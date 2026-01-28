@@ -1,0 +1,74 @@
+site_name: Shogi Arena Docs
+site_description: Shogi Arena - High-performance Shogi tournament and analysis system
+site_dir: site
+docs_dir: docs
+theme:
+  name: material
+  language: ja
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tabs
+    - navigation.expand
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quick-start.md
+      - First Tournament: getting-started/first-tournament.md
+  - User Guide:
+      - Tournaments: user-guide/tournaments.md
+      - SPSA Tuning: user-guide/spsa.md
+      - Dashboard: user-guide/dashboard.md
+      - Utility Tools: user-guide/tools.md
+      - Python Library: user-guide/python-library.md
+  - Technical Details:
+      - Architecture: technical/architecture.md
+      - Runners & Orchestrators: technical/runners-orchestrators.md
+      - Services & Utilities: technical/services.md
+      - Instances: technical/instances.md
+      - USI Engine Design: technical/usi-engine.md
+      - Dashboard Internals: technical/dashboard/architecture.md
+      - Dashboard Protocols: technical/dashboard/protocols.md
+      - Live API: technical/dashboard/live_api.md
+      - Dashboard Testing: technical/dashboard/testing.md
+      - Dashboard Typing: technical/dashboard/typing.md
+  - API Reference:
+      - Overview: api/index.md
+      - Core: api/core.md
+      - Engines: api/engines.md
+      - Services: api/services.md
+  - Development:
+      - Project Structure: development/project-structure.md
+      - Contributing: development/contributing.md
+      - Live Updates Refactor: development/live-updates-refactor.md
+      - Visual Testing: development/frontend-visual-testing.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true

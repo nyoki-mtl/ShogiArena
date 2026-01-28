@@ -1,0 +1,16 @@
+"""Type stubs for cshogi.cli module - Command line interface"""
+
+import re
+from typing import Any
+
+from cshogi import *  # noqa: F403
+
+# Regular expressions
+re_usi_info: re.Pattern[str]
+
+# Functions
+def is_jupyter() -> bool: ...
+def to_score(info: dict[str, Any], board_turn: int | None = None) -> float: ...
+def usi_info_to_score(info: dict[str, Any]) -> float: ...
+def usi_info_to_csa_comment(info: dict[str, Any]) -> str: ...
+def main() -> None: ...

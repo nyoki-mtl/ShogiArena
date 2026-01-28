@@ -1,0 +1,29 @@
+# アーティファクトベースの USI エンジン設定例
+# ------------------------------------------------------------------
+# - `artifact` (必須) を指定すると shogiarena がビルド済み成果物を取得・配置します。`engine_path` と同時指定は不可。
+# - `build_options.target_cpu` は必須。edition や tune_file は利用するアーティファクトに応じて任意で設定します。
+# - `name` は任意 (既定: artifact から派生)。UI 表示を揃えたい場合に指定してください。
+# - `working_directory` ほか各種オプションは任意で、未指定時は実装側の既定値（コメント参照）が適用されます。
+
+name: "YO-mainline"                                # 任意。省略時は artifact 名から推測
+artifact: "YaneuraOu/9f89431a"                     # 必須。取得対象のアーティファクト ID
+build_options:
+  target_cpu: ZEN4                                 # 必須。ホストに合わせた CPU 最適化
+  edition: YANEURAOU_ENGINE_NNUE_HALFKP_512X2_8_64 # 任意。既定: なし (アーティファクトに依存)
+  # tune_file: "./data/YaneuraOu-params/main.tune"   # 任意。既定: なし。SPSA で生成した tune を適用する例（相対パスまたは絶対パス）
+  # source_dir: "./.repos/YaneuraOu"              # 任意。既定: なし。ソース再利用時のみ設定（相対パスまたは絶対パス）
+# working_directory: "{output_dir}/engines/yo-mainline" # 任意。既定: アーティファクト展開先ディレクトリ
+engine_args:                                       # 任意。既定: []
+  - "--usi"
+environment:                                       # 任意。既定: {}
+  OMP_NUM_THREADS: "4"
+  CUDA_VISIBLE_DEVICES: "0"
+options:                                           # 任意。既定: {}
+  Threads: 4
+  USI_Hash: 2048
+  # EvalDir: "./data/evals/Suisho10"  # パスオプションの例（相対パスまたは絶対パス）
+  # BookDir: "./data/books/no_book"   # パスオプションの例（相対パスまたは絶対パス）
+go_options:                                        # 任意。既定: {}
+  byoyomi: 2000
+  nodes: 1000000
+enable_early_ponder: false                         # 任意。既定: false。true で ponderhit を早めに送信

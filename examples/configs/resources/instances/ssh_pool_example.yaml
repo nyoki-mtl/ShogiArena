@@ -1,0 +1,18 @@
+# 複数ホストを一括登録するショートハンド例
+# ------------------------------------------------------------------
+# - `name` / `type: ssh` / `hosts[]` / `user` は必須。`hosts` の各要素から個別インスタンスが生成され、`name-001` のような連番が自動付与されます。
+# - その他のキーは任意で、各生成インスタンスに共通設定としてコピーされます。
+# - 設定していない項目は SSH の単体定義 (ssh_example.yaml) と同じ既定値 (port=22, project_root=~/ShogiArena-remote, strict_host_key_checking=false など) が適用されます。
+
+name: "remote-cluster"                  # 必須。生成されるインスタンス名の接頭辞
+type: ssh                               # 必須。SSH インスタンスを表す固定値
+hosts:                                  # 必須。空にするとエラー
+  - "node-a.example.com"
+  - "node-b.example.com"
+user: "arena"                           # 必須。SSH ログインユーザー
+identity_file: "~/.ssh/arena_cluster"   # 任意。既定: null
+project_root: "/opt/shogiarena"         # 任意。既定: ~/ShogiArena-remote
+slots: 6                                # 任意。既定: 0 (無制限)
+max_engines: 3                          # 任意。既定: null -> slots と同値
+tags: ["remote", "cluster"]             # 任意。既定: []
+strict_host_key_checking: true          # 任意。既定: false

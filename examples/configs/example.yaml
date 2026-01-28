@@ -1,0 +1,116 @@
+# トーナメント設定の包括的サンプル
+# ------------------------------------------------------------------
+# - ArenaConfig の代表的なキーをすべて列挙し、用途をコメントでまとめています。
+# - サポートされているプレースホルダ: {output_dir}, {engine_dir}
+# - 相対パスは設定ファイルからの相対パスとして解釈されます
+# - 実際の運用では不要なブロックを削除し、自分の実験に合わせて値を調整してください。
+# - コメント内の「既定: ...」「必須/任意」は ArenaConfig dataclass の初期値を基にしています。
+
+experiment_name: "sample_gauntlet"   # 任意。既定: YAML から推測。ラン名 (run_dir 自動生成にも使用)
+log_level: INFO                      # 任意。既定: INFO。DEBUG にすると USI ログが詳細化
+# work_dir: "{output_dir}"           # 任意。既定: settings.yaml が無ければ `./shogiarena_output`（`shogiarena config init` 後は OS 標準の出力領域）
+# run_dir: null                      # 任意。既定: {output_dir}/tournament_runs/{experiment}/{config}
+instances:                            # 任意。既定: CLI --instances または local.yaml
+  - "./resources/instances/local_example.yaml"   # YAML ファイルやディレクトリを列挙可能（相対パスは設定ファイルからの相対）
+  # - "./resources/instances"                    # ディレクトリを指定すると *.yaml / *.yml をまとめて読み込む
+
+# レーティングの初期値と K 値
+rating:                     # 任意。未指定時は initial=1500, k_factor=16
+  initial: 1500.0           # 既定: 1500.0
+  k_factor: 16.0            # 既定: 16.0
+
+# SSE ダッシュボード/API を同時起動するかどうか
+dashboard:                 # 任意。既定: enabled=true, api_port=8080
+  enabled: true            # true で SSE/API を起動
+  api_port: 8080
+
+# 対局スケジュール（スケジューラや並列設定）
+tournament:                # 任意。未指定時は scheduler=round_robin, games_per_pair=4, seed=42, num_parallel=4, game_order=auto, baseline_count=1
+  scheduler: gauntlet      # 既定: round_robin。round_robin / gauntlet / spsa
+  games_per_pair: 20       # 既定: 4。同一ペアで指す局数（往復含む）
+  seed: 42                 # 既定: 42。乱数シード。再現性確保のため固定推奨
+  num_parallel: 4          # 既定: 4。並列ゲーム数
+  game_order: auto         # 既定: auto。auto / pairwise / interleave / shuffle
+  baseline_count: 1        # 既定: 1。ガントレット時の基準エンジン数
+
+# 対局ルール（時間設定、初期局面、千日手判定、SPRT など）
+rules:                      # 任意。未指定時は RulesConfig の既定が適用
+  time_control:             # 任意。既定: null (TimeControlLimits 未設定)
+    time_ms: 600000         # 任意。既定: null。基本持ち時間（ミリ秒）
+    increment_ms: 2000      # 任意。既定: null。一手ごとのフィッシャー加算
+    byoyomi_ms: null        # 任意。既定: null。秒読み方式
+    fixed_time_ms: null     # 任意。既定: null。1 手固定時間
+    depth_limit: null       # 任意。既定: null。探索深さ
+    node_limit: null        # 任意。既定: null。ノード上限
+    expiry_margin_ms: 500   # 任意。既定: 500
+    allow_timeout: false    # 任意。既定: false
+    max_wait_ms: 600000     # 任意。既定: 600000 (allow_timeout=true のとき有効)
+  initial_positions:        # 任意。既定: type=startpos, flip_policy=pair_both, source=None
+    type: startpos
+    flip_policy: pair_both
+    source: null
+  adjudication:             # 任意。既定: enable_resign=false, enable_max_plies=true, max_plies=320 など
+    enable_resign: true     # 既定: false
+    resign_score_cp: 800    # 既定: 800
+    resign_move_count: 8    # 既定: 8
+    resign_two_sided: true  # 既定: true
+    enable_max_plies: true  # 既定: true
+    max_plies: 320          # enable_max_plies=true の既定値
+    sync_max_plies_with_engine: true          # 既定: true
+    engine_max_ply_option_names: ["MaxMovesToDraw", "MaxPly"]  # 既定: "auto"（文字列）だが明示例を提示
+  repetition_occurrences_to_draw: 2           # 既定: 2 (許容値 2/3/4)
+
+sprt:                                         # 任意。既定: null。2 エンジン対戦で早期打ち切りを使う場合に設定
+  elo0: 0.0                                   # 任意。既定: 0.0
+  elo1: 5.0                                   # 任意。既定: 5.0
+  alpha: 0.05                                 # 任意。既定: 0.05
+  beta: 0.05                                  # 任意。既定: 0.05
+  min_games: 0                                # 任意。既定: 0
+
+# 参加エンジン定義（最低 2 エントリ）
+engines:                    # 必須。最低 2 エントリ以上が必要
+  - name: "YO Baseline"                         # 任意。省略時は artifact / engine_config から推測
+    artifact: "YaneuraOu/a5ee2786"              # artifact or engine_config のどちらか一方が必須
+    build_options:                               # artifact 利用時は target_cpu が必須。その他は任意
+      target_cpu: ZEN3                           # 必須 (artifact 利用時)
+      edition: YANEURAOU_ENGINE_NNUE_HALFKP_512X2_8_64  # 任意
+      # tune_file: "./data/YaneuraOu-params/baseline.tune"  # 任意（相対パスまたは絶対パス）
+      # source_dir: "./.repos/YaneuraOu"        # 任意（相対パスまたは絶対パス）
+    options_overlays:                            # 任意。既定: []
+      - "./resources/engines/overlays/example.yaml"
+    options:                                     # 任意。既定: {}
+      Threads: 4
+      USI_Hash: 2048
+      # BookDir: "./data/books/no_book"  # パスオプションの例（相対パスまたは絶対パス）
+    go_options:                                  # 任意。既定: {}
+      byoyomi: 2000
+      nodes: 1000000
+    instance_id: "local-main"                    # 任意。既定: null
+    cpu_affinity: "0-3"                          # 任意。既定: null
+    enable_early_ponder: false                   # 任意。既定: false
+
+  - name: "Dev Engine"
+    engine_config: "./resources/engines/local_example.yaml"   # artifact の代わりに engine_config を指定した例。engine_config の値が基準となり、この YAML の `options_overlays` → `options` の順で上書きされる
+    working_directory: "../.repos/my-engine/build"            # 任意。既定: engine_config の親（相対パスまたは絶対パス）
+    engine_args: ["--usi", "--threads", "2"]                  # 任意。既定: []
+    environment:                                              # 任意。既定: {}
+      OMP_NUM_THREADS: "2"
+    options_overlays:                                        # 任意。既定: []
+      - "./resources/engines/overlays/example.yaml"
+    options:                                                  # 任意。既定: {}。最終的に USI setoption へ送られ、engine_config 側の同名キーを上書き
+      Threads: 2
+      MultiPV: 1
+    go_options:                                               # 任意。既定: {}
+      byoyomi: 1000
+    time_control:                                             # 任意。既定: null
+      fixed_time_ms: null
+      node_limit: 500000
+    instance_id: "remote-linux-01"                            # 任意。既定: null
+    cpu_affinity: [4, 5]                                      # 任意。既定: null
+    enable_early_ponder: true                                 # 任意。既定: false
+
+# サポートされているプレースホルダ:
+# - {output_dir}: 出力ディレクトリ（settings.yaml が無ければ `./shogiarena_output`）
+# - {engine_dir}: エンジンキャッシュディレクトリ（settings.yaml が無ければ OS の一時ディレクトリ配下）
+# 
+# 注: 相対パスは設定ファイルからの相対パスとして解釈されます

@@ -1,0 +1,138 @@
+# 完全な ArenaConfig テンプレート
+# ------------------------------------------------------------
+# - コメント部を読みながら不要なセクションを削除してください。
+# - サポートされているプレースホルダ: {output_dir}, {engine_dir}
+# - 相対パスは設定ファイルからの相対パスとして解釈されます
+# - artifact を使うエンジンと engine_config を使うエンジンの両方を例示しています。
+
+# 実験名（run_dir の既定フォルダ名にも使用される）
+experiment_name: sample_gauntlet
+
+# ログ出力レベル。DEBUG にすると詳細ログ。
+log_level: INFO
+
+# 実行時の作業ディレクトリ。省略時は `shogiarena.utils.common.project_dirs.output_dir`（settings.yaml が無ければ `./shogiarena_output`）。
+# work_dir: "{output_dir}"
+
+# 実行結果を保存するディレクトリ。省略時は `{output_dir}/tournament_runs/{experiment_name}/{config名}`。
+# 既定ルールに従う場合はコメントアウト可能。
+# run_dir: null
+
+# レーティング更新設定
+rating:
+  # 開始時レーティング
+  initial: 1500.0
+  # レーティング変動の係数（Elo K-factor）
+  k_factor: 16.0
+
+# ダッシュボード API / SSE を有効化するかどうか
+# shogiarena dashboard run の代わりにトーナメント実行時に同時起動する
+# API ポートは FastAPI アプリのリッスンポート
+# ------------------------------------------------------------
+dashboard:
+  enabled: true
+  api_port: 8080
+
+# トーナメントスケジュール設定
+# ------------------------------------------------------------
+tournament:
+  # スケジューラ種別: round_robin / gauntlet / spsa（拡張予定）
+  scheduler: gauntlet
+  # 同一エンジンペアで何局指すか
+  games_per_pair: 20
+  # 乱数シード（リプレイ可能性の確保）
+  seed: 42
+  # 同時対局数。ローカル CPU コア数に合わせて調整
+  num_parallel: 4
+  # 対局の組み合わせ順序: auto / pairwise / interleave / shuffle
+  game_order: auto
+  # 先頭の何台を基準エンジンとして扱うか（gauntlet で有効）
+  baseline_count: 1
+
+# 対局ルール設定
+# ------------------------------------------------------------
+rules:
+  # 時間制御（ミリ秒）。time_ms + increment_ms が基本設定
+  time_control:
+    time_ms: 600000          # 基本持ち時間（600,000ms = 10分）
+    increment_ms: 2000       # 1手ごとのフィッシャー加算（2秒）
+    byoyomi_ms: null         # byoyomi モードを使う場合はここに設定
+    fixed_time_ms: null      # 1手固定時間を使う場合はこちらを設定
+    depth_limit: null        # 探索深さ制限
+    node_limit: null         # 探索ノード数制限
+    expiry_margin_ms: 500    # タイムアウト前の安全マージン
+    allow_timeout: false     # true の場合、タイムアウトを敗北扱いしない
+    max_wait_ms: 600000      # allow_timeout=true 時の最大待機時間
+  # 初期局面の生成。ランダム局面等を使いたい場合は type=file にし、source にファイルパス
+  initial_positions:
+    type: startpos
+    flip_policy: pair_both   # alternate / random / none / pair_both
+    source: null             # type=file の場合に SFEN リストを置くパス
+  # 投了判定や最大手数
+  adjudication:
+    enable_resign: true
+    resign_score_cp: 800
+    resign_move_count: 8
+    resign_two_sided: true   # 先後どちらか一方だけに適用するなら false
+    enable_max_plies: true
+    max_plies: 320
+    sync_max_plies_with_engine: true
+    engine_max_ply_option_names: [MaxMovesToDraw, MaxPly]
+  # 千日手判定回数。2, 3, 4 のいずれか
+  repetition_occurrences_to_draw: 2
+  # SPRT 設定はトップレベルの sprt を参照
+
+sprt:
+  # SPRT による早期判定設定。使わない場合は削除または null
+  elo0: 0.0
+  elo1: 5.0
+  alpha: 0.05
+  beta: 0.05
+  min_games: 0   # 早期終了の前に最低消化する局数（省略可）
+
+# 参加エンジン定義（最低 2 エントリ）
+# ------------------------------------------------------------
+engines:
+  # 1. アーティファクトを使う例
+  - name: "Baseline YO"
+    artifact: "YaneuraOu/a5ee2786"
+    build_options:
+      target_cpu: ZEN3               # 必須。ホスト CPU に合わせて変更
+      edition: YANEURAOU_ENGINE_NNUE_HALFKP_512X2_8_64
+      # source_dir: "../.repos/YaneuraOu"   # 任意。ソース再利用時に指定
+    options_overlays:
+      - "./resources/engines/overlays/example.yaml"
+    options:                         # USI オプションを上書き
+      Threads: 4
+      USI_Hash: 2048
+    time_control:
+      fixed_time_ms: null            # 個別に固定時間を設定したい場合に使用
+      node_limit: 2000000
+    cpu_affinity: "0-3"              # 特定コアにピン留め（オプション）
+
+  # 2. ローカルエンジン YAML を使う例
+  - name: "Dev Build"
+    engine_config: "./resources/engines/local_example.yaml"  # ローカル USI エンジンの設定ファイル
+    # build_options は engine_config 利用時には空にする
+    build_options: {}
+    options_overlays:
+      - "./resources/engines/overlays/example.yaml"
+    options:
+      Threads: 2
+      MultiPV: 1
+    instance_id: "local-dev"         # CLI --engine instance_id=... で上書き可能
+    cpu_affinity: [4, 5]              # 配列で指定しても可
+
+  # 3. SSH 経由のリモートインスタンス例（instance_id と合わせて使用）
+  - name: "Remote Runner"
+    artifact: "YaneuraOu/b7c4dd10"
+    build_options:
+      target_cpu: HASWELL
+    options_overlays:
+      - "./resources/engines/overlays/example.yaml"
+    options:
+      Threads: 2
+    instance_id: "remote-linux-01"
+    # SSH 側に taskset がない場合は警告が出るが実行は続行される
+
+# ここまでが ArenaConfig のサンプルです。不要なエンジンや設定は取り除いてご利用ください。

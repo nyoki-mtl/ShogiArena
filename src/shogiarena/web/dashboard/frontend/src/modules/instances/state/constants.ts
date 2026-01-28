@@ -1,0 +1,6 @@
+export const POLL_MS = 10_000;
+export const HEALTH_CHECK_MAX_AGE_MS = 10_000;
+export const HEALTH_CHECK_MIN_INTERVAL_MS = 10_000;
+export const RESOURCE_SAMPLE_MIN_INTERVAL_MS = 10_000;
+export const SPARK_HISTORY_MS = 60_000;
+export const SPARK_MAX_POINTS = 120;

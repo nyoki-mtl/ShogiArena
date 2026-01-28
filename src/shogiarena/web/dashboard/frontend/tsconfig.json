@@ -1,0 +1,22 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "esModuleInterop": true,
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "lib": ["ES2022", "DOM"],
+        "baseUrl": "./src",
+        "paths": {
+            "@/*": ["*"],
+            "@modules/*": ["modules/*"],
+            "@styles/*": ["styles/*"],
+            "@types/*": ["types/*"]
+        },
+        "types": ["vite/client"],
+        "skipLibCheck": true
+    },
+    "include": ["src"],
+    "exclude": ["dist", "node_modules"]
+}

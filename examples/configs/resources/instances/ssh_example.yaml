@@ -1,0 +1,18 @@
+# SSH 経由でエンジンを実行するインスタンス設定
+# ------------------------------------------------------------------
+# - `name` / `host` / `user` / `type: ssh` は必須。`identity_file` はパスワード認証を使う場合だけ任意です。
+# - `project_root` を省略すると `~/ShogiArena-remote` が既定で使用され、`engine_dir` は `{project_root}/data/engines` に自動決定されます。
+# - `slots` / `max_engines` / `tags` は任意。未指定時は 0 (無制限) や空配列として扱われます。
+# - `strict_host_key_checking` の既定は false (SSH の KnownHosts を無視する)。本番運用では true を推奨。
+
+name: "remote-linux-01"                 # 必須。CLI の --engine instance_id=... などで参照
+type: ssh                               # 必須。SSH インスタンスを表す固定値
+host: "203.0.113.10"                    # 必須。接続先ホスト名または IP
+user: "arena"                           # 必須。SSH ログインユーザー
+port: 22                                # 任意。既定: 22
+identity_file: "~/.ssh/arena_ed25519"   # 任意。既定: null。パスワード認証を使うなら省略
+project_root: "/home/arena/ShogiArena"  # 任意。既定: ~/ShogiArena-remote
+slots: 8                                # 任意。既定: 0 (無制限)。このマシンで許可するスロット数
+max_engines: 4                          # 任意。既定: null -> slots と同値として解釈
+tags: ["remote", "zen3"]                # 任意。既定: []
+strict_host_key_checking: true          # 任意。既定: false。セキュリティを優先する場合は true

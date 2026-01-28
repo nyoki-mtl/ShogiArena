@@ -1,0 +1,27 @@
+# ローカルビルド済み USI エンジン設定例
+# ------------------------------------------------------------------
+# - `engine_path` (必須) に実行可能ファイルを指定します。`artifact` と同時指定は不可。
+# - `name` は任意 (既定: engine_path のファイル名)。UI 表示を整えたい場合だけ指定してください。
+# - `working_directory` は任意 (既定: engine_path の親ディレクトリ)。
+# - `engine_args` / `environment` / `options` / `go_options` は任意で、未指定時は空集合として扱われます。
+# - コメントで「既定」と書いている値は shogiarena 側実装のデフォルトです。実際の対局方針に合わせて調整してください。
+
+name: "Local Dev Engine"                        # 任意。省略時は engine_path から派生
+engine_path: "./.repos/MyEngine/build/myengine"  # 必須。ローカル実行ファイルへのパス（相対パスまたは絶対パス）
+working_directory: "./.repos/MyEngine"       # 任意。省略時は engine_path の親を自動使用（相対パスまたは絶対パス）
+engine_args:                                    # 任意。既定: []
+  - "--usi"                                     # 例: 追加で渡したいコマンドライン引数
+  - "--threads"
+  - "2"
+environment:                                    # 任意。既定: {}
+  OMP_NUM_THREADS: "2"                          # 例: OpenMP の使用コア数を制限
+  # LD_LIBRARY_PATH: "./.repos/MyEngine/lib"   # 例: 依存ライブラリの検索パス（相対パスまたは絶対パス）
+options:                                        # 任意。既定: {} (USI setoption に変換)
+  Threads: 2                                    # 例: スレッド数。値は文字列化されます
+  MultiPV: 1
+  # BookDir: "./data/books/dev"       # パスオプションの例（相対パスまたは絶対パス）
+  # EvalDir: "./data/evals/dev_eval"  # パスオプションの例（相対パスまたは絶対パス）
+go_options:                                     # 任意。既定: {}
+  byoyomi: 1000                                 # 例: `go byoyomi 1000` として渡される
+  nodes: 500000
+enable_early_ponder: true                       # 任意。既定: false。ponderhit を積極的に送る実験機能

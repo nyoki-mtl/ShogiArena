@@ -1,0 +1,94 @@
+# SPRT (Sequential Probability Ratio Test) 実行用テンプレート
+# ------------------------------------------------------------------
+# - SPRT は 2 つのエンジンバージョン間の統計的有意差を早期停止機能付きで検証します。
+# - `sprt` ブロックで仮説検定のパラメータ（elo0, elo1, alpha, beta）を指定します。
+# - 有意差が検出されるか、max_games に到達すると自動的に停止します。
+# - コメント内の「必須/任意」「既定: ...」は ArenaConfig の初期値を基準にしています。
+
+experiment_name: "sprt-test-example"      # 任意 (既定: YAML から推測)
+# work_dir: "{output_dir}"                # 任意 (既定: project_dirs.output_dir)
+# run_dir: null                           # 任意 (既定: {output_dir}/tournament_runs/{experiment}/{config})
+log_level: INFO                            # 任意 (既定: INFO)
+instances:                                 # 任意 (既定: CLI --instances または local.yaml)
+  - "../../resources/instances/local_example.yaml"  # 相対パスは設定ファイルからの相対
+
+rating:                                    # 任意 (既定: initial=1500, k_factor=16)
+  initial: 1500.0
+  k_factor: 16.0
+
+dashboard:                                 # 任意 (既定: enabled=true, api_port=8080)
+  enabled: true
+  api_port: 8080
+
+tournament:                                # 任意 (既定: scheduler=round_robin, games_per_pair=4, seed=42, num_parallel=4)
+  scheduler: round_robin                   # SPRT では round_robin を推奨
+  games_per_pair: 2                        # エンジンが 2 つの場合、ペアごとの対局数
+  seed: 42                                 # 既定: 42
+  num_parallel: 4                          # 並列実行数
+  game_order: auto                         # 既定: auto
+
+rules:
+  time_control:                            # 任意 (既定: null)
+    time_ms: 60000                         # 任意。60秒持ち時間
+    increment_ms: 1000                     # 任意。1秒加算
+    node_limit: null                       # 任意。ノード数制限
+    depth_limit: null                      # 任意。深さ制限
+    fixed_time_ms: null                    # 任意。固定時間
+    expiry_margin_ms: 500                  # 任意。既定: 500
+    allow_timeout: false                   # 任意。既定: false
+    max_wait_ms: 600000                    # 任意。既定: 600000
+  initial_positions:                       # 任意 (既定: type=startpos, flip_policy=pair_both)
+    type: startpos                         # または file で開始局面ファイルを指定
+    flip_policy: pair_both                 # 先後を入れ替えて対局
+    source: null                           # type=file の場合は必須
+  adjudication:                            # 任意 (既定: enable_resign=false, enable_max_plies=true など)
+    enable_resign: true                    # 投了判定を有効化
+    resign_score_cp: 800                   # 800cp 差で投了
+    resign_move_count: 8                   # 8 手連続で差がある場合
+    resign_two_sided: true                 # 両方向の評価値差をチェック
+    enable_max_plies: true                 # 最大手数制限を有効化
+    max_plies: 320                         # 320 手で引き分け
+    sync_max_plies_with_engine: true       # エンジンにも max_plies を送信
+    engine_max_ply_option_names: ["MaxMovesToDraw", "MaxPly"]
+  repetition_occurrences_to_draw: 2        # 任意 (既定: 2)。千日手判定
+
+sprt:                                      # 必須。SPRT パラメータ
+  elo0: 0.0                                # H0: Elo 差が elo0 以下
+  elo1: 5.0                                # H1: Elo 差が elo1 以上
+  alpha: 0.05                              # 第一種過誤率 (H0 を誤って棄却)
+  beta: 0.05                               # 第二種過誤率 (H1 を誤って棄却)
+  min_games: 0                             # 最小対局数 (既定: 0)
+  max_games: 1000                          # 最大対局数 (既定: 無制限)
+
+engines:                                   # 必須。SPRT では通常 2 エンジン
+  # 1. ベースラインエンジン（旧バージョン）
+  - name: "Baseline"
+    artifact: "YaneuraOu/a5ee2786"         # artifact or engine_config の一方を必ず指定
+    build_options:
+      target_cpu: ZEN3                     # artifact 利用時は必須
+      edition: YANEURAOU_ENGINE_NNUE_HALFKP_512X2_8_64  # 任意
+    options:                               # 任意 (既定: {})
+      Threads: 4
+      USI_Hash: 2048
+      # BookDir: "./data/books/no_book"  # パスオプションの例（相対パスまたは絶対パス）
+    instance_id: "local-dev"               # 任意 (既定: null)
+
+  # 2. 挑戦者エンジン（新バージョン）
+  - name: "Modified"
+    artifact: "YaneuraOu/b7c4dd10"         # 異なるコミット/バージョンを指定
+    build_options:
+      target_cpu: ZEN3
+      edition: YANEURAOU_ENGINE_NNUE_HALFKP_512X2_8_64
+    options:
+      Threads: 4
+      USI_Hash: 2048
+      # BookDir: "./data/books/no_book"  # パスオプションの例（相対パスまたは絶対パス）
+    instance_id: "local-dev"
+
+# SPRT 実行例:
+# shogiarena run sprt examples/configs/run/sprt/example.yaml
+#
+# 結果:
+# - H0 が棄却された場合: Modified が統計的に有意に強い (Elo1 以上の差)
+# - H0 が受容された場合: Modified に有意な差はない (Elo0 以下の差)
+# - max_games に到達: 結論が出なかった (より多くの対局が必要)

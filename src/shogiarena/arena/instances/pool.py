@@ -1,0 +1,541 @@
+"""Instance pool management for allocating and tracking instances."""
+
+from __future__ import annotations
+
+import logging
+import threading
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal
+
+import yaml
+
+from shogiarena.utils.common import project_dirs
+
+from .models import (
+    Instance,
+    InstanceActiveGame,
+    InstanceActiveGameSide,
+    InstanceConfig,
+    InstancesConfig,
+    InstanceType,
+)
+
+logger = logging.getLogger(__name__)
+
+JobType = Literal["game", "card"]
+
+
+@dataclass(frozen=True)
+class ResourceRequest:
+    """Represents resources required on an instance."""
+
+    slots: int = 0
+    engines: int = 0
+
+    def __post_init__(self) -> None:
+        if self.slots < 0 or self.engines < 0:
+            raise ValueError("resource counts must be >= 0")
+
+
+class InstancePool:
+    """
+    Manages a pool of instances for job allocation.
+
+    Thread-safe operations for allocating and releasing instances.
+    """
+
+    DEFAULT_LOCAL_INSTANCES_PATH = project_dirs.output_dir / "instances" / "local.yaml"
+
+    def __init__(self) -> None:
+        """Initialize empty instance pool."""
+        self._instances: dict[str, Instance] = {}
+        self._lock = threading.RLock()
+
+    @classmethod
+    def load_from_yaml(cls, yaml_path: Path) -> InstancePool:
+        """
+        Load instance pool from YAML configuration file.
+
+        Args:
+            yaml_path: Path to instances YAML file
+
+        Returns:
+            Configured InstancePool
+
+        Raises:
+            FileNotFoundError: If YAML file doesn't exist
+            ValueError: If configuration is invalid
+        """
+        if not yaml_path.exists():
+            raise FileNotFoundError(f"Instances config file not found: {yaml_path}")
+
+        logger.debug("Loading instances from: %s", yaml_path)
+
+        try:
+            with open(yaml_path, encoding="utf-8") as f:
+                raw_data: Any = yaml.safe_load(f) or {}
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Failed to parse instances config: {exc}") from exc
+
+        config_data = cls._normalize_config_data(raw_data, yaml_path)
+        instances_config = InstancesConfig.model_validate(config_data)
+
+        pool = cls()
+        for instance_config in instances_config.instances:
+            instance = Instance(config=instance_config, source_path=yaml_path)
+            pool._instances[instance.name] = instance
+            logger.debug("Added instance: %s (%s)", instance.name, instance.type.value)
+
+        logger.debug("Loaded %d instances", len(pool._instances))
+        return pool
+
+    @staticmethod
+    def _normalize_config_data(raw_data: Any, source_path: Path) -> dict[str, Any]:
+        """Expand shorthand YAML forms into the canonical ``{"instances": [...]}`` mapping."""
+        if not isinstance(raw_data, dict):
+            raise ValueError("Instances config must be a mapping")
+        if "instances" in raw_data:
+            raise ValueError("'instances:' list format is not supported. Use single-file or hosts style.")
+
+        hosts = raw_data.get("hosts")
+        if hosts is not None:
+            if not isinstance(hosts, list) or not hosts:
+                raise ValueError("'hosts' must be a non-empty list when provided")
+            base_name = str(raw_data.get("name") or source_path.stem).strip() or source_path.stem
+            expanded = []
+            for index, host in enumerate(hosts, start=1):
+                entry = {key: value for key, value in raw_data.items() if key != "hosts"}
+                entry["host"] = host
+                entry["name"] = f"{base_name}-{index:03d}"
+                expanded.append(entry)
+            return {"instances": expanded}
+
+        entry = dict(raw_data)
+        if not str(entry.get("name", "")).strip():
+            entry["name"] = source_path.stem
+        return {"instances": [entry]}
+
+    @classmethod
+    def load_default_local(cls) -> InstancePool | None:
+        """Load the default local instances file when present.
+
+        Returns ``None`` when the bundled local instances configuration is absent.
+        """
+
+        path = cls.DEFAULT_LOCAL_INSTANCES_PATH
+        if not path.exists():
+            logger.debug("Default local instances file not found: %s", path)
+            return None
+
+        logger.debug("Loading default local instances from %s", path)
+        return cls.load_from_yaml(path)
+
+    def _local_instance_locked(self) -> Instance | None:
+        for instance in self._instances.values():
+            if instance.is_local:
+                return instance
+        return None
+
+    def get_instance(self, name: str) -> Instance | None:
+        """
+        Get instance by name.
+
+        Args:
+            name: Instance name to retrieve
+
+        Returns:
+            Instance if found, None otherwise
+        """
+        with self._lock:
+            return self._instances.get(name)
+
+    def list_instances(self) -> list[Instance]:
+        """
+        Get list of all instances.
+
+        Returns:
+            List of all instances
+        """
+        with self._lock:
+            return list(self._instances.values())
+
+    def get_local_instance(self) -> Instance | None:
+        """
+        Get the local instance if it exists.
+
+        Returns:
+            Local instance if found, None otherwise
+        """
+        with self._lock:
+            return self._local_instance_locked()
+
+    def ensure_local_instance(self) -> Instance:
+        """
+        Ensure a local instance exists, creating default if needed.
+
+        Returns:
+            Local instance
+
+        Note:
+            This method creates the in-memory ``local`` instance on demand and
+            does not generate or persist a YAML file on disk.
+        """
+        with self._lock:
+            local_instance = self._local_instance_locked()
+            if local_instance:
+                return local_instance
+
+            # Create default local instance
+            logger.debug("Creating default local instance")
+            local_config = InstanceConfig(
+                name="local",
+                type=InstanceType.LOCAL,
+                engine_dir="",
+                slots=4,  # Default local slots
+            )
+            local_instance = Instance(config=local_config, source_path=self.DEFAULT_LOCAL_INSTANCES_PATH)
+            self._instances["local"] = local_instance
+            return local_instance
+
+    def add_instance(self, config: InstanceConfig, *, source_path: Path | None = None) -> Instance:
+        """Add a new instance to the pool."""
+
+        with self._lock:
+            if config.name in self._instances:
+                raise ValueError(f"Instance already exists: {config.name}")
+            instance = Instance(config=config, source_path=source_path)
+            self._instances[config.name] = instance
+            logger.debug("Added instance to pool: %s", config.name)
+            return instance
+
+    def update_instance_config(
+        self,
+        name: str,
+        new_config: InstanceConfig,
+        *,
+        source_path: Path | None = None,
+    ) -> Instance:
+        """Replace configuration for an existing instance."""
+
+        with self._lock:
+            instance = self._instances.get(name)
+            if instance is None:
+                raise KeyError(name)
+            instance.config = new_config
+            if source_path is not None:
+                instance.source_path = source_path
+            logger.debug("Updated instance config: %s", name)
+            return instance
+
+    def remove_instance(self, name: str) -> Instance | None:
+        """Remove an instance from the pool."""
+
+        with self._lock:
+            instance = self._instances.pop(name, None)
+            if instance:
+                logger.debug("Removed instance from pool: %s", name)
+            return instance
+
+    def try_acquire_resources(self, requirements: Mapping[str, ResourceRequest]) -> bool:
+        """
+        Attempt to acquire resources on multiple instances atomically.
+
+        Args:
+            requirements: Mapping of instance_id -> ResourceRequest to reserve.
+
+        Returns:
+            True when all requested resources are acquired, False otherwise.
+        """
+        if not requirements:
+            return True
+
+        with self._lock:
+            # Validate availability upfront
+            for instance_id, req in requirements.items():
+                if req.slots <= 0 and req.engines <= 0:
+                    continue
+                instance = self._instances.get(instance_id)
+                if instance is None:
+                    raise KeyError(f"Unknown instance '{instance_id}'")
+                if not instance.metrics.reachable:
+                    logger.debug("Instance %s is unreachable; cannot acquire resources", instance_id)
+                    return False
+                if instance.drain:
+                    logger.debug("Instance %s is draining; cannot acquire resources", instance_id)
+                    return False
+                if req.slots and instance.available_slots < req.slots:
+                    logger.debug(
+                        "Instance %s lacks slot capacity (need %s, available %s)",
+                        instance_id,
+                        req.slots,
+                        instance.available_slots,
+                    )
+                    return False
+                if req.engines and instance.available_engines < req.engines:
+                    logger.debug(
+                        "Instance %s lacks engine capacity (need %s, available %s)",
+                        instance_id,
+                        req.engines,
+                        instance.available_engines,
+                    )
+                    return False
+
+            # All checks passed; acquire resources
+            acquired_ids: list[str] = []
+            try:
+                for instance_id, req in requirements.items():
+                    if req.slots <= 0 and req.engines <= 0:
+                        continue
+                    instance = self._instances[instance_id]
+                    acquired = instance.acquire_resources(slots=req.slots, engines=req.engines)
+                    if not acquired:
+                        logger.warning("Race while acquiring resources on %s; rolling back reservation", instance_id)
+                        raise RuntimeError("failed to acquire requested resources")
+                    acquired_ids.append(instance_id)
+                    logger.debug(
+                        "Reserved slots=%s engines=%s on instance %s (in_use=%s/%s, engines=%s/%s)",
+                        req.slots,
+                        req.engines,
+                        instance_id,
+                        instance.metrics.in_use_slots,
+                        instance.effective_slots,
+                        instance.metrics.in_use_engines,
+                        instance.max_engine_capacity,
+                    )
+            except (RuntimeError, KeyError, ValueError) as exc:
+                logger.debug("Failed to acquire resources; rolling back: %s", exc, exc_info=True)
+                for rollback_id in acquired_ids:
+                    req = requirements[rollback_id]
+                    instance = self._instances[rollback_id]
+                    instance.release_resources(slots=req.slots, engines=req.engines)
+                return False
+
+            return True
+
+    def release_resources(self, allocations: Mapping[str, ResourceRequest]) -> None:
+        """Release previously acquired resources for the given instances."""
+        if not allocations:
+            return
+
+        with self._lock:
+            for instance_id, req in allocations.items():
+                if req.slots <= 0 and req.engines <= 0:
+                    continue
+                instance = self._instances.get(instance_id)
+                if instance is None:
+                    logger.warning("Attempted to release resources for unknown instance: %s", instance_id)
+                    continue
+                instance.release_resources(slots=req.slots, engines=req.engines)
+                logger.debug(
+                    "Released slots=%s engines=%s for instance %s (in_use=%s/%s, engines=%s/%s)",
+                    req.slots,
+                    req.engines,
+                    instance_id,
+                    instance.metrics.in_use_slots,
+                    instance.config.slots,
+                    instance.metrics.in_use_engines,
+                    instance.max_engine_capacity,
+                )
+
+    def allocate(self, job_type: JobType = "game") -> Instance | None:
+        """
+        Allocate an available instance for a job.
+
+        Args:
+            job_type: Type of job ("game" or "card")
+
+        Returns:
+            Available instance if found, None if no instances available
+        """
+        with self._lock:
+            for instance in self._instances.values():
+                if not instance.can_accept_job:
+                    continue
+                # 1ゲームあたりのCPU/エンジン割当は呼び出し側で管理しているため、
+                # ここでは可用性確認時のダミー予約として1枠ずつ確保する。
+                if instance.acquire_resources(slots=1, engines=1):
+                    logger.debug(
+                        "Allocated instance %s for %s (slots: %s/%s)",
+                        instance.name,
+                        job_type,
+                        instance.metrics.in_use_slots,
+                        instance.effective_slots,
+                    )
+                    return instance
+
+            logger.debug("No available instances for %s", job_type)
+            return None
+
+    def release(self, name: str) -> None:
+        """
+        Release a slot from the specified instance.
+
+        Args:
+            name: Name of instance to release slot from
+        """
+        with self._lock:
+            instance = self._instances.get(name)
+            if instance:
+                instance.release_resources(slots=1, engines=1)
+                logger.debug(
+                    "Released slot for instance %s (slots: %s/%s)",
+                    name,
+                    instance.metrics.in_use_slots,
+                    instance.effective_slots,
+                )
+            else:
+                logger.warning(f"Attempted to release unknown instance: {name}")
+
+    def mark_in_use(self, name: str, delta: int) -> None:
+        """
+        Adjust the in-use slots count for an instance.
+
+        Args:
+            name: Name of instance to adjust
+            delta: Change in slot usage (positive to increase, negative to decrease)
+        """
+        with self._lock:
+            instance = self._instances.get(name)
+            if instance:
+                if delta > 0:
+                    acquired = instance.acquire_resources(slots=delta)
+                    if not acquired:
+                        raise RuntimeError(f"Failed to acquire {delta} slot(s) for instance {name}; capacity exhausted")
+                    logger.debug(
+                        "Adjusted slots for instance %s by +%s (in_use=%s/%s)",
+                        name,
+                        delta,
+                        instance.metrics.in_use_slots,
+                        instance.effective_slots,
+                    )
+                elif delta < 0:
+                    instance.release_resources(slots=-delta)
+                    logger.debug(
+                        "Adjusted slots for instance %s by %s (in_use=%s/%s)",
+                        name,
+                        delta,
+                        instance.metrics.in_use_slots,
+                        instance.effective_slots,
+                    )
+            else:
+                logger.warning(f"Attempted to adjust unknown instance: {name}")
+
+    def set_drain(self, name: str, drain: bool) -> bool:
+        """
+        Set drain status for an instance.
+
+        Args:
+            name: Name of instance to modify
+            drain: Whether to drain the instance
+
+        Returns:
+            True if instance was found and updated, False otherwise
+        """
+        with self._lock:
+            instance = self._instances.get(name)
+            if instance:
+                instance.drain = drain
+                logger.debug("Set drain=%s for instance %s", drain, name)
+                return True
+            return False
+
+    def record_active_game(
+        self,
+        instance_id: str,
+        *,
+        game_id: str,
+        black_engine: str,
+        white_engine: str,
+        initial_sfen: str,
+        role: InstanceActiveGameSide,
+        round_index: int | None = None,
+        time_control_black: str | None = None,
+        time_control_white: str | None = None,
+    ) -> None:
+        """Record that an instance is currently running a game for dashboard visibility.
+
+        Args:
+            instance_id: Target instance name
+            game_id: Unique game identifier
+            black_engine: Display name for the black-side engine
+            white_engine: Display name for the white-side engine
+            initial_sfen: Initial position SFEN
+            role: Role information specific to this instance
+            round_index: Optional tournament round index (0-based)
+            time_control_black: Optional stringified time control for black
+            time_control_white: Optional stringified time control for white
+        """
+
+        with self._lock:
+            instance = self._instances.get(instance_id)
+            if instance is None:
+                logger.debug("Cannot record active game %s, unknown instance %s", game_id, instance_id)
+                return
+
+            active = instance.active_games.get(game_id)
+            if active is None:
+                active = InstanceActiveGame(
+                    game_id=game_id,
+                    black_engine=black_engine,
+                    white_engine=white_engine,
+                    initial_sfen=initial_sfen,
+                    time_control_black=time_control_black,
+                    time_control_white=time_control_white,
+                    round_index=round_index,
+                )
+                instance.active_games[game_id] = active
+            else:
+                if round_index is not None:
+                    active.round_index = round_index
+                if time_control_black is not None:
+                    active.time_control_black = time_control_black
+                if time_control_white is not None:
+                    active.time_control_white = time_control_white
+
+            active.add_role(role)
+
+    def clear_active_game(self, instance_id: str, game_id: str) -> None:
+        """Remove an active game entry when the game finishes."""
+
+        with self._lock:
+            instance = self._instances.get(instance_id)
+            if instance is None:
+                return
+            if game_id in instance.active_games:
+                instance.active_games.pop(game_id, None)
+
+    def get_stats(self) -> dict[str, int]:
+        """
+        Get pool statistics.
+
+        Returns:
+            Dictionary with pool statistics
+        """
+        with self._lock:
+            total = len(self._instances)
+            reachable = sum(1 for i in self._instances.values() if i.metrics.reachable)
+            draining = sum(1 for i in self._instances.values() if i.drain)
+            in_use_slots = sum(i.metrics.in_use_slots for i in self._instances.values())
+            unknown_slots_instances = sum(1 for i in self._instances.values() if not i.slot_capacity_known)
+            total_slots = sum(i.effective_slots for i in self._instances.values() if i.effective_slots is not None)
+            available_slots = sum(
+                max(0, i.effective_slots - i.metrics.in_use_slots)
+                for i in self._instances.values()
+                if i.effective_slots is not None
+            )
+            active_game_count = sum(len(i.active_games) for i in self._instances.values())
+            active_instances = sum(1 for i in self._instances.values() if i.active_games)
+
+            return {
+                "total_instances": total,
+                "reachable_instances": reachable,
+                "draining_instances": draining,
+                "in_use_slots": in_use_slots,
+                "total_slots": total_slots,
+                "available_slots": max(0, available_slots),
+                "unknown_slots_instances": unknown_slots_instances,
+                "active_games": active_game_count,
+                "active_instances": active_instances,
+            }

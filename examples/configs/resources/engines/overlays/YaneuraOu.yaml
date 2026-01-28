@@ -1,0 +1,4 @@
+options:
+  BookFile: "no_book"
+  NetworkDelay: 0
+  NetworkDelay2: 0

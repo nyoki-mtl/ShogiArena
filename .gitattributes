@@ -1,0 +1,16 @@
+# Enforce LF line endings across the repo
+* text=auto eol=lf
+
+# Keep known binary artifacts untouched
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tgz binary
+*.xz binary
+*.zst binary
+*.tar binary

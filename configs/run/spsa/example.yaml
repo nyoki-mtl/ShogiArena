@@ -1,0 +1,31 @@
+## Equivalent: shogiarena run spsa configs/run/spsa/example.yaml
+
+# SPSA example
+
+engines:
+  - artifact: "yaneuraou/3570416"
+    build_options:
+      target_cpu: ZEN3
+    options_overlays:
+      - "./evals/example.yaml"
+    # Single engine is enough; SPSA applies tuned params only on tuned side
+
+dashboard:
+  enabled: true
+  api_port: 8080
+
+# Rules and initial positions
+rules:
+  initial_positions:
+    type: "file"
+    source: "./data/initial_sfens/start_sfens_ply24.txt"
+  # 千日手扱いとする同一局面の出現回数（SPSAでも調整可能）
+  repetition_occurrences_to_draw: 2
+
+# SPSA loop and required inputs
+spsa:
+  parameters_path: "./data/YaneuraOu-params/suisho10.params"
+  num_updates: 50
+  inflight_factor: 4
+  update_batch_size: 1
+  num_parallel: 4
