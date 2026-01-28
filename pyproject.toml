@@ -1,6 +1,6 @@
 [project]
 name = "shogiarena"
-version = "0.1.0"
+version = "0.1.1"
 description = "Asynchronous tournament and SPSA tuning platform for USI shogi engines"
 authors = [
     { name = "Hiroki Taniai", email = "nyoki.mtl@gmail.com" }

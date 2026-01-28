@@ -141,68 +141,12 @@ npm run build
 - Store templates in `configs/`
 - Development configs go in `.sandbox/`
 
-## Git Workflow
+## Contributing & Release Process
 
-### Branch Strategy
+This file focuses on the development environment, code structure, and coding standards.
+For contribution workflow and release procedures, see:
 
-This project uses a two-repository setup:
-
-```
-ShogiArena-dev (private) ← Development repository
- └─ develop branch: Daily development
- └─ main branch: Stable (synced with public)
-
-ShogiArena (public) ← Public repository
- └─ main branch: Public releases
-```
-
-**Important**: Always develop on the `develop` branch, never directly on `main`.
-
-### Commit Messages
-
-Follow [Conventional Commits](https://www.conventionalcommits.org/):
-
-```
-feat: add SPSA gradient tracking
-fix: correct Elo calculation for draws
-docs: update tournament configuration guide
-refactor: simplify orchestrator scheduling
-test: add property tests for time control
-chore: update dependencies
-```
-
-### Daily Development
-
-```bash
-git checkout develop
-# ... make changes ...
-git add .
-git commit -m "feat: add new feature"
-git push develop develop  # Push to private repo
-```
-
-### Creating a Public Release
-
-```bash
-# Merge to main with squashed commits
-git checkout main
-git merge develop --squash
-git commit -m "Release vX.Y.Z"
-
-# Tag the release
-git tag -a vX.Y.Z -m "Release version X.Y.Z"
-
-# Push to private repository main (stable)
-git push develop main
-
-# Push exported snapshot to public repository
-# (See AGENTS.md / CLAUDE.md for export procedure)
-git push public main
-git push public vX.Y.Z
-
-# Create GitHub release
-gh release create vX.Y.Z --title "vX.Y.Z" --notes "Release notes..."
-```
+- `docs/development/contributing.md`
 
 ## Testing Guidelines
 

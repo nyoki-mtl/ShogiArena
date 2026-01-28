@@ -12,6 +12,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from shogiarena import __version__
 from shogiarena.cli import commands
 from shogiarena.cli.errors import CliError
 from shogiarena.utils.common import settings as settings_mod
@@ -41,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version="%(prog)s 0.1.0",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "--log-level",

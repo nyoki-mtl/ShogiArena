@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- **CLI**: Added `--version` flag to display version information
+## [0.1.1] - 2026-01-28
+
+### Changed
+- **CLI**: `--version` now reports the package version (no hardcoded string)
 
 ## [0.1.0] - 2026-01-27
 
@@ -42,5 +44,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Model paths**: Recommend `{engine_dir}/...` or absolute paths for models/evals
 - **License**: Added MIT License with GPL-3.0 dependency notice for `cshogi`
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.1.1
 [0.1.0]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.1.0
