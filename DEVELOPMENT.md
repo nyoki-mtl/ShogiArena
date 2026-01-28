@@ -178,7 +178,7 @@ git checkout develop
 # ... make changes ...
 git add .
 git commit -m "feat: add new feature"
-git push dev develop:main  # Push to private repo
+git push develop develop  # Push to private repo
 ```
 
 ### Creating a Public Release
@@ -192,7 +192,11 @@ git commit -m "Release vX.Y.Z"
 # Tag the release
 git tag -a vX.Y.Z -m "Release version X.Y.Z"
 
-# Push to public repository
+# Push to private repository main (stable)
+git push develop main
+
+# Push exported snapshot to public repository
+# (See AGENTS.md / CLAUDE.md for export procedure)
 git push public main
 git push public vX.Y.Z
 
