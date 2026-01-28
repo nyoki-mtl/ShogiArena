@@ -19,21 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
---------------------------------------------------------------------------------
-
-THIRD-PARTY DEPENDENCIES NOTICE
-
-This project depends on third-party libraries that may have different licenses:
-
-- cshogi (https://github.com/TadaoYamaoka/cshogi): GPL-3.0 License
-  
-  Note: While the ShogiArena source code itself is licensed under the MIT
-  License, this project has a runtime dependency on cshogi, which is licensed
-  under GPL-3.0. When you use ShogiArena with cshogi, the combined work may
-  be subject to the terms of the GPL-3.0 license. Users should be aware of
-  this when distributing or using this software.
-
-For a complete list of dependencies and their licenses, please refer to:
-- pyproject.toml (Python dependencies)
-- package.json (JavaScript dependencies)

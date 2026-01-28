@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-01-28
+
+### Changed
+- **License**: Keep `LICENSE` as a standard MIT text so GitHub can detect it reliably
+- **Notices**: Move third-party license notes to `THIRD_PARTY_NOTICES.md`
+
 ## [0.1.1] - 2026-01-28
 
 ### Changed
@@ -44,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Model paths**: Recommend `{engine_dir}/...` or absolute paths for models/evals
 - **License**: Added MIT License with GPL-3.0 dependency notice for `cshogi`
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.1.2
 [0.1.1]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.1.1
 [0.1.0]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.1.0
