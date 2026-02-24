@@ -123,7 +123,7 @@ def _format_info(pv: UsiThinkPV) -> str:
     if pv.time is not None:
         parts.append(f"t={pv.time}ms")
     if pv.pv:
-        parts.append("pv=" + " ".join(pv.pv))
+        parts.append("pv=" + " ".join(m.to_usi() for m in pv.pv))
     return " ".join(parts)
 
 
@@ -164,9 +164,9 @@ async def _run_command(args: argparse.Namespace) -> None:
 
 
 def _print_result(result: UsiThinkResult) -> None:
-    bestmove = result.bestmove or "(none)"
-    ponder = f" ponder {result.ponder}" if result.ponder else ""
+    bestmove = result.bestmove.to_usi() if result.bestmove is not None else "(none)"
+    ponder = f" ponder {result.ponder.to_usi()}" if result.ponder is not None else ""
     print(f"bestmove {bestmove}{ponder}")
     pv = result.get_last_pv()
     if pv and pv.pv:
-        print("pv " + " ".join(pv.pv))
+        print("pv " + " ".join(m.to_usi() for m in pv.pv))

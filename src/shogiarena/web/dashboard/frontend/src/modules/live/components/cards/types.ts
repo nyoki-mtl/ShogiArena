@@ -7,7 +7,7 @@ export type WorkerSnapshotRecord = WorkerSnapshot & {
 };
 
 export interface KifuHandlers {
-    resultCodeToKifJP: (code: unknown) => string;
+    resultCodeToKifJP: (code: unknown, context?: Record<string, unknown> | null) => string;
     ensureKifuLayers: () => void;
     positionKifuPopover: (anchorEl: Element | null) => void;
     scrollKifuToCurrent: () => void;

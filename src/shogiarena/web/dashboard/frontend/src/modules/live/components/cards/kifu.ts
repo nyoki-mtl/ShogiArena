@@ -197,7 +197,7 @@ export function createKifuHandlers(deps: KifuDeps): KifuHandlers {
         const includeNumber = options?.includeNumber ?? true;
         const startNo = deps.getStartingPlyNumber(data.initial_sfen);
         const num = String(startNo + lastPly).padStart(3, '0');
-        const moveText = resultCodeToKifJP(data.result_code);
+        const moveText = resultCodeToKifJP(data.result_code, data);
         return includeNumber ? `${num} ${moveText}` : moveText;
     }
 
@@ -233,7 +233,7 @@ export function createKifuHandlers(deps: KifuDeps): KifuHandlers {
         variant: 'summary' | 'popover' = 'summary',
     ): string {
         const labelNum = String(deps.getStartingPlyNumber(data.initial_sfen) + lastPly).padStart(3, '0');
-        const reason = resultCodeToKifJP(data.result_code);
+        const reason = resultCodeToKifJP(data.result_code, data);
         return renderSummaryRow({
             label: labelNum,
             move: reason,
@@ -1034,7 +1034,7 @@ export function createKifuHandlers(deps: KifuDeps): KifuHandlers {
 
         if (hasTerminal && ply === maxPly + 1) {
             const labelNum = String(startNo + maxPly).padStart(3, '0');
-            const moveText = resultCodeToKifJP(data.result_code);
+            const moveText = resultCodeToKifJP(data.result_code, data);
             el.innerHTML = renderSummaryRow({
                 label: labelNum,
                 move: moveText,

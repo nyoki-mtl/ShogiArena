@@ -1,83 +1,34 @@
-"""SPSA utility functions for type coercion, variant handling, and calculations."""
+"""SPSA utility functions for variant handling and calculations.
+
+型変換関数は :mod:`shogiarena.utils.types.coerce` に統合済み。
+本モジュールでは下位互換のため再 export する。
+"""
 
 from __future__ import annotations
 
-import math
-from datetime import datetime, timezone
 from typing import Any
 
 from shogiarena.arena.orchestrators.spsa.identifiers import variant_token as core_variant_token
 from shogiarena.arena.tuning.param_io import compute_variant_id_from_mapping
+from shogiarena.utils.types.coerce import (
+    coerce_float,
+    coerce_int,
+    coerce_timestamp_ms,
+    timestamp_to_iso,
+)
 
-
-def coerce_int(value: Any) -> int | None:
-    """Coerce value to int, returning None if not possible."""
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        if math.isfinite(value):
-            return int(value)
-        return None
-    if isinstance(value, str):
-        token = value.strip()
-        if not token:
-            return None
-        try:
-            return int(token)
-        except ValueError:
-            return None
-    return None
-
-
-def coerce_float(value: Any) -> float | None:
-    """Coerce value to float, returning None if not possible."""
-    if isinstance(value, bool):
-        return float(value)
-    if isinstance(value, int | float):
-        if math.isfinite(float(value)):
-            return float(value)
-        return None
-    if isinstance(value, str):
-        try:
-            numeric = float(value)
-        except ValueError:
-            return None
-        return numeric if math.isfinite(numeric) else None
-    return None
-
-
-def coerce_timestamp_ms(value: Any) -> int | None:
-    """Coerce value to timestamp in milliseconds."""
-    if isinstance(value, int | float):
-        return int(value)
-    if isinstance(value, str):
-        raw = value.strip()
-        if not raw:
-            return None
-        try:
-            numeric = float(raw)
-        except ValueError:
-            try:
-                normalized = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
-                dt = datetime.fromisoformat(normalized)
-                return int(dt.timestamp() * 1000)
-            except ValueError:
-                return None
-        else:
-            return int(numeric)
-    return None
-
-
-def timestamp_to_iso(value: Any) -> str | None:
-    """Convert timestamp (ms) to ISO format string."""
-    if not isinstance(value, int | float):
-        return None
-    try:
-        return datetime.fromtimestamp(float(value) / 1000.0, tz=timezone.utc).isoformat()
-    except (OSError, OverflowError, ValueError):
-        return None
+# Re-export for existing consumers
+__all__ = [
+    "coerce_float",
+    "coerce_int",
+    "coerce_timestamp_ms",
+    "compute_variant_id_safe",
+    "extract_variant_from_game_id",
+    "format_variant_label",
+    "resolve_variant_id",
+    "timestamp_to_iso",
+    "variant_token",
+]
 
 
 def variant_token(update_idx: Any) -> str:

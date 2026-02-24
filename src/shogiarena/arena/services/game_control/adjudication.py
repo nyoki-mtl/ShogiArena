@@ -52,7 +52,7 @@ class AdjudicationConfig:
 class ResignTracker:
     """Tracks consecutive moves for resign adjudication."""
 
-    def __init__(self, resign_score_cp: int, move_count: int, two_sided: bool = True):
+    def __init__(self, resign_score_cp: int, move_count: int, two_sided: bool = True) -> None:
         self.resign_score_cp = resign_score_cp
         self.required_move_count = move_count
         self.two_sided = two_sided
@@ -151,7 +151,7 @@ class ResignTracker:
 class MaxPlyTracker:
     """Tracks total plies for max-plies adjudication."""
 
-    def __init__(self, max_plies: int):
+    def __init__(self, max_plies: int) -> None:
         self.max_plies = max_plies
         logger.debug(f"MaxPlyTracker initialized: max_plies={max_plies}")
 
@@ -176,7 +176,7 @@ class Adjudicator:
     Main adjudication service that combines all adjudication types.
     """
 
-    def __init__(self, config: AdjudicationConfig):
+    def __init__(self, config: AdjudicationConfig) -> None:
         """
         Initialize adjudicator with configuration.
 

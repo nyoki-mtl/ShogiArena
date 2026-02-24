@@ -7,7 +7,7 @@ import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import yaml
 
@@ -23,8 +23,6 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
-
-JobType = Literal["game", "card"]
 
 
 @dataclass(frozen=True)
@@ -252,67 +250,71 @@ class InstancePool:
             return True
 
         with self._lock:
-            # Validate availability upfront
+            if not self._validate_resource_requirements(requirements):
+                return False
+            return self._acquire_with_rollback(requirements)
+
+    def _validate_resource_requirements(self, requirements: Mapping[str, ResourceRequest]) -> bool:
+        for instance_id, req in requirements.items():
+            if req.slots <= 0 and req.engines <= 0:
+                continue
+            instance = self._instances.get(instance_id)
+            if instance is None:
+                raise KeyError(f"Unknown instance '{instance_id}'")
+            if not instance.metrics.reachable:
+                logger.debug("Instance %s is unreachable; cannot acquire resources", instance_id)
+                return False
+            if instance.drain:
+                logger.debug("Instance %s is draining; cannot acquire resources", instance_id)
+                return False
+            if req.slots and instance.available_slots < req.slots:
+                logger.debug(
+                    "Instance %s lacks slot capacity (need %s, available %s)",
+                    instance_id,
+                    req.slots,
+                    instance.available_slots,
+                )
+                return False
+            if req.engines and instance.available_engines < req.engines:
+                logger.debug(
+                    "Instance %s lacks engine capacity (need %s, available %s)",
+                    instance_id,
+                    req.engines,
+                    instance.available_engines,
+                )
+                return False
+        return True
+
+    def _acquire_with_rollback(self, requirements: Mapping[str, ResourceRequest]) -> bool:
+        acquired_ids: list[str] = []
+        try:
             for instance_id, req in requirements.items():
                 if req.slots <= 0 and req.engines <= 0:
                     continue
-                instance = self._instances.get(instance_id)
-                if instance is None:
-                    raise KeyError(f"Unknown instance '{instance_id}'")
-                if not instance.metrics.reachable:
-                    logger.debug("Instance %s is unreachable; cannot acquire resources", instance_id)
-                    return False
-                if instance.drain:
-                    logger.debug("Instance %s is draining; cannot acquire resources", instance_id)
-                    return False
-                if req.slots and instance.available_slots < req.slots:
-                    logger.debug(
-                        "Instance %s lacks slot capacity (need %s, available %s)",
-                        instance_id,
-                        req.slots,
-                        instance.available_slots,
-                    )
-                    return False
-                if req.engines and instance.available_engines < req.engines:
-                    logger.debug(
-                        "Instance %s lacks engine capacity (need %s, available %s)",
-                        instance_id,
-                        req.engines,
-                        instance.available_engines,
-                    )
-                    return False
-
-            # All checks passed; acquire resources
-            acquired_ids: list[str] = []
-            try:
-                for instance_id, req in requirements.items():
-                    if req.slots <= 0 and req.engines <= 0:
-                        continue
-                    instance = self._instances[instance_id]
-                    acquired = instance.acquire_resources(slots=req.slots, engines=req.engines)
-                    if not acquired:
-                        logger.warning("Race while acquiring resources on %s; rolling back reservation", instance_id)
-                        raise RuntimeError("failed to acquire requested resources")
-                    acquired_ids.append(instance_id)
-                    logger.debug(
-                        "Reserved slots=%s engines=%s on instance %s (in_use=%s/%s, engines=%s/%s)",
-                        req.slots,
-                        req.engines,
-                        instance_id,
-                        instance.metrics.in_use_slots,
-                        instance.effective_slots,
-                        instance.metrics.in_use_engines,
-                        instance.max_engine_capacity,
-                    )
-            except (RuntimeError, KeyError, ValueError) as exc:
-                logger.debug("Failed to acquire resources; rolling back: %s", exc, exc_info=True)
-                for rollback_id in acquired_ids:
-                    req = requirements[rollback_id]
-                    instance = self._instances[rollback_id]
-                    instance.release_resources(slots=req.slots, engines=req.engines)
-                return False
-
-            return True
+                instance = self._instances[instance_id]
+                acquired = instance.acquire_resources(slots=req.slots, engines=req.engines)
+                if not acquired:
+                    logger.warning("Race while acquiring resources on %s; rolling back reservation", instance_id)
+                    raise RuntimeError("failed to acquire requested resources")
+                acquired_ids.append(instance_id)
+                logger.debug(
+                    "Reserved slots=%s engines=%s on instance %s (in_use=%s/%s, engines=%s/%s)",
+                    req.slots,
+                    req.engines,
+                    instance_id,
+                    instance.metrics.in_use_slots,
+                    instance.effective_slots,
+                    instance.metrics.in_use_engines,
+                    instance.max_engine_capacity,
+                )
+        except (RuntimeError, KeyError, ValueError) as exc:
+            logger.debug("Failed to acquire resources; rolling back: %s", exc, exc_info=True)
+            for rollback_id in acquired_ids:
+                req = requirements[rollback_id]
+                instance = self._instances[rollback_id]
+                instance.release_resources(slots=req.slots, engines=req.engines)
+            return False
+        return True
 
     def release_resources(self, allocations: Mapping[str, ResourceRequest]) -> None:
         """Release previously acquired resources for the given instances."""
@@ -338,55 +340,6 @@ class InstancePool:
                     instance.metrics.in_use_engines,
                     instance.max_engine_capacity,
                 )
-
-    def allocate(self, job_type: JobType = "game") -> Instance | None:
-        """
-        Allocate an available instance for a job.
-
-        Args:
-            job_type: Type of job ("game" or "card")
-
-        Returns:
-            Available instance if found, None if no instances available
-        """
-        with self._lock:
-            for instance in self._instances.values():
-                if not instance.can_accept_job:
-                    continue
-                # 1ゲームあたりのCPU/エンジン割当は呼び出し側で管理しているため、
-                # ここでは可用性確認時のダミー予約として1枠ずつ確保する。
-                if instance.acquire_resources(slots=1, engines=1):
-                    logger.debug(
-                        "Allocated instance %s for %s (slots: %s/%s)",
-                        instance.name,
-                        job_type,
-                        instance.metrics.in_use_slots,
-                        instance.effective_slots,
-                    )
-                    return instance
-
-            logger.debug("No available instances for %s", job_type)
-            return None
-
-    def release(self, name: str) -> None:
-        """
-        Release a slot from the specified instance.
-
-        Args:
-            name: Name of instance to release slot from
-        """
-        with self._lock:
-            instance = self._instances.get(name)
-            if instance:
-                instance.release_resources(slots=1, engines=1)
-                logger.debug(
-                    "Released slot for instance %s (slots: %s/%s)",
-                    name,
-                    instance.metrics.in_use_slots,
-                    instance.effective_slots,
-                )
-            else:
-                logger.warning(f"Attempted to release unknown instance: {name}")
 
     def mark_in_use(self, name: str, delta: int) -> None:
         """

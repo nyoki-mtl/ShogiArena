@@ -1,13 +1,13 @@
-"""Database service for arena async operations using ShogiDB ORM."""
+"""Database service for arena async operations using ShogiRepository ORM."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
+from typing import TypeAlias
 
-from sqlalchemy import func, select
+import rshogi
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import aliased
 
 from shogiarena.arena.services.persistence.records import (
@@ -15,7 +15,8 @@ from shogiarena.arena.services.persistence.records import (
     GameParticipationRecord,
     InstanceSnapshot,
 )
-from shogiarena.db import ShogiDB, SQLiteShogiDBFactory
+from shogiarena.db import ShogiRepository
+from shogiarena.db.factory import BaseFactory
 from shogiarena.db.models import (
     EngineArtifact,
     Game,
@@ -23,8 +24,16 @@ from shogiarena.db.models import (
     InstanceSpec,
     Player,
 )
-from shogiarena.records import GameInfo
-from shogiarena.utils.types.types import GameResult
+from shogiarena.records.storage.db_store import DBRecordStore
+from shogiarena.utils.types.coerce import coerce_game_result
+from shogiarena.utils.types.types import (
+    GameRecordEnginesDict,
+    GameRecordPlayersDict,
+    GameResult,
+    JsonObject,
+)
+
+GameHistoryEntry: TypeAlias = JsonObject
 
 
 class ArenaDBService:
@@ -34,17 +43,17 @@ class ArenaDBService:
     and rating data without direct SQLite usage.
     """
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, factory: BaseFactory) -> None:
         """Initialize database service.
 
         Args:
-            db_path: Path to SQLite database file
+            factory: Database factory for creating sessions
         """
-        self.db_path = db_path
-        self.factory = SQLiteShogiDBFactory(db_path)
-        self._db: ShogiDB | None = None
+        self.factory = factory
+        self._db: ShogiRepository | None = None
+        self._record_store: DBRecordStore | None = None
 
-    def _get_db(self) -> ShogiDB:
+    def _get_db(self) -> ShogiRepository:
         """Get database connection, creating if needed."""
         if self._db is None:
             self._db = self.factory.create()
@@ -52,15 +61,15 @@ class ArenaDBService:
             self._db.create_tables()
         return self._db
 
+    def _get_record_store(self) -> DBRecordStore:
+        """DBRecordStore を提供するヘルパー。"""
+        if self._record_store is None:
+            self._record_store = DBRecordStore(self._get_db())
+        return self._record_store
+
     @staticmethod
-    def _coerce_game_result(raw: Any) -> GameResult:
-        if isinstance(raw, GameResult):
-            return raw
-        if isinstance(raw, int):
-            return GameResult(raw)
-        if isinstance(raw, str) and raw.strip():
-            return GameResult(int(raw))
-        raise ValueError(f"Unsupported game result value: {raw!r}")
+    def _coerce_game_result(raw: object) -> GameResult:
+        return coerce_game_result(raw, strict=True)
 
     def get_game_result_counts(self, game_type: str = "arena") -> dict[GameResult, int]:
         """Get game result counts by result code.
@@ -80,7 +89,7 @@ class ArenaDBService:
             counts[game_result] = int(total)
         return counts
 
-    def get_games_with_players(self, game_type: str = "arena") -> list[dict[str, Any]]:
+    def get_games_with_players(self, game_type: str = "arena") -> list[GameRecordPlayersDict]:
         """Get games with player information for rating calculations.
 
         Args:
@@ -109,7 +118,7 @@ class ArenaDBService:
         )
         result = db.session.execute(stmt)
 
-        games: list[dict[str, Any]] = []
+        games: list[GameRecordPlayersDict] = []
         for game_id, game_name, black_player, white_player, raw_result, initial_sfen in result:
             game_result = self._coerce_game_result(raw_result)
             games.append(
@@ -124,7 +133,16 @@ class ArenaDBService:
             )
         return games
 
-    def get_all_games(self, game_type: str = "arena") -> list[dict[str, Any]]:
+    def get_all_games(
+        self,
+        game_type: str = "arena",
+        *,
+        offset: int = 0,
+        limit: int | None = None,
+        search_query: str | None = None,
+        player_names: Sequence[str] | None = None,
+        result_filter: GameResult | None = None,
+    ) -> list[GameRecordEnginesDict]:
         """Return all games for dashboard APIs.
 
         Returns a list of dicts with keys:
@@ -150,9 +168,32 @@ class ArenaDBService:
             .where(Game.game_type == game_type)
             .order_by(Game.id.asc())
         )
-        result = db.session.execute(stmt)
-        records: list[dict[str, Any]] = []
-        for game_name, black_engine, white_engine, raw_result, initial_sfen in result:
+        if offset < 0:
+            raise ValueError("offset must be >= 0")
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be positive")
+        if result_filter is not None:
+            stmt = stmt.where(Game.result_code == result_filter.value)
+        if player_names:
+            names = [str(name) for name in player_names if str(name)]
+            if names:
+                stmt = stmt.where(or_(BlackPlayer.player_name.in_(names), WhitePlayer.player_name.in_(names)))
+        if search_query:
+            pattern = f"%{search_query}%"
+            stmt = stmt.where(
+                or_(
+                    Game.game_name.ilike(pattern),
+                    BlackPlayer.player_name.ilike(pattern),
+                    WhitePlayer.player_name.ilike(pattern),
+                )
+            )
+        if offset:
+            stmt = stmt.offset(int(offset))
+        if limit is not None:
+            stmt = stmt.limit(int(limit))
+        rows = db.session.execute(stmt)
+        records: list[GameRecordEnginesDict] = []
+        for game_name, black_engine, white_engine, raw_result, initial_sfen in rows:
             game_result = self._coerce_game_result(raw_result)
             records.append(
                 {
@@ -170,8 +211,8 @@ class ArenaDBService:
         db = self._get_db()
         db.create_tables()
 
-    def get_shogidb(self) -> ShogiDB:
-        """Expose the underlying ShogiDB instance for read-heavy services."""
+    def get_shogidb(self) -> ShogiRepository:
+        """Expose the underlying ShogiRepository instance for read-heavy services."""
 
         return self._get_db()
 
@@ -207,14 +248,49 @@ class ArenaDBService:
                 stats["draws"] += 1
         return stats
 
-    def append_game_info_list(self, game_info_list: Iterable[GameInfo | None]) -> None:
-        """Append list of game info objects to database.
+    def append_record_list(
+        self, record_list: Iterable[rshogi.record.GameRecord | None], *, update: bool = False
+    ) -> None:
+        """Append list of record objects to database.
 
         Args:
-            game_info_list: List of game info objects to append
+            record_list: List of record objects to append
         """
+        self._get_record_store().append(record_list, update=update)
+
+    def delete_games_by_ids(self, game_ids: Iterable[int]) -> int:
+        """Delete games by database identifiers.
+
+        Returns:
+            Number of deleted rows.
+        """
+        ids = [int(gid) for gid in game_ids]
+        if not ids:
+            return 0
         db = self._get_db()
-        db.append_game_info_list(game_info_list)
+        stmt = select(Game.id).where(Game.id.in_(ids))
+        existing = db.session.execute(stmt).scalars().all()
+        if not existing:
+            return 0
+        db.session.execute(delete(Game).where(Game.id.in_(existing)))
+        db.session.commit()
+        return len(existing)
+
+    def delete_games_by_names(self, game_names: Iterable[str], *, game_type: str | None = None) -> int:
+        """Delete games by game_name, optionally scoped to game_type."""
+        names = [str(name) for name in game_names if str(name)]
+        if not names:
+            return 0
+        db = self._get_db()
+        stmt = select(Game.id).where(Game.game_name.in_(names))
+        if game_type is not None:
+            stmt = stmt.where(Game.game_type == game_type)
+        existing = db.session.execute(stmt).scalars().all()
+        if not existing:
+            return 0
+        db.session.execute(delete(Game).where(Game.id.in_(existing)))
+        db.session.commit()
+        return len(existing)
 
     # ------------------------------------------------------------------
     # Engine / instance participation helpers
@@ -366,7 +442,7 @@ class ArenaDBService:
         *,
         limit: int = 50,
         offset: int = 0,
-    ) -> list[dict[str, Any]]:
+    ) -> list[GameHistoryEntry]:
         """Return recent completed games for a given instance."""
 
         db = self._get_db()
@@ -404,7 +480,7 @@ class ArenaDBService:
         )
         rows = db.session.execute(stmt).mappings().all()
 
-        grouped: dict[int, dict[str, Any]] = {}
+        grouped: dict[int, GameHistoryEntry] = {}
         for row in rows:
             gid = int(row["game_id"])
             entry = grouped.setdefault(
@@ -435,7 +511,9 @@ class ArenaDBService:
                 "instance_name": row["instance_name"],
                 "engine_artifact_id": row["engine_artifact_id"],
             }
-            entry["roles"].append(role_payload)
+            roles_list = entry["roles"]
+            if isinstance(roles_list, list):
+                roles_list.append(role_payload)
 
             start_val = row["started_at"]
             if start_val is not None:
@@ -448,9 +526,12 @@ class ArenaDBService:
                 if current_end is None or end_val > current_end:
                     entry["completed_at"] = end_val
 
-        def _sort_key(item: dict[str, Any]) -> tuple[datetime, int]:
-            completed = item.get("completed_at") or datetime.min
-            return (completed, int(item["game_id"]))
+        def _sort_key(item: GameHistoryEntry) -> tuple[datetime, int]:
+            completed = item.get("completed_at")
+            if not isinstance(completed, datetime):
+                completed = datetime.min
+            game_id = item.get("game_id")
+            return (completed, int(game_id) if isinstance(game_id, int | str) else 0)
 
         ordered = sorted(grouped.values(), key=_sort_key, reverse=True)
         return ordered[: max(1, limit)]

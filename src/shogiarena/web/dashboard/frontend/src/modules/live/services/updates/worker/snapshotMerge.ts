@@ -217,6 +217,9 @@ export function mergeWorkerSnapshot(
         snapshot.time_control_black = update.time_control_black as string | null;
     if (update.time_control_white !== undefined)
         snapshot.time_control_white = update.time_control_white as string | null;
+    if (update.engine_status && typeof update.engine_status === 'object') {
+        snapshot.engine_status = update.engine_status as typeof snapshot.engine_status;
+    }
 
     const move = (update as { move?: unknown }).move;
     const ki2Move = (update as { ki2_move?: unknown }).ki2_move;
@@ -313,6 +316,9 @@ export function mergeWorkerSnapshotMutable(
         snapshot.time_control_black = update.time_control_black as string | null;
     if (update.time_control_white !== undefined)
         snapshot.time_control_white = update.time_control_white as string | null;
+    if (update.engine_status && typeof update.engine_status === 'object') {
+        snapshot.engine_status = update.engine_status as typeof snapshot.engine_status;
+    }
 
     const move = (update as { move?: unknown }).move;
     const ki2Move = (update as { ki2_move?: unknown }).ki2_move;

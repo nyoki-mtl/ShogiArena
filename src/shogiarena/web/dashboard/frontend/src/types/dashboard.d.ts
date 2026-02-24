@@ -2,7 +2,7 @@ import type { LiveBoardAdapter, LiveCardId, LiveViewSnapshot, WorkerRuntimeState
 import type { NormalizedTournamentGame } from '@/modules/tournament/types';
 import type { RatingDeltaInfo } from './tournament';
 
-export type DashboardRuntimeMode = 'unknown' | 'tournament' | 'spsa' | 'match' | 'sprt';
+export type DashboardRuntimeMode = 'unknown' | 'tournament' | 'generate' | 'spsa' | 'match' | 'sprt';
 
 export type DashboardNoticeVariant = 'info' | 'success' | 'warn' | 'error';
 

@@ -4,32 +4,31 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+import rshogi
+from rshogi.initial_positions import InitialPosition
 
 from shogiarena.arena.configs.base import SprtConfig
 from shogiarena.arena.configs.spsa import LtcPassCriteria, LtcRegressionConfig
 from shogiarena.arena.orchestrators.spsa_orchestrator import SpsaOrchestrator
 from shogiarena.arena.tuning.param_io import ParamEntry
+from shogiarena.utils.types.types import GameResult
 
 
-class DummyResult:
-    def __init__(self, *, black_win: bool = False, white_win: bool = False, draw: bool = False) -> None:
-        self._black_win = black_win
-        self._white_win = white_win
-        self._draw = draw
-
-    def is_black_win(self) -> bool:
-        return self._black_win
-
-    def is_white_win(self) -> bool:
-        return self._white_win
-
-    def is_draw(self) -> bool:
-        return self._draw
-
-
-class DummyGameInfo:
-    def __init__(self, result: DummyResult) -> None:
-        self.game_result = result
+def _make_record(result: GameResult) -> object:
+    return rshogi.record.GameRecord.from_dict(
+        {
+            "metadata": {
+                "game_name": "test",
+                "game_type": "spsa",
+                "black_player": "b",
+                "white_player": "w",
+                "attributes": {"game_name": "test", "game_type": "spsa"},
+            },
+            "init_position_sfen": InitialPosition.STANDARD.value,
+            "moves": [],
+            "result": {"result": result.name, "ply_count": 0},
+        }
+    )
 
 
 class DummySpsaOrchestrator(SpsaOrchestrator):
@@ -63,8 +62,8 @@ class DummySpsaOrchestrator(SpsaOrchestrator):
     async def _run_game_pair(self, *args, **kwargs):  # type: ignore[override]
         return (
             -1.0,
-            DummyGameInfo(DummyResult(white_win=True)),
-            DummyGameInfo(DummyResult(black_win=True)),
+            _make_record(GameResult.WHITE_WIN),
+            _make_record(GameResult.BLACK_WIN),
         )
 
 
@@ -76,8 +75,8 @@ class DummySprtPassOrchestrator(DummySpsaOrchestrator):
     async def _run_game_pair(self, *args, **kwargs):  # type: ignore[override]
         return (
             1.0,
-            DummyGameInfo(DummyResult(black_win=True)),
-            DummyGameInfo(DummyResult(white_win=True)),
+            _make_record(GameResult.BLACK_WIN),
+            _make_record(GameResult.WHITE_WIN),
         )
 
 
@@ -89,8 +88,8 @@ class DummySprtFailOrchestrator(DummySpsaOrchestrator):
     async def _run_game_pair(self, *args, **kwargs):  # type: ignore[override]
         return (
             -1.0,
-            DummyGameInfo(DummyResult(white_win=True)),
-            DummyGameInfo(DummyResult(black_win=True)),
+            _make_record(GameResult.WHITE_WIN),
+            _make_record(GameResult.BLACK_WIN),
         )
 
 

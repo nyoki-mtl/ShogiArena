@@ -1,18 +1,18 @@
-import { applyTabConfiguration, getDashboardMode, getModeConfig, setDashboardMode } from '@/modules/shared';
-import { crash } from '@/modules/shared/utils/errors';
-import type { DashboardCore, DashboardRuntimeMode } from '@/types/dashboard';
-import type { DashboardTabsApi } from '@/types/globals';
-import type { TournamentSummary } from '@/modules/tournament/types';
-import { requestJson } from '@/modules/shared/services/api';
+import { installLiveDiagnosticsPanel } from '@/modules/live/services/diagnosticsPanel';
 import {
     ensureLiveNamespace,
     recordLiveDiagnosticsMetric,
     requireLiveApi,
     type LiveNamespaceOwner,
 } from '@/modules/live/utils/liveNamespace';
-import { installLiveDiagnosticsPanel } from '@/modules/live/services/diagnosticsPanel';
-import type { SpsaSummaryResponse } from '@/modules/spsa/types';
+import { applyTabConfiguration, getDashboardMode, getModeConfig, setDashboardMode } from '@/modules/shared';
+import { requestJson } from '@/modules/shared/services/api';
+import { crash } from '@/modules/shared/utils/errors';
 import { SPSA_SUMMARY_PROGRESS_EVENT } from '@/modules/spsa/constants';
+import type { SpsaSummaryResponse } from '@/modules/spsa/types';
+import type { TournamentSummary } from '@/modules/tournament/types';
+import type { DashboardCore, DashboardRuntimeMode } from '@/types/dashboard';
+import type { DashboardTabsApi } from '@/types/globals';
 
 interface LiveMainWindow extends LiveNamespaceOwner {
     DashboardCore?: DashboardCore;
@@ -128,7 +128,11 @@ export function initializeLiveMain(owner: LiveMainWindow = defaultWindow): void 
 
     function applyRuntimeMode(mode: DashboardRuntimeMode): void {
         const normalizedMode: DashboardRuntimeMode =
-            mode === 'spsa' ? 'spsa' : mode === 'tournament' || mode === 'match' || mode === 'sprt' ? mode : 'unknown';
+            mode === 'spsa'
+                ? 'spsa'
+                : mode === 'tournament' || mode === 'match' || mode === 'sprt' || mode === 'generate'
+                  ? mode
+                  : 'unknown';
         owner.ARENA_RUNTIME_MODE = normalizedMode;
         state.spsaMode = normalizedMode === 'spsa';
         const config = getModeConfig(normalizedMode);
@@ -173,7 +177,7 @@ export function initializeLiveMain(owner: LiveMainWindow = defaultWindow): void 
     async function initializeDashboardMode(): Promise<void> {
         if (!spsaFeatureAvailable || owner.ARENA_DISABLE_SPSA) {
             const current = getCurrentRuntimeMode();
-            if (current === 'match' || current === 'sprt') {
+            if (current === 'match' || current === 'sprt' || current === 'generate') {
                 applyRuntimeMode(current);
                 summaryApi.updateSummaryStats();
                 return;

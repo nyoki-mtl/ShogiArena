@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TypeAlias
+
+from rshogi.core import normalize_usi_position
 
 from shogiarena.arena.engines.engine_factory import EngineFactory
 from shogiarena.arena.engines.time_control import TimeControlLimits
+from shogiarena.arena.instances.models import Instance
 from shogiarena.arena.remote.executor import RemoteExecutor
 from shogiarena.arena.remote.repo_manager import RemoteRepoSpec
-from shogiarena.utils.board import normalize_sfen
 
 from . import base_orchestrator_utils
+
+RunOptions: TypeAlias = dict[str, object]
 
 
 class RemoteExecutionManager:
@@ -21,8 +25,8 @@ class RemoteExecutionManager:
         self._remote_repo_ready: set[str] = set()
         self._remote_executors: dict[str, RemoteExecutor] = {}
 
-    def get_remote_executor(self, remote_instance: Any) -> RemoteExecutor:
-        name = str(getattr(remote_instance, "name", ""))
+    def get_remote_executor(self, remote_instance: Instance) -> RemoteExecutor:
+        name = remote_instance.name
         if not name:
             raise ValueError("remote_instance must provide a non-empty name")
         existing = self._remote_executors.get(name)
@@ -40,10 +44,10 @@ class RemoteExecutionManager:
     async def ensure_remote_repo(
         self,
         executor: RemoteExecutor,
-        remote_instance: Any,
+        remote_instance: Instance,
         remote_root: str | None = None,
     ) -> str:
-        name = str(getattr(remote_instance, "name", ""))
+        name = remote_instance.name
         if not name:
             raise ValueError("remote_instance must provide a non-empty name")
         resolved_root = remote_root or base_orchestrator_utils.remote_project_root(remote_instance)
@@ -62,7 +66,7 @@ class RemoteExecutionManager:
             remote_paths.append(remote_binary)
         return remote_paths
 
-    async def rewrite_remote_options(self, remote_instance: Any, *option_sets: dict[str, Any] | None) -> None:
+    async def rewrite_remote_options(self, remote_instance: Instance, *option_sets: RunOptions | None) -> None:
         for opts in option_sets:
             if not opts:
                 continue
@@ -77,15 +81,15 @@ class RemoteExecutionManager:
         white_name: str,
         black_engine_binary_path: str,
         white_engine_binary_path: str,
-        black_options: dict[str, Any],
-        white_options: dict[str, Any],
+        black_options: RunOptions,
+        white_options: RunOptions,
         black_limits: TimeControlLimits,
         white_limits: TimeControlLimits,
         max_plies: int = 0,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         return {
             "game_id": game_id,
-            "initial_sfen": normalize_sfen(start_sfen),
+            "initial_sfen": normalize_usi_position(start_sfen),
             "max_plies": max(0, int(max_plies)),
             "black": {
                 "name": black_name,
@@ -106,11 +110,11 @@ class RemoteExecutionManager:
     async def prepare_remote_game_spec(
         self,
         *,
-        remote_instance: Any,
+        remote_instance: Instance,
         black_config_path: Path,
         white_config_path: Path,
-        black_options: dict[str, Any] | None,
-        white_options: dict[str, Any] | None,
+        black_options: RunOptions | None,
+        white_options: RunOptions | None,
         start_sfen: str,
         game_id: str,
         black_name: str,
@@ -118,7 +122,7 @@ class RemoteExecutionManager:
         black_limits: TimeControlLimits,
         white_limits: TimeControlLimits,
         max_plies: int,
-    ) -> tuple[RemoteExecutor, str, dict[str, Any]]:
+    ) -> tuple[RemoteExecutor, str, dict[str, object]]:
         executor = self.get_remote_executor(remote_instance)
         remote_root = await self.ensure_remote_repo(executor, remote_instance)
 

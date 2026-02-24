@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
-from collections.abc import Sequence
-from typing import Literal
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any, Literal
+
+from rshogi.core import Move
 
 from shogiarena.arena.engines.usi_engine import (
     AnalysisHandle,
@@ -38,9 +40,27 @@ class EngineParticipant(GameEngineProtocol):
         self._prepared = False
         self._lock = asyncio.Lock()
         self._ponder_handle: PonderHandle | None = None
-        self._ponder_predicted_move: str | None = None
+        self._ponder_predicted_move: Move | None = None
         self._role: Literal["black", "white"] | None = role
         self._default_enable_early_ponder = getattr(engine.config, "enable_early_ponder", False)
+
+    def register_handshake_log_handler(
+        self,
+        handler: Callable[[dict[str, Any]], Awaitable[None] | None],
+    ) -> Callable[[], None]:
+        register = getattr(self._engine, "register_handshake_log_handler", None)
+        if not callable(register):
+            return lambda: None
+        return register(handler)
+
+    def register_io_log_handler(
+        self,
+        handler: Callable[[dict[str, Any]], Awaitable[None] | None],
+    ) -> Callable[[], None]:
+        register = getattr(self._engine, "register_io_log_handler", None)
+        if not callable(register):
+            return lambda: None
+        return register(handler)
 
     @property
     def name(self) -> str:
@@ -51,13 +71,21 @@ class EngineParticipant(GameEngineProtocol):
         """Return the stable engine name used for option snapshots."""
 
         name = self._engine.name
-        if isinstance(name, str) and "#" in name:
+        if "#" in name:
             return name.split("#", 1)[0]
         return name
 
     async def prepare(self, *, initial_sfen: str) -> None:
+        await self.prepare_ready_state()
+        await self.prepare_new_game_position(initial_sfen=initial_sfen)
+
+    async def prepare_ready_state(self) -> None:
         if not self._engine.is_running:
             await self._engine.start()
+        else:
+            await self._engine.trigger_isready()
+
+    async def prepare_new_game_position(self, *, initial_sfen: str) -> None:
         await self._engine.new_game()
         await self._engine.submit_position(initial_sfen, ())
         self._prepared = True
@@ -89,6 +117,10 @@ class EngineParticipant(GameEngineProtocol):
         sfen: str,
         moves: Sequence[str],
         ply_limit: int | None = None,
+        node_limit: int | None = None,
+        infinite: bool = False,
+        info_handler: InfoHandler | None = None,
+        wait_for_bestmove: bool | None = None,
         timeout: float | None = None,
     ) -> UsiMateResult:
         self._ensure_prepared()
@@ -97,6 +129,10 @@ class EngineParticipant(GameEngineProtocol):
                 sfen=sfen,
                 moves=tuple(moves),
                 ply_limit=ply_limit,
+                node_limit=node_limit,
+                infinite=infinite,
+                info_handler=info_handler,
+                wait_for_bestmove=wait_for_bestmove,
                 timeout=timeout,
             )
 
@@ -118,7 +154,12 @@ class EngineParticipant(GameEngineProtocol):
             )
 
     async def notify_gameover(self, result: GameResult) -> None:
-        """Notify the underlying engine that the game has ended."""
+        """Notify the underlying engine that the game has ended.
+
+        Keep this path short so orchestrators can promptly release shared
+        instance capacity (slots/max_engines) after a game ends. Readiness for
+        the next game is established in ``prepare_ready_state()``.
+        """
         if not self._engine.is_running:
             await self.cancel_ponder()
             return
@@ -129,10 +170,7 @@ class EngineParticipant(GameEngineProtocol):
         else:
             logger.debug("%s: no gameover token mapped for result=%s", self.name, result.name)
 
-        try:
-            await self.cancel_ponder()
-        finally:
-            await self._engine.trigger_isready()
+        await self.cancel_ponder()
 
     async def stop(self) -> UsiThinkResult | None:
         if not self._engine.is_running:
@@ -169,11 +207,11 @@ class EngineParticipant(GameEngineProtocol):
         sfen: str,
         moves: Sequence[str],
         request: UsiThinkRequest,
-        predicted_move: str | None,
+        predicted_move: Move | None,
         info_handler: InfoHandler | None = None,
         enable_early_ponder: bool | None = None,
     ) -> None:
-        if not predicted_move:
+        if predicted_move is None:
             return
         if not self._is_ponder_enabled():
             return
@@ -200,6 +238,8 @@ class EngineParticipant(GameEngineProtocol):
     ) -> UsiThinkResult | None:
         async with self._lock:
             if self._ponder_handle is None or not self._ponder_handle.active:
+                self._ponder_handle = None
+                self._ponder_predicted_move = None
                 return None
             handle = self._ponder_handle
             result = await handle.hit(timings=timings, timeout=timeout)
@@ -214,13 +254,17 @@ class EngineParticipant(GameEngineProtocol):
     def has_active_ponder(self) -> bool:
         return self._ponder_handle is not None and self._ponder_handle.active
 
-    def active_ponder_predicted_move(self) -> str | None:
+    def active_ponder_predicted_move(self) -> Move | None:
         return self._ponder_predicted_move if self.has_active_ponder() else None
 
     async def _cancel_ponder_locked(self, timeout: float | None = None) -> UsiThinkResult | None:
         if self._ponder_handle is None:
             return None
         handle = self._ponder_handle
+        if not handle.active:
+            self._ponder_handle = None
+            self._ponder_predicted_move = None
+            return None
         self._ponder_handle = None
         self._ponder_predicted_move = None
         return await handle.cancel(timeout=timeout)
@@ -228,21 +272,22 @@ class EngineParticipant(GameEngineProtocol):
     def _is_ponder_enabled(self) -> bool:
         options = self._engine.get_usi_options()
         if not options:
-            return False
+            return True
         opt = options.get("USI_Ponder")
         if opt is None:
-            return False
+            return True
         current = opt.get("current")
         if current is None:
             current = opt.get("default")
         if current is None:
-            return False
-        normalized = str(current).strip().lower()
-        if normalized == "true":
             return True
-        if normalized == "false":
+        normalized = str(current).strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
             return False
-        raise ValueError(f"Unsupported USI_Ponder value: '{current}'")
+        logger.warning("%s: unsupported USI_Ponder value '%s'; treating as disabled", self.name, current)
+        return False
 
     def _map_game_result(self, result: GameResult) -> str | None:
         if result.is_draw():

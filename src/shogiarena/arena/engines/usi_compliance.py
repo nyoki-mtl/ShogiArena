@@ -164,14 +164,14 @@ class UsiComplianceTester:
                 timeout=self._settings.go_timeout,
             )
             duration = time.perf_counter() - start
-            bestmove = result.bestmove or "(none)"
-            if not result.bestmove:
+            bestmove = result.bestmove.to_usi() if result.bestmove is not None else "(none)"
+            if result.bestmove is None:
                 return self._failure(
                     "go movetime",
                     "Engine returned empty bestmove response",
                     start,
                 )
-            ponder = f", ponder={result.ponder}" if result.ponder else ""
+            ponder = f", ponder={result.ponder.to_usi()}" if result.ponder is not None else ""
             detail = f"bestmove={bestmove}{ponder} in {duration * 1000:.1f} ms"
             return ComplianceCheckResult(name="go movetime", passed=True, detail=detail, duration=duration)
         except asyncio.CancelledError:
@@ -216,7 +216,7 @@ class UsiComplianceTester:
             if stop_result is None:
                 return self._failure("go infinite/stop", "Engine did not return bestmove after stop", start)
             duration = time.perf_counter() - start
-            bestmove = stop_result.bestmove or "(none)"
+            bestmove = stop_result.bestmove.to_usi() if stop_result.bestmove is not None else "(none)"
             detail = f"bestmove={bestmove} after stop in {duration * 1000:.1f} ms"
             return ComplianceCheckResult(name="go infinite/stop", passed=True, detail=detail, duration=duration)
         except asyncio.CancelledError:

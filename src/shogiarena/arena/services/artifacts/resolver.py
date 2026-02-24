@@ -23,6 +23,7 @@ from shogiarena.utils.common.locks import FileLock
 from shogiarena.utils.common.paths import resolve_path_like
 from shogiarena.utils.common.settings import RepoSettings
 from shogiarena.utils.cpuinfo import detect_target_cpu
+from shogiarena.utils.types.coerce import coerce_str
 
 logger = logging.getLogger(__name__)
 
@@ -158,16 +159,18 @@ class ArtifactResolver:
 
     @staticmethod
     def _expand_value(value: Any, ctx: Mapping[str, Any]) -> Any:
-        if isinstance(value, str):
-            try:
-                return value.format_map(ctx)
-            except (KeyError, AttributeError) as exc:
-                raise ValueError(f"Unknown placeholder in build_config: {value}") from exc
-        if isinstance(value, list):
-            return [ArtifactResolver._expand_value(item, ctx) for item in value]
-        if isinstance(value, dict):
-            return {key: ArtifactResolver._expand_value(val, ctx) for key, val in value.items()}
-        return value
+        match value:
+            case str() as s:
+                try:
+                    return s.format_map(ctx)
+                except (KeyError, AttributeError) as exc:
+                    raise ValueError(f"Unknown placeholder in build_config: {s}") from exc
+            case list() as items:
+                return [ArtifactResolver._expand_value(item, ctx) for item in items]
+            case dict() as d:
+                return {key: ArtifactResolver._expand_value(val, ctx) for key, val in d.items()}
+            case _:
+                return value
 
     @staticmethod
     def _resolve_path(value: str, *, base: Path) -> Path:
@@ -181,13 +184,15 @@ class ArtifactResolver:
         needle = f"{{opts.{key}}}"
 
         def _walk(value: Any) -> bool:
-            if isinstance(value, str):
-                return needle in value
-            if isinstance(value, list):
-                return any(_walk(item) for item in value)
-            if isinstance(value, dict):
-                return any(_walk(val) for val in value.values())
-            return False
+            match value:
+                case str() as s:
+                    return needle in s
+                case list() as items:
+                    return any(_walk(item) for item in items)
+                case dict() as d:
+                    return any(_walk(val) for val in d.values())
+                case _:
+                    return False
 
         return _walk(cfg)
 
@@ -223,7 +228,7 @@ class ArtifactResolver:
         needs_tag = "tune_tag" in build_opts or self._config_uses_opt(cfg, "tune_tag") or "tune_file" in build_opts
         if needs_tag:
             raw_tag = build_opts.get("tune_tag")
-            tune_tag = str(raw_tag).strip() if isinstance(raw_tag, str) and raw_tag else "vanilla"
+            tune_tag = coerce_str(raw_tag) or "vanilla"
             tune_tag = re.sub(r"[^A-Za-z0-9._-]", "-", tune_tag)
             build_opts["tune_tag"] = tune_tag
 
@@ -306,8 +311,8 @@ class ArtifactResolver:
             return tune_file_expanded
 
         tune_file = build_opts.get("tune_file")
-        if isinstance(tune_file, str) and tune_file.strip():
-            return str(tune_file)
+        if tf_str := coerce_str(tune_file):
+            return tf_str
         return None
 
     @staticmethod
@@ -664,17 +669,15 @@ class ArtifactResolver:
         keys: set[str] = set()
 
         def _walk(value: Any) -> None:
-            if isinstance(value, str):
-                keys.update(_OPT_PLACEHOLDER_RE.findall(value))
-                return
-            if isinstance(value, list):
-                for item in value:
-                    _walk(item)
-                return
-            if isinstance(value, dict):
-                for val in value.values():
-                    _walk(val)
-                return
+            match value:
+                case str() as s:
+                    keys.update(_OPT_PLACEHOLDER_RE.findall(s))
+                case list() as items:
+                    for item in items:
+                        _walk(item)
+                case dict() as d:
+                    for val in d.values():
+                        _walk(val)
 
         _walk(cfg)
         return keys

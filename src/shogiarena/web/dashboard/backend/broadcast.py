@@ -9,7 +9,11 @@ import copy
 import logging
 import time
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+from shogiarena.utils.types.coerce import coerce_int, coerce_str, is_strict_numeric
+from shogiarena.utils.types.snapshots import GameSnapshot, WorkerSnapshot
+from shogiarena.web.dashboard.backend.types import GamesSnapshotPayload
 
 if TYPE_CHECKING:
     from shogiarena.web.dashboard.backend.game_cache import GameSnapshotCache
@@ -71,7 +75,7 @@ class BroadcastHandler:
         self._last_clock_publish_at: dict[str, float] = {}
         self._last_summary_publish_at: dict[str, float] = {}
         self._last_games_publish_at: float | None = None
-        self._last_games_published_snapshot: dict[str, Any] | None = None
+        self._last_games_published_snapshot: GamesSnapshotPayload | None = None
 
     def worker_update(self, worker_idx: int, payload: dict[str, Any]) -> None:
         """Broadcast a worker update.
@@ -84,19 +88,12 @@ class BroadcastHandler:
         if gid:
             worker_snapshot = self._state.worker_snapshots.get(worker_idx)
             payload_ply_raw = payload.get("currentPly")
-            payload_ply = int(payload_ply_raw) if isinstance(payload_ply_raw, int | float) else 0
+            payload_ply = coerce_int(payload_ply_raw) or 0
             payload_ply = max(0, payload_ply)
 
-            if (
-                isinstance(worker_snapshot, dict)
-                and self._extract_gid(worker_snapshot) == gid
-                and isinstance(worker_snapshot.get("moves"), list)
-            ):
-                ws_ply_raw = worker_snapshot.get("currentPly")
-                ws_ply = int(ws_ply_raw) if isinstance(ws_ply_raw, int | float) else 0
-                ws_ply = max(0, ws_ply)
-                ws_moves = worker_snapshot.get("moves")
-                ws_moves_len = len(ws_moves) if isinstance(ws_moves, list) else 0
+            if worker_snapshot is not None and self._extract_gid(worker_snapshot) == gid:
+                ws_ply = max(0, worker_snapshot.get("currentPly", 0))
+                ws_moves_len = len(worker_snapshot["moves"])
                 has_move_delta = payload.get("move") is not None or payload.get("ki2_move") is not None
 
                 if has_move_delta and payload_ply > max(ws_ply, ws_moves_len):
@@ -168,13 +165,13 @@ class BroadcastHandler:
         previous = copy.deepcopy(self._last_games_published_snapshot) if self._last_games_published_snapshot else None
         if previous:
             delta = self._storage.compute_games_delta(previous, schedule_rows, base)
-            self._publish("live.games.delta", delta)
+            self._publish("live.games.delta", dict(delta))
         else:
-            self._publish("live.games.delta", sanitised)
+            self._publish("live.games.delta", dict(sanitised))
         self._last_games_publish_at = now_ms
         self._last_games_published_snapshot = copy.deepcopy(sanitised)
 
-    def set_worker(self, worker_idx: int, snapshot: dict[str, Any], *, broadcast: bool = True) -> None:
+    def set_worker(self, worker_idx: int, snapshot: WorkerSnapshot, *, broadcast: bool = True) -> None:
         """Set a worker snapshot.
 
         Args:
@@ -182,18 +179,45 @@ class BroadcastHandler:
             snapshot: Snapshot data.
             broadcast: Whether to broadcast the snapshot.
         """
-        self._state.worker_snapshots[worker_idx] = dict(snapshot)
+        self._state.worker_snapshots[worker_idx] = cast(WorkerSnapshot, dict(snapshot))
         gid = self._extract_gid(snapshot)
         if gid:
             self._cache.set(gid, dict(snapshot))
         if broadcast and gid:
-            ws_snapshot = self._game_state.build_ws_snapshot(gid, snapshot, assignment_rev=self._state.assignment_rev)
+            ws_snapshot = self._game_state.build_ws_snapshot(
+                gid, cast(GameSnapshot, snapshot), assignment_rev=self._state.assignment_rev
+            )
             if ws_snapshot is not None:
                 self._publish(
                     f"live.game.{gid}.snapshot",
                     {"gid": gid, "snapshot": ws_snapshot},
                     worker_idx=worker_idx,
                 )
+
+    def assign_worker_snapshot(self, worker_idx: int, snapshot: WorkerSnapshot) -> None:
+        """Assign a worker to a game and publish assignment + game snapshot in order."""
+        gid = self._extract_gid(snapshot)
+        if not gid:
+            return
+        prev = self._state.worker_assignment.get(worker_idx)
+        if prev != gid:
+            self._state.worker_assignment[worker_idx] = gid
+            self._state.assignment_rev += 1
+            self.publish_assignment_snapshot(worker_idx=worker_idx)
+
+        cleaned_snapshot = {k: v for k, v in snapshot.items() if not str(k).startswith("_")}
+        self._state.worker_snapshots[worker_idx] = cast(WorkerSnapshot, cleaned_snapshot)
+        self._cache.set(gid, dict(cleaned_snapshot))
+        ws_snapshot = self._game_state.build_ws_snapshot(
+            gid, cast(GameSnapshot, cleaned_snapshot), assignment_rev=self._state.assignment_rev
+        )
+        if ws_snapshot is None:
+            return
+        self._publish(
+            f"live.game.{gid}.snapshot",
+            {"gid": gid, "snapshot": ws_snapshot},
+            worker_idx=worker_idx,
+        )
 
     def publish_assignment_snapshot(self, *, worker_idx: int | None = None) -> None:
         """Publish an assignment snapshot.
@@ -204,6 +228,8 @@ class BroadcastHandler:
         payload = self._build_assignment_snapshot(worker_filter=None)
         if payload is None:
             return
+        # Publish snapshot as the authoritative stream; keep diff for legacy subscribers.
+        self._publish("live.assignment.snapshot", payload, worker_idx=None)
         self._publish("live.assignment.diff", payload, worker_idx=None)
 
     def _maybe_publish_assignment(self, worker_idx: int, gid: str) -> None:
@@ -238,9 +264,10 @@ class BroadcastHandler:
                 continue
             gid = self._state.worker_assignment.get(idx)
             assignments[str(idx)] = gid
-            if isinstance(gid, str) and gid and gid not in seen:
-                seen.add(gid)
-                gids.append(gid)
+            gid_str = coerce_str(gid)
+            if gid_str and gid_str not in seen:
+                seen.add(gid_str)
+                gids.append(gid_str)
         return {
             "assignments": assignments,
             "gids": gids,
@@ -260,10 +287,10 @@ class BroadcastHandler:
         """
         for key in ("gid", "game_id", "gameId"):
             value = payload.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-            if isinstance(value, int):
-                return str(value)
+            if s := coerce_str(value):
+                return s
+            if (n := coerce_int(value)) is not None:
+                return str(n)
         return None
 
     def _build_game_diff_envelopes(
@@ -285,7 +312,7 @@ class BroadcastHandler:
             return []
 
         type_value = payload.get("type")
-        type_str = type_value if isinstance(type_value, str) and type_value else None
+        type_str = coerce_str(type_value)
 
         analysis_keys = {
             "eval",
@@ -307,7 +334,7 @@ class BroadcastHandler:
             raw = source.get("eval")
             if raw is None:
                 raw = source.get("eval_cp")
-            if isinstance(raw, int | float):
+            if isinstance(raw, int | float) and not isinstance(raw, bool):
                 return float(raw)
             return None
 
@@ -318,7 +345,7 @@ class BroadcastHandler:
                 out["eval"] = eval_value
             for key in ("depth", "seldepth", "nodes", "time_ms", "wall_time_ms", "latency_ms"):
                 value = source.get(key)
-                if isinstance(value, int | float):
+                if is_strict_numeric(value):
                     out[key] = value
             latency_alert = source.get("latency_alert")
             if isinstance(latency_alert, bool):
@@ -333,43 +360,42 @@ class BroadcastHandler:
         out: list[tuple[str, dict[str, Any]]] = []
 
         if has_move:
-            ply_raw = payload.get("currentPly")
-            ply = int(ply_raw) if isinstance(ply_raw, int | float) else None
-            move = payload.get("move")
-            if (ply and isinstance(move, str) and move.strip()) or result_code is not None:
+            ply = coerce_int(payload.get("currentPly"))
+            move_str = coerce_str(payload.get("move"))
+            if (ply and move_str) or result_code is not None:
                 move_payload: dict[str, Any] = {
                     "gid": gid,
                     "assignment_rev": assignment_rev,
                 }
                 if ply is not None:
                     move_payload["ply"] = ply
-                if isinstance(move, str) and move.strip():
-                    move_payload["usi"] = move
-                if isinstance(result_code, int | float):
-                    move_payload["result_code"] = int(result_code)
-                ki2_move = payload.get("ki2_move")
-                if isinstance(move, str) and move.strip() and isinstance(ki2_move, str) and ki2_move.strip():
-                    move_payload["ki2_move"] = ki2_move
-                sfen = payload.get("sfen")
-                if isinstance(sfen, str) and sfen.strip():
-                    move_payload["sfen"] = sfen
+                if move_str:
+                    move_payload["usi"] = move_str
+                rc = coerce_int(result_code)
+                if rc is not None:
+                    move_payload["result_code"] = rc
+                ki2_str = coerce_str(payload.get("ki2_move"))
+                if move_str and ki2_str:
+                    move_payload["ki2_move"] = ki2_str
+                sfen_str = coerce_str(payload.get("sfen"))
+                if sfen_str:
+                    move_payload["sfen"] = sfen_str
                 wall_time = payload.get("wall_time_ms")
-                if isinstance(wall_time, int | float) and isinstance(move, str) and move.strip():
+                if is_strict_numeric(wall_time) and move_str:
                     move_payload["wall_time_ms"] = wall_time
                 latency = payload.get("latency_ms")
-                if isinstance(latency, int | float) and isinstance(move, str) and move.strip():
+                if is_strict_numeric(latency) and move_str:
                     move_payload["latency_ms"] = latency
                 latency_alert = payload.get("latency_alert")
-                if isinstance(latency_alert, bool) and isinstance(move, str) and move.strip():
+                if isinstance(latency_alert, bool) and move_str:
                     move_payload["latency_alert"] = latency_alert
                 analysis_final = _extract_analysis(payload)
-                if analysis_final and ((isinstance(move, str) and move.strip()) or result_code is not None):
+                if analysis_final and (move_str or result_code is not None):
                     move_payload["analysis_final"] = analysis_final
                 out.append((topic_moves, move_payload))
 
         if not has_move and has_analysis:
-            ply_raw = payload.get("currentPly")
-            ply = int(ply_raw) if isinstance(ply_raw, int | float) else None
+            ply = coerce_int(payload.get("currentPly"))
             analysis = _extract_analysis(payload)
             if ply and analysis:
                 out.append(
@@ -379,6 +405,7 @@ class BroadcastHandler:
         # State stream: clock/metadata/result updates (coalescible).
         state_payload: dict[str, Any] = {"gid": gid, "assignment_rev": assignment_rev}
         clock_fields = (
+            "side",
             "active",
             "black_remain_ms",
             "white_remain_ms",
@@ -408,7 +435,7 @@ class BroadcastHandler:
         # from losing track of which clock is running.
         if clock_payload and "active" not in clock_payload:
             worker_snapshot = self._state.worker_snapshots.get(worker_idx)
-            if isinstance(worker_snapshot, dict):
+            if worker_snapshot is not None:
                 cached_clock = worker_snapshot.get("clock")
                 if isinstance(cached_clock, Mapping):
                     cached_active = cached_clock.get("active")
@@ -417,10 +444,9 @@ class BroadcastHandler:
         if clock_payload:
             state_payload["clock"] = clock_payload
 
-        for key in ("end_reason", "meta", "sfen", "black_name", "white_name"):
+        for key in ("end_reason", "meta", "sfen", "black_name", "white_name", "engine_status"):
             if payload.get(key) is not None:
                 state_payload[key] = payload.get(key)
-
         initial_sfen = payload.get("initial_sfen")
         tc_black = payload.get("time_control_black")
         tc_white = payload.get("time_control_white")
@@ -442,6 +468,40 @@ class BroadcastHandler:
 
         if type_str is not None:
             state_payload["type"] = type_str
+
+        # Contract enforcement: clock event payloads must include required fields.
+        # If malformed, skip clock emission to avoid corrupting frontend clock state.
+        if type_str in {"clock_start", "clock_increment"}:
+            required_by_type: dict[str, tuple[str, ...]] = {
+                "clock_start": ("active", "black_remain_ms", "white_remain_ms", "started_at_ms"),
+                "clock_increment": (
+                    "side",
+                    "applied_increment_ms",
+                    "pre_black_remain_ms",
+                    "pre_white_remain_ms",
+                    "black_remain_ms",
+                    "white_remain_ms",
+                    "occurred_at_ms",
+                ),
+            }
+            clock_obj = state_payload.get("clock")
+            missing: list[str] = []
+            if not isinstance(clock_obj, Mapping):
+                missing = list(required_by_type.get(type_str, ()))
+            else:
+                for key in required_by_type.get(type_str, ()):
+                    if clock_obj.get(key) is None:
+                        missing.append(key)
+            if missing:
+                logger.warning(
+                    "WS clock contract violation gid=%s type=%s missing=%s",
+                    gid,
+                    type_str,
+                    ",".join(missing),
+                )
+                state_payload.pop("clock", None)
+                # Never emit clock_* type without a valid clock payload.
+                state_payload.pop("type", None)
 
         if "clock" in state_payload:
             only_clock = set(state_payload.keys()) <= {"gid", "assignment_rev", "clock", "type"}

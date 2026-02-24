@@ -7,14 +7,14 @@
 ```
 examples/configs/
 ├── run/                              # 実行設定テンプレート
-│   ├── tournament/example.yaml       # トーナメント実行（ラウンドロビン、ガントレット）
+│   ├── example.yaml                  # トーナメント実行（ラウンドロビン、ガントレット）
 │   ├── sprt/example.yaml             # SPRT テスト（統計的検定）
 │   └── spsa/example.yaml             # SPSA チューニング（パラメータ最適化）
 ├── resources/
 │   ├── engines/                      # エンジン設定テンプレート
 │   ├── evals/                        # 評価関数設定
 │   └── instances/                    # インスタンス設定（ローカル、SSH）
-├── arena_full_reference.yaml         # ArenaConfig の全項目リファレンス
+├── arena_full_reference.yaml         # TournamentRunConfig の全項目リファレンス
 └── example.yaml                      # 簡易版サンプル
 ```
 
@@ -24,7 +24,7 @@ examples/configs/
 
 ```bash
 # トーナメント実行
-shogiarena run tournament examples/configs/run/tournament/example.yaml
+shogiarena run tournament examples/configs/example.yaml
 
 # SPRT テスト
 shogiarena run sprt examples/configs/run/sprt/example.yaml
@@ -54,10 +54,10 @@ shogiarena run tournament my_tournament.yaml
 
 ### Tournament (トーナメント)
 
-`examples/configs/run/tournament/example.yaml` - 総当たり戦やガントレット形式での包括的なエンジン比較。詳細なコメント付きで全オプションを説明。
+`examples/configs/example.yaml` - 総当たり戦やガントレット形式での包括的なエンジン比較。詳細なコメント付きで全オプションを説明。
 
 **主な設定項目:**
-- `engines`: 対局させるエンジン（artifact 参照または engine_config）
+- `engines`: 対局させるエンジン（artifact 参照または engine_path）
 - `tournament.scheduler`: `round_robin`, `gauntlet`, `swiss` など
 - `rules.time_control`: 持ち時間、秒読み、ノード制限など
 - `rules.adjudication`: 投了判定、引き分け判定
@@ -96,7 +96,7 @@ shogiarena run tournament my_tournament.yaml
 
 ### arena_full_reference.yaml
 
-`ArenaConfig` の全項目を網羅したリファレンス。自分の環境に合わせてカスタマイズして使用。
+`TournamentRunConfig` の全項目を網羅したリファレンス。自分の環境に合わせてカスタマイズして使用。
 
 ## 追加リソース
 

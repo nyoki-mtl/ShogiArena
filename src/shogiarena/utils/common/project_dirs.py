@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from shogiarena.utils.common.settings import SETTINGS, ArenaSettings
 
 output_dir = SETTINGS.output_dir
@@ -24,18 +22,3 @@ def _apply_settings(settings: ArenaSettings) -> None:
     overlays = settings.overlays
     log_root_dir = output_dir / "logs"
     settings_path = settings.settings_path
-
-
-def ensure_exists(path: Path) -> None:
-    """Create ``path`` (and parents) when it does not exist."""
-
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def ensure_work_dir() -> None:
-    ensure_exists(output_dir)
-
-
-def ensure_log_root_dir() -> None:
-    ensure_work_dir()
-    ensure_exists(log_root_dir)

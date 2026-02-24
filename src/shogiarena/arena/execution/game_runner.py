@@ -6,7 +6,7 @@ This module handles:
 - Move validation and game state management
 - Timeout and error handling
 - Game result determination (win/loss/draw)
-- GameInfo creation for database persistence
+- GameRecord creation for database persistence
 """
 
 import asyncio
@@ -14,27 +14,27 @@ import json
 import logging
 import time
 import zlib
-from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime
-from typing import Any, Literal, NamedTuple, TypedDict, cast
+from typing import Literal, NamedTuple, TypedDict, cast
 
-import cshogi
-import cshogi.KI2
+import rshogi
+from rshogi.core import Board, Move, normalize_usi_position
+from rshogi.types import Color, RepetitionState
 
-from shogiarena.arena.engines.time_control import TimeControl, TimeControlLimits
+from shogiarena.arena.engines.time_control import TimeControl, TimeControlLimits, limits_to_record_time_spec
 from shogiarena.arena.engines.usi_engine import PonderHitTimings
 from shogiarena.arena.engines.usi_think import request_from_time_controls
 from shogiarena.arena.engines.usi_types import UsiThinkResult
 from shogiarena.arena.execution.types import GameEngineProtocol
 from shogiarena.arena.services.game_control.adjudication import AdjudicationConfig, Adjudicator
-from shogiarena.records import GameInfo
-from shogiarena.utils.board import normalize_sfen
-from shogiarena.utils.common.constants import MOVE_END
-from shogiarena.utils.types.types import GameResult, Turn
+from shogiarena.utils.types.types import STARTING_SFEN, GameResult, game_result_terminal_kind, timeout_win_result
 
 logger = logging.getLogger(__name__)
+_BLACK = int(Color.BLACK)
+_GAME_RESULT_ERROR = GameResult.from_str("ERROR")
 
 
 class RecoveredBestmoveResult(NamedTuple):
@@ -56,7 +56,7 @@ class ApplyMoveCommonResult(NamedTuple):
 
 class _MoveContinue(TypedDict):
     game_over: Literal[False]
-    move: int
+    move: Move
 
 
 class _GameOverResult(TypedDict):
@@ -65,6 +65,90 @@ class _GameOverResult(TypedDict):
 
 
 _GameMoveResult = _MoveContinue | _GameOverResult
+
+
+class _ClockStartPayload(TypedDict):
+    type: Literal["clock_start"]
+    game_id: str | None
+    active: Literal["black", "white"]
+    black_remain_ms: int
+    white_remain_ms: int
+    started_at_ms: int
+    time_control_black: str
+    time_control_white: str
+    byoyomi_ms_black: int
+    byoyomi_ms_white: int
+    increment_ms_black: int
+    increment_ms_white: int
+    initial_sfen: str
+    black_name: str
+    white_name: str
+    start_ply_number: int
+
+
+class _MoveProgressPayload(TypedDict, total=False):
+    type: Literal["move_progress"]
+    game_id: str | None
+    initial_sfen: str
+    black_name: str
+    white_name: str
+    sfen: str
+    move: str
+    ki2_move: str
+    eval_cp: int | None
+    ply: int
+    display_ply: int
+    currentPly: int
+    start_ply_number: int
+    depth: int | None
+    seldepth: int | None
+    nodes: int | None
+    time_ms: int | None
+    wall_time_ms: int | None
+    result_code: int
+
+
+class _HandshakePayload(TypedDict, total=False):
+    type: Literal["handshake_log"]
+    game_id: str | None
+    initial_sfen: str
+    black_name: str
+    white_name: str
+    role: Literal["black", "white"]
+    direction: object
+    line: object
+    ts: int
+    state: str
+
+
+class _EngineIoPayload(TypedDict, total=False):
+    type: Literal["engine_io"]
+    game_id: str | None
+    initial_sfen: str
+    black_name: str
+    white_name: str
+    role: Literal["black", "white"]
+    direction: object
+    line: object
+    ts: int
+    state: str
+
+
+class _ClockIncrementPayload(TypedDict):
+    type: Literal["clock_increment"]
+    game_id: str | None
+    side: Literal["black", "white"]
+    applied_increment_ms: int
+    pre_black_remain_ms: int
+    pre_white_remain_ms: int
+    black_remain_ms: int
+    white_remain_ms: int
+    occurred_at_ms: int
+
+
+_ProgressPayload = (
+    _ClockStartPayload | _MoveProgressPayload | _HandshakePayload | _EngineIoPayload | _ClockIncrementPayload
+)
 
 
 def _starting_ply_number(sfen: str) -> int:
@@ -90,8 +174,7 @@ class GameRunner:
         adjudication_config: AdjudicationConfig | None = None,
         *,
         repetition_occurrences_to_draw: int = 2,
-        on_engine_options: Callable[[str, dict[str, Any], dict[str, str] | None], None] | None = None,
-        latency_monitor_config: Any | None = None,
+        on_engine_options: Callable[[str, dict[str, object], dict[str, str] | None], None] | None = None,
     ):
         """
         Initialize game runner.
@@ -103,7 +186,6 @@ class GameRunner:
             repetition_occurrences_to_draw: Number of times the same position must
                 appear before declaring a repetition draw (>=2). Value 4 matches
                 official shogi rules.
-            latency_monitor_config: Deprecated, retained for backwards compatibility.
         """
         self.progress_queue = progress_queue
 
@@ -125,7 +207,7 @@ class GameRunner:
 
     def set_engine_options_callback(
         self,
-        callback: Callable[[str, dict[str, Any], dict[str, str] | None], None] | None,
+        callback: Callable[[str, dict[str, object], dict[str, str] | None], None] | None,
     ) -> None:
         """Install a callback invoked when USI option snapshots become available."""
 
@@ -144,7 +226,7 @@ class GameRunner:
         """Mark runner as shutting down to avoid further USI chatter."""
         self._shutting_down = True
 
-    async def _enqueue_progress(self, game_id: str | None, ply: int, payload: Mapping[str, Any]) -> None:
+    async def _enqueue_progress(self, game_id: str | None, ply: int, payload: _ProgressPayload) -> None:
         if self.progress_queue is None or game_id is None:
             return
         numeric_id = self._progress_numeric_id(game_id)
@@ -167,28 +249,25 @@ class GameRunner:
         black_name: str,
         white_name: str,
     ) -> None:
-        await self._enqueue_progress(
-            game_id,
-            ply,
-            {
-                "type": "clock_start",
-                "game_id": game_id,
-                "active": "black" if active_is_black else "white",
-                "black_remain_ms": black_remaining_ms,
-                "white_remain_ms": white_remaining_ms,
-                "started_at_ms": int(time.time() * 1000),
-                "time_control_black": time_control_black,
-                "time_control_white": time_control_white,
-                "byoyomi_ms_black": int(black_limits.byoyomi_ms or 0),
-                "byoyomi_ms_white": int(white_limits.byoyomi_ms or 0),
-                "increment_ms_black": int(black_limits.increment_ms or 0),
-                "increment_ms_white": int(white_limits.increment_ms or 0),
-                "initial_sfen": initial_sfen,
-                "black_name": black_name,
-                "white_name": white_name,
-                "start_ply_number": start_ply_number,
-            },
-        )
+        payload: _ClockStartPayload = {
+            "type": "clock_start",
+            "game_id": game_id,
+            "active": "black" if active_is_black else "white",
+            "black_remain_ms": black_remaining_ms,
+            "white_remain_ms": white_remaining_ms,
+            "started_at_ms": int(time.time() * 1000),
+            "time_control_black": time_control_black,
+            "time_control_white": time_control_white,
+            "byoyomi_ms_black": int(black_limits.byoyomi_ms or 0),
+            "byoyomi_ms_white": int(white_limits.byoyomi_ms or 0),
+            "increment_ms_black": int(black_limits.increment_ms or 0),
+            "increment_ms_white": int(white_limits.increment_ms or 0),
+            "initial_sfen": initial_sfen,
+            "black_name": black_name,
+            "white_name": white_name,
+            "start_ply_number": start_ply_number,
+        }
+        await self._enqueue_progress(game_id, ply, payload)
 
     async def _enqueue_move_progress(
         self,
@@ -210,7 +289,7 @@ class GameRunner:
         wall_time_ms: int | None = None,
     ) -> None:
         display_ply = max(0, start_ply_number - 1) + ply_index
-        payload = {
+        payload: _MoveProgressPayload = {
             "type": "move_progress",
             "game_id": game_id,
             "initial_sfen": initial_sfen,
@@ -246,9 +325,9 @@ class GameRunner:
     ) -> None:
         if self.progress_queue is None or game_id is None:
             return
-        trimmed_moves = [move for move in usi_moves if isinstance(move, str) and move.strip()]
+        trimmed_moves = [move for move in usi_moves if move.strip()]
         completion_index = len(trimmed_moves)
-        payload = {
+        payload: _MoveProgressPayload = {
             "type": "move_progress",
             "game_id": game_id,
             "initial_sfen": initial_sfen,
@@ -265,6 +344,166 @@ class GameRunner:
             completion_index,
             payload,
         )
+
+    async def _enqueue_handshake_event(
+        self,
+        *,
+        game_id: str | None,
+        role: Literal["black", "white"],
+        entry: dict[str, object],
+        initial_sfen: str,
+        black_name: str,
+        white_name: str,
+    ) -> None:
+        if game_id is None:
+            return
+        direction = entry.get("dir")
+        line = entry.get("line")
+        ts_value = entry.get("ts")
+        timestamp = int(ts_value) if isinstance(ts_value, int | float) else int(time.time() * 1000)
+        payload: _HandshakePayload = {
+            "type": "handshake_log",
+            "game_id": game_id,
+            "initial_sfen": initial_sfen,
+            "black_name": black_name,
+            "white_name": white_name,
+            "role": role,
+            "direction": direction,
+            "line": line,
+            "ts": timestamp,
+        }
+        state = entry.get("state")
+        if isinstance(state, str) and state:
+            payload["state"] = state
+        await self._enqueue_progress(game_id, 0, payload)
+
+    async def _enqueue_engine_io_event(
+        self,
+        *,
+        game_id: str | None,
+        role: Literal["black", "white"],
+        entry: dict[str, object],
+        initial_sfen: str,
+        black_name: str,
+        white_name: str,
+    ) -> None:
+        if game_id is None:
+            return
+        direction = entry.get("dir")
+        line = entry.get("line")
+        ts_value = entry.get("ts")
+        timestamp = int(ts_value) if isinstance(ts_value, int | float) else int(time.time() * 1000)
+        payload: _EngineIoPayload = {
+            "type": "engine_io",
+            "game_id": game_id,
+            "initial_sfen": initial_sfen,
+            "black_name": black_name,
+            "white_name": white_name,
+            "role": role,
+            "direction": direction,
+            "line": line,
+            "ts": timestamp,
+        }
+        state = entry.get("state")
+        if isinstance(state, str) and state:
+            payload["state"] = state
+        await self._enqueue_progress(game_id, 0, payload)
+
+    def _register_handshake_listener(
+        self,
+        engine: GameEngineProtocol,
+        role: Literal["black", "white"],
+        game_id: str | None,
+        initial_sfen: str,
+        black_name: str,
+        white_name: str,
+    ) -> Callable[[], None]:
+        if game_id is None:
+            return lambda: None
+        register = getattr(engine, "register_handshake_log_handler", None)
+        if not callable(register):
+            return lambda: None
+
+        def handler(entry: dict[str, object]) -> Awaitable[None] | None:
+            return self._enqueue_handshake_event(
+                game_id=game_id,
+                role=role,
+                entry=entry,
+                initial_sfen=initial_sfen,
+                black_name=black_name,
+                white_name=white_name,
+            )
+
+        remove = register(handler)
+        return remove if callable(remove) else lambda: None
+
+    def _register_engine_io_listener(
+        self,
+        engine: GameEngineProtocol,
+        role: Literal["black", "white"],
+        game_id: str | None,
+        initial_sfen: str,
+        black_name: str,
+        white_name: str,
+    ) -> Callable[[], None]:
+        if game_id is None:
+            return lambda: None
+        register = getattr(engine, "register_io_log_handler", None)
+        if not callable(register):
+            return lambda: None
+
+        def handler(entry: dict[str, object]) -> Awaitable[None] | None:
+            return self._enqueue_engine_io_event(
+                game_id=game_id,
+                role=role,
+                entry=entry,
+                initial_sfen=initial_sfen,
+                black_name=black_name,
+                white_name=white_name,
+            )
+
+        remove = register(handler)
+        return remove if callable(remove) else lambda: None
+
+    @contextmanager
+    def _handshake_listener_context(
+        self,
+        black_engine: GameEngineProtocol,
+        white_engine: GameEngineProtocol,
+        game_id: str | None,
+        initial_sfen: str,
+        black_name: str,
+        white_name: str,
+    ):
+        cleanups: list[Callable[[], None]] = [
+            self._register_handshake_listener(black_engine, "black", game_id, initial_sfen, black_name, white_name),
+            self._register_handshake_listener(white_engine, "white", game_id, initial_sfen, black_name, white_name),
+        ]
+        try:
+            yield
+        finally:
+            for cleanup in cleanups:
+                cleanup()
+
+    @contextmanager
+    def _engine_io_listener_context(
+        self,
+        black_engine: GameEngineProtocol,
+        white_engine: GameEngineProtocol,
+        game_id: str | None,
+        initial_sfen: str,
+        black_name: str,
+        white_name: str,
+    ):
+        cleanups: list[Callable[[], None]] = [
+            self._register_engine_io_listener(black_engine, "black", game_id, initial_sfen, black_name, white_name),
+            self._register_engine_io_listener(white_engine, "white", game_id, initial_sfen, black_name, white_name),
+        ]
+        try:
+            yield
+        finally:
+            for cleanup in cleanups:
+                cleanup()
 
     async def _enqueue_terminal_progress(
         self,
@@ -285,7 +524,7 @@ class GameRunner:
         eval_cp = self._extract_evaluation(think_result)
         search_stats = self._extract_search_statistics(think_result, elapsed_ms)
         display_ply = max(0, start_ply_number - 1) + ply_index
-        payload = {
+        payload: _MoveProgressPayload = {
             "type": "move_progress",
             "game_id": game_id,
             "initial_sfen": initial_sfen,
@@ -306,20 +545,14 @@ class GameRunner:
         }
         await self._enqueue_progress(game_id, ply_index, payload)
 
-    def _progress_numeric_id(self, game_id: str | int) -> int:
-        """Convert game_id to numeric form for progress tracking."""
-        if isinstance(game_id, int):
-            return game_id
-        if isinstance(game_id, str) and game_id.startswith("game_"):
+    def _progress_numeric_id(self, game_id: str) -> int:
+        """Convert textual game_id to numeric form for progress tracking."""
+        if game_id.startswith("game_"):
             suffix = game_id[len("game_") :]
             compact_suffix = suffix.replace("_", "")
             if compact_suffix.isdigit():
                 return int(compact_suffix)
-            # For legacy hashed IDs, fall through to CRC32 mapping.
-        if isinstance(game_id, str):
-            # Scheduler-generated IDs are hashed strings; map them deterministically.
-            return zlib.crc32(game_id.encode("utf-8")) & 0x7FFFFFFF
-        raise TypeError(f"Unsupported game_id type: {type(game_id)!r}")
+        return zlib.crc32(game_id.encode("utf-8")) & 0x7FFFFFFF
 
     async def run_game(
         self,
@@ -329,7 +562,7 @@ class GameRunner:
         game_id: str | None = None,
         black_time_control_limits: TimeControlLimits | None = None,
         white_time_control_limits: TimeControlLimits | None = None,
-    ) -> GameInfo:
+    ) -> rshogi.record.GameRecord:
         """
         Run a single game between two engines.
 
@@ -340,7 +573,7 @@ class GameRunner:
             game_id: Optional game identifier
 
         Returns:
-            GameInfo object with game results
+            GameRecord object with game results
         """
         if game_id is None:
             game_id = f"game_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -348,13 +581,13 @@ class GameRunner:
         logger.debug(f"Starting game {game_id}: {black_engine.name} (Black) vs {white_engine.name} (White)")
 
         # Initialize game_result to handle exceptions
-        game_result = GameResult.ERROR
+        game_result = _GAME_RESULT_ERROR
         result_progress_emitted = [False]
 
         # Initialize game state with normalized SFEN
-        board = cshogi.Board()
+        board = Board()
 
-        normalized_sfen = normalize_sfen(initial_sfen)
+        normalized_sfen = normalize_usi_position(initial_sfen)
         if normalized_sfen == "startpos":
             board.reset()
         else:
@@ -395,54 +628,64 @@ class GameRunner:
             adjudicator = Adjudicator(self.adjudication_config)
             logger.debug(f"Adjudication initialized: {self.adjudication_config}")
 
-        cancelled = False
-        error: Exception | None = None
-        try:
-            # Prepare both engines for the game
-            if not self._shutting_down:
-                await self._prepare_engines_for_game(black_engine, white_engine, initial_sfen)
-            else:
-                raise asyncio.CancelledError()
-
-            # Game loop
-            game_result = await self._game_loop(
-                board,
+        with (
+            self._engine_io_listener_context(
                 black_engine,
                 white_engine,
+                game_id,
                 initial_sfen,
-                start_ply_number,
-                moves,
-                usi_moves,
-                eval_values,
-                nodes_values,
-                depth_values,
-                seldepth_values,
-                move_times_ms,
-                wall_times_ms,
-                latency_deltas_ms,
-                black_time_control=black_time_control,
-                white_time_control=white_time_control,
-                game_id=game_id,
-                adjudicator=adjudicator,
-                result_progress_emitted=result_progress_emitted,
-            )
+                black_engine.name,
+                white_engine.name,
+            ),
+        ):
+            cancelled = False
+            error: Exception | None = None
+            try:
+                # Prepare both engines for the game
+                if not self._shutting_down:
+                    await self._prepare_engines_for_game(black_engine, white_engine, initial_sfen)
+                else:
+                    raise asyncio.CancelledError()
 
-        except asyncio.CancelledError:
-            # Propagate cancellation to align with orchestrator-level SIGINT handling
-            cancelled = True
-            raise
-        except (OSError, RuntimeError, ValueError, asyncio.TimeoutError) as exc:
-            if self._shutting_down:
-                # Suppress error spam on shutdown
-                game_result = GameResult.PAUSED
-            else:
-                logger.exception("Game %s failed with unhandled error", game_id)
-                game_result = GameResult.ERROR
-            error = exc
-        finally:
-            # Send gameover to both engines
-            if not cancelled and not self._shutting_down:
-                await self._finalize_game(black_engine, white_engine, game_result)
+                # Game loop
+                game_result = await self._game_loop(
+                    board,
+                    black_engine,
+                    white_engine,
+                    initial_sfen,
+                    start_ply_number,
+                    moves,
+                    usi_moves,
+                    eval_values,
+                    nodes_values,
+                    depth_values,
+                    seldepth_values,
+                    move_times_ms,
+                    wall_times_ms,
+                    latency_deltas_ms,
+                    black_time_control=black_time_control,
+                    white_time_control=white_time_control,
+                    game_id=game_id,
+                    adjudicator=adjudicator,
+                    result_progress_emitted=result_progress_emitted,
+                )
+
+            except asyncio.CancelledError:
+                # Propagate cancellation to align with orchestrator-level SIGINT handling
+                cancelled = True
+                raise
+            except (OSError, RuntimeError, ValueError, asyncio.TimeoutError) as exc:
+                if self._shutting_down:
+                    # Suppress error spam on shutdown
+                    game_result = GameResult.PAUSED
+                else:
+                    logger.exception("Game %s failed with unhandled error", game_id)
+                    game_result = _GAME_RESULT_ERROR
+                error = exc
+            finally:
+                # Send gameover to both engines
+                if not cancelled and not self._shutting_down:
+                    await self._finalize_game(black_engine, white_engine, game_result)
 
         if error is not None:
             raise error
@@ -456,52 +699,55 @@ class GameRunner:
                 usi_moves=usi_moves,
                 result=game_result,
                 initial_sfen=normalized_sfen,
-                final_sfen=board.sfen(),
+                final_sfen=board.to_sfen(),
                 black_name=black_engine.name,
                 white_name=white_engine.name,
                 start_ply_number=start_ply_number,
             )
 
-        # Add MOVE_END to indicate game termination (required by GameInfo persistence)
-        # Ensure MOVE_END is always added even if no moves were made (e.g., engine startup failure)
-        if not moves or moves[-1] != MOVE_END:
-            moves.append(MOVE_END)
-            eval_values.append(None)
-            nodes_values.append(None)
-            depth_values.append(None)
-            seldepth_values.append(None)
-            move_times_ms.append(None)
-            wall_times_ms.append(None)
-            latency_deltas_ms.append(None)
-
-        # Create GameInfo
         # Build encoded TimeControl spec strings for DB/UI
-        tc_spec_black_str = black_time_control.limits.to_spec_str()
-        tc_spec_white_str = white_time_control.limits.to_spec_str()
-
-        game_info = GameInfo(
+        tc_spec_black_str = limits_to_record_time_spec(black_time_control.limits)
+        tc_spec_white_str = limits_to_record_time_spec(white_time_control.limits)
+        record_metadata = rshogi.record.GameRecordMetadata(
             game_name=game_id,
             game_type="arena",
-            black_player_name=black_engine.name,
-            white_player_name=white_engine.name,
-            start_date=start_time,
-            end_date=end_time,
-            game_result=game_result,
-            init_position_sfen=normalized_sfen if normalized_sfen != "startpos" else cshogi.STARTING_SFEN,
-            moves=moves,
-            eval_values=eval_values,
-            nodes_values=nodes_values,
-            depth_values=depth_values,
-            seldepth_values=seldepth_values,
-            move_times_ms=move_times_ms,
-            wall_times_ms=wall_times_ms,
-            latency_deltas_ms=latency_deltas_ms,
-            black_time_control=tc_spec_black_str,
-            white_time_control=tc_spec_white_str,
+            black_player=black_engine.name,
+            white_player=white_engine.name,
+            start_date=start_time.isoformat(),
+            end_date=end_time.isoformat(),
+            updated_date=end_time.isoformat(),
+            black_time_control=rshogi.record.TimeControl.from_spec(tc_spec_black_str),
+            white_time_control=rshogi.record.TimeControl.from_spec(tc_spec_white_str),
+            attributes={
+                "game_name": game_id,
+                "game_type": "arena",
+                "updated_date": end_time.isoformat(),
+            },
         )
+        move_records: list[rshogi.record.MoveRecord] = []
+        for idx, move in enumerate(moves):
+            wall_time = wall_times_ms[idx] if idx < len(wall_times_ms) else None
+            latency_delta = latency_deltas_ms[idx] if idx < len(latency_deltas_ms) else None
+            engine_info = rshogi.record.MoveEngineInfo(
+                eval=eval_values[idx] if idx < len(eval_values) else None,
+                nodes=nodes_values[idx] if idx < len(nodes_values) else None,
+                depth=depth_values[idx] if idx < len(depth_values) else None,
+                seldepth=seldepth_values[idx] if idx < len(seldepth_values) else None,
+                wall_time_ms=int(wall_time) if wall_time is not None else None,
+                latency_delta_ms=int(latency_delta) if latency_delta is not None else None,
+            )
+            move_records.append(
+                rshogi.record.MoveRecord(
+                    Move(move),
+                    time_ms=move_times_ms[idx] if idx < len(move_times_ms) else None,
+                    engine_info=engine_info,
+                )
+            )
+        init_sfen = normalized_sfen if normalized_sfen != "startpos" else STARTING_SFEN
+        terminal = rshogi.record.SpecialMoveRecord(game_result_terminal_kind(game_result), game_result)
 
         logger.debug(f"Game {game_id} completed: {game_result}")
-        return game_info
+        return rshogi.record.GameRecord.from_main_line(init_sfen, move_records, terminal, record_metadata)
 
     async def _prepare_engines_for_game(
         self,
@@ -512,10 +758,28 @@ class GameRunner:
         """Prepare engines for a new game."""
         if self._shutting_down:
             return
-        await asyncio.gather(
-            black_engine.prepare(initial_sfen=initial_sfen),
-            white_engine.prepare(initial_sfen=initial_sfen),
-        )
+        black_ready = getattr(black_engine, "prepare_ready_state", None)
+        white_ready = getattr(white_engine, "prepare_ready_state", None)
+        black_new_game = getattr(black_engine, "prepare_new_game_position", None)
+        white_new_game = getattr(white_engine, "prepare_new_game_position", None)
+
+        if callable(black_ready) and callable(white_ready) and callable(black_new_game) and callable(white_new_game):
+            # Two-phase barrier:
+            # 1) Wait until both engines are ready (readyok observed by each engine instance).
+            # 2) Start game setup for both sides (usinewgame + position) in parallel.
+            await asyncio.gather(
+                black_ready(),
+                white_ready(),
+            )
+            await asyncio.gather(
+                black_new_game(initial_sfen=initial_sfen),
+                white_new_game(initial_sfen=initial_sfen),
+            )
+        else:
+            await asyncio.gather(
+                black_engine.prepare(initial_sfen=initial_sfen),
+                white_engine.prepare(initial_sfen=initial_sfen),
+            )
         self._publish_engine_options_snapshot(black_engine)
         self._publish_engine_options_snapshot(white_engine)
 
@@ -541,7 +805,7 @@ class GameRunner:
 
     async def _game_loop(
         self,
-        board: cshogi.Board,
+        board: Board,
         black_engine: GameEngineProtocol,
         white_engine: GameEngineProtocol,
         initial_sfen: str,
@@ -570,10 +834,8 @@ class GameRunner:
         # Exit immediately if shutdown requested
         if self._shutting_down:
             raise asyncio.CancelledError()
-        initial_ply = max(board.move_number - 1, 0)
+        initial_ply = max(int(board.game_ply) - 1, 0)
         ply_count = initial_ply
-        position_counts: Counter[int] = Counter()
-        position_counts[int(board.zobrist_hash())] = 1
         max_plies: int | None = None
         if adjudicator and self.adjudication_config and self.adjudication_config.max_plies_enabled:
             max_plies = self.adjudication_config.max_plies
@@ -586,7 +848,7 @@ class GameRunner:
             # Determine current player and engine
             if self._shutting_down:
                 raise asyncio.CancelledError()
-            is_black_turn = board.turn == cshogi.BLACK
+            is_black_turn = int(board.turn) == _BLACK
             current_engine = black_engine if is_black_turn else white_engine
             player_name = "Black" if is_black_turn else "White"
 
@@ -598,13 +860,13 @@ class GameRunner:
 
             # Check for game end conditions
             # 1. Check for checkmate (no legal moves)
-            if board.is_game_over():
+            if board.is_mated():
                 # In shogi, no legal moves means checkmate (current player loses)
                 logger.debug(f"Game ended by checkmate - {player_name} is checkmated")
                 return GameResult.WHITE_WIN if is_black_turn else GameResult.BLACK_WIN
 
-            # 2. Check for nyugyoku (entering king declaration win)
-            if board.is_nyugyoku():
+            # 2. Check for entering king declaration win
+            if board.can_declare_win():
                 # Current player wins by entering king declaration
                 logger.debug(f"Game ended by nyugyoku declaration - {player_name} wins")
                 return GameResult.BLACK_WIN if is_black_turn else GameResult.WHITE_WIN
@@ -616,8 +878,8 @@ class GameRunner:
                     logger.debug(f"Time expired for {player_name}, but allow_timeout=True (continuing game)")
                 else:
                     logger.debug(f"Game ended by time expiry - {player_name} loses on time")
-                    winner_turn = Turn.WHITE if is_black_turn else Turn.BLACK
-                    return GameResult.win_by_timeout_from_turn(winner_turn)
+                    winner_color = Color.WHITE if is_black_turn else Color.BLACK
+                    return timeout_win_result(winner_color)
 
             # Build think request from time controls
             think_request = request_from_time_controls(
@@ -636,21 +898,11 @@ class GameRunner:
             last_move_usi = usi_moves[-1] if usi_moves else None
             use_ponder = False
             ponder_timings: PonderHitTimings | None = None
-            if current_engine.has_active_ponder():
-                predicted = current_engine.active_ponder_predicted_move()
-                if predicted == last_move_usi:
-                    use_ponder = True
-                    ponder_timings = self._build_ponder_hit_timings(
-                        current_time_control=current_time_control,
-                        enemy_time_control=enemy_time_control,
-                        is_black_turn=is_black_turn,
-                    )
-                    logger.debug("Ponderhit attempt for %s (predicted %s)", current_engine.name, predicted)
-                else:
-                    await current_engine.cancel_ponder()
 
-            # Start time control timer and broadcast clock start for UI
+            # Start move clock before any ponder synchronization so cancel_ponder
+            # latency is also charged to the side to move.
             current_time_control.start_timer()
+            go_start_time = time.perf_counter()
             await self._enqueue_clock_start(
                 game_id=game_id,
                 ply=ply_count,
@@ -667,8 +919,21 @@ class GameRunner:
                 white_name=white_engine.name,
             )
 
-            # Track time for fallback
-            go_start_time = time.perf_counter()
+            if current_engine.has_active_ponder():
+                predicted = current_engine.active_ponder_predicted_move()
+                if predicted is not None and predicted.to_usi() == last_move_usi:
+                    use_ponder = True
+                    ponder_timings = self._build_ponder_hit_timings(
+                        current_time_control=current_time_control,
+                        enemy_time_control=enemy_time_control,
+                        is_black_turn=is_black_turn,
+                    )
+                    logger.debug("Ponderhit attempt for %s (predicted %s)", current_engine.name, predicted.to_usi())
+                else:
+                    wait_timeout = current_time_control.get_timeout_for_wait()
+                    wait_timeout_f = 1.0 if wait_timeout is None else float(wait_timeout)
+                    cancel_timeout = min(wait_timeout_f, 1.0)
+                    await current_engine.cancel_ponder(timeout=cancel_timeout)
 
             # Calculate timeout for wait_bestmove
             timeout_seconds = current_time_control.get_timeout_for_wait()
@@ -716,7 +981,7 @@ class GameRunner:
                             initial_sfen=initial_sfen,
                             black_name=black_engine.name,
                             white_name=white_engine.name,
-                            board_sfen=board.sfen(),
+                            board_sfen=board.to_sfen(),
                             result=game_result,
                             think_result=think_result,
                             elapsed_ms=elapsed_ms,
@@ -728,8 +993,8 @@ class GameRunner:
                 move = cast(_MoveContinue, move_result)["move"]
 
                 # Prepare KI2 notation BEFORE applying the move
-                ki2_move = cshogi.KI2.move_to_ki2(move, board)
-                side_that_moved_is_black = board.turn == cshogi.BLACK
+                ki2_move = board.move32_from_move(move).to_ki2(board) or move.to_usi()
+                side_that_moved_is_black = int(board.turn) == _BLACK
 
                 # Accumulate search statistics for database storage and apply move/time updates
                 apply_start = time.perf_counter()
@@ -760,7 +1025,6 @@ class GameRunner:
                     ply_count=ply_count,
                     adjudicator=adjudicator,
                     side_that_moved_is_black=side_that_moved_is_black,
-                    position_counts=position_counts,
                     repetition_occurrences_to_draw=self.repetition_occurrences_to_draw,
                 )
                 apply_elapsed_ms = (time.perf_counter() - apply_start) * 1000.0
@@ -772,13 +1036,6 @@ class GameRunner:
                 game_finished_after_move = result_after_apply is not None
                 hit_max_plies = max_plies is not None and ply_count >= max_plies
 
-                # Adjudication is handled inside _apply_move_common
-
-                game_finished_after_move = result_after_apply is not None
-                hit_max_plies = max_plies is not None and ply_count >= max_plies
-
-                # Adjudication is handled inside _apply_move_common
-
                 # Report progress if queue is available. Emit before early returns so that
                 # dashboards receive the terminal move even when max-plies adjudication fires.
                 await self._enqueue_move_progress(
@@ -788,8 +1045,8 @@ class GameRunner:
                     initial_sfen=initial_sfen,
                     black_name=black_engine.name,
                     white_name=white_engine.name,
-                    board_sfen=board.sfen(),
-                    usi_move=cshogi.move_to_usi(move),
+                    board_sfen=board.to_sfen(),
+                    usi_move=move.to_usi(),
                     ki2_move=ki2_move,
                     eval_cp=eval_value,
                     depth=search_stats["depth"],
@@ -807,23 +1064,6 @@ class GameRunner:
                 if game_finished_after_move:
                     assert result_after_apply is not None
                     return result_after_apply
-
-                # Repetition handling:
-                # cshogi.REPETITION_* codes are evaluated from the side-to-move perspective
-                # after board.push(move). Since is_black_turn was captured BEFORE pushing,
-                # the winner/loser mapping must invert accordingly.
-                # Codes: DRAW=1, WIN=2, LOSE=3, SUPERIOR=4, INFERIOR=5
-                repetition_status = board.is_draw()
-                if repetition_status == cshogi.REPETITION_DRAW:
-                    logger.debug("Game ended by repetition draw")
-                    return GameResult.DRAW_BY_REPETITION
-                elif repetition_status == cshogi.REPETITION_WIN:
-                    logger.debug("Game ended by repetition win for side to move")
-                    return GameResult.BLACK_WIN if is_black_turn else GameResult.WHITE_WIN
-                elif repetition_status == cshogi.REPETITION_LOSE:
-                    logger.debug("Game ended by repetition loss for side to move")
-                    return GameResult.WHITE_WIN if is_black_turn else GameResult.BLACK_WIN
-                # REPETITION_SUPERIOR/INFERIOR are rare, let engine decide via bestmove
 
                 await self._maybe_start_ponder(
                     engine=current_engine,
@@ -852,8 +1092,8 @@ class GameRunner:
                         )
                         return GameResult.DRAW_BY_MAX_PLIES
                     logger.debug(f"Timeout recovery failed - {player_name} loses on time")
-                    winner_turn = Turn.WHITE if is_black_turn else Turn.BLACK
-                    return GameResult.win_by_timeout_from_turn(winner_turn)
+                    winner_color = Color.WHITE if is_black_turn else Color.BLACK
+                    return timeout_win_result(winner_color)
 
                 result_after_recovery, new_ply_count = await self._handle_recovered_bestmove(
                     board=board,
@@ -881,7 +1121,6 @@ class GameRunner:
                     player_name=player_name,
                     is_black_turn=is_black_turn,
                     adjudicator=adjudicator,
-                    position_counts=position_counts,
                     repetition_occurrences_to_draw=self.repetition_occurrences_to_draw,
                     result_progress_emitted=result_progress_emitted,
                 )
@@ -910,16 +1149,19 @@ class GameRunner:
     ) -> PonderHitTimings:
         current_limits = current_time_control.limits
         enemy_limits = enemy_time_control.limits
+        request = request_from_time_controls(
+            my_limits=current_limits,
+            enemy_limits=enemy_limits,
+            my_is_black=is_black_turn,
+            my_remaining_ms=current_time_control.active_time_left_ms(),
+            enemy_remaining_ms=enemy_time_control.active_time_left_ms(),
+        )
         return PonderHitTimings(
-            btime=current_time_control.active_time_left_ms()
-            if is_black_turn
-            else enemy_time_control.active_time_left_ms(),
-            wtime=enemy_time_control.active_time_left_ms()
-            if is_black_turn
-            else current_time_control.active_time_left_ms(),
-            binc=current_limits.increment_ms if is_black_turn else enemy_limits.increment_ms,
-            winc=enemy_limits.increment_ms if is_black_turn else current_limits.increment_ms,
-            byoyomi=current_limits.byoyomi_ms,
+            btime=request.btime,
+            wtime=request.wtime,
+            binc=request.binc,
+            winc=request.winc,
+            byoyomi=request.byoyomi,
         )
 
     async def _maybe_start_ponder(
@@ -934,11 +1176,11 @@ class GameRunner:
         enemy_time_control: TimeControl,
     ) -> None:
         predicted = think_result.ponder
-        if not predicted:
-            await engine.cancel_ponder()
+        if predicted is None:
+            await engine.cancel_ponder(timeout=0.2)
             return
         ponder_moves = list(usi_moves)
-        ponder_moves.append(predicted)
+        ponder_moves.append(predicted.to_usi())
         try:
             ponder_request = request_from_time_controls(
                 my_limits=current_time_control.limits,
@@ -956,7 +1198,7 @@ class GameRunner:
             )
         except (OSError, RuntimeError, ValueError, asyncio.TimeoutError) as exc:
             logger.debug("Failed to start ponder for %s: %s", engine.name, exc, exc_info=True)
-            await engine.cancel_ponder()
+            await engine.cancel_ponder(timeout=0.2)
 
     async def _finalize_game(
         self, black_engine: GameEngineProtocol, white_engine: GameEngineProtocol, game_result: GameResult
@@ -984,7 +1226,7 @@ class GameRunner:
     # --- Typed results for move processing ---------------------------------
 
     async def _process_move_result(
-        self, board: cshogi.Board, think_result: UsiThinkResult, engine_name: str
+        self, board: Board, think_result: UsiThinkResult, engine_name: str
     ) -> _GameMoveResult:
         """
         Process the move result from engine.
@@ -995,33 +1237,26 @@ class GameRunner:
         bestmove = think_result.bestmove
 
         # Handle special moves
-        if bestmove == "resign":
+        if bestmove == Move.MOVE_RESIGN:
             logger.debug(f"Engine {engine_name} resigned")
             # Current player loses
-            result = GameResult.WHITE_WIN if board.turn == cshogi.BLACK else GameResult.BLACK_WIN
+            result = GameResult.WHITE_WIN if int(board.turn) == _BLACK else GameResult.BLACK_WIN
             return _GameOverResult(game_over=True, result=result)
 
-        if bestmove == "win":
+        if bestmove == Move.MOVE_WIN:
             logger.debug(f"Engine {engine_name} declared win")
             # Current player wins
-            result = GameResult.BLACK_WIN if board.turn == cshogi.BLACK else GameResult.WHITE_WIN
+            result = GameResult.BLACK_WIN if int(board.turn) == _BLACK else GameResult.WHITE_WIN
             return _GameOverResult(game_over=True, result=result)
 
-        # Parse and validate normal move
+        # Validate normal move
         assert bestmove is not None  # Already handled resign/win above
-        try:
-            move = board.move_from_usi(bestmove)
-        except ValueError as exc:
-            logger.warning(f"Invalid move from {engine_name}: {bestmove} - {exc}")
-            result = GameResult.WHITE_WIN if board.turn == cshogi.BLACK else GameResult.BLACK_WIN
+        if not board.is_legal_move(bestmove):
+            logger.warning(f"Illegal move from {engine_name}: {bestmove.to_usi()}")
+            result = GameResult.WHITE_WIN if int(board.turn) == _BLACK else GameResult.BLACK_WIN
             return _GameOverResult(game_over=True, result=result)
 
-        if move == 0 or not board.is_legal(move):
-            logger.warning(f"Illegal move from {engine_name}: {bestmove}")
-            result = GameResult.WHITE_WIN if board.turn == cshogi.BLACK else GameResult.BLACK_WIN
-            return _GameOverResult(game_over=True, result=result)
-
-        return _MoveContinue(game_over=False, move=move)
+        return _MoveContinue(game_over=False, move=bestmove)
 
     def _extract_evaluation(self, think_result: UsiThinkResult) -> int | None:
         """Extract evaluation value from think result.
@@ -1074,26 +1309,23 @@ class GameRunner:
         pre_white_remain_ms: int,
     ) -> None:
         """Notify UI about clock increment."""
-        await self._enqueue_progress(
-            game_id,
-            ply_count,
-            {
-                "type": "clock_increment",
-                "game_id": game_id,
-                "side": "black" if side_that_moved_is_black else "white",
-                "applied_increment_ms": int(current_time_control.limits.increment_ms or 0),
-                "pre_black_remain_ms": int(pre_black_remain_ms),
-                "pre_white_remain_ms": int(pre_white_remain_ms),
-                "black_remain_ms": int(black_time_control.active_time_left_ms()),
-                "white_remain_ms": int(white_time_control.active_time_left_ms()),
-                "occurred_at_ms": int(time.time() * 1000),
-            },
-        )
+        payload: _ClockIncrementPayload = {
+            "type": "clock_increment",
+            "game_id": game_id,
+            "side": "black" if side_that_moved_is_black else "white",
+            "applied_increment_ms": int(current_time_control.limits.increment_ms or 0),
+            "pre_black_remain_ms": int(pre_black_remain_ms),
+            "pre_white_remain_ms": int(pre_white_remain_ms),
+            "black_remain_ms": int(black_time_control.active_time_left_ms()),
+            "white_remain_ms": int(white_time_control.active_time_left_ms()),
+            "occurred_at_ms": int(time.time() * 1000),
+        }
+        await self._enqueue_progress(game_id, ply_count, payload)
 
     async def _handle_recovered_bestmove(
         self,
         *,
-        board: cshogi.Board,
+        board: Board,
         think_result: UsiThinkResult,
         current_engine: GameEngineProtocol,
         go_start_time: float,
@@ -1118,7 +1350,6 @@ class GameRunner:
         player_name: str,
         is_black_turn: bool,
         adjudicator: Adjudicator | None,
-        position_counts: Counter[int],
         repetition_occurrences_to_draw: int,
         result_progress_emitted: list[bool] | None = None,
     ) -> "RecoveredBestmoveResult":
@@ -1141,7 +1372,7 @@ class GameRunner:
                     initial_sfen=initial_sfen,
                     black_name=black_name,
                     white_name=white_name,
-                    board_sfen=board.sfen(),
+                    board_sfen=board.to_sfen(),
                     result=result,
                     think_result=think_result,
                     elapsed_ms=elapsed_ms,
@@ -1154,12 +1385,12 @@ class GameRunner:
         allow_timeout = current_time_control.limits.allow_timeout
         if current_time_control.expired() and not allow_timeout:
             logger.debug(f"Time expired for {player_name} before applying increment; strict timeout -> loss on time")
-            winner_turn = Turn.WHITE if is_black_turn else Turn.BLACK
-            return RecoveredBestmoveResult(result=GameResult.win_by_timeout_from_turn(winner_turn), ply_count=ply_count)
+            winner_color = Color.WHITE if is_black_turn else Color.BLACK
+            return RecoveredBestmoveResult(result=timeout_win_result(winner_color), ply_count=ply_count)
 
         # Apply recovered move using common path
         move = cast(_MoveContinue, move_result)["move"]
-        side_that_moved_is_black = board.turn == cshogi.BLACK
+        side_that_moved_is_black = int(board.turn) == _BLACK
         (
             result_after_apply,
             new_ply_count,
@@ -1187,7 +1418,6 @@ class GameRunner:
             ply_count=ply_count,
             adjudicator=adjudicator,
             side_that_moved_is_black=side_that_moved_is_black,
-            position_counts=position_counts,
             repetition_occurrences_to_draw=repetition_occurrences_to_draw,
         )
         return RecoveredBestmoveResult(result=result_after_apply, ply_count=new_ply_count)
@@ -1195,8 +1425,8 @@ class GameRunner:
     async def _apply_move_common(
         self,
         *,
-        board: cshogi.Board,
-        move: int,
+        board: Board,
+        move: Move,
         think_result: UsiThinkResult,
         elapsed_ms: int,
         moves: list[int],
@@ -1215,13 +1445,12 @@ class GameRunner:
         ply_count: int,
         adjudicator: Adjudicator | None,
         side_that_moved_is_black: bool,
-        position_counts: Counter[int],
         repetition_occurrences_to_draw: int,
     ) -> "ApplyMoveCommonResult":
         """Common post-bestmove routine used by normal and recovery paths."""
         # Record the move and statistics
-        moves.append(move)
-        usi_moves.append(cshogi.move_to_usi(move))
+        moves.append(int(move))
+        usi_moves.append(move.to_usi())
         eval_value = self._extract_evaluation(think_result)
         eval_values.append(eval_value)
         search_stats = self._extract_search_statistics(think_result, elapsed_ms)
@@ -1234,26 +1463,31 @@ class GameRunner:
         latency_deltas_ms.append(None)
 
         # Apply move
-        board.push(move)
+        board.apply_move(move)
         ply_count += 1
-        position_key = int(board.zobrist_hash())
-        position_counts[position_key] += 1
+        # Repetition detection using rshogi native API.
+        # is_repetition(threshold) fires when repetition_counter >= threshold,
+        # where threshold = repetition_occurrences_to_draw - 1 maps occurrences to the
+        # internal counter (e.g. 2 occurrences → threshold 1, 4 occurrences → threshold 3).
+        # When threshold >= 3 (official 4-occurrence rule), repetition_state() also fires
+        # and provides WIN/LOSE/DRAW detail for perpetual check adjudication.
         repetition_result: GameResult | None = None
-        if position_counts[position_key] >= repetition_occurrences_to_draw:
+        if board.is_repetition(repetition_occurrences_to_draw - 1):
             if repetition_occurrences_to_draw >= 4:
-                repetition_status = board.is_draw()
-                if repetition_status == cshogi.REPETITION_DRAW:
+                repetition_state = board.repetition_state()
+                if repetition_state == RepetitionState.DRAW:
                     repetition_result = GameResult.DRAW_BY_REPETITION
-                elif repetition_status == cshogi.REPETITION_WIN:
-                    # cshogi.REPETITION_WIN means the current side to move (opponent of the mover) wins.
+                elif repetition_state == RepetitionState.WIN:
+                    # RepetitionState.WIN means the current side to move (opponent of the mover) wins.
                     repetition_result = GameResult.WHITE_WIN if side_that_moved_is_black else GameResult.BLACK_WIN
-                elif repetition_status == cshogi.REPETITION_LOSE:
+                elif repetition_state == RepetitionState.LOSE:
                     repetition_result = GameResult.BLACK_WIN if side_that_moved_is_black else GameResult.WHITE_WIN
+                # SUPERIOR/INFERIOR: not a forced result, let the game continue
             else:
                 repetition_result = GameResult.DRAW_BY_REPETITION
 
         # Check immediate game termination caused by the move (e.g., checkmate)
-        if board.is_game_over():
+        if board.is_mated():
             winner_result = GameResult.BLACK_WIN if side_that_moved_is_black else GameResult.WHITE_WIN
             return ApplyMoveCommonResult(
                 result=winner_result,
@@ -1286,9 +1520,9 @@ class GameRunner:
             )
         if current_time_control.expired() and not current_time_control.limits.allow_timeout:
             logger.debug("Time expired after move; strict timeout -> loss on time")
-            winner_turn = Turn.WHITE if side_that_moved_is_black else Turn.BLACK
+            winner_color = Color.WHITE if side_that_moved_is_black else Color.BLACK
             return ApplyMoveCommonResult(
-                result=GameResult.win_by_timeout_from_turn(winner_turn),
+                result=timeout_win_result(winner_color),
                 ply_count=ply_count,
                 eval_value=eval_value,
                 search_stats=search_stats,

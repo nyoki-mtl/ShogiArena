@@ -86,6 +86,8 @@ class LiveWebSocketHub:
         self._analysis_flush_task: asyncio.Task[None] | None = None
         self._drop_counts: dict[str, int] = {}
         self._started_at_ms = int(time.time() * 1000)
+        self._topic_subscribers: dict[str, int] = {}
+        self._global_subscribers: int = 0
 
         self._client_seq = 0
 
@@ -105,12 +107,14 @@ class LiveWebSocketHub:
         self._client_seq += 1
         client = LiveWsClient(ws=ws, worker_filter=worker_filter, client_id=self._client_seq)
         self.clients.add(client)
+        self._add_client_subscriptions(client)
         try:
             self._send_bootstrap_messages(client)
             await self._attach_tasks(client)
             return ws
         finally:
             self.clients.discard(client)
+            self._remove_client_subscriptions(client)
             await self._graceful_close(client)
 
     def publish(self, topic: str, payload: Any, *, worker_idx: int | None = None) -> None:
@@ -130,6 +134,11 @@ class LiveWebSocketHub:
         if message is None:
             return
         self._fanout(message, topic, worker_idx, is_analysis=is_analysis)
+
+    def has_subscribers(self, topic: str) -> bool:
+        if self._global_subscribers > 0:
+            return True
+        return self._topic_subscribers.get(topic, 0) > 0
 
     async def shutdown(self) -> None:
         """Terminate all connections and prevent new ones from being accepted."""
@@ -354,6 +363,33 @@ class LiveWebSocketHub:
             self._handle_control_message(client, msg_type, message)
             return
 
+    def _add_client_subscriptions(self, client: LiveWsClient) -> None:
+        subs = client.subscriptions
+        if subs is None:
+            self._global_subscribers += 1
+            return
+        for topic in subs:
+            self._topic_subscribers[topic] = self._topic_subscribers.get(topic, 0) + 1
+
+    def _remove_client_subscriptions(self, client: LiveWsClient) -> None:
+        subs = client.subscriptions
+        if subs is None:
+            self._global_subscribers = max(0, self._global_subscribers - 1)
+            return
+        for topic in subs:
+            current = self._topic_subscribers.get(topic, 0)
+            if current <= 1:
+                self._topic_subscribers.pop(topic, None)
+            else:
+                self._topic_subscribers[topic] = current - 1
+
+    def _set_client_subscriptions(self, client: LiveWsClient, next_subs: set[str] | None) -> None:
+        if client.subscriptions == next_subs:
+            return
+        self._remove_client_subscriptions(client)
+        client.subscriptions = next_subs
+        self._add_client_subscriptions(client)
+
     def _handle_control_message(self, client: LiveWsClient, msg_type: str, message: dict[str, Any]) -> None:
         include_analysis = message.get("includeAnalysis")
         if isinstance(include_analysis, bool):
@@ -380,11 +416,11 @@ class LiveWebSocketHub:
                 return
             topics = message.get("topics")
             if topics is None:
-                client.subscriptions = None
+                self._set_client_subscriptions(client, None)
                 return
             if isinstance(topics, list):
                 valid = {str(t) for t in topics if isinstance(t, str) and t}
-                client.subscriptions = valid or None
+                self._set_client_subscriptions(client, valid or None)
                 # 初回購読時に最新スナップショットを即送出し、ギャップを埋める
                 if client.subscriptions and self.snapshot_resolver:
                     for topic in client.subscriptions:
@@ -414,19 +450,22 @@ class LiveWebSocketHub:
             return
         if msg_type == "unsubscribe":
             if "topics" not in message:
-                client.subscriptions = set()
+                self._set_client_subscriptions(client, set())
                 return
             topics = message.get("topics")
             if topics is None:
-                client.subscriptions = set()
+                self._set_client_subscriptions(client, set())
                 return
             if isinstance(topics, list):
                 if client.subscriptions is None:
                     # if previously "all", convert to empty set then remove
-                    client.subscriptions = set()
+                    self._set_client_subscriptions(client, set())
+                    return
+                next_subs = set(client.subscriptions)
                 for t in topics:
                     if isinstance(t, str):
-                        client.subscriptions.discard(t)
+                        next_subs.discard(t)
+                self._set_client_subscriptions(client, next_subs)
             return
         if msg_type == "ack":
             # For now we just accept; could track latency later.
@@ -487,6 +526,8 @@ class LiveWebSocketHub:
             return 1
         if "analysis" in topic:
             return 5
+        if topic.startswith("live.engine."):
+            return 6
         if topic.startswith("live.games"):
             return 4
         if "summary" in topic:
@@ -547,6 +588,8 @@ class LiveWebSocketHub:
             # State diffs/snapshots and full snapshots are coalescible.
             return True
         if topic.startswith("live.assignment.") and (topic.endswith(".diff") or topic.endswith(".snapshot")):
+            return True
+        if topic.startswith("live.engine.") and (topic.endswith(".diff") or topic.endswith(".snapshot")):
             return True
         return False
 

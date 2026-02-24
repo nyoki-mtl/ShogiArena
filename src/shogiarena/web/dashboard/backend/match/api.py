@@ -13,9 +13,16 @@ from typing import Any
 from aiohttp import web
 
 from shogiarena.arena.services.persistence.db_service import ArenaDBService
+from shogiarena.db.factory import SQLiteShogiDBFactory
+from shogiarena.utils.types.coerce import coerce_game_result
 from shogiarena.utils.types.types import GameResult
 from shogiarena.web.dashboard.backend.http_helpers import json_error_response
 from shogiarena.web.dashboard.backend.live.schema import build_live_view_snapshot
+from shogiarena.web.dashboard.backend.match.types import (
+    ConfidenceInterval,
+    MatchTimelineEntry,
+    WdlGamesCount,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +85,7 @@ class MatchAPI:
             if len(ordered) >= 2:
                 return ordered
 
-        db_service = ArenaDBService(self._db_path)
+        db_service = ArenaDBService(SQLiteShogiDBFactory(self._db_path))
         games = db_service.get_all_games()
         names: list[str] = []
         for game in games:
@@ -110,13 +117,7 @@ class MatchAPI:
 
     @staticmethod
     def _coerce_result(raw: Any) -> GameResult:
-        if isinstance(raw, GameResult):
-            return raw
-        if isinstance(raw, int):
-            return GameResult(raw)
-        if isinstance(raw, str) and raw.strip():
-            return GameResult(int(raw))
-        return GameResult.DRAW_BY_REPETITION
+        return coerce_game_result(raw) or GameResult.DRAW_BY_REPETITION
 
     @staticmethod
     def _safe_win_rate(wins: int, draws: int, total: int) -> float | None:
@@ -132,7 +133,7 @@ class MatchAPI:
         return 400.0 * math.log10(bounded / (1.0 - bounded))
 
     @staticmethod
-    def _elo_confidence_interval(win_rate: float | None, total: int) -> dict[str, float | None]:
+    def _elo_confidence_interval(win_rate: float | None, total: int) -> ConfidenceInterval:
         if win_rate is None or total <= 0:
             return {"lower": None, "upper": None}
         variance = win_rate * (1.0 - win_rate) / total
@@ -145,7 +146,7 @@ class MatchAPI:
         }
 
     @staticmethod
-    def _win_rate_confidence_interval(win_rate: float | None, total: int) -> dict[str, float | None]:
+    def _win_rate_confidence_interval(win_rate: float | None, total: int) -> ConfidenceInterval:
         if win_rate is None or total <= 0:
             return {"lower": None, "upper": None}
         variance = win_rate * (1.0 - win_rate) / total
@@ -155,11 +156,11 @@ class MatchAPI:
         return {"lower": lower, "upper": upper}
 
     @staticmethod
-    def _empty_counts() -> dict[str, int]:
+    def _empty_counts() -> WdlGamesCount:
         return {"wins": 0, "losses": 0, "draws": 0, "games": 0}
 
     def _build_match_payload(self) -> dict[str, Any]:
-        db_service = ArenaDBService(self._db_path)
+        db_service = ArenaDBService(SQLiteShogiDBFactory(self._db_path))
         games = db_service.get_all_games()
         engines = self._resolve_engine_order()
         tested = engines[0] if len(engines) >= 1 else ""
@@ -169,7 +170,7 @@ class MatchAPI:
         black_counts = self._empty_counts()
         white_counts = self._empty_counts()
 
-        timeline: list[dict[str, Any]] = []
+        timeline: list[MatchTimelineEntry] = []
         for index, game in enumerate(games, start=1):
             black_engine = game.get("black_engine")
             white_engine = game.get("white_engine")

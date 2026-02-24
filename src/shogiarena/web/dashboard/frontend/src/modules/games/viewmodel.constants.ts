@@ -10,6 +10,7 @@ export const RESULT_DETAIL_LABELS: Readonly<Record<string, string>> = Object.fre
     timeout: 'Timeout',
     repetition: 'Rep',
     'max plies': 'Max Moves',
+    impasse: 'Impasse',
     error: 'Error',
     invalid: 'Invalid',
     paused: 'Paused',
@@ -22,6 +23,7 @@ export const RESULT_DETAIL_SUFFIXES: Readonly<Record<string, string>> = Object.f
     timeout: 'by Timeout',
     repetition: 'by Repetition',
     'max plies': 'by Max Moves',
+    impasse: 'by Impasse',
 });
 
 export const RESULT_OUTCOME_ORDER = Object.freeze([
@@ -43,6 +45,7 @@ export const RESULT_DETAIL_ORDER = Object.freeze([
     'timeout',
     'repetition',
     'max plies',
+    'impasse',
     'error',
     'invalid',
     'paused',

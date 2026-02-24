@@ -677,6 +677,9 @@ function createLiveSummaryApi(owner: SummaryWindow): LiveSummaryApi {
             }
 
             const pair = new Map<string, PairwiseCell>();
+            const blackWinCodes = new Set([0, 4, 8, 12, 16]);
+            const whiteWinCodes = new Set([1, 5, 9, 13, 17]);
+            const drawCodes = new Set([2, 6, 10]);
             let signatureHash = 5381;
             const hashString = (value: string): void => {
                 for (let i = 0; i < value.length; i += 1) {
@@ -697,15 +700,15 @@ function createLiveSummaryApi(owner: SummaryWindow): LiveSummaryApi {
                 if (!pair.has(key)) pair.set(key, {});
                 const cell = pair.get(key);
                 if (!cell) return;
-                const code = Number(g.result_code ?? 0);
-                const cat = code & 3; // 0: black win, 1: white win, 2: draw, 3: error
-                if (cat === 0) {
+                const code = Number(g.result_code ?? Number.NaN);
+                if (!Number.isFinite(code)) return;
+                if (blackWinCodes.has(code)) {
                     cell[a] = (cell[a] || 0) + 1;
                     cell[b] = cell[b] || 0;
-                } else if (cat === 1) {
+                } else if (whiteWinCodes.has(code)) {
                     cell[b] = (cell[b] || 0) + 1;
                     cell[a] = cell[a] || 0;
-                } else if (cat === 2) {
+                } else if (drawCodes.has(code)) {
                     cell.d = (cell.d || 0) + 1;
                 }
             });

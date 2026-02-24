@@ -4,7 +4,7 @@ import logging
 import platform
 import re
 import subprocess
-from typing import Any
+from typing import TypedDict
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,17 @@ logger = logging.getLogger(__name__)
 # - No dynamic CPUID execution (avoids Rosetta/SELinux issues)
 # - OS-level sources only (Linux: /proc/cpuinfo, macOS: sysctl, Windows: registry)
 # - Returns a stable subset: arch, arch_string_raw, vendor_id_raw, brand_raw, family, model, flags
+
+
+class CpuInfoDict(TypedDict, total=False):
+    arch: str
+    arch_string_raw: str
+    vendor_id_raw: str | None
+    brand_raw: str | None
+    family: int | None
+    model: int | None
+    flags: list[str]
+    system: str
 
 
 def _normalize_arch(arch_string_raw: str | None) -> tuple[str, str]:
@@ -49,7 +60,7 @@ def _norm_flag_token(s: str) -> str:
     return sl
 
 
-def _normalize_flags(flags: Any) -> list[str]:
+def _normalize_flags(flags: str | list[str] | tuple[str, ...] | None) -> list[str]:
     out: list[str] = []
     if isinstance(flags, list) or isinstance(flags, tuple):
         for f in flags:
@@ -65,7 +76,7 @@ def _normalize_flags(flags: Any) -> list[str]:
     return sorted(set(out))
 
 
-def _to_int_or_none(v: Any) -> int | None:
+def _to_int_or_none(v: object) -> int | None:
     try:
         if v is None:
             return None
@@ -79,9 +90,9 @@ def _to_int_or_none(v: Any) -> int | None:
         return None
 
 
-def parse_linux_cpuinfo_text(text: str) -> dict[str, Any]:
+def parse_linux_cpuinfo_text(text: str) -> CpuInfoDict:
     arch, raw = _normalize_arch(platform.machine())
-    info: dict[str, Any] = {
+    info: CpuInfoDict = {
         "arch": arch,
         "arch_string_raw": raw,
         "vendor_id_raw": None,
@@ -115,9 +126,9 @@ def parse_linux_cpuinfo_text(text: str) -> dict[str, Any]:
     return info
 
 
-def _linux_info() -> dict[str, Any]:
+def _linux_info() -> CpuInfoDict:
     arch, raw = _normalize_arch(platform.machine())
-    info: dict[str, Any] = {
+    info: CpuInfoDict = {
         "arch": arch,
         "arch_string_raw": raw,
         "vendor_id_raw": None,
@@ -130,8 +141,13 @@ def _linux_info() -> dict[str, Any]:
         with open("/proc/cpuinfo", encoding="utf-8", errors="ignore") as f:
             text = f.read()
         parsed = parse_linux_cpuinfo_text(text)
-        for k, v in parsed.items():
-            info[k] = v
+        info["arch"] = parsed.get("arch", info["arch"])
+        info["arch_string_raw"] = parsed.get("arch_string_raw", info["arch_string_raw"])
+        info["vendor_id_raw"] = parsed.get("vendor_id_raw", info["vendor_id_raw"])
+        info["brand_raw"] = parsed.get("brand_raw", info["brand_raw"])
+        info["family"] = parsed.get("family", info["family"])
+        info["model"] = parsed.get("model", info["model"])
+        info["flags"] = parsed.get("flags", info["flags"])
     except FileNotFoundError as e:
         logger.error("/proc/cpuinfo not found: %s", e)
     except OSError as e:
@@ -139,9 +155,9 @@ def _linux_info() -> dict[str, Any]:
     return info
 
 
-def _macos_info() -> dict[str, Any]:
+def _macos_info() -> CpuInfoDict:
     arch, raw = _normalize_arch(platform.machine())
-    info: dict[str, Any] = {
+    info: CpuInfoDict = {
         "arch": arch,
         "arch_string_raw": raw,
         "vendor_id_raw": None,
@@ -182,9 +198,9 @@ def _macos_info() -> dict[str, Any]:
     return info
 
 
-def _windows_info() -> dict[str, Any]:
+def _windows_info() -> CpuInfoDict:
     arch, raw = _normalize_arch(platform.machine())
-    info: dict[str, Any] = {
+    info: CpuInfoDict = {
         "arch": arch,
         "arch_string_raw": raw,
         "vendor_id_raw": None,
@@ -238,7 +254,6 @@ def _windows_info() -> dict[str, Any]:
         # Augment via IsProcessorFeaturePresent for reliable AVX/AVX2 detection
         try:
             import ctypes
-            from typing import cast
 
             windll = getattr(ctypes, "windll", None)
             if windll is None:
@@ -246,7 +261,7 @@ def _windows_info() -> dict[str, Any]:
             kernel32 = getattr(windll, "kernel32", None)
             if kernel32 is None:
                 raise RuntimeError("kernel32 unavailable via ctypes.windll")
-            k32 = cast(Any, kernel32)
+            k32 = kernel32
 
             def _pf(n: int) -> bool:
                 try:
@@ -279,7 +294,7 @@ def _windows_info() -> dict[str, Any]:
     return info
 
 
-def get_cpu_info() -> dict[str, Any]:
+def get_cpu_info() -> CpuInfoDict:
     sysname = platform.system().lower()
     if sysname == "linux":
         info = _linux_info()
@@ -290,7 +305,7 @@ def get_cpu_info() -> dict[str, Any]:
     else:
         # Fallback minimal
         arch, raw = _normalize_arch(platform.machine())
-        info = {
+        info: CpuInfoDict = {
             "arch": arch,
             "arch_string_raw": raw,
             "vendor_id_raw": None,
@@ -318,7 +333,6 @@ def _is_x86_64(arch_raw: str) -> bool:
 
 def _run_asm_windows(machine_code: bytes) -> int:
     import ctypes
-    from typing import cast
 
     size = len(machine_code)
     if size < 0x1000:
@@ -327,10 +341,10 @@ def _run_asm_windows(machine_code: bytes) -> int:
     PAGE_READWRITE = 0x04
     PAGE_EXECUTE = 0x10
 
-    windll = cast(Any, getattr(ctypes, "windll", None))
+    windll = getattr(ctypes, "windll", None)
     if windll is None:
         raise OSError("ctypes.windll unavailable")
-    k32 = cast(Any, getattr(windll, "kernel32", None))
+    k32 = getattr(windll, "kernel32", None)
     if k32 is None:
         raise OSError("kernel32 unavailable via ctypes.windll")
 
@@ -420,7 +434,7 @@ def _cpuid_leaf7_regs() -> tuple[int, int, int]:
     return ebx, ecx, edx
 
 
-def _augment_flags_with_cpuid(info: dict[str, Any]) -> None:
+def _augment_flags_with_cpuid(info: CpuInfoDict) -> None:
     """Augment flags with CPUID leaf7 detection for x86.
 
     Adds: avx2, avx512f, avx512_vnni/avx512vnni, avx_vnni where supported.
@@ -464,7 +478,7 @@ def _normalize_vendor(vendor: str | None) -> str:
     return v
 
 
-def map_info_to_target_cpu(info: dict[str, Any]) -> str:
+def map_info_to_target_cpu(info: CpuInfoDict) -> str:
     """Map parsed CPU info to YaneuraOu TARGET_CPU string."""
     sys_name = str(info.get("system") or platform.system()).lower()
     arch_raw = (info.get("arch_string_raw") or platform.machine()).lower()

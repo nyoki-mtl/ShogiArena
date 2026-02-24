@@ -6,7 +6,13 @@
 [![Python](https://img.shields.io/pypi/pyversions/shogiarena)](https://pypi.org/project/shogiarena/)
 [![License](https://img.shields.io/github/license/nyoki-mtl/ShogiArena)](https://github.com/nyoki-mtl/ShogiArena/blob/main/LICENSE)
 
-> **📖 [Full Documentation](https://nyoki-mtl.github.io/ShogiArena/)** | [日本語ドキュメント](README_ja.md)
+> [!NOTE]
+> **This is an active development project.** APIs, configurations, and implementations may change significantly without prior notice to accommodate development needs. Please refer to the [CHANGELOG](CHANGELOG.md) for breaking changes.
+
+**📖 Documentation:** [https://nyoki-mtl.github.io/ShogiArena/](https://nyoki-mtl.github.io/ShogiArena/) (Japanese)  
+**📄 日本語版 README:** [README_ja.md](README_ja.md)
+
+---
 
 **ShogiArena** is a comprehensive platform for shogi engine development and evaluation. It provides:
 
@@ -31,7 +37,7 @@ For development installation, see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Configuration (Optional)
 
-While not required, running `shogiarena init` is recommended for:
+While not required, running `shogiarena init` (alias for `shogiarena config init`) is recommended for:
 
 ```bash
 shogiarena init
@@ -157,12 +163,16 @@ async def compare_engines():
 
 **Programmatic Tournament Execution**
 ```python
+from pathlib import Path
+
 from shogiarena.arena.configs.tournament import ArenaConfig
 from shogiarena.arena.runners.tournament_runner import TournamentRunner
+from shogiarena.arena.storage import FilesystemRunStorage
 
 # Run tournaments programmatically with full control
 config = ArenaConfig.from_yaml("tournament.yaml")
-runner = TournamentRunner(config)
+storage = FilesystemRunStorage(Path("runs/tournament"))
+runner = TournamentRunner(config, storage=storage)
 runner.run_sync()  # or: await runner.run() for async
 ```
 

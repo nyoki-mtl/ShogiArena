@@ -2,6 +2,8 @@ import type { DashboardCore } from '@/types/dashboard';
 import type { LiveCardState } from '@/modules/live/types';
 import type { WorkerSnapshotRecord } from './types';
 import type { WorkerViewModelMessage } from '@/modules/live/services/updates/workerBridge';
+import { shouldRunEngineClock } from '@/modules/live/utils/engineStatus';
+import { getWorkerStateEntry } from './state';
 
 export interface EventHandlers {
     handleWorkerSnapshotEvent: (event: { workerIdx?: number | string; snapshot?: { data?: unknown } | null }) => void;
@@ -21,11 +23,13 @@ export interface EventDeps {
     applyByoyomiFreezeCache: (workerIdx: number, clockData: Record<string, unknown>) => void;
     updateTimeControlLabelsForWorker: (workerIdx: number, clockData: Record<string, unknown>) => void;
     startWorkerClockTimer: (workerIdx: number) => void;
+    stopWorkerClockTimer: (workerIdx: number) => void;
     updateWorkerClockDisplay: (workerIdx: number) => void;
     showNotice?: DashboardCore['showNotice'];
     state: DashboardCore['state'];
     onVm?: (vm: WorkerViewModelMessage, receivedAt: number) => void;
     setMergeWorkerActive?: (active: boolean) => void;
+    handleEngineLogEvent?: (payload: unknown) => void;
 }
 
 export interface EventSubscription {
@@ -44,16 +48,47 @@ export function createCardEventHandlers(deps: EventDeps): EventSubscription {
         applyByoyomiFreezeCache,
         updateTimeControlLabelsForWorker,
         startWorkerClockTimer,
+        stopWorkerClockTimer,
         updateWorkerClockDisplay,
         showNotice,
         state,
         onVm,
         setMergeWorkerActive,
+        handleEngineLogEvent,
     } = deps;
 
     let sseDisconnectedNotified = false;
     const cleanups: Array<() => void> = [];
     let mergeWorkerActive = false;
+    const parseSide = (value: unknown): 'black' | 'white' | null => {
+        if (typeof value !== 'string') return null;
+        const normalized = value.trim().toLowerCase();
+        if (normalized === 'black' || normalized === 'white') return normalized;
+        return null;
+    };
+    const inferIncrementSide = (clockData: Record<string, unknown>): 'black' | 'white' | null => {
+        const direct = parseSide(clockData.side);
+        if (direct) return direct;
+        const active = parseSide(clockData.active);
+        if (active === 'black') return 'white';
+        if (active === 'white') return 'black';
+        const preBlack = Number(clockData.pre_black_remain_ms);
+        const preWhite = Number(clockData.pre_white_remain_ms);
+        const postBlack = Number(clockData.black_remain_ms);
+        const postWhite = Number(clockData.white_remain_ms);
+        const hasPrePost =
+            Number.isFinite(preBlack) &&
+            Number.isFinite(preWhite) &&
+            Number.isFinite(postBlack) &&
+            Number.isFinite(postWhite);
+        if (hasPrePost) {
+            const deltaBlack = postBlack - preBlack;
+            const deltaWhite = postWhite - preWhite;
+            if (deltaBlack !== 0 && deltaWhite === 0) return 'black';
+            if (deltaWhite !== 0 && deltaBlack === 0) return 'white';
+        }
+        return null;
+    };
 
     const register = (eventName: string, handler: (payload: unknown) => void): void => {
         if (!events) return;
@@ -97,12 +132,26 @@ export function createCardEventHandlers(deps: EventDeps): EventSubscription {
         if (event.kind === 'clock_increment') {
             const inc = (clockData as { applied_increment_ms?: number; appliedIncrementMs?: number })
                 .applied_increment_ms;
-            flashIncrement(idx, clockData.side as string | undefined, Number(inc ?? clockData.appliedIncrementMs ?? 0));
-            applyByoyomiFreezeCache(idx, clockData);
+            const side = inferIncrementSide(clockData);
+            if (!mergeWorkerActive) {
+                flashIncrement(
+                    idx,
+                    (side ?? undefined) as string | undefined,
+                    Number(inc ?? clockData.appliedIncrementMs ?? 0),
+                );
+                applyByoyomiFreezeCache(idx, clockData);
+            }
         }
 
         updateTimeControlLabelsForWorker(idx, clockData);
-        startWorkerClockTimer(idx);
+        const workerState = getWorkerStateEntry(state, idx);
+        const engineStatus = workerState.engineStatus;
+        const allowClock = Boolean(engineStatus) && shouldRunEngineClock(engineStatus);
+        if (allowClock) {
+            startWorkerClockTimer(idx);
+        } else {
+            stopWorkerClockTimer(idx);
+        }
         updateWorkerClockDisplay(idx);
     };
 
@@ -142,6 +191,9 @@ export function createCardEventHandlers(deps: EventDeps): EventSubscription {
         setMergeWorkerActive?.(false);
         console.debug?.('[Live] merge worker disabled');
     });
+    if (handleEngineLogEvent) {
+        register('live:engine-log', (payload: unknown) => handleEngineLogEvent(payload));
+    }
     register('live:worker-vm', (vm: unknown) => {
         if (!vm || typeof vm !== 'object' || typeof (vm as { workerIdx?: unknown }).workerIdx !== 'number') return;
         const getNow = () =>

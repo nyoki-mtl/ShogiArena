@@ -7,15 +7,14 @@ const KIF_RESULT_LABELS: Record<number, string> = {
     3: '反則負け',
     4: '宣言勝ち',
     5: '宣言勝ち',
-    6: '持将棋',
+    6: '最大手数',
     7: '中断',
     8: '反則負け',
     9: '反則負け',
-    10: '中断',
-    11: 'ルール違反',
+    10: '持将棋',
+    11: '中断',
     12: '反則負け',
     13: '反則負け',
-    14: 'エラー (通信)',
     15: 'エラー (初期設定)',
     16: '時間切れ負け',
     17: '時間切れ負け',
@@ -25,6 +24,49 @@ const KIF_RESULT_LABELS: Record<number, string> = {
 
 export const DEFAULT_INITIAL_SFEN = 'startpos';
 export const INCREMENT_PLACEHOLDER = '\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0';
+
+type ResultContext = {
+    end_reason?: unknown;
+    meta?: unknown;
+    [key: string]: unknown;
+};
+
+type DrawCode6Reason = 'max_plies' | 'jishogi' | null;
+
+function readDrawReasonHints(context: ResultContext | null | undefined): string[] {
+    if (!context || typeof context !== 'object') return [];
+    const hints: string[] = [];
+    const pushIfString = (value: unknown): void => {
+        if (typeof value === 'string' && value.trim()) {
+            hints.push(value.trim().toLowerCase());
+        }
+    };
+
+    pushIfString(context.end_reason);
+    pushIfString(context.endReason);
+
+    const meta = context.meta;
+    if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+        const metaObj = meta as Record<string, unknown>;
+        pushIfString(metaObj.reason);
+        pushIfString(metaObj.end_reason);
+        pushIfString(metaObj.endReason);
+        pushIfString(metaObj.draw_reason);
+        pushIfString(metaObj.drawReason);
+        pushIfString(metaObj.result_detail);
+        pushIfString(metaObj.resultDetail);
+    }
+    return hints;
+}
+
+function inferDrawCode6Reason(context: ResultContext | null | undefined): DrawCode6Reason {
+    const hints = readDrawReasonHints(context);
+    if (hints.length === 0) return null;
+    const joined = hints.join(' ');
+    if (/jishogi|impasse|持将棋/.test(joined)) return 'jishogi';
+    if (/max|ply|limit|move|最大手数/.test(joined)) return 'max_plies';
+    return null;
+}
 
 export function createEmptyWorkerSnapshot(): WorkerSnapshot {
     return {
@@ -48,10 +90,16 @@ export function createEmptyWorkerSnapshot(): WorkerSnapshot {
     };
 }
 
-export function resultCodeToKifJP(code: unknown): string {
+export function resultCodeToKifJP(code: unknown, context?: ResultContext | null): string {
     const numeric = typeof code === 'string' ? Number.parseInt(code, 10) : Number(code);
     if (!Number.isFinite(numeric)) {
         return '結果不明';
+    }
+    if (numeric === 6) {
+        const reason = inferDrawCode6Reason(context);
+        if (reason === 'jishogi') return '持将棋';
+        if (reason === 'max_plies') return '最大手数';
+        return '最大手数';
     }
     return KIF_RESULT_LABELS[numeric] ?? '結果不明';
 }

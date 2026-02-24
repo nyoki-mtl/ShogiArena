@@ -6,14 +6,20 @@ import asyncio
 import concurrent.futures
 import threading
 from collections.abc import Coroutine, Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 from typing import Any, TypeVar
+
+from rshogi.core import Move
 
 from shogiarena.arena.engines.engine_factory import EngineFactory
 from shogiarena.arena.engines.usi_engine import (
     AnalysisHandle,
     AsyncUsiEngine,
+    PonderHandle,
+    PonderHitTimings,
+    ReadyTimeout,
     UsiMateResult,
 )
 from shogiarena.arena.engines.usi_engine import (
@@ -40,6 +46,34 @@ class SyncAnalysisHandle:
         fut.result()
 
 
+class SyncPonderHandle:
+    """Synchronous facade for :class:`PonderHandle`."""
+
+    def __init__(self, handle: PonderHandle, loop: asyncio.AbstractEventLoop) -> None:
+        self._handle = handle
+        self._loop = loop
+
+    @property
+    def active(self) -> bool:
+        return self._handle.active
+
+    @property
+    def predicted_move(self) -> Move | None:
+        return self._handle.predicted_move
+
+    @property
+    def requires_timings(self) -> bool:
+        return self._handle.requires_timings
+
+    def hit(self, *, timings: PonderHitTimings | None = None, timeout: float | None = None) -> UsiThinkResult:
+        fut = asyncio.run_coroutine_threadsafe(self._handle.hit(timings=timings, timeout=timeout), self._loop)
+        return fut.result()
+
+    def cancel(self, *, timeout: float | None = None) -> UsiThinkResult | None:
+        fut = asyncio.run_coroutine_threadsafe(self._handle.cancel(timeout=timeout), self._loop)
+        return fut.result()
+
+
 class SyncUsiEngine:
     """
     Blocking wrapper over :class:`AsyncUsiEngine`.
@@ -48,8 +82,15 @@ class SyncUsiEngine:
     interact with USI engines without touching ``asyncio`` primitives.
     """
 
-    def __init__(self, engine: AsyncUsiEngine) -> None:
+    def __init__(
+        self,
+        engine: AsyncUsiEngine,
+        *,
+        collect_info_strings: bool = False,
+    ) -> None:
         self._engine = engine
+        if collect_info_strings:
+            self._engine._collect_info_strings = True
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run_loop, name=f"sync-usi-{engine.name}", daemon=True)
         self._thread.start()
@@ -59,6 +100,31 @@ class SyncUsiEngine:
     # ------------------------------------------------------------------ #
     # Construction helpers
     # ------------------------------------------------------------------ #
+    @dataclass(slots=True)
+    class EngineLaunchSpec:
+        path: str | Path
+        timeout: float | None = 10.0
+        extra_options: dict[str, Any] | None = None
+        engine_name: str | None = None
+        instance_id: str | None = None
+        instance_pool: InstancePool | None = None
+        collect_info_strings: bool = False
+
+    @classmethod
+    def from_launch_spec(cls, spec: EngineLaunchSpec) -> SyncUsiEngine:
+        """Instantiate via :func:`EngineFactory.create_engine` using a spec object."""
+        timeout_value = spec.timeout if spec.timeout is not None else 10.0
+
+        return cls.from_config_path(
+            spec.path,
+            timeout=timeout_value,
+            extra_options=spec.extra_options,
+            engine_name=spec.engine_name,
+            instance_id=spec.instance_id,
+            instance_pool=spec.instance_pool,
+            collect_info_strings=spec.collect_info_strings,
+        )
+
     @classmethod
     def from_config_path(
         cls,
@@ -69,6 +135,7 @@ class SyncUsiEngine:
         engine_name: str | None = None,
         instance_id: str | None = None,
         instance_pool: InstancePool | None = None,
+        collect_info_strings: bool = False,
     ) -> SyncUsiEngine:
         """Instantiate via :func:`EngineFactory.create_engine`."""
 
@@ -95,12 +162,17 @@ class SyncUsiEngine:
         creator = threading.Thread(target=worker, name="sync-usi-create", daemon=True)
         creator.start()
         engine = future.result()
-        return cls(engine)
+        return cls(engine, collect_info_strings=collect_info_strings)
 
     @classmethod
-    def from_async_engine(cls, engine: AsyncUsiEngine) -> SyncUsiEngine:
+    def from_async_engine(
+        cls,
+        engine: AsyncUsiEngine,
+        *,
+        collect_info_strings: bool = False,
+    ) -> SyncUsiEngine:
         """Wrap an existing :class:`AsyncUsiEngine`."""
-        return cls(engine)
+        return cls(engine, collect_info_strings=collect_info_strings)
 
     # ------------------------------------------------------------------ #
     # Context manager helpers
@@ -141,7 +213,7 @@ class SyncUsiEngine:
     # ------------------------------------------------------------------ #
     # Engine command wrappers
     # ------------------------------------------------------------------ #
-    def trigger_isready(self, timeout: float | None = None) -> None:
+    def trigger_isready(self, timeout: ReadyTimeout = "default") -> None:
         self._ensure_started()
         self._run_coroutine(self._engine.trigger_isready(timeout=timeout))
 
@@ -178,7 +250,11 @@ class SyncUsiEngine:
         *,
         sfen: str,
         ply_limit: int | None = None,
+        node_limit: int | None = None,
+        infinite: bool = False,
         moves: Iterable[str] | None = None,
+        info_handler: InfoHandler | None = None,
+        wait_for_bestmove: bool | None = None,
         timeout: float | None = None,
     ) -> UsiMateResult:
         self._ensure_started()
@@ -186,7 +262,11 @@ class SyncUsiEngine:
             self._engine.think_mate(
                 sfen=sfen,
                 ply_limit=ply_limit,
+                node_limit=node_limit,
+                infinite=infinite,
                 moves=tuple(moves or ()),
+                info_handler=info_handler,
+                wait_for_bestmove=wait_for_bestmove,
                 timeout=timeout,
             )
         )
@@ -214,12 +294,66 @@ class SyncUsiEngine:
         self._ensure_started()
         return self._run_coroutine(self._engine.stop(timeout=timeout))
 
+    def start_ponder(
+        self,
+        *,
+        sfen: str,
+        request: UsiThinkRequest,
+        moves: Iterable[str] | None = None,
+        predicted_move: Move | None = None,
+        info_handler: InfoHandler | None = None,
+        enable_early_ponder: bool | None = None,
+    ) -> SyncPonderHandle:
+        self._ensure_started()
+        handle = self._run_coroutine(
+            self._engine.start_ponder(
+                sfen=sfen,
+                request=request,
+                moves=tuple(moves or ()),
+                predicted_move=predicted_move,
+                info_handler=info_handler,
+                enable_early_ponder=enable_early_ponder,
+            )
+        )
+        return SyncPonderHandle(handle, self._loop)
+
+    def ponder_hit(
+        self,
+        *,
+        timings: PonderHitTimings | None = None,
+        timeout: float | None = None,
+    ) -> UsiThinkResult:
+        self._ensure_started()
+        handle = self._engine.active_ponder
+        if handle is None:
+            raise RuntimeError("No active ponder session for ponderhit")
+        return SyncPonderHandle(handle, self._loop).hit(timings=timings, timeout=timeout)
+
+    def cancel_ponder(self, *, timeout: float | None = None) -> UsiThinkResult | None:
+        self._ensure_started()
+        handle = self._engine.active_ponder
+        if handle is None:
+            return None
+        return SyncPonderHandle(handle, self._loop).cancel(timeout=timeout)
+
     # ------------------------------------------------------------------ #
     # Data accessors
     # ------------------------------------------------------------------ #
     @property
     def name(self) -> str:
         return self._engine.name
+
+    @property
+    def is_running(self) -> bool:
+        return self._engine.is_running
+
+    @property
+    def is_ready(self) -> bool:
+        return self._engine.is_ready
+
+    @property
+    def is_thinking(self) -> bool:
+        return self._engine.is_thinking
 
     @property
     def engine_info(self) -> dict[str, str]:

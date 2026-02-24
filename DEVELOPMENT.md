@@ -299,6 +299,6 @@ The `_refs/` directory contains vendored reference implementations for learning:
 - **YaneuraOu**: USI protocol reference and engine integration
 - **cutechess**: Tournament scheduling and time control management
 - **fastshogi**: High-performance match execution patterns
-- **cshogi**: Python shogi library (type stubs in `stubs/cshogi/`)
+- **rshogi**: Python shogi library (`_refs/rshogi/` contains reference implementation)
 
 Consult these when implementing related features or understanding protocols.

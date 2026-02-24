@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-02-24
+
+### Added
+- **OpenBench integration**: Added test submission support with heartbeat and recovery flows for remote benchmark pipelines
+- **USI engine telemetry**: Added handshake logging and richer engine status visibility for dashboard diagnostics
+
+### Changed
+- **Engine runtime**: Expanded pondering, mate search, and clock handling while tightening move parsing around typed `Move` values
+- **Record pipeline**: Switched to `rshogi`-based handling and updated output formats from `psfen`/`pack` to `psv`/`sbinpack`
+- **Type safety**: Strengthened configuration and runtime payload validation with broader `TypedDict`/Pydantic usage
+
+### Removed
+- **Legacy record modules**: Dropped KIF support and deprecated parser/exporter paths in favor of the new record stack
+
 ## [0.1.2] - 2026-01-28
 
 ### Changed
@@ -50,7 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Model paths**: Recommend `{engine_dir}/...` or absolute paths for models/evals
 - **License**: Added MIT License with GPL-3.0 dependency notice for `cshogi`
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.2.0
 [0.1.2]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.1.2
 [0.1.1]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.1.1
 [0.1.0]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.1.0

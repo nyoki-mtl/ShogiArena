@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from aiohttp import WSMsgType, web
@@ -63,7 +63,7 @@ class SpsaStreams:
             logger.debug("%s SSE client disconnected before start: %s", log_context, exc)
             return False
 
-    def _progress_payload(self, updates: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    def _progress_payload(self, updates: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any]:
         snapshot = self._data_service.compute_progress_snapshot(updates or [])
         completed = snapshot.get("completed", 0) or 0
         total = snapshot.get("total")
@@ -351,7 +351,7 @@ class SpsaStreams:
         last_heartbeat = time.monotonic()
         last_signatures: dict[int, str | None] = dict.fromkeys(targets)
 
-        def compute_ltc_wdl(games: list[dict[str, Any]]) -> dict[str, int]:
+        def compute_ltc_wdl(games: Sequence[Mapping[str, Any]]) -> dict[str, int]:
             tuned_wins = 0
             baseline_wins = 0
             draws = 0
@@ -555,7 +555,7 @@ class SpsaStreams:
                         detail = self._data_service.build_update_detail(target_idx)
                     except ValueError:
                         continue
-                    filtered = apply_detail_view(detail, detail_view)
+                    filtered = apply_detail_view({**detail}, detail_view)
                     signature = self._signature_for_detail(filtered)
                     if send_initial or signature != last_signatures.get(target_idx):
                         batch.append(filtered)
@@ -659,7 +659,7 @@ class SpsaStreams:
             while True:
                 updates = self._data_service.load_index_updates()
                 if updates:
-                    changed: list[dict[str, Any]] = []
+                    changed: list[Mapping[str, Any]] = []
                     for entry in updates:
                         idx_value = entry.get("update_idx")
                         if not isinstance(idx_value, int):

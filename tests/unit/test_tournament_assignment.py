@@ -5,6 +5,7 @@ import pytest
 
 from shogiarena.arena.configs.tournament import GameSpec
 from shogiarena.arena.runners.tournament_runner import TournamentRunner
+from shogiarena.arena.storage import TempRunStorage
 
 
 class DummyPool:
@@ -23,8 +24,11 @@ class DummyPool:
 
 def make_runner_with_schedule(spec: GameSpec) -> TournamentRunner:
     runner = object.__new__(TournamentRunner)
+    runner._storage = TempRunStorage()
+    runner.run_dir = runner._storage.run_dir
     runner.instance_pool = DummyPool()
     runner._reschedule_lock = asyncio.Lock()
+    runner._dashboard_enabled = False
     runner.completed_game_ids = set()
     runner.cancelled_game_ids = set()
     runner.game_schedule = [spec]

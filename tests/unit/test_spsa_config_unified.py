@@ -7,6 +7,7 @@ from shogiarena.arena.configs.spsa import load_config_yaml
 from shogiarena.arena.engines.time_control import TimeControlLimits
 from shogiarena.arena.orchestrators.spsa_orchestrator import SpsaOrchestrator
 from shogiarena.arena.session import LifecycleHooksBase, SessionContext
+from shogiarena.arena.storage import FilesystemRunStorage
 
 
 def write(tmp: Path, rel: str, content: str) -> Path:
@@ -33,7 +34,7 @@ def test_spsa_engine_initializes_with_global_time_control(tmp_path: Path) -> Non
         f"""
         experiment_name: exp
         engines:
-          - engine_config: "{eng_yaml}"
+          - engine_path: "{eng_yaml}"
             name: test
         rules:
           initial_positions:
@@ -52,7 +53,8 @@ def test_spsa_engine_initializes_with_global_time_control(tmp_path: Path) -> Non
 
     cfg = load_config_yaml(str(cfg_yaml))
     # Ensure orchestrator initializes with global time_control only
-    session = SessionContext.build(run_dir=tmp_path, num_workers=1, run_id="test")
+    storage = FilesystemRunStorage(tmp_path)
+    session = SessionContext.build(storage=storage, num_workers=1, run_id="test")
     orch = SpsaOrchestrator(cfg, session=session, hooks=LifecycleHooksBase())
     assert orch is not None
 
@@ -76,7 +78,7 @@ def test_spsa_engine_with_time_control_initializes(tmp_path: Path) -> None:
         f"""
         experiment_name: exp
         engines:
-          - engine_config: "{eng_yaml}"
+          - engine_path: "{eng_yaml}"
             name: test
         rules:
           initial_positions:
@@ -92,7 +94,8 @@ def test_spsa_engine_with_time_control_initializes(tmp_path: Path) -> None:
     write(tmp_path, "params.txt", "# empty\n")
 
     cfg = load_config_yaml(str(cfg_yaml))
-    session = SessionContext.build(run_dir=tmp_path, num_workers=1, run_id="test")
+    storage = FilesystemRunStorage(tmp_path)
+    session = SessionContext.build(storage=storage, num_workers=1, run_id="test")
     orch = SpsaOrchestrator(cfg, session=session, hooks=LifecycleHooksBase())
     assert orch is not None
 
@@ -113,7 +116,7 @@ def test_spsa_ltc_regression_config(tmp_path: Path) -> None:
         f"""
         experiment_name: exp
         engines:
-          - engine_config: "{eng_yaml}"
+          - engine_path: "{eng_yaml}"
             name: test
         rules:
           initial_positions:
@@ -173,7 +176,7 @@ def test_ltc_regression_rejects_removed_fail_action(tmp_path):
         f"""
         experiment_name: exp
         engines:
-          - engine_config: "{engine_yaml}"
+          - engine_path: "{engine_yaml}"
             name: test
         rules:
           initial_positions:

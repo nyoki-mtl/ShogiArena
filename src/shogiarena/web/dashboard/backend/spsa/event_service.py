@@ -6,19 +6,27 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from shogiarena.db import ShogiDB
+from shogiarena.arena.orchestrators.spsa.event_types import SpsaEvent
+from shogiarena.db import ShogiRepository
 from shogiarena.db.models import Game
+from shogiarena.records.storage.db_store import DBRecordStore
 
 from .store import SpsaStore
+from .types import (
+    GameBriefEntry,
+    LtcRegressionDetail,
+    UpdateDetailResponse,
+    UpdateEntry,
+    WdlCounts,
+)
 from .utils import (
     coerce_float,
     coerce_int,
-    coerce_timestamp_ms,
     extract_variant_from_game_id,
     format_variant_label,
     resolve_variant_id,
@@ -36,21 +44,21 @@ class SpsaEventService:
         *,
         store: SpsaStore,
         ensure_shogidb: Callable[[], None],
-        shogidb_supplier: Callable[[], ShogiDB | None],
+        shogidb_supplier: Callable[[], ShogiRepository | None],
     ) -> None:
         self._store = store
         self._ensure_shogidb = ensure_shogidb
         self._get_shogidb = shogidb_supplier
 
     @staticmethod
-    def _normalize_non_negative_idx(value: Any) -> int | None:
+    def _normalize_non_negative_idx(value: object) -> int | None:
         """Normalize update indices to non-negative integers (baseline anchored at #0)."""
         normalized = coerce_int(value)
         if normalized is None:
             return None
         return max(0, normalized)
 
-    def build_update_detail(self, idx: int) -> dict[str, Any]:
+    def build_update_detail(self, idx: int) -> UpdateDetailResponse:
         """Build detailed information about a specific SPSA update."""
 
         events = self._store.load_event_entries()
@@ -61,10 +69,10 @@ class SpsaEventService:
         variant_id: str | None = None
         wins = losses = draws = 0
         game_ids: list[str] = []
-        games_meta: dict[str, dict[str, Any]] = {}
+        games_meta: dict[str, dict[str, Any]] = {}  # I/O boundary: イベントから集約する中間状態
         games_order: list[str] = []
         ltc_game_ids: list[str] = []
-        ltc_games_meta: dict[str, dict[str, Any]] = {}
+        ltc_games_meta: dict[str, dict[str, Any]] = {}  # I/O boundary: LTC イベントから集約する中間状態
         ltc_games_order: list[str] = []
         ltc_event_count = 0
         ltc_game_event_count = 0
@@ -77,45 +85,39 @@ class SpsaEventService:
         gain_c_k: float | None = None
         gain_a_k: float | None = None
         is_pending = True
-        phase_wdl: dict[str, dict[str, int]] = {
-            "plus": {"wins": 0, "losses": 0, "draws": 0},
-            "minus": {"wins": 0, "losses": 0, "draws": 0},
+        phase_wdl: dict[str, WdlCounts] = {
+            "plus": WdlCounts(wins=0, losses=0, draws=0),
+            "minus": WdlCounts(wins=0, losses=0, draws=0),
         }
-        ltc_regression: dict[str, Any] | None = None
+        ltc_regression: LtcRegressionDetail | None = None
 
-        def ensure_ltc_detail() -> dict[str, Any]:
+        def ensure_ltc_detail() -> LtcRegressionDetail:
             nonlocal ltc_regression
             if not isinstance(ltc_regression, dict):
-                ltc_regression = {
-                    "status": "pending",
-                    "tuned_wins": 0,
-                    "baseline_wins": 0,
-                    "draws": 0,
-                    "total_games": 0,
-                    "total_pairs": None,
-                    "winrate": None,
-                    "elo": None,
-                    "pairs_played": None,
-                    "accepted": None,
-                    "baseline_update_idx": None,
-                    "baseline_variant_token": None,
-                    "tuned_variant_token": None,
-                    "started_at": None,
-                    "completed_at": None,
-                    "fail_reasons": [],
-                    "sprt": None,
-                    "sprt_decision": None,
-                }
+                ltc_regression = LtcRegressionDetail(
+                    status="pending",
+                    tuned_wins=0,
+                    baseline_wins=0,
+                    draws=0,
+                    total_games=0,
+                    total_pairs=None,
+                    winrate=None,
+                    elo=None,
+                    pairs_played=None,
+                    accepted=None,
+                    baseline_update_idx=None,
+                    baseline_variant_token=None,
+                    tuned_variant_token=None,
+                    started_at=None,
+                    completed_at=None,
+                    fail_reasons=[],
+                    sprt=None,
+                    sprt_decision=None,
+                )
             return ltc_regression
 
-        def is_ltc_event(event: Mapping[str, Any]) -> bool:
-            ltc_flag = event.get("ltc")
-            if isinstance(ltc_flag, bool) and ltc_flag:
-                return True
-            family = event.get("family")
-            if isinstance(family, str) and family.strip().lower() == "ltc":
-                return True
-            return False
+        def is_ltc_event(event: SpsaEvent) -> bool:
+            return event.get("ltc", False) or event.get("family", "").strip().lower() == "ltc"
 
         def register_game_record(game_id: str) -> dict[str, Any]:
             entry = games_meta.get(game_id)
@@ -134,88 +136,63 @@ class SpsaEventService:
             return entry
 
         for event in events:
-            if event.get("event") == "update_pending" and int(event.get("update_idx", -1)) == idx:
-                params_payload = event.get("params")
-                if isinstance(params_payload, dict):
-                    params = {
-                        str(key): coerced
-                        for key, value in params_payload.items()
-                        if (coerced := coerce_float(value)) is not None
-                    }
+            if event.get("event") == "update_pending" and event.get("update_idx", -1) == idx:
+                params_val = event.get("params")
+                if params_val is not None:
+                    params = dict(params_val)
                     variant_id = format_variant_label(idx)
-                perturb_payload = event.get("perturbations")
-                if isinstance(perturb_payload, dict):
-                    perturbations = perturb_payload
-                ck_value = coerce_float(event.get("c_k"))
-                if ck_value is not None:
-                    gain_c_k = ck_value
-                ak_value = coerce_float(event.get("a_k"))
-                if ak_value is not None:
-                    gain_a_k = ak_value
-            elif event.get("event") == "update" and int(event.get("update_idx", -1)) == idx:
-                params_payload = event.get("params")
-                if isinstance(params_payload, dict):
-                    params = {
-                        str(key): coerced
-                        for key, value in params_payload.items()
-                        if (coerced := coerce_float(value)) is not None
-                    }
+                perturb_val = event.get("perturbations")
+                if perturb_val is not None:
+                    perturbations = perturb_val
+                if (val := event.get("c_k")) is not None:
+                    gain_c_k = val
+                if (val := event.get("a_k")) is not None:
+                    gain_a_k = val
+            elif event.get("event") == "update" and event.get("update_idx", -1) == idx:
+                params_val = event.get("params")
+                if params_val is not None:
+                    params = dict(params_val)
                     variant_id = format_variant_label(idx)
 
-                grads_payload = event.get("gradients")
-                if isinstance(grads_payload, dict):
-                    grads = {
-                        str(key): coerced
-                        for key, value in grads_payload.items()
-                        if (coerced := coerce_float(value)) is not None
-                    }
+                grads_val = event.get("gradients")
+                if grads_val is not None:
+                    grads = dict(grads_val)
 
-                deltas_payload = event.get("deltas")
-                if isinstance(deltas_payload, dict):
-                    deltas = {
-                        str(key): coerced
-                        for key, value in deltas_payload.items()
-                        if (coerced := coerce_float(value)) is not None
-                    }
+                deltas_val = event.get("deltas")
+                if deltas_val is not None:
+                    deltas = dict(deltas_val)
 
-                s_plus_value = coerce_float(event.get("s_plus"))
-                if s_plus_value is not None:
-                    s_plus = s_plus_value
-                s_minus_value = coerce_float(event.get("s_minus"))
-                if s_minus_value is not None:
-                    s_minus = s_minus_value
-                step_value = coerce_float(event.get("step"))
-                if step_value is not None:
-                    step = step_value
-                perturb_payload = event.get("perturbations")
-                if isinstance(perturb_payload, dict):
-                    perturbations = perturb_payload
-                ck_value = coerce_float(event.get("c_k"))
-                if ck_value is not None:
-                    gain_c_k = ck_value
-                ak_value = coerce_float(event.get("a_k"))
-                if ak_value is not None:
-                    gain_a_k = ak_value
+                if (val := event.get("s_plus")) is not None:
+                    s_plus = val
+                if (val := event.get("s_minus")) is not None:
+                    s_minus = val
+                if (val := event.get("step")) is not None:
+                    step = val
+                perturb_val = event.get("perturbations")
+                if perturb_val is not None:
+                    perturbations = perturb_val
+                if (val := event.get("c_k")) is not None:
+                    gain_c_k = val
+                if (val := event.get("a_k")) is not None:
+                    gain_a_k = val
                 is_pending = False
-            elif event.get("event") == "update_perturbation" and int(event.get("update_idx", -1)) == idx:
-                perturb_payload = event.get("perturbations")
-                if isinstance(perturb_payload, dict):
-                    perturbations = perturb_payload
-                ck_value = coerce_float(event.get("c_k"))
-                if ck_value is not None:
-                    gain_c_k = ck_value
-                ak_value = coerce_float(event.get("a_k"))
-                if ak_value is not None:
-                    gain_a_k = ak_value
+            elif event.get("event") == "update_perturbation" and event.get("update_idx", -1) == idx:
+                perturb_val = event.get("perturbations")
+                if perturb_val is not None:
+                    perturbations = perturb_val
+                if (val := event.get("c_k")) is not None:
+                    gain_c_k = val
+                if (val := event.get("a_k")) is not None:
+                    gain_a_k = val
 
-            elif event.get("event") == "ltc_regression_start" and int(event.get("update_idx", -1)) == idx:
+            elif event.get("event") == "ltc_regression_start" and event.get("update_idx", -1) == idx:
                 ltc_event_count += 1
                 ltc_entry = ensure_ltc_detail()
                 ltc_entry["status"] = "running"
-                total_pairs_val = event.get("total_pairs")
-                if isinstance(total_pairs_val, int | float):
-                    ltc_entry["total_pairs"] = int(total_pairs_val)
-                if (ts := coerce_timestamp_ms(event.get("timestamp") or event.get("ts"))) is not None:
+                if (val := event.get("total_pairs")) is not None:
+                    ltc_entry["total_pairs"] = val
+                ts = event.get("ts")
+                if ts is not None:
                     ltc_entry["started_at"] = ts
                 ltc_entry["tuned_wins"] = 0
                 ltc_entry["baseline_wins"] = 0
@@ -225,73 +202,67 @@ class SpsaEventService:
                 ltc_entry["sprt"] = None
                 ltc_entry["sprt_decision"] = None
 
-            elif event.get("event") == "ltc_regression_result" and int(event.get("update_idx", -1)) == idx:
+            elif event.get("event") == "ltc_regression_result" and event.get("update_idx", -1) == idx:
                 ltc_event_count += 1
                 ltc_entry = ensure_ltc_detail()
                 status_val = event.get("status")
-                if isinstance(status_val, str):
+                if status_val is not None:
                     ltc_entry["status"] = status_val.strip()
-                elif status_val is not None:
-                    ltc_entry["status"] = status_val
-                winrate_val = coerce_float(event.get("winrate"))
-                if winrate_val is not None:
+                if (winrate_val := event.get("winrate")) is not None:
                     ltc_entry["winrate"] = winrate_val
-                elo_val = coerce_float(event.get("elo"))
-                if elo_val is not None:
+                if (elo_val := event.get("elo")) is not None:
                     ltc_entry["elo"] = elo_val
                 tuned_wins_val = event.get("tuned_wins")
                 baseline_wins_val = event.get("baseline_wins")
                 draws_val = event.get("draws")
                 total_games_val = event.get("total_games")
-                ltc_entry["tuned_wins"] = int(tuned_wins_val) if isinstance(tuned_wins_val, int | float) else 0
-                ltc_entry["baseline_wins"] = int(baseline_wins_val) if isinstance(baseline_wins_val, int | float) else 0
-                ltc_entry["draws"] = int(draws_val) if isinstance(draws_val, int | float) else 0
-                if isinstance(total_games_val, int | float):
-                    ltc_entry["total_games"] = int(total_games_val)
+                ltc_entry["tuned_wins"] = tuned_wins_val if tuned_wins_val is not None else 0
+                ltc_entry["baseline_wins"] = baseline_wins_val if baseline_wins_val is not None else 0
+                ltc_entry["draws"] = draws_val if draws_val is not None else 0
+                if total_games_val is not None:
+                    ltc_entry["total_games"] = total_games_val
                 else:
                     ltc_entry["total_games"] = (
                         ltc_entry.get("tuned_wins", 0) + ltc_entry.get("baseline_wins", 0) + ltc_entry.get("draws", 0)
                     )
-                pairs_played_val = event.get("pairs_played")
-                if isinstance(pairs_played_val, int | float):
-                    ltc_entry["pairs_played"] = int(pairs_played_val)
-                accepted_val = event.get("accepted")
-                if isinstance(accepted_val, bool):
+                if (val := event.get("pairs_played")) is not None:
+                    ltc_entry["pairs_played"] = val
+                if (accepted_val := event.get("accepted")) is not None:
                     ltc_entry["accepted"] = accepted_val
                 baseline_idx_val = event.get("baseline_update_idx")
                 normalized_baseline_idx = self._normalize_non_negative_idx(baseline_idx_val)
                 if normalized_baseline_idx is not None:
                     ltc_entry["baseline_update_idx"] = normalized_baseline_idx
-                baseline_token_val = event.get("baseline_variant_token")
-                if isinstance(baseline_token_val, str):
-                    ltc_entry["baseline_variant_token"] = baseline_token_val
-                tuned_token_val = event.get("tuned_variant_token")
-                if isinstance(tuned_token_val, str):
-                    ltc_entry["tuned_variant_token"] = tuned_token_val
+                if (val := event.get("baseline_variant_token")) is not None:
+                    ltc_entry["baseline_variant_token"] = val
+                if (val := event.get("tuned_variant_token")) is not None:
+                    ltc_entry["tuned_variant_token"] = val
                 fail_reasons_val = event.get("fail_reasons")
-                if isinstance(fail_reasons_val, list):
+                if fail_reasons_val is not None:
                     ltc_entry["fail_reasons"] = [str(reason) for reason in fail_reasons_val if reason is not None]
                 sprt_val = event.get("sprt")
                 if isinstance(sprt_val, dict):
                     ltc_entry["sprt"] = sprt_val
                 sprt_decision_val = event.get("sprt_decision")
-                if isinstance(sprt_decision_val, str):
+                if sprt_decision_val is not None:
                     ltc_entry["sprt_decision"] = sprt_decision_val
-                elif isinstance(ltc_entry.get("sprt"), dict):
-                    decision = ltc_entry["sprt"].get("decision")
-                    if isinstance(decision, str):
-                        ltc_entry["sprt_decision"] = decision
-                completed_ts = coerce_timestamp_ms(event.get("timestamp") or event.get("ts"))
+                else:
+                    sprt_stored = ltc_entry.get("sprt")
+                    if isinstance(sprt_stored, dict):
+                        decision = sprt_stored.get("decision")
+                        if isinstance(decision, str):
+                            ltc_entry["sprt_decision"] = decision
+                completed_ts = event.get("ts")
                 if completed_ts is not None:
                     ltc_entry["completed_at"] = completed_ts
 
-            elif event.get("event") == "game_result" and int(event.get("update_idx", -1)) == idx:
+            elif event.get("event") == "game_result" and event.get("update_idx", -1) == idx:
                 if is_ltc_event(event):
                     ltc_event_count += 1
                     ltc_game_event_count += 1
                     ltc_entry = ensure_ltc_detail()
                     if ltc_entry.get("started_at") is None:
-                        started_ts = coerce_timestamp_ms(event.get("start_time") or event.get("ts"))
+                        started_ts = event.get("ts")
                         if started_ts is not None:
                             ltc_entry["started_at"] = started_ts
                     winner = event.get("winner")
@@ -302,57 +273,47 @@ class SpsaEventService:
                     else:
                         ltc_entry["draws"] = int(ltc_entry.get("draws", 0)) + 1
                     ltc_entry["total_games"] = int(ltc_entry.get("total_games", 0)) + 1
-                    ltc_gid_raw = event.get("game_id")
-                    ltc_gid = str(ltc_gid_raw).strip() if isinstance(ltc_gid_raw, str) else ""
+                    ltc_gid = (event.get("game_id") or "").strip()
                     if ltc_gid:
                         ltc_game_ids.append(ltc_gid)
                         record = register_ltc_game_record(ltc_gid)
-                        if isinstance(event.get("black_player"), str):
-                            record["black_player"] = event["black_player"]
-                        if isinstance(event.get("white_player"), str):
-                            record["white_player"] = event["white_player"]
-                        rc_value = coerce_float(event.get("result_code"))
-                        record["result_code"] = int(rc_value) if rc_value is not None else None
-                        moves_value = coerce_float(event.get("num_moves"))
-                        record["num_moves"] = int(moves_value) if moves_value is not None else None
+                        if (val := event.get("black_player")) is not None:
+                            record["black_player"] = val
+                        if (val := event.get("white_player")) is not None:
+                            record["white_player"] = val
+                        record["result_code"] = event.get("result_code")
+                        record["num_moves"] = event.get("num_moves")
                         record["status"] = "completed"
-                        if isinstance(event.get("variant_token"), str):
-                            record["variant_id"] = event["variant_token"]
-                        tuned_token_val = event.get("tuned_variant_token")
-                        if isinstance(tuned_token_val, str):
-                            record["variant_token"] = tuned_token_val
-                        baseline_token_val = event.get("baseline_variant_token")
-                        if isinstance(baseline_token_val, str):
-                            record["baseline_variant_token"] = baseline_token_val
-                        if isinstance(event.get("phase"), str):
-                            record["phase"] = event["phase"]
-                        if isinstance(event.get("start_time"), str):
-                            record["start_time"] = event["start_time"]
-                        if isinstance(event.get("end_time"), str):
-                            record["end_time"] = event["end_time"]
-                        assigned_instance = event.get("assigned_instance")
-                        if isinstance(assigned_instance, str):
-                            record["assigned_instance"] = assigned_instance
-                        round_val = coerce_float(event.get("round"))
-                        if round_val is not None:
-                            record["round"] = int(round_val)
+                        if (val := event.get("variant_token")) is not None:
+                            record["variant_id"] = val
+                        if (val := event.get("tuned_variant_token")) is not None:
+                            record["variant_token"] = val
+                        if (val := event.get("baseline_variant_token")) is not None:
+                            record["baseline_variant_token"] = val
+                        if (val := event.get("phase")) is not None:
+                            record["phase"] = val
+                        if (val := event.get("start_time")) is not None:
+                            record["start_time"] = val
+                        if (val := event.get("end_time")) is not None:
+                            record["end_time"] = val
+                        if (val := event.get("assigned_instance")) is not None:
+                            record["assigned_instance"] = val
+                        if (val := event.get("round")) is not None:
+                            record["round"] = val
                     continue
-                gid_raw = event.get("game_id")
-                gid = str(gid_raw).strip() if isinstance(gid_raw, str) else ""
+                gid = (event.get("game_id") or "").strip()
                 if gid:
                     game_ids.append(gid)
                     record = register_game_record(gid)
-                    if isinstance(event.get("black_player"), str):
-                        record["black_player"] = event["black_player"]
-                    if isinstance(event.get("white_player"), str):
-                        record["white_player"] = event["white_player"]
-                    rc_value = coerce_float(event.get("result_code"))
-                    record["result_code"] = int(rc_value) if rc_value is not None else None
-                    moves_value = coerce_float(event.get("num_moves"))
-                    record["num_moves"] = int(moves_value) if moves_value is not None else None
+                    if (val := event.get("black_player")) is not None:
+                        record["black_player"] = val
+                    if (val := event.get("white_player")) is not None:
+                        record["white_player"] = val
+                    record["result_code"] = event.get("result_code")
+                    record["num_moves"] = event.get("num_moves")
                     record["status"] = "completed"
-                    if isinstance(event.get("end_time"), str):
-                        record["end_time"] = event["end_time"]
+                    if (val := event.get("end_time")) is not None:
+                        record["end_time"] = val
                 winner = event.get("winner")
                 if winner == 1:
                     wins += 1
@@ -361,11 +322,11 @@ class SpsaEventService:
                 else:
                     draws += 1
 
-                phase_key_raw = event.get("phase")
-                phase_key = str(phase_key_raw).strip().lower() if isinstance(phase_key_raw, str) else None
+                phase_raw = event.get("phase")
+                phase_key = phase_raw.strip().lower() if phase_raw else None
                 if not phase_key:
                     phase_key = "unknown"
-                bucket = phase_wdl.setdefault(phase_key, {"wins": 0, "losses": 0, "draws": 0})
+                bucket = phase_wdl.setdefault(phase_key, WdlCounts(wins=0, losses=0, draws=0))
                 if winner == 1:
                     bucket["wins"] = bucket.get("wins", 0) + 1
                 elif winner == 0:
@@ -373,61 +334,53 @@ class SpsaEventService:
                 else:
                     bucket["draws"] = bucket.get("draws", 0) + 1
 
-            elif event.get("event") == "game_scheduled" and int(event.get("update_idx", -1)) == idx:
+            elif event.get("event") == "game_scheduled" and event.get("update_idx", -1) == idx:
                 if is_ltc_event(event):
                     ltc_event_count += 1
                     ltc_game_event_count += 1
-                    ltc_gid_raw = event.get("game_id")
-                    ltc_gid = str(ltc_gid_raw).strip() if isinstance(ltc_gid_raw, str) else ""
+                    ltc_gid = (event.get("game_id") or "").strip()
                     if not ltc_gid:
                         continue
                     record = register_ltc_game_record(ltc_gid)
-                    if isinstance(event.get("black_player"), str):
-                        record["black_player"] = event["black_player"]
-                    if isinstance(event.get("white_player"), str):
-                        record["white_player"] = event["white_player"]
-                    if isinstance(event.get("variant_token"), str):
-                        record["variant_id"] = event["variant_token"]
-                    tuned_token_val = event.get("tuned_variant_token")
-                    if isinstance(tuned_token_val, str):
-                        record["variant_token"] = tuned_token_val
-                    baseline_token_val = event.get("baseline_variant_token")
-                    if isinstance(baseline_token_val, str):
-                        record["baseline_variant_token"] = baseline_token_val
-                    if isinstance(event.get("phase"), str):
-                        record["phase"] = event["phase"]
-                    assigned = event.get("assigned_instance")
-                    if isinstance(assigned, str):
-                        record["assigned_instance"] = assigned
-                    status_value = str(event.get("status") or "pending").strip().lower()
+                    if (val := event.get("black_player")) is not None:
+                        record["black_player"] = val
+                    if (val := event.get("white_player")) is not None:
+                        record["white_player"] = val
+                    if (val := event.get("variant_token")) is not None:
+                        record["variant_id"] = val
+                    if (val := event.get("tuned_variant_token")) is not None:
+                        record["variant_token"] = val
+                    if (val := event.get("baseline_variant_token")) is not None:
+                        record["baseline_variant_token"] = val
+                    if (val := event.get("phase")) is not None:
+                        record["phase"] = val
+                    if (val := event.get("assigned_instance")) is not None:
+                        record["assigned_instance"] = val
+                    status_value = (event.get("status") or "pending").strip().lower()
                     record["status"] = status_value or "pending"
-                    start_time = event.get("start_time")
-                    if isinstance(start_time, str):
-                        record["start_time"] = start_time
+                    if (val := event.get("start_time")) is not None:
+                        record["start_time"] = val
                     record.setdefault("result_code", None)
                     record.setdefault("num_moves", None)
                     continue
-                gid_raw = event.get("game_id")
-                gid = str(gid_raw).strip() if isinstance(gid_raw, str) else ""
+                gid = (event.get("game_id") or "").strip()
                 if not gid:
                     continue
                 record = register_game_record(gid)
-                if isinstance(event.get("black_player"), str):
-                    record["black_player"] = event["black_player"]
-                if isinstance(event.get("white_player"), str):
-                    record["white_player"] = event["white_player"]
-                if isinstance(event.get("variant_token"), str):
-                    record["variant_id"] = event["variant_token"]
-                if isinstance(event.get("phase"), str):
-                    record["phase"] = event["phase"]
-                assigned = event.get("assigned_instance")
-                if isinstance(assigned, str):
-                    record["assigned_instance"] = assigned
-                status_value = str(event.get("status") or "pending").strip().lower()
+                if (val := event.get("black_player")) is not None:
+                    record["black_player"] = val
+                if (val := event.get("white_player")) is not None:
+                    record["white_player"] = val
+                if (val := event.get("variant_token")) is not None:
+                    record["variant_id"] = val
+                if (val := event.get("phase")) is not None:
+                    record["phase"] = val
+                if (val := event.get("assigned_instance")) is not None:
+                    record["assigned_instance"] = val
+                status_value = (event.get("status") or "pending").strip().lower()
                 record["status"] = status_value or "pending"
-                start_time = event.get("start_time")
-                if isinstance(start_time, str):
-                    record["start_time"] = start_time
+                if (val := event.get("start_time")) is not None:
+                    record["start_time"] = val
                 record.setdefault("result_code", None)
                 record.setdefault("num_moves", None)
 
@@ -458,20 +411,24 @@ class SpsaEventService:
         self._ensure_shogidb()
         shogidb = self._get_shogidb()
 
-        def hydrate_ltc_records_from_shogidb(db: ShogiDB, game_ids: list[str]) -> None:
+        def hydrate_ltc_records_from_shogidb(db: ShogiRepository, game_ids: list[str]) -> None:
+            record_store = DBRecordStore(db)
             for gid in game_ids[:50]:
-                game_info = db.export_to_game_info(game_name=gid)
-                if game_info is None:
+                game_record = record_store.load(game_name=gid)
+                if game_record is None:
                     continue
                 record = register_ltc_game_record(gid)
-                if isinstance(game_info.black_player_name, str):
-                    record.setdefault("black_player", game_info.black_player_name)
-                if isinstance(game_info.white_player_name, str):
-                    record.setdefault("white_player", game_info.white_player_name)
-                if game_info.game_result is not None:
-                    record.setdefault("result_code", int(game_info.game_result))
-                if game_info.num_moves is not None:
-                    record.setdefault("num_moves", int(game_info.num_moves))
+                black_player = game_record.metadata.black_player
+                if isinstance(black_player, str):
+                    record.setdefault("black_player", black_player)
+                white_player = game_record.metadata.white_player
+                if isinstance(white_player, str):
+                    record.setdefault("white_player", white_player)
+                result = game_record.result
+                result_code = result.value if result is not None else None
+                if result_code is not None:
+                    record.setdefault("result_code", result_code)
+                record.setdefault("num_moves", len(game_record.moves))
                 meta_snapshot = self.get_game_event_snapshot(gid)
                 phase_value = meta_snapshot.get("phase") if isinstance(meta_snapshot, dict) else None
                 update_idx_value = meta_snapshot.get("update_idx") if isinstance(meta_snapshot, dict) else None
@@ -483,23 +440,25 @@ class SpsaEventService:
                 if isinstance(phase_value, str):
                     record.setdefault("phase", phase_value)
                 record.setdefault("status", "completed")
-                start_dt = getattr(game_info, "start_date", None)
-                if isinstance(start_dt, datetime):
-                    record.setdefault("start_time", start_dt.isoformat())
-                end_dt = getattr(game_info, "end_date", None)
-                if isinstance(end_dt, datetime):
-                    record.setdefault("end_time", end_dt.isoformat())
+                start_time = game_record.metadata.start_date
+                if isinstance(start_time, str) and start_time.strip():
+                    record.setdefault("start_time", start_time)
+                end_time = game_record.metadata.end_date
+                if isinstance(end_time, str) and end_time.strip():
+                    record.setdefault("end_time", end_time)
 
         if shogidb is not None and game_ids:
+            record_store = DBRecordStore(shogidb)
             for gid in game_ids[:50]:
-                game_info = shogidb.export_to_game_info(game_name=gid)
-                if game_info is None:
+                game_record = record_store.load(game_name=gid)
+                if game_record is None:
                     continue
                 record = register_game_record(gid)
-                record["black_player"] = game_info.black_player_name
-                record["white_player"] = game_info.white_player_name
-                record["result_code"] = int(game_info.game_result) if game_info.game_result is not None else None
-                record["num_moves"] = game_info.num_moves
+                record["black_player"] = game_record.metadata.black_player
+                record["white_player"] = game_record.metadata.white_player
+                result = game_record.result
+                record["result_code"] = result.value if result is not None else None
+                record["num_moves"] = len(game_record.moves)
                 meta_snapshot = self.get_game_event_snapshot(gid)
                 phase_value = meta_snapshot.get("phase") if isinstance(meta_snapshot, dict) else None
                 update_idx_value = meta_snapshot.get("update_idx") if isinstance(meta_snapshot, dict) else None
@@ -510,12 +469,12 @@ class SpsaEventService:
                 if isinstance(phase_value, str):
                     record["phase"] = phase_value
                 record["status"] = record.get("status") or "completed"
-                start_dt = getattr(game_info, "start_date", None)
-                if isinstance(start_dt, datetime):
-                    record["start_time"] = start_dt.isoformat()
-                end_dt = getattr(game_info, "end_date", None)
-                if isinstance(end_dt, datetime):
-                    record["end_time"] = end_dt.isoformat()
+                start_time = game_record.metadata.start_date
+                if isinstance(start_time, str) and start_time.strip():
+                    record["start_time"] = start_time
+                end_time = game_record.metadata.end_date
+                if isinstance(end_time, str) and end_time.strip():
+                    record["end_time"] = end_time
 
         if shogidb is not None and not ltc_game_ids:
             try:
@@ -535,56 +494,55 @@ class SpsaEventService:
         if shogidb is not None and ltc_game_ids:
             hydrate_ltc_records_from_shogidb(shogidb, ltc_game_ids)
 
-        games_brief: list[dict[str, Any]] = []
+        games_brief: list[GameBriefEntry] = []
         for gid in games_order:
             record_entry = games_meta.get(gid)
             if record_entry is None:
                 continue
-            base_game: dict[str, Any] = record_entry
             games_brief.append(
-                {
-                    "game_id": gid,
-                    "black_player": base_game.get("black_player"),
-                    "white_player": base_game.get("white_player"),
-                    "result_code": base_game.get("result_code"),
-                    "num_moves": base_game.get("num_moves"),
-                    "variant_id": base_game.get("variant_id") or variant_token,
-                    "phase": base_game.get("phase"),
-                    "status": base_game.get("status"),
-                    "assigned_instance": base_game.get("assigned_instance"),
-                    "round": base_game.get("round"),
-                    "start_time": base_game.get("start_time"),
-                    "end_time": base_game.get("end_time"),
-                }
+                GameBriefEntry(
+                    game_id=gid,
+                    black_player=record_entry.get("black_player"),
+                    white_player=record_entry.get("white_player"),
+                    result_code=record_entry.get("result_code"),
+                    num_moves=record_entry.get("num_moves"),
+                    variant_id=record_entry.get("variant_id") or variant_token,
+                    phase=record_entry.get("phase"),
+                    status=record_entry.get("status"),
+                    assigned_instance=record_entry.get("assigned_instance"),
+                    round=record_entry.get("round"),
+                    start_time=record_entry.get("start_time"),
+                    end_time=record_entry.get("end_time"),
+                )
             )
 
-        ltc_games_brief: list[dict[str, Any]] = []
+        ltc_games_brief: list[GameBriefEntry] = []
         for gid in ltc_games_order:
             record_entry = ltc_games_meta.get(gid)
             if record_entry is None:
                 continue
-            ltc_game: dict[str, Any] = record_entry
             ltc_games_brief.append(
-                {
-                    "game_id": gid,
-                    "black_player": ltc_game.get("black_player"),
-                    "white_player": ltc_game.get("white_player"),
-                    "result_code": ltc_game.get("result_code"),
-                    "num_moves": ltc_game.get("num_moves"),
-                    "variant_id": ltc_game.get("variant_id"),
-                    "phase": ltc_game.get("phase"),
-                    "status": ltc_game.get("status"),
-                    "assigned_instance": ltc_game.get("assigned_instance"),
-                    "round": ltc_game.get("round"),
-                    "start_time": ltc_game.get("start_time"),
-                    "end_time": ltc_game.get("end_time"),
-                }
+                GameBriefEntry(
+                    game_id=gid,
+                    black_player=record_entry.get("black_player"),
+                    white_player=record_entry.get("white_player"),
+                    result_code=record_entry.get("result_code"),
+                    num_moves=record_entry.get("num_moves"),
+                    variant_id=record_entry.get("variant_id"),
+                    phase=record_entry.get("phase"),
+                    status=record_entry.get("status"),
+                    assigned_instance=record_entry.get("assigned_instance"),
+                    round=record_entry.get("round"),
+                    start_time=record_entry.get("start_time"),
+                    end_time=record_entry.get("end_time"),
+                )
             )
 
-        response_data = {
+        wdl = WdlCounts(wins=wins, losses=losses, draws=draws)
+        response_data: UpdateDetailResponse = {
             "update_idx": idx,
             "engines": {"baseline": base_name, "tuned": tuned_name},
-            "wdl": {"wins": wins, "losses": losses, "draws": draws},
+            "wdl": wdl,
             "variant_id": variant_id,
             "params": params,
             "gradients": grads,
@@ -641,7 +599,7 @@ class SpsaEventService:
         for event in reversed(events):
             if event.get("event") != "game_result":
                 continue
-            gid = str(event.get("game_id", "")).strip()
+            gid = (event.get("game_id") or "").strip()
             if gid != normalized:
                 continue
             payload = dict(event)
@@ -649,15 +607,10 @@ class SpsaEventService:
             payload.setdefault("white_player", payload.get("white_engine"))
             payload.setdefault("num_moves", payload.get("moves_count"))
             if "end_time" not in payload:
-                ts_val = payload.get("timestamp") or payload.get("ts")
+                ts_val = payload.get("ts")
                 end_iso: str | None = None
-                if isinstance(ts_val, int | float):
+                if isinstance(ts_val, int):
                     end_iso = datetime.fromtimestamp(float(ts_val) / 1000.0, tz=timezone.utc).isoformat()
-                elif isinstance(ts_val, str):
-                    try:
-                        end_iso = datetime.fromtimestamp(int(ts_val) / 1000.0, tz=timezone.utc).isoformat()
-                    except (TypeError, ValueError):
-                        end_iso = ts_val
                 payload["end_time"] = end_iso or ts_val
             return payload
         return None
@@ -672,29 +625,17 @@ class SpsaEventService:
         for event in events:
             if event.get("event") != "game_result":
                 continue
-            raw_gid = event.get("game_id")
-            if not raw_gid:
-                continue
-            gid = str(raw_gid).strip()
+            gid = (event.get("game_id") or "").strip()
             if not gid:
                 continue
-            ts_raw = event.get("timestamp") or event.get("ts")
-            if isinstance(ts_raw, int | float):
-                ts = int(ts_raw)
-            elif isinstance(ts_raw, str):
-                try:
-                    ts = int(ts_raw)
-                except ValueError:
-                    ts = 0
-            else:
-                ts = 0
+            ts = event.get("ts") or 0
             prev = latest.get(gid)
             if prev is None or ts > prev:
                 latest[gid] = ts
         entries = sorted(latest.items(), key=lambda item: item[1], reverse=True)
         return entries
 
-    def load_index_updates(self) -> list[dict[str, Any]]:
+    def load_index_updates(self) -> list[UpdateEntry]:
         """Merge index.json updates with event log enrichment."""
 
         entries = [entry for entry in self._store.load_index_updates() if isinstance(entry, dict)]
@@ -703,7 +644,7 @@ class SpsaEventService:
 
         event_updates = self.collect_updates_from_events()
         event_enriched = {entry.get("update_idx"): entry for entry in event_updates if isinstance(entry, dict)}
-        existing_idx: dict[int, dict[str, Any]] = {}
+        existing_idx: dict[int, UpdateEntry] = {}
 
         for entry in entries:
             idx = entry.get("update_idx")
@@ -770,9 +711,9 @@ class SpsaEventService:
                     enriched_copy["has_ltc_regression"] = bool(enriched_copy.get("ltc_regression"))
                 entries.append(enriched_copy)
 
-        return entries
+        return cast(list[UpdateEntry], entries)
 
-    def collect_updates_from_events(self) -> list[dict[str, Any]]:
+    def collect_updates_from_events(self) -> list[UpdateEntry]:
         """Aggregate update entries from events.jsonl."""
 
         events = self._store.load_event_entries()
@@ -782,34 +723,28 @@ class SpsaEventService:
         now_ts = int(time.time() * 1000)
         updates: dict[int, dict[str, Any]] = {}
 
-        def _is_ltc_event(event: Mapping[str, Any]) -> bool:
-            ltc_flag = event.get("ltc")
-            if isinstance(ltc_flag, bool) and ltc_flag:
-                return True
-            family = event.get("family")
-            if isinstance(family, str) and family.strip().lower() == "ltc":
-                return True
-            return False
+        def _is_ltc_event(event: SpsaEvent) -> bool:
+            return event.get("ltc", False) or event.get("family", "").strip().lower() == "ltc"
 
-        def _ensure_ltc_entry(entry: dict[str, Any]) -> dict[str, Any]:
+        def _ensure_ltc_entry(entry: dict[str, Any]) -> LtcRegressionDetail:
             ltc_info = entry.get("ltc_regression")
             if not isinstance(ltc_info, dict):
-                ltc_info = {
-                    "status": "pending",
-                    "tuned_wins": 0,
-                    "baseline_wins": 0,
-                    "draws": 0,
-                    "total_games": 0,
-                    "total_pairs": None,
-                    "winrate": None,
-                    "elo": None,
-                    "accepted": None,
-                    "baseline_update_idx": None,
-                    "baseline_variant_token": None,
-                    "tuned_variant_token": None,
-                    "started_at": None,
-                    "completed_at": None,
-                }
+                ltc_info = LtcRegressionDetail(
+                    status="pending",
+                    tuned_wins=0,
+                    baseline_wins=0,
+                    draws=0,
+                    total_games=0,
+                    total_pairs=None,
+                    winrate=None,
+                    elo=None,
+                    accepted=None,
+                    baseline_update_idx=None,
+                    baseline_variant_token=None,
+                    tuned_variant_token=None,
+                    started_at=None,
+                    completed_at=None,
+                )
                 entry["ltc_regression"] = ltc_info
             entry["has_ltc_regression"] = True
             return ltc_info
@@ -837,8 +772,8 @@ class SpsaEventService:
                     "losses": 0,
                     "draws": 0,
                     "phase_wdl": {
-                        "plus": {"wins": 0, "losses": 0, "draws": 0},
-                        "minus": {"wins": 0, "losses": 0, "draws": 0},
+                        "plus": WdlCounts(wins=0, losses=0, draws=0),
+                        "minus": WdlCounts(wins=0, losses=0, draws=0),
                     },
                     "has_ltc_regression": False,
                 }
@@ -862,24 +797,13 @@ class SpsaEventService:
             return record
 
         for event in events:
-            idx_value = event.get("update_idx")
-            idx: int | None = None
-            if isinstance(idx_value, int):
-                idx = idx_value
-            elif isinstance(idx_value, float):
-                idx = int(idx_value)
-            elif isinstance(idx_value, str):
-                try:
-                    idx = int(idx_value)
-                except ValueError:
-                    idx = None
+            idx = event.get("update_idx")  # Already int | None from parser
             if idx is None:
                 continue
 
             entry = get_entry(idx)
             event_type = event.get("event")
-            ts_value = event.get("timestamp") or event.get("ts")
-            event_ts = coerce_timestamp_ms(ts_value)
+            event_ts = event.get("ts")
             if event_ts is None:
                 fallback_ts = entry.get("timestamp")
                 if not isinstance(fallback_ts, int):
@@ -891,29 +815,29 @@ class SpsaEventService:
                     entry["start_time"] = event_ts
                 prev_end = entry.get("end_time")
                 entry["end_time"] = max(prev_end, event_ts) if isinstance(prev_end, int) else event_ts
-                params = event.get("params", {})
-                if isinstance(params, dict):
-                    entry["params"] = params
-                grads = event.get("gradients", {})
-                if isinstance(grads, dict):
-                    entry["gradients"] = grads
-                deltas = event.get("deltas", {})
-                if isinstance(deltas, dict):
-                    entry["deltas"] = deltas
-                perturbations = event.get("perturbations")
-                if isinstance(perturbations, dict):
-                    entry["perturbations"] = perturbations
-                if (value := coerce_float(event.get("c_k"))) is not None:
+                params_val = event.get("params")
+                if params_val is not None:
+                    entry["params"] = dict(params_val)
+                grads_val = event.get("gradients")
+                if grads_val is not None:
+                    entry["gradients"] = dict(grads_val)
+                deltas_val = event.get("deltas")
+                if deltas_val is not None:
+                    entry["deltas"] = dict(deltas_val)
+                perturb_val = event.get("perturbations")
+                if perturb_val is not None:
+                    entry["perturbations"] = perturb_val
+                if (value := event.get("c_k")) is not None:
                     entry["c_k"] = value
-                if (value := coerce_float(event.get("a_k"))) is not None:
+                if (value := event.get("a_k")) is not None:
                     entry["a_k"] = value
-                if (value := coerce_float(event.get("s_plus"))) is not None:
+                if (value := event.get("s_plus")) is not None:
                     entry["s_plus"] = value
-                if (value := coerce_float(event.get("s_minus"))) is not None:
+                if (value := event.get("s_minus")) is not None:
                     entry["s_minus"] = value
-                if (value := coerce_float(event.get("step"))) is not None:
+                if (value := event.get("step")) is not None:
                     entry["step"] = value
-                if (value := coerce_float(event.get("delta_norm"))) is not None:
+                if (value := event.get("delta_norm")) is not None:
                     entry["delta_norm"] = value
                 if "ltc_rejected" in event:
                     entry["ltc_rejected"] = bool(event.get("ltc_rejected"))
@@ -925,31 +849,30 @@ class SpsaEventService:
                 entry["timestamp"] = event_ts
                 current_start = entry.get("start_time")
                 entry["start_time"] = min(current_start, event_ts) if isinstance(current_start, int) else event_ts
-                params = event.get("params", {})
-                if isinstance(params, dict):
-                    entry["params"] = params
-                perturbations = event.get("perturbations")
-                if isinstance(perturbations, dict):
-                    entry["perturbations"] = perturbations
-                if (value := coerce_float(event.get("c_k"))) is not None:
+                params_val = event.get("params")
+                if params_val is not None:
+                    entry["params"] = dict(params_val)
+                perturb_val = event.get("perturbations")
+                if perturb_val is not None:
+                    entry["perturbations"] = perturb_val
+                if (value := event.get("c_k")) is not None:
                     entry["c_k"] = value
-                if (value := coerce_float(event.get("a_k"))) is not None:
+                if (value := event.get("a_k")) is not None:
                     entry["a_k"] = value
                 entry["pending"] = True
             elif event_type == "update_perturbation":
-                perturbations = event.get("perturbations")
-                if isinstance(perturbations, dict):
-                    entry["perturbations"] = perturbations
-                if (value := coerce_float(event.get("c_k"))) is not None:
+                perturb_val = event.get("perturbations")
+                if perturb_val is not None:
+                    entry["perturbations"] = perturb_val
+                if (value := event.get("c_k")) is not None:
                     entry["c_k"] = value
-                if (value := coerce_float(event.get("a_k"))) is not None:
+                if (value := event.get("a_k")) is not None:
                     entry["a_k"] = value
                 entry.setdefault("pending", True)
             elif event_type == "ltc_regression_start":
                 ltc_entry = _ensure_ltc_entry(entry)
                 ltc_entry["status"] = "running"
-                total_pairs_val = event.get("total_pairs")
-                ltc_entry["total_pairs"] = int(total_pairs_val) if isinstance(total_pairs_val, int | float) else None
+                ltc_entry["total_pairs"] = event.get("total_pairs")
                 ltc_entry["tuned_wins"] = 0
                 ltc_entry["baseline_wins"] = 0
                 ltc_entry["draws"] = 0
@@ -959,37 +882,35 @@ class SpsaEventService:
             elif event_type == "ltc_regression_result":
                 ltc_entry = _ensure_ltc_entry(entry)
                 status_val = event.get("status")
-                ltc_entry["status"] = str(status_val).strip() if isinstance(status_val, str) else status_val
-                if (value := coerce_float(event.get("winrate"))) is not None:
+                if status_val is not None:
+                    ltc_entry["status"] = status_val.strip()
+                if (value := event.get("winrate")) is not None:
                     ltc_entry["winrate"] = value
-                if (value := coerce_float(event.get("elo"))) is not None:
+                if (value := event.get("elo")) is not None:
                     ltc_entry["elo"] = value
                 tuned_wins_val = event.get("tuned_wins")
                 baseline_wins_val = event.get("baseline_wins")
                 draws_val = event.get("draws")
                 total_games_val = event.get("total_games")
-                ltc_entry["tuned_wins"] = int(tuned_wins_val) if isinstance(tuned_wins_val, int | float) else 0
-                ltc_entry["baseline_wins"] = int(baseline_wins_val) if isinstance(baseline_wins_val, int | float) else 0
-                ltc_entry["draws"] = int(draws_val) if isinstance(draws_val, int | float) else 0
-                if isinstance(total_games_val, int | float):
-                    ltc_entry["total_games"] = int(total_games_val)
+                ltc_entry["tuned_wins"] = tuned_wins_val if tuned_wins_val is not None else 0
+                ltc_entry["baseline_wins"] = baseline_wins_val if baseline_wins_val is not None else 0
+                ltc_entry["draws"] = draws_val if draws_val is not None else 0
+                if total_games_val is not None:
+                    ltc_entry["total_games"] = total_games_val
                 else:
                     ltc_entry["total_games"] = (
                         ltc_entry.get("tuned_wins", 0) + ltc_entry.get("baseline_wins", 0) + ltc_entry.get("draws", 0)
                     )
-                accepted_val = event.get("accepted")
-                if isinstance(accepted_val, bool):
+                if (accepted_val := event.get("accepted")) is not None:
                     ltc_entry["accepted"] = accepted_val
                 baseline_idx_val = event.get("baseline_update_idx")
                 normalized_baseline_idx = self._normalize_non_negative_idx(baseline_idx_val)
                 if normalized_baseline_idx is not None:
                     ltc_entry["baseline_update_idx"] = normalized_baseline_idx
-                baseline_token_val = event.get("baseline_variant_token")
-                if isinstance(baseline_token_val, str):
-                    ltc_entry["baseline_variant_token"] = baseline_token_val
-                tuned_token_val = event.get("tuned_variant_token")
-                if isinstance(tuned_token_val, str):
-                    ltc_entry["tuned_variant_token"] = tuned_token_val
+                if (val := event.get("baseline_variant_token")) is not None:
+                    ltc_entry["baseline_variant_token"] = val
+                if (val := event.get("tuned_variant_token")) is not None:
+                    ltc_entry["tuned_variant_token"] = val
                 if event_ts is not None:
                     ltc_entry["completed_at"] = event_ts
                 if ltc_entry.get("accepted") is True:
@@ -1017,18 +938,18 @@ class SpsaEventService:
                 else:
                     entry["draws"] = entry.get("draws", 0) + 1
 
-                phase_key_raw = event.get("phase")
-                phase_key = str(phase_key_raw).strip().lower() if isinstance(phase_key_raw, str) else None
+                phase_raw = event.get("phase")
+                phase_key = phase_raw.strip().lower() if phase_raw else None
                 if not phase_key:
                     phase_key = "unknown"
                 phase_map = entry.setdefault(
                     "phase_wdl",
                     {
-                        "plus": {"wins": 0, "losses": 0, "draws": 0},
-                        "minus": {"wins": 0, "losses": 0, "draws": 0},
+                        "plus": WdlCounts(wins=0, losses=0, draws=0),
+                        "minus": WdlCounts(wins=0, losses=0, draws=0),
                     },
                 )
-                bucket = phase_map.setdefault(phase_key, {"wins": 0, "losses": 0, "draws": 0})
+                bucket = phase_map.setdefault(phase_key, WdlCounts(wins=0, losses=0, draws=0))
                 if winner == 1:
                     bucket["wins"] = bucket.get("wins", 0) + 1
                 elif winner == 0:
@@ -1036,46 +957,40 @@ class SpsaEventService:
                 else:
                     bucket["draws"] = bucket.get("draws", 0) + 1
 
-                gid_raw = event.get("game_id")
-                gid = str(gid_raw).strip() if isinstance(gid_raw, str) else ""
+                gid = (event.get("game_id") or "").strip()
                 if gid:
                     record = register_game(entry, gid)
-                    if isinstance(event.get("black_player"), str):
-                        record["black_player"] = event["black_player"]
-                    if isinstance(event.get("white_player"), str):
-                        record["white_player"] = event["white_player"]
-                    rc_value = coerce_float(event.get("result_code"))
-                    record["result_code"] = int(rc_value) if rc_value is not None else None
-                    moves_value = coerce_float(event.get("num_moves"))
-                    record["num_moves"] = int(moves_value) if moves_value is not None else None
+                    if (val := event.get("black_player")) is not None:
+                        record["black_player"] = val
+                    if (val := event.get("white_player")) is not None:
+                        record["white_player"] = val
+                    record["result_code"] = event.get("result_code")
+                    record["num_moves"] = event.get("num_moves")
                     record["status"] = "completed"
-                    if isinstance(event.get("end_time"), str):
-                        record["end_time"] = event["end_time"]
+                    if (val := event.get("end_time")) is not None:
+                        record["end_time"] = val
 
             elif event_type == "game_scheduled":
                 if _is_ltc_event(event):
                     continue
-                gid_raw = event.get("game_id")
-                gid = str(gid_raw).strip() if isinstance(gid_raw, str) else ""
+                gid = (event.get("game_id") or "").strip()
                 if not gid:
                     continue
                 record = register_game(entry, gid)
-                if isinstance(event.get("black_player"), str):
-                    record["black_player"] = event["black_player"]
-                if isinstance(event.get("white_player"), str):
-                    record["white_player"] = event["white_player"]
-                if isinstance(event.get("variant_token"), str):
-                    record["variant_id"] = event["variant_token"]
-                if isinstance(event.get("phase"), str):
-                    record["phase"] = event["phase"]
-                assigned = event.get("assigned_instance")
-                if isinstance(assigned, str):
-                    record["assigned_instance"] = assigned
-                status_value = str(event.get("status") or "pending").strip().lower()
+                if (val := event.get("black_player")) is not None:
+                    record["black_player"] = val
+                if (val := event.get("white_player")) is not None:
+                    record["white_player"] = val
+                if (val := event.get("variant_token")) is not None:
+                    record["variant_id"] = val
+                if (val := event.get("phase")) is not None:
+                    record["phase"] = val
+                if (val := event.get("assigned_instance")) is not None:
+                    record["assigned_instance"] = val
+                status_value = (event.get("status") or "pending").strip().lower()
                 record["status"] = status_value or "pending"
-                start_time = event.get("start_time")
-                if isinstance(start_time, str):
-                    record["start_time"] = start_time
+                if (val := event.get("start_time")) is not None:
+                    record["start_time"] = val
 
         enriched: list[dict[str, Any]] = []
         for idx, entry in updates.items():
@@ -1098,9 +1013,9 @@ class SpsaEventService:
             enriched.append(entry)
 
         enriched.sort(key=lambda item: item.get("update_idx", 0), reverse=True)
-        return enriched
+        return cast(list[UpdateEntry], enriched)
 
-    def _persist_best_params_snapshot(self, entry: dict[str, Any], ltc_entry: dict[str, Any]) -> None:
+    def _persist_best_params_snapshot(self, entry: Mapping[str, Any], ltc_entry: Mapping[str, Any]) -> None:
         params = entry.get("params")
         if not isinstance(params, Mapping) or not params:
             return

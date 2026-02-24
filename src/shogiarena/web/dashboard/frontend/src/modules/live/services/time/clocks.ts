@@ -164,12 +164,23 @@ export function createStaticClockUpdater({ state }: StaticClockDeps) {
             }
         }
 
-        if (incElB) incElB.textContent = INCREMENT_PLACEHOLDER;
-        if (incElW) incElW.textContent = INCREMENT_PLACEHOLDER;
-        if (viewPly > 0 && clocks.incSide && clocks.incMs > 0) {
-            const incStr = `+${formatInc(clocks.incMs)}`;
-            if (clocks.incSide === 'black' && incElB) incElB.textContent = incStr;
-            if (clocks.incSide === 'white' && incElW) incElW.textContent = incStr;
+        const isWorkerLatest = typeof cardState.source === 'string' && cardState.source.startsWith('worker-latest:');
+        if (!isWorkerLatest) {
+            if (incElB) {
+                incElB.textContent = INCREMENT_PLACEHOLDER;
+                incElB.classList.remove('inc-flash');
+            }
+            if (incElW) {
+                incElW.textContent = INCREMENT_PLACEHOLDER;
+                incElW.classList.remove('inc-flash');
+            }
+            const allowPersistentIncrement =
+                typeof cardState.source === 'string' && cardState.source.startsWith('db-game:');
+            if (allowPersistentIncrement && viewPly > 0 && clocks.incSide && clocks.incMs > 0) {
+                const incStr = `+${formatInc(clocks.incMs)}`;
+                if (clocks.incSide === 'black' && incElB) incElB.textContent = incStr;
+                if (clocks.incSide === 'white' && incElW) incElW.textContent = incStr;
+            }
         }
     };
 }

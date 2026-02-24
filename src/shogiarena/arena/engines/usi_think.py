@@ -50,6 +50,8 @@ class UsiThinkRequest:
 
     def to_command(self) -> str:
         parts: list[str] = ["go"]
+        if self.ponder:
+            parts.append("ponder")
         if self.movetime is not None:
             parts.extend(["movetime", str(int(self.movetime))])
         if self.btime is not None:
@@ -68,8 +70,6 @@ class UsiThinkRequest:
             parts.extend(["nodes", str(int(self.nodes))])
         if self.infinite:
             parts.append("infinite")
-        if self.ponder:
-            parts.append("ponder")
         if self.searchmoves:
             parts.append("searchmoves")
             parts.extend(self.searchmoves)
@@ -111,9 +111,25 @@ def request_from_time_controls(
         byoyomi_ms = int(my_limits.byoyomi_ms or 0)
         if byoyomi_ms < 0:
             raise ValueError("byoyomi must be >= 0")
+
+        # Align with shogihome behavior:
+        # btime/wtime represent "main time" and can be paired with byoyomi.
+        # When a side uses Fischer-style increment, advertised main time should
+        # subtract that increment to avoid double counting.
+        def adjust(rem: int, inc: int | None) -> int:
+            if rem < 0:
+                raise ValueError("remaining time must be >= 0")
+            if inc is None:
+                return rem
+            if inc < 0:
+                raise ValueError("increment must be >= 0")
+            return max(0, rem - inc)
+
+        my_adj = adjust(my_remaining_ms, my_limits.increment_ms)
+        enemy_adj = adjust(enemy_remaining_ms, enemy_limits.increment_ms)
         return UsiThinkRequest(
-            btime=my_remaining_ms if my_is_black else enemy_remaining_ms,
-            wtime=enemy_remaining_ms if my_is_black else my_remaining_ms,
+            btime=my_adj if my_is_black else enemy_adj,
+            wtime=enemy_adj if my_is_black else my_adj,
             byoyomi=byoyomi_ms,
             depth=my_limits.depth_limit,
             nodes=my_limits.node_limit,

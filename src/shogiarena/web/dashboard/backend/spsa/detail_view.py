@@ -12,6 +12,7 @@ from typing import Any
 from aiohttp import web
 
 DetailDict = dict[str, Any]
+DetailPayload = dict[str, Any]
 
 SUPPORTED_VIEWS: tuple[str, ...] = ("slim", "full")
 SUPPORTED_WINDOWS: tuple[str, ...] = ("short", "long")
@@ -127,7 +128,7 @@ def _resolve_available_includes(detail: Mapping[str, Any]) -> set[str]:
     return available
 
 
-def _has_content(value: Any) -> bool:
+def _has_content(value: object) -> bool:
     if isinstance(value, int | float):
         return bool(value)
     return False
@@ -199,10 +200,13 @@ def _contains_score_history(payload: Mapping[str, Any]) -> bool:
 
 def _build_score_history_digest(payload: Mapping[str, Any], window: str) -> dict[str, Any]:
     history_obj = payload.get("score_history") or payload.get("scoreHistory")
-    if isinstance(history_obj, Mapping) and history_obj.get("view") == "digest" and history_obj.get("window") == window:
-        return dict(history_obj)
+    history_map: dict[str, Any] | None = None
+    if isinstance(history_obj, dict):
+        history_map = {str(key): value for key, value in history_obj.items()}
+    if history_map is not None and history_map.get("view") == "digest" and history_map.get("window") == window:
+        return dict(history_map)
 
-    samples = _extract_score_samples(history_obj)
+    samples = _extract_score_samples(history_map if history_map is not None else history_obj)
     limit = WINDOW_SAMPLE_LIMITS.get(window, WINDOW_SAMPLE_LIMITS["short"])
     trimmed = list(samples[-limit:]) if limit and samples else list(samples)
 
@@ -238,8 +242,9 @@ def _build_score_history_digest(payload: Mapping[str, Any], window: str) -> dict
 
 def _extract_score_samples(source: Any) -> list[float]:
     raw_samples: Sequence[Any] | None = None
-    if isinstance(source, Mapping):
-        candidate = source.get("samples")
+    if isinstance(source, dict):
+        source_map = {str(key): value for key, value in source.items()}
+        candidate = source_map.get("samples")
         if isinstance(candidate, Sequence):
             raw_samples = candidate
     elif isinstance(source, Sequence):
@@ -254,7 +259,7 @@ def _extract_score_samples(source: Any) -> list[float]:
         if isinstance(entry, int | float):
             value = float(entry)
         elif isinstance(entry, Mapping):
-            value_obj = entry.get("value")
+            value_obj = dict(entry).get("value")
             if isinstance(value_obj, int | float):
                 value = float(value_obj)
             else:

@@ -11,6 +11,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from shogiarena.utils.types.coerce import coerce_int, coerce_str
+from shogiarena.utils.types.snapshots import GameSnapshot
+
 if TYPE_CHECKING:
     from shogiarena.web.dashboard.backend.game_cache import GameSnapshotCache
 
@@ -94,17 +97,15 @@ class GameStateUpdater:
         # Check if we have a current position sfen (not initial).
         # If sfen represents the current position, use its side_to_move directly
         # without parity correction.
-        current_sfen = snapshot.get("sfen")
-        if isinstance(current_sfen, str) and current_sfen.strip() and current_sfen != "startpos":
+        current_sfen = coerce_str(snapshot.get("sfen"))
+        if current_sfen and current_sfen != "startpos":
             parts = current_sfen.split()
             if len(parts) >= 2 and parts[1] in ("b", "w"):
                 # Current sfen directly tells us whose turn it is.
                 return "black" if parts[1] == "b" else "white"
 
         # Fall back to initial_sfen with parity correction.
-        initial_sfen = snapshot.get("initial_sfen")
-        if not isinstance(initial_sfen, str) or not initial_sfen.strip():
-            initial_sfen = "startpos"
+        initial_sfen = coerce_str(snapshot.get("initial_sfen")) or "startpos"
 
         # "startpos" means standard starting position (black to move).
         if initial_sfen == "startpos":
@@ -132,7 +133,7 @@ class GameStateUpdater:
     def build_ws_snapshot(
         self,
         gid: str,
-        snapshot: Mapping[str, Any],
+        snapshot: GameSnapshot,
         *,
         assignment_rev: int = 0,
     ) -> dict[str, Any] | None:
@@ -148,13 +149,10 @@ class GameStateUpdater:
         Returns:
             WebSocket-formatted snapshot or None if input is invalid.
         """
-        if not isinstance(snapshot, Mapping):
-            return None
-        initial_sfen_raw = snapshot.get("initial_sfen")
-        initial_sfen = initial_sfen_raw if isinstance(initial_sfen_raw, str) else None
+        initial_sfen = snapshot["initial_sfen"]
         tc_black = snapshot.get("time_control_black")
         tc_white = snapshot.get("time_control_white")
-        has_initial = bool(isinstance(initial_sfen, str) and initial_sfen.strip() != "")
+        has_initial = bool(initial_sfen.strip())
         has_tc = tc_black is not None and tc_white is not None
         if not (has_initial and has_tc):
             logger.warning(
@@ -165,59 +163,37 @@ class GameStateUpdater:
                 tc_white is not None,
             )
             return None
-        moves_raw = snapshot.get("moves")
-        if not isinstance(moves_raw, list):
-            moves_raw = []
-        ki2_moves = snapshot.get("ki2_moves")
-        if not isinstance(ki2_moves, list):
-            ki2_moves = []
-        eval_black = snapshot.get("eval_black")
-        if not isinstance(eval_black, list):
-            eval_black = []
-        eval_white = snapshot.get("eval_white")
-        if not isinstance(eval_white, list):
-            eval_white = []
-        depth_values = snapshot.get("depth_values")
-        if not isinstance(depth_values, list):
-            depth_values = []
-        seldepth_values = snapshot.get("seldepth_values")
-        if not isinstance(seldepth_values, list):
-            seldepth_values = []
-        nodes_values = snapshot.get("nodes_values")
-        if not isinstance(nodes_values, list):
-            nodes_values = []
-        move_times = snapshot.get("move_times_ms")
-        if not isinstance(move_times, list):
-            move_times = []
-        wall_times = snapshot.get("wall_times_ms")
-        if not isinstance(wall_times, list):
-            wall_times = []
-        latency_deltas = snapshot.get("latency_deltas_ms")
-        if not isinstance(latency_deltas, list):
-            latency_deltas = []
-        latency_alerts = snapshot.get("latency_alerts")
-        if not isinstance(latency_alerts, list):
-            latency_alerts = []
+        moves_raw = snapshot["moves"]
+        ki2_moves = snapshot["ki2_moves"]
+        eval_black = snapshot["eval_black"]
+        eval_white = snapshot["eval_white"]
+        depth_values = snapshot["depth_values"]
+        seldepth_values = snapshot["seldepth_values"]
+        nodes_values = snapshot["nodes_values"]
+        move_times = snapshot["move_times_ms"]
+        wall_times = snapshot["wall_times_ms"]
+        latency_deltas = snapshot["latency_deltas_ms"]
+        latency_alerts = snapshot["latency_alerts"]
 
         moves: list[dict[str, Any]] = []
         for idx, move in enumerate(moves_raw):
-            if not isinstance(move, str) or not move.strip():
+            if not move.strip():
                 break
             entry: dict[str, Any] = {"ply": idx + 1, "usi": move}
-            if idx < len(ki2_moves) and isinstance(ki2_moves[idx], str) and ki2_moves[idx].strip():
+            if idx < len(ki2_moves) and ki2_moves[idx].strip():
                 entry["ki2_move"] = ki2_moves[idx]
             analysis_final: dict[str, Any] = {}
-            if idx < len(eval_black) and isinstance(eval_black[idx], int | float):
+            if idx < len(eval_black):
                 analysis_final["eval"] = float(eval_black[idx])
-            elif idx < len(eval_white) and isinstance(eval_white[idx], int | float):
+            elif idx < len(eval_white):
                 analysis_final["eval"] = -float(eval_white[idx])
-            if idx < len(depth_values) and isinstance(depth_values[idx], int | float):
+            if idx < len(depth_values):
                 analysis_final["depth"] = depth_values[idx]
-            if idx < len(seldepth_values) and isinstance(seldepth_values[idx], int | float):
+            if idx < len(seldepth_values):
                 analysis_final["seldepth"] = seldepth_values[idx]
-            if idx < len(nodes_values) and isinstance(nodes_values[idx], int | float):
+            if idx < len(nodes_values):
                 analysis_final["nodes"] = nodes_values[idx]
-            if idx < len(move_times) and isinstance(move_times[idx], int | float):
+            if idx < len(move_times):
                 analysis_final["time_ms"] = move_times[idx]
             if analysis_final:
                 entry["analysis_final"] = analysis_final
@@ -255,8 +231,7 @@ class GameStateUpdater:
         }
         if state:
             ws_snapshot["state"] = state
-        if isinstance(snapshot.get("sfen"), str):
-            ws_snapshot["sfen"] = snapshot.get("sfen")
+        ws_snapshot["sfen"] = snapshot["sfen"]
         if snapshot.get("black_name") is not None:
             ws_snapshot["black_name"] = snapshot.get("black_name")
         if snapshot.get("white_name") is not None:
@@ -265,6 +240,9 @@ class GameStateUpdater:
             ws_snapshot["time_control_black"] = snapshot.get("time_control_black")
         if snapshot.get("time_control_white") is not None:
             ws_snapshot["time_control_white"] = snapshot.get("time_control_white")
+        engine_status = snapshot.get("engine_status")
+        if engine_status is not None:
+            ws_snapshot["engine_status"] = engine_status
         return ws_snapshot
 
     @staticmethod
@@ -411,20 +389,16 @@ class GameStateUpdater:
             payload: Worker update payload.
         """
         existing = self._cache.get(gid)
-        snap = dict(existing) if isinstance(existing, dict) else self.default_snapshot(gid)
+        snap = dict(existing) if existing is not None else self.default_snapshot(gid)
 
         # Basic metadata.
-        initial_sfen = payload.get("initial_sfen")
-        if isinstance(initial_sfen, str) and initial_sfen.strip():
-            snap["initial_sfen"] = initial_sfen
-        black_name = payload.get("black_name")
-        if isinstance(black_name, str):
-            snap["black_name"] = black_name
-        white_name = payload.get("white_name")
-        if isinstance(white_name, str):
-            snap["white_name"] = white_name
-        sfen = payload.get("sfen")
-        if isinstance(sfen, str) and sfen.strip():
+        if isfen := coerce_str(payload.get("initial_sfen")):
+            snap["initial_sfen"] = isfen
+        if bname := coerce_str(payload.get("black_name")):
+            snap["black_name"] = bname
+        if wname := coerce_str(payload.get("white_name")):
+            snap["white_name"] = wname
+        if sfen := coerce_str(payload.get("sfen")):
             snap["sfen"] = sfen
 
         if payload.get("time_control_black") is not None:
@@ -433,6 +407,7 @@ class GameStateUpdater:
             snap["time_control_white"] = payload.get("time_control_white")
 
         clock_fields = (
+            "side",
             "active",
             "black_remain_ms",
             "white_remain_ms",
@@ -447,6 +422,7 @@ class GameStateUpdater:
             "increment_ms_white",
         )
         clock_payload: dict[str, Any] = {}
+        update_type = payload.get("type")
         raw_clock = payload.get("clock")
         if isinstance(raw_clock, Mapping):
             clock_payload.update(raw_clock)
@@ -457,6 +433,30 @@ class GameStateUpdater:
         for key in clock_fields:
             if payload.get(key) is not None:
                 clock_payload[key] = payload.get(key)
+        if clock_payload and isinstance(update_type, str):
+            required_by_type: dict[str, tuple[str, ...]] = {
+                "clock_start": ("active", "black_remain_ms", "white_remain_ms", "started_at_ms"),
+                "clock_increment": (
+                    "side",
+                    "applied_increment_ms",
+                    "pre_black_remain_ms",
+                    "pre_white_remain_ms",
+                    "black_remain_ms",
+                    "white_remain_ms",
+                    "occurred_at_ms",
+                ),
+            }
+            required = required_by_type.get(update_type)
+            if required:
+                missing = [key for key in required if clock_payload.get(key) is None]
+                if missing:
+                    logger.warning(
+                        "GameState clock contract violation gid=%s type=%s missing=%s",
+                        gid,
+                        update_type,
+                        ",".join(missing),
+                    )
+                    clock_payload = {}
         if clock_payload:
             existing_clock = snap.get("clock")
             if isinstance(existing_clock, Mapping):
@@ -476,15 +476,16 @@ class GameStateUpdater:
             self.cleanup_game_buffer(gid)
         if payload.get("meta") is not None:
             snap["meta"] = payload.get("meta")
+        engine_status = payload.get("engine_status")
+        if isinstance(engine_status, Mapping):
+            snap["engine_status"] = dict(engine_status)
 
         # Apply move patch into history arrays.
-        current_ply_raw = payload.get("currentPly")
-        ply = int(current_ply_raw) if isinstance(current_ply_raw, int | float) else None
+        ply = coerce_int(payload.get("currentPly"))
         if ply is not None:
             ply = max(0, ply)
 
-        prev_ply_raw = snap.get("currentPly")
-        prev_ply = int(prev_ply_raw) if isinstance(prev_ply_raw, int | float) else 0
+        prev_ply = coerce_int(snap.get("currentPly")) or 0
         prev_ply = max(0, prev_ply)
 
         def _trim_at_first_missing(arr: list[Any]) -> None:
@@ -509,8 +510,8 @@ class GameStateUpdater:
         moves = self.ensure_list(snap, "moves")
         ki2_moves = self.ensure_list(snap, "ki2_moves")
 
-        move = payload.get("move")
-        if isinstance(move, str) and move.strip() and ply is not None and ply > 0:
+        move = coerce_str(payload.get("move"))
+        if move and ply is not None and ply > 0:
             idx = ply - 1
             if idx < len(moves):
                 moves[idx] = move
@@ -526,7 +527,7 @@ class GameStateUpdater:
                 gap = ply - len(moves) - 1
                 if gap <= MAX_PENDING_PLY_GAP:
                     ki2_move_raw = payload.get("ki2_move")
-                    ki2_move_str = ki2_move_raw if isinstance(ki2_move_raw, str) else None
+                    ki2_move_str = coerce_str(ki2_move_raw)
                     self._buffer_move(gid, ply, move, ki2_move_str)
                 else:
                     logger.warning(
@@ -536,8 +537,8 @@ class GameStateUpdater:
                         gap,
                     )
 
-        ki2_move = payload.get("ki2_move")
-        if isinstance(ki2_move, str) and ki2_move.strip() and ply is not None and ply > 0:
+        ki2_move = coerce_str(payload.get("ki2_move"))
+        if ki2_move and ply is not None and ply > 0:
             idx = ply - 1
             if idx < len(ki2_moves):
                 ki2_moves[idx] = ki2_move

@@ -1,6 +1,6 @@
 """Shared configuration models and small helpers for arena configs.
 
-This module contains lightweight dataclasses used across tournament and SPSA
+This module contains Pydantic models used across tournament and SPSA
 configuration flows. Parsing/validation of YAML is handled by higher-level
 loaders; here we focus on modeling and small utilities with strict and
 transparent error handling.
@@ -8,19 +8,20 @@ transparent error handling.
 
 import logging
 import random
-from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Any, Literal
+from urllib.parse import urlparse
 
-import cshogi
+from pydantic import BaseModel, Field, field_validator, model_validator
+from rshogi.core import parse_usi_position
+from typing_extensions import Self
 
 from shogiarena.arena.engines.time_control import TimeControlLimits
-from shogiarena.utils.board import sfen_parser
+from shogiarena.utils.types.types import STARTING_SFEN
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class InitialPositions:
+class InitialPositionConfig(BaseModel):
     """Configuration for initial position generation."""
 
     type: Literal["startpos", "file"] = "startpos"
@@ -58,12 +59,12 @@ class InitialPositions:
                     positions.append(line[14:].strip())
                     continue
                 if line == "startpos":
-                    positions.append(cshogi.STARTING_SFEN)
+                    positions.append(STARTING_SFEN)
                     continue
                 if line.startswith("position startpos") or line.startswith("startpos "):
                     # Use parser to apply moves then export canonical SFEN
-                    b = sfen_parser(line)
-                    positions.append(b.sfen())
+                    b = parse_usi_position(line)
+                    positions.append(b.to_sfen())
                     continue
                 # Otherwise try to parse; if it errors, keep as-is
                 # Accept raw SFEN (no prefix) directly
@@ -72,8 +73,8 @@ class InitialPositions:
                     positions.append(line)
                     continue
                 # Fallback: parser (may raise ValueError or similar)
-                b = sfen_parser(line)
-                positions.append(b.sfen())
+                b = parse_usi_position(line)
+                positions.append(b.to_sfen())
 
             rng = random.Random(seed)
             return [rng.choice(positions) for _ in range(num_positions)]
@@ -90,106 +91,243 @@ class InitialPositions:
 
         Returns a list consisting of the canonical "startpos" SFEN equivalent.
         """
-        return [cshogi.STARTING_SFEN] * num_positions
+        return [STARTING_SFEN] * num_positions
 
 
-@dataclass
-class AdjudicationSettings:
+class AdjudicationSettings(BaseModel):
     """Adjudication knobs controlling resign and max-move policies."""
 
-    enable_resign: bool = False
-    resign_score_cp: int = 800
+    resign_threshold_cp: int | None = Field(default=None, gt=0)
     resign_move_count: int = 8
     resign_two_sided: bool = True
 
     enable_max_plies: bool = True
-    max_plies: int | None = 320
+    max_plies: int | None = Field(default=320, gt=0)
     sync_max_plies_with_engine: bool = True
     engine_max_ply_option_names: str | list[str] = "auto"
 
-    def __post_init__(self) -> None:
-        self.resign_score_cp = int(self.resign_score_cp)
-        self.resign_move_count = int(self.resign_move_count)
+    @field_validator("engine_max_ply_option_names", mode="wrap")
+    @classmethod
+    def _normalize_option_names(cls, v: Any, handler: Any) -> list[str]:
+        # Single string → wrap in list (e.g., "auto" → ["auto"])
+        if isinstance(v, str):
+            trimmed = v.strip()
+            return [trimmed] if trimmed else []
+        # Let Pydantic validate as list[str], then deduplicate and strip
+        result = handler(v)
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for n in result:
+            val = str(n).strip()
+            if val and val not in seen:
+                seen.add(val)
+                deduped.append(val)
+        return deduped
 
+    @model_validator(mode="after")
+    def _validate_max_plies_consistency(self) -> Self:
         if self.enable_max_plies:
             if self.max_plies is None:
                 raise ValueError("adjudication.max_plies must be set when enable_max_plies is true")
-            try:
-                self.max_plies = int(self.max_plies)
-            except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
-                raise TypeError("adjudication.max_plies must be an integer") from exc
-            if self.max_plies <= 0:
-                raise ValueError("adjudication.max_plies must be positive")
         else:
             self.max_plies = None
-
-        names = self.engine_max_ply_option_names
-        if isinstance(names, str):
-            trimmed = names.strip()
-            self.engine_max_ply_option_names = trimmed or []
-        elif isinstance(names, list):
-            deduped: list[str] = []
-            seen: set[str] = set()
-            for n in names:
-                if not isinstance(n, str):
-                    raise TypeError("adjudication.engine_max_ply_option_names entries must be strings")
-                val = n.strip()
-                if val and val not in seen:
-                    seen.add(val)
-                    deduped.append(val)
-            self.engine_max_ply_option_names = deduped
-        else:
-            raise TypeError("adjudication.engine_max_ply_option_names must be str or list[str]")
+        return self
 
 
-@dataclass
-class RulesConfig:
+class RulesConfig(BaseModel):
     """Game rules configuration."""
 
     # Optional time control settings nested under rules
-    time_control: "TimeControlLimits | None" = None
+    time_control: TimeControlLimits | None = None
     # Initial positions (migrated from TournamentConfig)
-    initial_positions: InitialPositions = field(default_factory=InitialPositions)
-    adjudication: AdjudicationSettings | dict[str, Any] = field(default_factory=AdjudicationSettings)
+    initial_positions: InitialPositionConfig = Field(default_factory=InitialPositionConfig)
+    adjudication: AdjudicationSettings = Field(default_factory=AdjudicationSettings)
     repetition_occurrences_to_draw: int = 2
 
-    def __post_init__(self) -> None:
-        """Normalize nested structures for rules.
-
-        - Ensure initial_positions is an InitialPositions instance when provided as a mapping.
-        """
-        if isinstance(self.initial_positions, dict):
-            self.initial_positions = InitialPositions(**cast(dict[str, Any], self.initial_positions))
-
-        if isinstance(self.adjudication, dict):
-            self.adjudication = AdjudicationSettings(**cast(dict[str, Any], self.adjudication))
-
-        self.repetition_occurrences_to_draw = int(self.repetition_occurrences_to_draw)
-        if self.repetition_occurrences_to_draw not in (2, 3, 4):
+    @field_validator("repetition_occurrences_to_draw")
+    @classmethod
+    def _validate_repetition(cls, v: int) -> int:
+        if v not in (2, 3, 4):
             raise ValueError("repetition_occurrences_to_draw must be 2, 3, or 4")
+        return v
 
 
-@dataclass
-class SprtConfig:
+class SprtConfig(BaseModel):
     """SPRT early stopping configuration."""
 
     elo0: float = 0.0
     elo1: float = 5.0
     alpha: float = 0.05
     beta: float = 0.05
-    min_games: int = 0
-    max_games: int | None = None
-    num_parallel: int | None = None
+    min_games: int = Field(default=0, ge=0)
+    max_games: int | None = Field(default=None, gt=0)
+    num_parallel: int | None = Field(default=None, gt=0)
 
-    def __post_init__(self) -> None:
-        self.min_games = int(self.min_games)
-        if self.min_games < 0:
-            raise ValueError("sprt.min_games must be >= 0")
-        if self.max_games is not None:
-            self.max_games = int(self.max_games)
-            if self.max_games <= 0:
-                raise ValueError("sprt.max_games must be > 0")
-        if self.num_parallel is not None:
-            self.num_parallel = int(self.num_parallel)
-            if self.num_parallel <= 0:
-                raise ValueError("sprt.num_parallel must be > 0")
+    @model_validator(mode="after")
+    def _validate_sprt(self) -> Self:
+        if self.max_games is not None and self.max_games < self.min_games:
+            raise ValueError("sprt.max_games must be >= min_games")
+        if self.elo1 <= self.elo0:
+            raise ValueError("sprt.elo1 must be greater than elo0")
+        return self
+
+
+class OpenBenchCreatePayload(BaseModel):
+    """Payload template for OpenBench/ShogiBench CREATE_TEST action."""
+
+    dev_engine: str | None = None
+    base_engine: str | None = None
+    dev_repo: str | None = None
+    base_repo: str | None = None
+    dev_branch: str | None = None
+    base_branch: str | None = None
+    dev_bench: str = "Autofill"
+    base_bench: str = "Autofill"
+    dev_options: str = "Threads=1 Hash=1024"
+    base_options: str = "Threads=1 Hash=1024"
+    dev_network: str = ""
+    base_network: str = ""
+    dev_time_control: str | None = None
+    base_time_control: str | None = None
+    book_name: str = "NONE"
+    upload_pgns: str = "FALSE"
+    test_mode: str = "SPRT"
+    test_bounds: str = "auto"
+    test_confidence: str = "auto"
+    test_max_games: int | Literal["auto"] = 0
+    priority: int = 0
+    throughput: int = 1000
+    workload_size: int = 32
+    syzygy_wdl: str = "DISABLED"
+    syzygy_adj: str = "OPTIONAL"
+    win_adj: str = "None"
+    draw_adj: str = "None"
+    scale_method: str = "BASE"
+    scale_nps: int | Literal["auto"] = "auto"
+
+    @field_validator(
+        "dev_engine",
+        "base_engine",
+        "dev_repo",
+        "base_repo",
+        "dev_branch",
+        "base_branch",
+        "dev_time_control",
+        "base_time_control",
+        mode="before",
+    )
+    @classmethod
+    def _strip_optional_str(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        return str(v).strip() or None
+
+    @field_validator(
+        "dev_bench",
+        "base_bench",
+        "dev_options",
+        "base_options",
+        "dev_network",
+        "base_network",
+        "book_name",
+        "upload_pgns",
+        "test_mode",
+        "test_bounds",
+        "test_confidence",
+        "syzygy_wdl",
+        "syzygy_adj",
+        "win_adj",
+        "draw_adj",
+        "scale_method",
+        mode="before",
+    )
+    @classmethod
+    def _strip_required_str(cls, v: Any) -> str:
+        return str(v).strip()
+
+    @field_validator("test_max_games", mode="before")
+    @classmethod
+    def _normalize_test_max_games(cls, v: Any) -> int | Literal["auto"]:
+        if isinstance(v, str):
+            stripped = v.strip() or "0"
+            return stripped if stripped == "auto" else int(stripped)
+        return int(v)
+
+    @field_validator("scale_nps", mode="before")
+    @classmethod
+    def _normalize_scale_nps(cls, v: Any) -> int | Literal["auto"]:
+        if isinstance(v, str):
+            stripped = v.strip() or "auto"
+            return stripped if stripped == "auto" else int(stripped)
+        return int(v)
+
+
+class OpenBenchCreateConfig(BaseModel):
+    """OpenBench/ShogiBench create-test settings."""
+
+    discovery_timeout_sec: float = Field(default=180.0, gt=0)
+    payload: OpenBenchCreatePayload = Field(default_factory=OpenBenchCreatePayload)
+
+
+class OpenBenchConfig(BaseModel):
+    """OpenBench/ShogiBench submission configuration."""
+
+    enabled: bool = False
+    mode: Literal["existing_test", "create_test"] = "existing_test"
+    server: str | None = None
+    username: str | None = None
+    password_env: str = "OPENBENCH_PASSWORD"
+    target_test_id: int | None = Field(default=None, gt=0)
+    submit_interval_games: int = Field(default=2, gt=0)
+    strict: bool = True
+    heartbeat_interval_sec: float = Field(default=30.0, gt=0)
+    poll_interval_sec: float = Field(default=5.0, gt=0)
+    assignment_timeout_sec: float = Field(default=120.0, gt=0)
+    allow_insecure_http: bool = False
+    create: OpenBenchCreateConfig | None = None
+
+    @field_validator("server", mode="before")
+    @classmethod
+    def _strip_server(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        return str(v).strip() or None
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def _strip_username(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        return str(v).strip() or None
+
+    @field_validator("password_env", mode="before")
+    @classmethod
+    def _strip_password_env(cls, v: Any) -> str:
+        return str(v or "").strip() or "OPENBENCH_PASSWORD"
+
+    @model_validator(mode="after")
+    def _validate_openbench(self) -> Self:
+        if self.server:
+            parsed = urlparse(self.server)
+            if parsed.scheme not in {"http", "https"}:
+                raise ValueError("openbench.server must start with http:// or https://")
+            if not parsed.netloc:
+                raise ValueError("openbench.server must include host")
+            if parsed.scheme != "https" and not self.allow_insecure_http:
+                raise ValueError("openbench.server must use https:// unless allow_insecure_http=true")
+
+        if self.enabled:
+            if not self.server:
+                raise ValueError("openbench.server is required when openbench.enabled=true")
+            if not self.username:
+                raise ValueError("openbench.username is required when openbench.enabled=true")
+            if not self.password_env:
+                raise ValueError("openbench.password_env is required when openbench.enabled=true")
+            if self.mode == "existing_test":
+                if self.target_test_id is None:
+                    raise ValueError(
+                        "openbench.target_test_id is required when openbench.enabled=true and mode=existing_test"
+                    )
+            if self.mode == "create_test" and self.create is None:
+                raise ValueError("openbench.create is required when openbench.mode=create_test")
+        return self

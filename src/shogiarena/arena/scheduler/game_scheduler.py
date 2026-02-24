@@ -6,14 +6,14 @@ import random
 from abc import ABC, abstractmethod
 from itertools import combinations
 
-from shogiarena.arena.configs.tournament import EngineSpec, GameSpec, InitialPositions
+from shogiarena.arena.configs.tournament import EngineConfig, GameSpec, InitialPositionConfig
 
 SeedLike = int | float | str | bytes | bytearray | None
 
 logger = logging.getLogger(__name__)
 
 
-def _require_engine_name(spec: EngineSpec) -> str:
+def _require_engine_name(spec: EngineConfig) -> str:
     """Return the engine name or raise when unset."""
 
     if not spec.name:
@@ -27,10 +27,10 @@ class GameScheduler(ABC):
     @abstractmethod
     def generate_schedule(
         self,
-        engines: list[EngineSpec],
+        engines: list[EngineConfig],
         games_per_pair: int,
         seed: SeedLike,
-        initial_positions: InitialPositions,
+        initial_positions: InitialPositionConfig,
     ) -> list[GameSpec]:
         """Generate complete game schedule.
 
@@ -59,6 +59,98 @@ class GameScheduler(ABC):
         raise NotImplementedError
 
 
+class SelfPlayScheduler(GameScheduler):
+    """Selfplay scheduler for a single engine."""
+
+    def generate_schedule(
+        self,
+        engines: list[EngineConfig],
+        games_per_pair: int,
+        seed: SeedLike,
+        initial_positions: InitialPositionConfig,
+    ) -> list[GameSpec]:
+        if len(engines) != 1:
+            raise ValueError("Selfplay requires exactly 1 engine")
+        if games_per_pair <= 0:
+            return []
+
+        seed_str = str(seed)
+        engine_name = _require_engine_name(engines[0])
+        pair_both = initial_positions.flip_policy == "pair_both"
+
+        if pair_both:
+            positions_needed = math.ceil(games_per_pair / 2)
+        else:
+            positions_needed = games_per_pair
+
+        positions = initial_positions.generate(positions_needed, seed_str)
+
+        games: list[GameSpec] = []
+        position_idx = 0
+        round_num = 0
+        total_positions = len(positions)
+
+        def next_position() -> str:
+            nonlocal position_idx
+            try:
+                sfen_value = positions[position_idx]
+            except IndexError as exc:
+                raise RuntimeError(
+                    f"Initial positions exhausted: have {total_positions}, need at least {position_idx + 1}",
+                ) from exc
+            position_idx += 1
+            return sfen_value
+
+        if pair_both:
+            remaining = games_per_pair
+            while remaining > 0:
+                sfen = next_position()
+                games.append(
+                    GameSpec.create(
+                        black=engine_name,
+                        white=engine_name,
+                        sfen=sfen,
+                        round_num=round_num,
+                        seed=seed_str,
+                    ),
+                )
+                round_num += 1
+                remaining -= 1
+                if remaining > 0:
+                    games.append(
+                        GameSpec.create(
+                            black=engine_name,
+                            white=engine_name,
+                            sfen=sfen,
+                            round_num=round_num,
+                            seed=seed_str,
+                        ),
+                    )
+                    round_num += 1
+                    remaining -= 1
+        else:
+            for _ in range(games_per_pair):
+                sfen = next_position()
+                games.append(
+                    GameSpec.create(
+                        black=engine_name,
+                        white=engine_name,
+                        sfen=sfen,
+                        round_num=round_num,
+                        seed=seed_str,
+                    ),
+                )
+                round_num += 1
+
+        logger.debug("Generated %s selfplay games for %s", len(games), engine_name)
+        return games
+
+    def get_total_games(self, num_engines: int, games_per_pair: int) -> int:
+        if num_engines != 1:
+            return 0
+        return max(0, games_per_pair)
+
+
 class RoundRobinScheduler(GameScheduler):
     """Round robin scheduler for N-engine tournaments.
 
@@ -68,10 +160,10 @@ class RoundRobinScheduler(GameScheduler):
 
     def generate_schedule(
         self,
-        engines: list[EngineSpec],
+        engines: list[EngineConfig],
         games_per_pair: int,
         seed: SeedLike,
-        initial_positions: InitialPositions,
+        initial_positions: InitialPositionConfig,
     ) -> list[GameSpec]:
         """Generate round robin game schedule with stable IDs.
 
@@ -214,10 +306,10 @@ class SwissScheduler(GameScheduler):
 
     def generate_schedule(
         self,
-        engines: list[EngineSpec],
+        engines: list[EngineConfig],
         games_per_pair: int,
         seed: SeedLike,
-        initial_positions: InitialPositions,
+        initial_positions: InitialPositionConfig,
     ) -> list[GameSpec]:
         """Swiss system not yet implemented."""
         raise NotImplementedError("Swiss scheduler not yet implemented")
@@ -239,17 +331,17 @@ class GauntletScheduler(GameScheduler):
     - If baseline_count > 1: first N engines are baselines; every baseline plays all non-baselines
     """
 
-    def __init__(self, baseline_count: int = 1):
+    def __init__(self, baseline_count: int = 1) -> None:
         if baseline_count < 1:
             raise ValueError("baseline_count must be >= 1 for gauntlet")
         self.baseline_count = baseline_count
 
     def generate_schedule(
         self,
-        engines: list[EngineSpec],
+        engines: list[EngineConfig],
         games_per_pair: int,
         seed: SeedLike,
-        initial_positions: InitialPositions,
+        initial_positions: InitialPositionConfig,
     ) -> list[GameSpec]:
         if len(engines) < 2:
             raise ValueError("Need at least 2 engines for gauntlet")
@@ -406,6 +498,7 @@ def create_scheduler(scheduler_type: str) -> GameScheduler:
         ValueError: Unknown scheduler type
     """
     schedulers: dict[str, type[GameScheduler]] = {
+        "selfplay": SelfPlayScheduler,
         "round_robin": RoundRobinScheduler,
         "gauntlet": GauntletScheduler,  # constructed below with default baseline_count
     }

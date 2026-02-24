@@ -7,6 +7,49 @@ import { recordLiveDiagnosticsMetric } from '@/modules/live/utils/liveNamespace/
 
 const BYOYOMI_POSTMOVE_BEHAVIOR = 'freeze';
 
+interface RunningClockDisplay {
+    mainRemainMs: number;
+    byoyomiRemainMs: number | null;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    return value;
+}
+
+export function computeByoyomiRemainMs(
+    byoyomiMs: number,
+    elapsedMs: number,
+    mainRemainAtTurnStartMs: number | null | undefined,
+): number {
+    const safeByoyomi = Math.max(0, Number(byoyomiMs || 0));
+    const safeElapsed = Math.max(0, Number(elapsedMs || 0));
+    const mainRemain = Math.max(0, Number(mainRemainAtTurnStartMs ?? 0));
+    const byoyomiElapsed = Math.max(0, safeElapsed - mainRemain);
+    return Math.max(0, safeByoyomi - byoyomiElapsed);
+}
+
+export function computeRunningClockDisplay(
+    remainMs: number,
+    byoyomiMs: number,
+    elapsedMs: number,
+): RunningClockDisplay {
+    const safeRemain = Math.max(0, Number(remainMs || 0));
+    const safeByoyomi = Math.max(0, Number(byoyomiMs || 0));
+    const safeElapsed = Math.max(0, Number(elapsedMs || 0));
+    const rawMainRemain = safeRemain - safeElapsed;
+    if (safeByoyomi > 0 && rawMainRemain <= 0) {
+        return {
+            mainRemainMs: 0,
+            byoyomiRemainMs: computeByoyomiRemainMs(safeByoyomi, safeElapsed, safeRemain),
+        };
+    }
+    return {
+        mainRemainMs: Math.max(0, rawMainRemain),
+        byoyomiRemainMs: null,
+    };
+}
+
 interface ClocksDeps {
     state: DashboardCoreState;
     getCards: () => LiveCardState[];
@@ -53,12 +96,12 @@ export function createClocksController(deps: ClocksDeps) {
     type WorkerClockTimer = ReturnType<typeof setInterval>;
     const workerClockTimers = new Map<number, WorkerClockTimer>();
     const incrementTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+    const incrementExpiresAt = new Map<string, number>();
 
     /**
      * Start clock timer for a worker. Respects syncTempo setting:
      * - 'off': do NOT start interval; live updates are stopped
-     * - 'unlimited' or 'auto': start 100ms interval for smooth ticking
-     * - 2/4/8 (fixed tempo): do NOT start interval; clock updates via refresh sync only
+     * - otherwise: start 100ms interval for smooth ticking
      */
     function startWorkerClockTimer(workerIdx: number): void {
         if (!hasWorkerCards(workerIdx)) {
@@ -67,12 +110,6 @@ export function createClocksController(deps: ClocksDeps) {
         const syncTempo = getSyncTempo?.() ?? 'auto';
         // OFF mode: do not start interval. Live updates are stopped.
         if (syncTempo === 'off') {
-            stopWorkerClockTimer(workerIdx);
-            return;
-        }
-        // Fixed tempo: do not start interval. Clock updates happen via refresh sync.
-        if (syncTempo === 2 || syncTempo === 4 || syncTempo === 8) {
-            // Ensure any existing interval is stopped.
             stopWorkerClockTimer(workerIdx);
             return;
         }
@@ -107,8 +144,9 @@ export function createClocksController(deps: ClocksDeps) {
         clock: { timeControlBlack?: unknown; timeControlWhite?: unknown } | null | undefined,
     ): void {
         if (!clock) return;
-        const tcBlack = clock.timeControlBlack;
-        const tcWhite = clock.timeControlWhite;
+        const clockFields = clock as Record<string, unknown>;
+        const tcBlack = clock.timeControlBlack ?? clockFields.time_control_black;
+        const tcWhite = clock.timeControlWhite ?? clockFields.time_control_white;
         if (!tcBlack && !tcWhite) return;
         const labelB = tcBlack ? formatTimeControlShort(tcBlack) : null;
         const labelW = tcWhite ? formatTimeControlShort(tcWhite) : null;
@@ -127,8 +165,20 @@ export function createClocksController(deps: ClocksDeps) {
             if (cardState && cardState.source === `worker-latest:${workerIdx}`) {
                 const bi = document.getElementById(`black-inc-${cardState.id}`);
                 const wi = document.getElementById(`white-inc-${cardState.id}`);
+                const blackKey = `black-inc-${cardState.id}`;
+                const whiteKey = `white-inc-${cardState.id}`;
                 if (bi && !bi.textContent) bi.textContent = INCREMENT_PLACEHOLDER;
                 if (wi && !wi.textContent) wi.textContent = INCREMENT_PLACEHOLDER;
+                if (bi) bi.classList.remove('inc-flash');
+                if (wi) wi.classList.remove('inc-flash');
+                const blackTimeout = incrementTimeouts.get(blackKey);
+                const whiteTimeout = incrementTimeouts.get(whiteKey);
+                if (blackTimeout) clearTimeout(blackTimeout);
+                if (whiteTimeout) clearTimeout(whiteTimeout);
+                incrementTimeouts.delete(blackKey);
+                incrementTimeouts.delete(whiteKey);
+                incrementExpiresAt.delete(blackKey);
+                incrementExpiresAt.delete(whiteKey);
             }
         }
     }
@@ -148,6 +198,7 @@ export function createClocksController(deps: ClocksDeps) {
             }
             el.textContent = `+${formatInc(incMs)}`;
             el.classList.add('inc-flash');
+            incrementExpiresAt.set(timeoutKey, Date.now() + 1200);
             const timeoutId = setTimeout(() => {
                 const current = document.getElementById(elId);
                 if (current) {
@@ -155,8 +206,27 @@ export function createClocksController(deps: ClocksDeps) {
                     current.classList.remove('inc-flash');
                 }
                 incrementTimeouts.delete(timeoutKey);
+                incrementExpiresAt.delete(timeoutKey);
             }, 1000);
             incrementTimeouts.set(timeoutKey, timeoutId);
+        }
+    }
+
+    function cleanupExpiredIncrementBadge(cardId: string | number, side: 'black' | 'white', now: number): void {
+        const elId = `${side}-inc-${cardId}`;
+        const key = elId;
+        const expiresAt = incrementExpiresAt.get(key);
+        if (typeof expiresAt !== 'number' || now < expiresAt) return;
+        const timeoutId = incrementTimeouts.get(key);
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+            incrementTimeouts.delete(key);
+        }
+        incrementExpiresAt.delete(key);
+        const el = document.getElementById(elId);
+        if (el) {
+            el.textContent = INCREMENT_PLACEHOLDER;
+            el.classList.remove('inc-flash');
         }
     }
 
@@ -172,8 +242,8 @@ export function createClocksController(deps: ClocksDeps) {
 
         const ws = getWorkerStateEntry(state, workerIdx);
         const active = ws.clockActive || null;
-        let br = Number(ws.blackRemainMs || 0);
-        let wr = Number(ws.whiteRemainMs || 0);
+        const blackRemainBase = Number(ws.blackRemainMs || 0);
+        const whiteRemainBase = Number(ws.whiteRemainMs || 0);
         const startedAt = Number(ws.startedAtMs || 0);
         const now = Date.now();
         const elapsed = Math.max(0, now - startedAt);
@@ -181,11 +251,23 @@ export function createClocksController(deps: ClocksDeps) {
         const tcMode = ws.clockDisplayMode;
         const searchLimitsOnly = tcMode === 'search';
 
+        const wsEntry = getWorkerStateEntry(state, workerIdx);
+        const byoyomiMsBlack = toNumber(wsEntry.byoyomiMsBlack, 0);
+        const byoyomiMsWhite = toNumber(wsEntry.byoyomiMsWhite, 0);
+        let blackRemainDisplay = blackRemainBase;
+        let whiteRemainDisplay = whiteRemainBase;
+        let blackByoyomiDisplay: number | null = null;
+        let whiteByoyomiDisplay: number | null = null;
+
         if (!searchLimitsOnly) {
             if (active === 'black') {
-                br = Math.max(0, br - elapsed);
+                const running = computeRunningClockDisplay(blackRemainBase, byoyomiMsBlack, elapsed);
+                blackRemainDisplay = running.mainRemainMs;
+                blackByoyomiDisplay = running.byoyomiRemainMs;
             } else if (active === 'white') {
-                wr = Math.max(0, wr - elapsed);
+                const running = computeRunningClockDisplay(whiteRemainBase, byoyomiMsWhite, elapsed);
+                whiteRemainDisplay = running.mainRemainMs;
+                whiteByoyomiDisplay = running.byoyomiRemainMs;
             }
         }
 
@@ -215,40 +297,23 @@ export function createClocksController(deps: ClocksDeps) {
                 continue;
             }
             liveCardsTouched += 1;
-
-            const wsEntry = getWorkerStateEntry(state, workerIdx);
-            const tc = (wsEntry as unknown as { clock?: Record<string, unknown> }).clock ?? null;
-            const byoyomiMsBlack = toNumber(tc?.byoyomiMsBlack, 0);
-            const byoyomiMsWhite = toNumber(tc?.byoyomiMsWhite, 0);
-            const byoyomiDeltaMs = toNumber(tc?.byoyomiDeltaMs, 0);
+            cleanupExpiredIncrementBadge(cardState.id, 'black', now);
+            cleanupExpiredIncrementBadge(cardState.id, 'white', now);
             const rowB = document.getElementById(`row-black-${cardState.id}`);
             const rowW = document.getElementById(`row-white-${cardState.id}`);
             const remElB = document.getElementById(`black-remaining-${cardState.id}`);
             const remElW = document.getElementById(`white-remaining-${cardState.id}`);
 
-            const blackByoElapsed = Math.max(0, elapsed - byoyomiDeltaMs);
-            const whiteByoElapsed = Math.max(0, elapsed - byoyomiDeltaMs);
-            const byoyomiBlack =
-                typeof tc?.byoyomiMsBlack === 'number' && Number.isFinite(tc.byoyomiMsBlack)
-                    ? Number(tc.byoyomiMsBlack)
-                    : 0;
-            const byoyomiWhite =
-                typeof tc?.byoyomiMsWhite === 'number' && Number.isFinite(tc.byoyomiMsWhite)
-                    ? Number(tc.byoyomiMsWhite)
-                    : 0;
-            const byoB = Math.max(byoyomiBlack, byoyomiMsBlack);
-            const byoW = Math.max(byoyomiWhite, byoyomiMsWhite);
-
             if (remElB) {
                 if (searchLimitsOnly) {
-                    remElB.textContent = active === 'black' ? formatCountUp(elapsed) : '00:00.0';
+                    remElB.textContent = active === 'black' ? formatCountUp(elapsed) : '00:00';
                     remElB.classList.remove('byoyomi');
                 } else if (active === 'black') {
-                    if (byoB > 0 && br <= 0) {
-                        remElB.textContent = formatByoyomi(Math.max(0, byoB - blackByoElapsed));
+                    if (blackByoyomiDisplay != null) {
+                        remElB.textContent = formatByoyomi(blackByoyomiDisplay);
                         remElB.classList.add('byoyomi');
                     } else {
-                        remElB.textContent = formatRemain(br);
+                        remElB.textContent = formatRemain(blackRemainDisplay);
                         remElB.classList.remove('byoyomi');
                     }
                 } else {
@@ -256,11 +321,11 @@ export function createClocksController(deps: ClocksDeps) {
                     if (frozen) {
                         remElB.textContent = frozen;
                         remElB.classList.add('byoyomi');
-                    } else if (byoB > 0 && br <= 0) {
-                        remElB.textContent = formatByoyomi(byoB);
+                    } else if (byoyomiMsBlack > 0 && blackRemainBase <= 0) {
+                        remElB.textContent = formatByoyomi(byoyomiMsBlack);
                         remElB.classList.add('byoyomi');
                     } else {
-                        remElB.textContent = formatRemain(br);
+                        remElB.textContent = formatRemain(blackRemainBase);
                         remElB.classList.remove('byoyomi');
                     }
                 }
@@ -268,14 +333,14 @@ export function createClocksController(deps: ClocksDeps) {
 
             if (remElW) {
                 if (searchLimitsOnly) {
-                    remElW.textContent = active === 'white' ? formatCountUp(elapsed) : '00:00.0';
+                    remElW.textContent = active === 'white' ? formatCountUp(elapsed) : '00:00';
                     remElW.classList.remove('byoyomi');
                 } else if (active === 'white') {
-                    if (byoW > 0 && wr <= 0) {
-                        remElW.textContent = formatByoyomi(Math.max(0, byoW - whiteByoElapsed));
+                    if (whiteByoyomiDisplay != null) {
+                        remElW.textContent = formatByoyomi(whiteByoyomiDisplay);
                         remElW.classList.add('byoyomi');
                     } else {
-                        remElW.textContent = formatRemain(wr);
+                        remElW.textContent = formatRemain(whiteRemainDisplay);
                         remElW.classList.remove('byoyomi');
                     }
                 } else {
@@ -283,11 +348,11 @@ export function createClocksController(deps: ClocksDeps) {
                     if (frozen) {
                         remElW.textContent = frozen;
                         remElW.classList.add('byoyomi');
-                    } else if (byoW > 0 && wr <= 0) {
-                        remElW.textContent = formatByoyomi(byoW);
+                    } else if (byoyomiMsWhite > 0 && whiteRemainBase <= 0) {
+                        remElW.textContent = formatByoyomi(byoyomiMsWhite);
                         remElW.classList.add('byoyomi');
                     } else {
-                        remElW.textContent = formatRemain(wr);
+                        remElW.textContent = formatRemain(whiteRemainBase);
                         remElW.classList.remove('byoyomi');
                     }
                 }
@@ -299,7 +364,6 @@ export function createClocksController(deps: ClocksDeps) {
             }
         }
 
-        const wsEntry = getWorkerStateEntry(state, workerIdx);
         setWorkerStateEntry(state, workerIdx, wsEntry);
 
         const t1 =
@@ -339,10 +403,22 @@ export function createClocksController(deps: ClocksDeps) {
             setWorkerStateEntry(state, workerIdx, ws);
             return;
         }
-        const occurredAt = Number(clock.occurredAtMs || Date.now());
+        const source = clock as Record<string, unknown>;
+        const snake = clock as unknown as {
+            occurred_at_ms?: number;
+            pre_black_remain_ms?: number;
+            pre_white_remain_ms?: number;
+            preBlackRemainMs?: number;
+            preWhiteRemainMs?: number;
+        };
+        const occurredAt = Number(clock.occurredAtMs ?? snake.occurred_at_ms ?? Date.now());
         const startedAt = Number(ws.startedAtMs || occurredAt);
         const elapsedMs = Math.max(0, occurredAt - startedAt);
-        const freezeMs = Math.max(100, byoyomiMs - elapsedMs);
+        const preRemainMs =
+            side === 'black'
+                ? toFiniteNumber(source.pre_black_remain_ms ?? snake.preBlackRemainMs)
+                : toFiniteNumber(source.pre_white_remain_ms ?? snake.preWhiteRemainMs);
+        const freezeMs = computeByoyomiRemainMs(byoyomiMs, elapsedMs, preRemainMs);
         const text = BYOYOMI_POSTMOVE_BEHAVIOR === 'freeze' ? formatByoyomi(freezeMs) : formatByoyomi(byoyomiMs);
         if (side === 'black') ws.blackFrozenByoText = text;
         else ws.whiteFrozenByoText = text;

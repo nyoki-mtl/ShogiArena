@@ -1,16 +1,16 @@
-import type { LiveUpdatesContext } from '@/modules/live/types/updates';
-import { reportDashboardRecoverableFailure } from '@/modules/shared/utils/errors';
-import { normalizeSummaryPayload } from './normalizers';
-import type { LiveUpdateHandlers } from './handlers';
-import { createSseContractGuard } from './sseContractGuard';
-import { bootstrapWorkers } from './bootstrap';
-import { gamesPayloadSchema, liveEnvelopeSchema, summarySnapshotSchema } from './schema';
-import type { LiveEnvelope } from './wsTypes';
-import { createMergeWorkerBridge } from './workerBridge';
-import { recordLiveDiagnosticsMetric } from '@/modules/live/utils/liveNamespace/metrics';
 import { peekWorkerSnapshotRecord } from '@/modules/live/state/updates';
+import type { LiveUpdatesContext } from '@/modules/live/types/updates';
+import { recordLiveDiagnosticsMetric } from '@/modules/live/utils/liveNamespace/metrics';
 import { getResumeCoordinator, type ResumeToken } from '@/modules/shared/services/resumeCoordinator';
+import { reportDashboardRecoverableFailure } from '@/modules/shared/utils/errors';
 import type { ZodTypeAny } from 'zod';
+import { bootstrapWorkers } from './bootstrap';
+import type { LiveUpdateHandlers } from './handlers';
+import { normalizeSummaryPayload } from './normalizers';
+import { gamesPayloadSchema, liveEnvelopeSchema, summarySnapshotSchema } from './schema';
+import { createSseContractGuard } from './sseContractGuard';
+import { createMergeWorkerBridge } from './workerBridge';
+import type { LiveEnvelope } from './wsTypes';
 
 type DisconnectReason = 'error' | 'closed' | 'unsupported';
 type ResumeSession = {
@@ -36,6 +36,7 @@ function resolveSummaryTopic(runtimeMode: string | null | undefined): string {
     if (normalized === 'spsa') return `${SUMMARY_TOPIC_PREFIX}spsa`;
     if (normalized === 'sprt') return `${SUMMARY_TOPIC_PREFIX}sprt`;
     if (normalized === 'match') return `${SUMMARY_TOPIC_PREFIX}match`;
+    if (normalized === 'generate') return `${SUMMARY_TOPIC_PREFIX}generate`;
     return `${SUMMARY_TOPIC_PREFIX}tournament`;
 }
 
@@ -125,6 +126,12 @@ function buildWorkerFilterKey(workers: Set<number>): string {
         .filter((value) => Number.isFinite(value))
         .sort((a, b) => a - b)
         .join(',');
+}
+
+type EngineLogRole = 'black' | 'white';
+
+function buildEngineLogDiffTopic(gid: string, role: EngineLogRole): string {
+    return `live.engine.${gid}.${role}.io.diff`;
 }
 
 function buildTopicKey(topics: Set<string>): string {
@@ -225,6 +232,8 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
     let lastWorkerFilterKey: string | null = null;
     let desiredWorkerFilterKey = '';
     let removeCardsListener: (() => void) | null = null;
+    let removeEngineLogListener: (() => void) | null = null;
+    const engineLogTopicCounts = new Map<string, number>();
     const SNAPSHOT_REASON_UNKNOWN = 0;
     const SNAPSHOT_REASON_WORKER = 1;
     const SNAPSHOT_REASON_CATCHUP_DEFERRED = 3;
@@ -279,7 +288,12 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
     let lastTopicPruneAt = 0;
     let moveGapListenerAttached = false;
     const summaryTopic = resolveSummaryTopic(context.state?.runtimeMode ?? 'tournament');
-    const BASE_SUBSCRIPTIONS = new Set<string>([summaryTopic, 'live.games.delta', 'live.assignment.diff']);
+    const BASE_SUBSCRIPTIONS = new Set<string>([
+        summaryTopic,
+        'live.games.delta',
+        'live.assignment.snapshot',
+        'live.assignment.diff',
+    ]);
 
     const contractGuard = createSseContractGuard({
         emit: events?.emit?.bind(events),
@@ -342,9 +356,26 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
         }
     }
 
+    function addEngineLogTopic(topic: string): void {
+        const current = engineLogTopicCounts.get(topic) ?? 0;
+        engineLogTopicCounts.set(topic, current + 1);
+    }
+
+    function removeEngineLogTopic(topic: string): void {
+        const current = engineLogTopicCounts.get(topic) ?? 0;
+        if (current <= 1) {
+            engineLogTopicCounts.delete(topic);
+        } else {
+            engineLogTopicCounts.set(topic, current - 1);
+        }
+    }
+
     function buildSubscriptionTopics(activeWorkers: Set<number>): { topics: Set<string>; gids: Set<string> } {
         const topics = new Set(BASE_SUBSCRIPTIONS);
         const gids = collectActiveGids(assignmentByWorker, activeWorkers);
+        for (const topic of engineLogTopicCounts.keys()) {
+            topics.add(topic);
+        }
         for (const gid of gids) {
             topics.add(`live.game.${gid}.moves.diff`);
             topics.add(`live.game.${gid}.state.diff`);
@@ -590,9 +621,14 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
         lastIncludeAnalysis = true;
         lastWorkerFilterKey = null;
         desiredWorkerFilterKey = '';
+        engineLogTopicCounts.clear();
         if (removeCardsListener) {
             removeCardsListener();
             removeCardsListener = null;
+        }
+        if (removeEngineLogListener) {
+            removeEngineLogListener();
+            removeEngineLogListener = null;
         }
         if (closedByUser && removeVisibilityListener) {
             removeVisibilityListener();
@@ -663,6 +699,9 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
         }
         if (!removeCardsListener) {
             installCardsListener();
+        }
+        if (!removeEngineLogListener) {
+            installEngineLogListener();
         }
         if (!moveGapListenerAttached && context.owner && typeof context.owner.addEventListener === 'function') {
             context.owner.addEventListener('live:move-gap', handleMoveGapEvent as EventListener);
@@ -840,6 +879,37 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
                     return;
                 }
 
+                if (topic.startsWith('live.engine.')) {
+                    const now = getNow();
+                    touchTopic(topic, now);
+                    maybePruneTopicTracking(now);
+                    if (!validateSeq(topic, envelope.seq)) {
+                        requestSnapshot(topic);
+                        return;
+                    }
+                    pendingSnapshotTopics.delete(topic);
+                    const payload = envelope.payload;
+                    if (payload && typeof payload === 'object') {
+                        const data = payload as {
+                            gid?: unknown;
+                            role?: unknown;
+                            entries?: unknown;
+                        };
+                        const gid = typeof data.gid === 'string' && data.gid.trim() ? data.gid.trim() : null;
+                        const role = data.role === 'black' || data.role === 'white' ? data.role : null;
+                        const entries = Array.isArray(data.entries) ? data.entries : [];
+                        if (gid && role) {
+                            events?.emit?.('live:engine-log', {
+                                gid,
+                                role,
+                                entries,
+                                isSnapshot: topic.endsWith('.snapshot'),
+                            });
+                        }
+                    }
+                    return;
+                }
+
                 if (!validateSeq(topic, envelope.seq)) {
                     requestSnapshot(topic);
                     return;
@@ -917,6 +987,7 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
         if (topic.startsWith('live.games.')) return 'games';
         if (topic.startsWith('live.assignment.')) return 'assignment';
         if (topic.startsWith('live.worker.')) return 'worker';
+        if (topic.startsWith('live.engine.')) return 'engine';
         if (topic.startsWith('live.time.')) return 'time';
         if (topic.startsWith('live.spsa.')) return 'spsa';
         if (topic.startsWith('live.updates.')) return 'updates';
@@ -1157,6 +1228,53 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
         if (typeof unsubscribe === 'function') {
             removeCardsListener = unsubscribe;
         }
+    }
+
+    function installEngineLogListener(): void {
+        if (removeEngineLogListener || !events?.on) {
+            return;
+        }
+        const toggleHandler = (payload: unknown) => {
+            if (!payload || typeof payload !== 'object') return;
+            const data = payload as {
+                gid?: unknown;
+                role?: unknown;
+                open?: unknown;
+            };
+            const gid = typeof data.gid === 'string' && data.gid.trim() ? data.gid.trim() : null;
+            const role = data.role === 'black' || data.role === 'white' ? data.role : null;
+            const open = data.open === true;
+            if (!gid || !role) return;
+            const topic = buildEngineLogDiffTopic(gid, role);
+            if (open) {
+                addEngineLogTopic(topic);
+            } else {
+                removeEngineLogTopic(topic);
+            }
+            updateSubscriptions(SNAPSHOT_REASON_CARD_SUBSCRIBE);
+        };
+        const switchHandler = (payload: unknown) => {
+            if (!payload || typeof payload !== 'object') return;
+            const data = payload as { prevGid?: unknown; nextGid?: unknown; role?: unknown };
+            const prevGid = typeof data.prevGid === 'string' && data.prevGid.trim() ? data.prevGid.trim() : null;
+            const nextGid = typeof data.nextGid === 'string' && data.nextGid.trim() ? data.nextGid.trim() : null;
+            const role = data.role === 'black' || data.role === 'white' ? data.role : null;
+            if (!role) return;
+            if (prevGid) {
+                removeEngineLogTopic(buildEngineLogDiffTopic(prevGid, role));
+            }
+            if (nextGid) {
+                addEngineLogTopic(buildEngineLogDiffTopic(nextGid, role));
+            }
+            updateSubscriptions(SNAPSHOT_REASON_CARD_SUBSCRIBE);
+        };
+        const unsubToggle = events.on('live:engine-log-toggle', toggleHandler);
+        const unsubSwitch = events.on('live:engine-log-switch', switchHandler);
+        removeEngineLogListener = () => {
+            if (typeof unsubToggle === 'function') unsubToggle();
+            if (typeof unsubSwitch === 'function') unsubSwitch();
+            removeEngineLogListener = null;
+        };
     }
 
     function getNow(): number {

@@ -92,6 +92,22 @@ sprt:
   #beta: 0.05
   #min_games: 0   # 早期終了の前に最低消化する局数
 
+# OpenBench/ShogiBench への結果提出（任意、SPRT時のみ）
+#openbench:
+#  enabled: true
+#  mode: existing_test   # or: create_test
+#  server: "https://your-openbench.example.com"
+#  username: "your-user"
+#  password_env: "OPENBENCH_PASSWORD"
+#  target_test_id: 1234
+#  submit_interval_games: 2
+#  strict: true
+#  # create:             # required when mode=create_test
+#  #   discovery_timeout_sec: 180
+#  #   payload:
+#  #     dev_engine: "YaneuraOu"
+#  #     base_engine: "YaneuraOu"
+
 rating:
   initial: 1500.0
   k_factor: 16.0

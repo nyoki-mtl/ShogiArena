@@ -9,24 +9,26 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
 
+import rshogi.record
 import yaml
+from rshogi.core import normalize_usi_position
 
-from shogiarena.arena.configs.spsa import LtcRegressionConfig, SpsaConfig
-from shogiarena.arena.configs.tournament import EngineSpec
+from shogiarena.arena.configs.spsa import LtcRegressionConfig, SpsaRunConfig
+from shogiarena.arena.configs.tournament import EngineConfig
 from shogiarena.arena.engines.time_control import TimeControlLimits
+from shogiarena.arena.engines.usi_engine import AsyncUsiEngine
+from shogiarena.arena.instances.models import Instance
 from shogiarena.arena.session import GameCompletionEvent, GameLifecycleHooks, SessionContext
 from shogiarena.arena.tuning.param_io import (
     ParamEntry,
     quantize_value,
     write_params,
 )
-from shogiarena.records import GameInfo
-from shogiarena.utils.board import normalize_sfen
+from shogiarena.utils.types.coerce import coerce_int
 from shogiarena.utils.types.types import GameResult
 
-from .base_orchestrator import BaseOrchestrator, SummaryUpdateCallback
+from .base_orchestrator import BaseOrchestrator, DashboardServerProtocol, SummaryUpdateCallback
 from .base_orchestrator_utils import (
     build_engine_config_map,
     build_remote_game_info,
@@ -62,24 +64,26 @@ class SpsaGamePayload:
 class SpsaOrchestrator(BaseOrchestrator):
     def __init__(
         self,
-        config: SpsaConfig,
+        config: SpsaRunConfig,
         *,
         session: SessionContext,
         hooks: GameLifecycleHooks,
         summary_updater: SummaryUpdateCallback | None = None,
-        api_server: Any | None = None,
+        api_server: DashboardServerProtocol | None = None,
     ) -> None:
         super().__init__(
             api_server=api_server,
             summary_updater=summary_updater,
             session_context=session,
             hooks=hooks,
+            resource_poll_interval=config.system.resource_poll_interval,
+            resource_poll_max_interval=config.system.resource_poll_max_interval,
         )
         # Align naming with TournamentOrchestrator: expose unified config
         self.config = config
         self.num_workers = session.num_workers
         # Align with Tournament: store provided run_dir without extra validation here
-        self.run_dir: Path = session.run_dir
+        self.run_dir: Path = session.storage.run_dir
         metadata = session.metadata or {}
         session_uuid = str(metadata.get("session_uuid") or "").strip()
         self._session_uuid: str = session_uuid or session.run_id
@@ -124,10 +128,10 @@ class SpsaOrchestrator(BaseOrchestrator):
         )
         # Broadcast completion after DB save to avoid API/DB race
 
-    def _append_spsa_event(self, payload: dict[str, Any]) -> None:
+    def _append_spsa_event(self, payload: dict[str, object]) -> None:
         append_event(self.run_dir, self._session_uuid, payload)
 
-    def _record_ltc_result(self, record: dict[str, Any]) -> None:
+    def _record_ltc_result(self, record: dict[str, object]) -> None:
         record_ltc_result(
             run_dir=self.run_dir,
             session_uuid=self._session_uuid,
@@ -212,7 +216,7 @@ class SpsaOrchestrator(BaseOrchestrator):
         tuned_params: list[ParamEntry],
         baseline_params: list[ParamEntry],
         baseline_update_idx: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         """Backwards-compatible hook for tests that stub LTC execution."""
 
         return await run_ltc_regression(
@@ -223,10 +227,10 @@ class SpsaOrchestrator(BaseOrchestrator):
             baseline_update_idx=baseline_update_idx,
         )
 
-    def _prepare_engine_configs(self) -> dict[str, Any]:
+    def _prepare_engine_configs(self) -> dict[str, EngineConfig]:
         """Write engine YAMLs and build name-to-spec map for baseline/tuned.
 
-        Returns a dict mapping engine name to the original EngineSpec objects.
+        Returns a dict mapping engine name to the original EngineConfig objects.
         Also stores baseline_config/tuned_config paths as attributes for later
         use and attaches a dynamic 'engine_config' attribute to each spec for
         interface parity with TournamentOrchestrator.
@@ -240,24 +244,43 @@ class SpsaOrchestrator(BaseOrchestrator):
         tuned_opts = build_usi_options(getattr(self, "extra_options", None), tuned_spec) or {}
 
         # Write minimal YAMLs using artifact form when available to defer resolution
-        def _write(spec: Any, filename: str, opts: dict[str, Any]) -> Path:
-            y: dict[str, Any] = {"name": spec.name}
-            art = getattr(spec, "artifact", None)
-            if isinstance(art, str) and art.strip():
+        def _write(spec: EngineConfig, filename: str, opts: dict[str, object]) -> Path:
+            y: dict[str, object] = {"name": spec.name}
+            art = spec.artifact
+            if art and art.strip():
                 y["artifact"] = art
-                bopts = getattr(spec, "build_options", None)
-                if isinstance(bopts, dict) and bopts:
-                    y["build_options"] = dict(bopts)
+                if spec.build_options:
+                    y["build_options"] = dict(spec.build_options)
             else:
-                # Extract engine_path from the referenced engine_config YAML
-                e_cfg = getattr(spec, "engine_config", None)
-                if e_cfg is None:
-                    raise ValueError("SPSA engine requires either artifact or engine_config")
-                raw = yaml.safe_load(Path(e_cfg).read_text(encoding="utf-8")) or {}
+                # Extract engine_path from the referenced engine_path YAML
+                if spec.engine_path is None:
+                    raise ValueError("SPSA engine requires either artifact or engine_path")
+                raw = yaml.safe_load(Path(spec.engine_path).read_text(encoding="utf-8")) or {}
                 ep = raw.get("engine_path")
                 if not isinstance(ep, str) or not ep.strip():
-                    raise ValueError(f"engine_path missing in engine_config: {e_cfg}")
+                    raise ValueError(f"engine_path missing in engine config: {spec.engine_path}")
                 y["engine_path"] = str(ep)
+            if spec.mate_default_ply_limit is not None and spec.mate_default_ply_limit > 0:
+                y["mate_default_ply_limit"] = spec.mate_default_ply_limit
+            if spec.mate_default_node_limit is not None and spec.mate_default_node_limit > 0:
+                y["mate_default_node_limit"] = spec.mate_default_node_limit
+            y["mate_default_infinite"] = spec.mate_default_infinite
+            y["mate_wait_for_bestmove"] = spec.mate_wait_for_bestmove
+            if spec.isready_sync_strategy:
+                y["isready_sync_strategy"] = spec.isready_sync_strategy
+            if spec.isready_lock_key and spec.isready_lock_key.strip():
+                y["isready_lock_key"] = spec.isready_lock_key.strip()
+            if spec.isready_lock_template and spec.isready_lock_template.strip():
+                y["isready_lock_template"] = spec.isready_lock_template.strip()
+            if spec.isready_lock_check_key and spec.isready_lock_check_key.strip():
+                y["isready_lock_check_key"] = spec.isready_lock_check_key.strip()
+            if spec.isready_lock_check_template and spec.isready_lock_check_template.strip():
+                y["isready_lock_check_template"] = spec.isready_lock_check_template.strip()
+            if spec.isready_lock_check_templates:
+                y["isready_lock_check_templates"] = [str(item) for item in spec.isready_lock_check_templates]
+            y["isready_lock_skip_if_exists"] = spec.isready_lock_skip_if_exists
+            if spec.handshake_timeout is not None:
+                y["handshake_timeout"] = float(spec.handshake_timeout)
             if opts:
                 y["options"] = opts
             p = out_dir / filename
@@ -267,11 +290,10 @@ class SpsaOrchestrator(BaseOrchestrator):
         self.baseline_config = _write(base_spec, "engine_baseline.yaml", base_opts)
         self.tuned_config = _write(tuned_spec, "engine_tuned.yaml", tuned_opts)
 
-        # Dynamically attach engine_config path for parity with arena EngineSpec
-        cast(Any, base_spec).engine_config = self.baseline_config
-        cast(Any, tuned_spec).engine_config = self.tuned_config
+        base_spec.engine_path = self.baseline_config
+        tuned_spec.engine_path = self.tuned_config
 
-        entries: list[Any] = [base_spec, tuned_spec]
+        entries: list[EngineConfig] = [base_spec, tuned_spec]
         return build_engine_config_map(entries)
 
     def _compute_variant_offsets(
@@ -329,7 +351,7 @@ class SpsaOrchestrator(BaseOrchestrator):
         baseline_variant_token: str | None = None,
         event_family: str = "spsa",
         time_control_override: TimeControlLimits | None = None,
-    ) -> tuple[float, GameInfo | None, GameInfo | None]:
+    ) -> tuple[float, rshogi.record.GameRecord, rshogi.record.GameRecord]:
         """Play a tuned-vs-baseline pair (tuned black/white) and return mean score."""
         black_reserved = reserved_ids[0] if reserved_ids else None
         white_reserved = reserved_ids[1] if reserved_ids else None
@@ -379,10 +401,10 @@ class SpsaOrchestrator(BaseOrchestrator):
         baseline_variant_token: str | None = None,
         event_family: str = "spsa",
         time_control_override: TimeControlLimits | None = None,
-    ) -> tuple[int, GameInfo]:
+    ) -> tuple[int, rshogi.record.GameRecord]:
         """Run a single SPSA game with structure aligned to TournamentOrchestrator.
 
-        Returns (winner_code, GameInfo) where winner_code is 1 for tuned win,
+        Returns (winner_code, GameRecord) where winner_code is 1 for tuned win,
         0 for baseline win, 2 for draw.
         """
         rng = self._make_rng(update_idx + worker_idx)  # Deterministic but different per game
@@ -420,15 +442,35 @@ class SpsaOrchestrator(BaseOrchestrator):
             tuned_as_black=tuned_as_black,
             time_control_override=time_control_override,
         )
+        progress_q = self.progress_queue
+        if progress_q is not None:
+            initial_sfen = normalize_usi_position(start_sfen or "startpos")
+            black_tc_spec = black_limits.to_spec_str() if black_limits is not None else None
+            white_tc_spec = white_limits.to_spec_str() if white_limits is not None else None
+            enqueue_progress_event(
+                progress_q,
+                game_id,
+                {
+                    "type": "game_assigned",
+                    "game_id": game_id,
+                    "initial_sfen": initial_sfen,
+                    "black_name": tuned_label if tuned_as_black else baseline_label,
+                    "white_name": baseline_label if tuned_as_black else tuned_label,
+                    "time_control_black": black_tc_spec,
+                    "time_control_white": white_tc_spec,
+                },
+                fallback_move_count=0,
+                allow_default_str=True,
+            )
 
-        async def _hook(engines_by_key: dict[str, Any]) -> dict[Any, str] | None:
+        async def _hook(engines_by_key: dict[str, AsyncUsiEngine]) -> dict[AsyncUsiEngine, str] | None:
             tuned_key = make_role_pool_key(str(self.config.tuned[0].name or "tuned"), "tuned")
             base_key = make_role_pool_key(str(self.config.baseline[0].name or "baseline"), "baseline")
             tuned_engine = engines_by_key.get(tuned_key)
             base_engine = engines_by_key.get(base_key)
             if tuned_engine is not None:
                 await tuned_engine.apply_engine_options(tuned_option_map)
-            names: dict[Any, str] = {}
+            names: dict[AsyncUsiEngine, str] = {}
             if tuned_engine is not None:
                 names[tuned_engine] = tuned_label
             if base_engine is not None:
@@ -439,12 +481,12 @@ class SpsaOrchestrator(BaseOrchestrator):
 
         # If both roles are assigned to the same SSH instance, run remotely for low latency
         same_instance_remote = False
-        inst_pool = getattr(self, "instance_pool", None)
+        inst_pool = self.instance_pool
         if inst_pool is not None:
             base_spec = self.config.baseline[0]
             tuned_spec = self.config.tuned[0]
-            b_id = getattr(base_spec, "instance_id", None)
-            t_id = getattr(tuned_spec, "instance_id", None)
+            b_id = base_spec.instance_id
+            t_id = tuned_spec.instance_id
             if b_id and t_id and b_id == t_id:
                 inst = inst_pool.get_instance(b_id)
                 if inst is None:
@@ -460,7 +502,7 @@ class SpsaOrchestrator(BaseOrchestrator):
             remote_instance = None
 
         variant_label = tuned_token if phase == "ltc" else tuned_token + phase_symbol(phase)
-        assigned_instance = getattr(remote_instance, "name", None) if remote_instance is not None else None
+        assigned_instance = remote_instance.name if remote_instance is not None else None
         event_common = {
             "event": "game_scheduled",
             "update_idx": update_idx,
@@ -522,20 +564,25 @@ class SpsaOrchestrator(BaseOrchestrator):
                 baseline_options=baseline_option_map,
             )
         else:
-            gi = await self._execute_game(
+            exec_spec = BaseOrchestrator.GameExecutionSpec(
                 black_item=black_item,
                 white_item=white_item,
-                initial_sfen=normalize_sfen(start_sfen),
+                initial_sfen=normalize_usi_position(start_sfen),
                 game_id=game_id,
                 black_limits=black_limits,
                 white_limits=white_limits,
                 before_game_hook=_hook,
                 on_game_start=mark_running_once,
             )
+            gi = await self._execute_game(exec_spec)
 
-        gi.game_type = "spsa"
-        gi.black_player_name = tuned_label if tuned_as_black else baseline_label
-        gi.white_player_name = baseline_label if tuned_as_black else tuned_label
+        gi.update_metadata(
+            {
+                "game_type": "spsa",
+                "black_player": tuned_label if tuned_as_black else baseline_label,
+                "white_player": baseline_label if tuned_as_black else tuned_label,
+            }
+        )
 
         # Winner wrt tuned perspective
         winner = self._calculate_winner_code(gi, tuned_as_black)
@@ -574,12 +621,12 @@ class SpsaOrchestrator(BaseOrchestrator):
         game_id: str,
         black_limits: TimeControlLimits,
         white_limits: TimeControlLimits,
-        remote_instance: Any,
+        remote_instance: Instance,
         tuned_label: str,
         baseline_label: str,
-        tuned_options: dict[str, Any],
-        baseline_options: dict[str, Any],
-    ) -> GameInfo:
+        tuned_options: dict[str, object],
+        baseline_options: dict[str, object],
+    ) -> rshogi.record.GameRecord:
         """Execute a single SPSA game by delegating both engines to one remote instance."""
         # Prepare variant-id names for display consistency
         black_display = tuned_label if tuned_as_black else baseline_label
@@ -618,7 +665,7 @@ class SpsaOrchestrator(BaseOrchestrator):
         )
 
         # Stream events into orchestrator's progress queue and aggregate per-move stats
-        progress_q = getattr(self, "progress_queue", None)
+        progress_q = self.progress_queue
         agg_move_times: list[int | None] = []
         agg_wall_times: list[int | None] = []
         agg_nodes: list[int | None] = []
@@ -630,7 +677,7 @@ class SpsaOrchestrator(BaseOrchestrator):
         # Track latest ply to assign sensible move_count for non-move events
         last_ply_seen: int = 0
 
-        def on_event(ev: dict[str, Any]) -> None:
+        def on_event(ev: dict[str, object]) -> None:
             nonlocal last_ply_seen
             # Aggregate per-move stats (from move_progress)
             last_ply_seen = self._update_aggregates_from_event(
@@ -670,8 +717,7 @@ class SpsaOrchestrator(BaseOrchestrator):
         if final_result is None:
             raise RuntimeError("Remote game did not produce a result_code in move_progress events")
 
-        # Build GameInfo from final payload (minimal fields)
-        # Build the final GameInfo object
+        # Build GameRecord from final payload.
 
         gi = build_remote_game_info(
             start_sfen=start_sfen,
@@ -694,17 +740,21 @@ class SpsaOrchestrator(BaseOrchestrator):
             "[%s] end game %s: result=%s",
             remote_instance.name,
             game_id,
-            (int(gi.game_result) if gi.game_result is not None else None),
+            gi.result.value,
         )
-        gi.game_type = "spsa"
-        gi.black_player_name = black_display
-        gi.white_player_name = white_display
+        gi.update_metadata(
+            {
+                "game_type": "spsa",
+                "black_player": black_display,
+                "white_player": white_display,
+            }
+        )
         return gi
 
     # --- Event aggregation/bridging helpers -------------------------------
     @staticmethod
     def _update_aggregates_from_event(
-        ev: dict[str, Any],
+        ev: dict[str, object],
         last_ply_seen: int,
         agg_moves: list[str],
         agg_evals: list[int | None],
@@ -715,26 +765,17 @@ class SpsaOrchestrator(BaseOrchestrator):
         agg_wall_times: list[int | None],
     ) -> int:
         if ev.get("type") == "move_progress":
-            try:
-                last_ply_val = int(ev.get("ply", 0) or 0)
-            except (TypeError, ValueError):
-                last_ply_val = 0
+            last_ply_val = coerce_int(ev.get("ply")) or 0
             last_ply_seen = max(last_ply_seen, last_ply_val)
             move = ev.get("move")
             if isinstance(move, str) and move.strip():
                 agg_moves.append(move)
-                agg_evals.append(int(ev["eval_cp"])) if ev.get("eval_cp") is not None else agg_evals.append(None)
-                agg_nodes.append(int(ev["nodes"])) if ev.get("nodes") is not None else agg_nodes.append(None)
-                agg_depth.append(int(ev["depth"])) if ev.get("depth") is not None else agg_depth.append(None)
-                agg_seldepth.append(int(ev["seldepth"])) if ev.get("seldepth") is not None else agg_seldepth.append(
-                    None
-                )
-                agg_move_times.append(int(ev["time_ms"])) if ev.get("time_ms") is not None else agg_move_times.append(
-                    None
-                )
-                agg_wall_times.append(int(ev["wall_time_ms"])) if ev.get(
-                    "wall_time_ms"
-                ) is not None else agg_wall_times.append(None)
+                agg_evals.append(coerce_int(ev.get("eval_cp")))
+                agg_nodes.append(coerce_int(ev.get("nodes")))
+                agg_depth.append(coerce_int(ev.get("depth")))
+                agg_seldepth.append(coerce_int(ev.get("seldepth")))
+                agg_move_times.append(coerce_int(ev.get("time_ms")))
+                agg_wall_times.append(coerce_int(ev.get("wall_time_ms")))
         return last_ply_seen
 
     def _prepare_game_items(
@@ -751,11 +792,10 @@ class SpsaOrchestrator(BaseOrchestrator):
         """Build engine pool items and per-side time controls for the next game."""
         base_spec = self.config.baseline[0]
         tuned_spec = self.config.tuned[0]
-        base_tc = getattr(self.config.rules, "time_control", None)
+        base_tc = self.config.rules.time_control
 
-        def pick_limits(spec: EngineSpec) -> TimeControlLimits:
-            tc = getattr(spec, "time_control", None)
-            limits = build_time_control_limits(base_tc, tc)
+        def pick_limits(spec: EngineConfig) -> TimeControlLimits:
+            limits = build_time_control_limits(base_tc, spec.time_control)
             if limits is None:
                 raise RuntimeError(
                     f"Missing required time_control for SPSA engine '{spec.name}'. "
@@ -808,12 +848,11 @@ class SpsaOrchestrator(BaseOrchestrator):
         return GameResult.DRAW_BY_REPETITION
 
     @staticmethod
-    def _calculate_winner_code(game_info: GameInfo, tuned_as_black: bool) -> int:
-        if game_info.game_result is None:
-            return 2
-        if game_info.game_result.is_black_win():
+    def _calculate_winner_code(game_info: rshogi.record.GameRecord, tuned_as_black: bool) -> int:
+        result = game_info.result
+        if result.is_black_win():
             return 1 if tuned_as_black else 0
-        if game_info.game_result.is_white_win():
+        if result.is_white_win():
             return 0 if tuned_as_black else 1
         return 2
 
@@ -837,8 +876,8 @@ class SpsaOrchestrator(BaseOrchestrator):
         *,
         rng: random.Random | None = None,
         allow_stochastic: bool = False,
-    ) -> dict[str, Any]:
-        options: dict[str, Any] = {}
+    ) -> dict[str, object]:
+        options: dict[str, object] = {}
         for entry in params:
             if entry.not_used:
                 continue
@@ -876,7 +915,7 @@ class SpsaOrchestrator(BaseOrchestrator):
 
         # Gain schedules (k is 1-based)
         k = int(update_idx)
-        a0 = float(getattr(self.config, "a0", self.config.mobility) or self.config.mobility)
+        a0 = float(self.config.a0 or self.config.mobility)
         A = float(self.config.A if self.config.A is not None else max(1.0, 0.1 * float(self.config.num_updates)))
         alpha = float(self.config.alpha)
         gamma = float(self.config.gamma)
@@ -1075,7 +1114,8 @@ class SpsaOrchestrator(BaseOrchestrator):
             delta_norm = delta_norm_sq**0.5
             if self.config.early_stop is not None:
                 if self.config.early_stop.get("type") == "delta_norm":
-                    threshold = float(self.config.early_stop.get("threshold", 1e-3))
+                    threshold_raw = self.config.early_stop.get("threshold", 1e-3)
+                    threshold = float(threshold_raw) if isinstance(threshold_raw, int | float | str) else 1e-3
                     if delta_norm < threshold:
                         logger.debug(f"Early stopping triggered: delta_norm={delta_norm:.6f} < {threshold}")
                         self._stop_event.set()

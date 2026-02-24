@@ -6,46 +6,65 @@ import asyncio
 import copy
 import json
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast, runtime_checkable
+from typing import Any, Literal, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
 
+import rshogi.record
+
+from shogiarena.arena.configs.base import RulesConfig
+from shogiarena.arena.configs.tournament import EngineConfig
 from shogiarena.arena.engines.time_control import TimeControlLimits
 from shogiarena.arena.engines.usi_engine import AsyncUsiEngine
 from shogiarena.arena.execution.engine_participant import EngineParticipant
 from shogiarena.arena.execution.game_runner import GameRunner
-from shogiarena.arena.instances.models import InstanceActiveGameSide
+from shogiarena.arena.instances.models import Instance, InstanceActiveGameSide
 from shogiarena.arena.instances.pool import InstancePool, ResourceRequest
-from shogiarena.arena.instances.slot_policy import estimate_required_slots
+from shogiarena.arena.instances.slot_policy import HasOptions, estimate_required_slots
 from shogiarena.arena.remote.executor import RemoteExecutor
 from shogiarena.arena.services.persistence.records import (
     EngineArtifactSnapshot,
     GameParticipationRecord,
     InstanceSnapshot,
+    serialize_participation_records,
 )
 from shogiarena.arena.session import GameCompletionEvent, GameLifecycleHooks, SessionContext
-from shogiarena.records import GameInfo
+from shogiarena.utils.types.types import EngineInfoSnapshots, EngineOptionsSnapshots
 
 from . import base_orchestrator_utils
+from .base_orchestrator_utils import WorkerSnapshot
 from .engine_pool import EnginePool
+from .progress import DashboardServerProtocol as ProgressDashboardServerProtocol
 from .progress import ProgressHub, SummaryUpdateCallback
 from .remote_exec import RemoteExecutionManager
+
+BeforeGameHook: TypeAlias = Callable[
+    [dict[str, AsyncUsiEngine]],
+    Awaitable[dict[AsyncUsiEngine, str] | None],
+]
+_T = TypeVar("_T")
 
 
 @runtime_checkable
 class DashboardServerProtocol(Protocol):
     """Protocol describing the dashboard API server interactions."""
 
-    def set_worker_snapshot(self, worker_idx: int, snapshot: Mapping[str, Any], *, broadcast: bool = True) -> None: ...
+    def set_worker_snapshot(
+        self, worker_idx: int, snapshot: Mapping[str, object], *, broadcast: bool = True
+    ) -> None: ...
 
-    def broadcast_worker_update(self, worker_idx: int, payload: Mapping[str, Any]) -> None: ...
+    def broadcast_worker_update(self, worker_idx: int, payload: Mapping[str, object]) -> None: ...
+
+    def broadcast_engine_io(self, worker_idx: int, payload: Mapping[str, object]) -> None: ...
+
+    def clear_engine_logs(self, game_id: str | int) -> None: ...
 
     def update_engine_options(
         self,
         engine_name: str,
-        options: Mapping[str, Any],
+        options: Mapping[str, object],
         info: Mapping[str, str] | None = None,
     ) -> None: ...
 
@@ -67,14 +86,16 @@ class BaseOrchestrator:
         summary_updater: SummaryUpdateCallback | None = None,
         session_context: SessionContext,
         hooks: GameLifecycleHooks,
+        resource_poll_interval: float | None = None,
+        resource_poll_max_interval: float | None = None,
     ) -> None:
         # `api_server` is expected to provide `broadcast_worker_update` and
         # `set_worker_snapshot` methods compatible with the dashboard server.
         self.api_server: DashboardServerProtocol | None = api_server
         self._summary_updater: SummaryUpdateCallback | None = summary_updater
         # Common task groups and stop coordination
-        self._worker_tasks: set[asyncio.Task[Any]] = set()
-        self._running_tasks: set[asyncio.Task[Any]] = set()
+        self._worker_tasks: set[asyncio.Task[None]] = set()
+        self._running_tasks: set[asyncio.Task[None]] = set()
         self._stop_event = asyncio.Event()
         # Optional attachments initialized by orchestrator subclasses
         self.game_runner: GameRunner | None = None
@@ -83,36 +104,38 @@ class BaseOrchestrator:
         self.instance_pool: InstancePool | None = session_context.instance_pool
         self.session_context: SessionContext = session_context
         services = session_context.services or {}
-        self.db_service = services.get("db") if isinstance(services, Mapping) else None
+        self.db_service = services.get("db") if services else None
         self._hooks: GameLifecycleHooks = hooks
         # Remote execution helpers shared across orchestrators
         self._remote_exec = RemoteExecutionManager()
+        self._resource_poll_interval = resource_poll_interval
+        self._resource_poll_max_interval = resource_poll_max_interval
         # Progress hub for SSE updates
         self._progress_hub = ProgressHub(
-            api_server=self.api_server,
+            api_server=cast(ProgressDashboardServerProtocol | None, self.api_server),
             preassign_worker=self.preassign_worker,
         )
         # Runtime engine snapshots propagated to dashboard/UI consumers
-        self._engine_option_snapshots: dict[str, dict[str, Any]] = {}
-        self._engine_info_snapshots: dict[str, dict[str, str]] = {}
+        self._engine_option_snapshots: EngineOptionsSnapshots = {}
+        self._engine_info_snapshots: EngineInfoSnapshots = {}
 
     # --- Abstract entrypoint (implement in subclasses) -------------------
     async def run(self) -> object:  # pragma: no cover - to be implemented by subclasses
         raise NotImplementedError
 
     @staticmethod
-    def normalize_options_list_to_dict(options: Any) -> dict[str, Any]:
+    def normalize_options_list_to_dict(options: list[dict[str, str] | str] | None) -> dict[str, str]:
         """Normalize a list-style options payload (e.g., from SPSA EngineSpec) into a dict.
 
         Supports [{"name": k, "value": v}, ...] and strings like
         "setoption name <k> value <v>".
         """
-        out: dict[str, Any] = {}
+        out: dict[str, str] = {}
         if not options:
             return out
         for o in options:
             if isinstance(o, dict) and "name" in o:
-                out[str(o["name"])] = o.get("value", "")
+                out[str(o["name"])] = str(o.get("value", ""))
             elif isinstance(o, str):
                 s = o.strip()
                 if s.startswith("setoption "):
@@ -126,14 +149,14 @@ class BaseOrchestrator:
                     out[k] = v
         return out
 
-    def get_remote_executor(self, remote_instance: Any) -> RemoteExecutor:
+    def get_remote_executor(self, remote_instance: Instance) -> RemoteExecutor:
         """Return a cached RemoteExecutor for the provided instance."""
         return self._remote_exec.get_remote_executor(remote_instance)
 
     async def ensure_remote_repo(
         self,
         executor: RemoteExecutor,
-        remote_instance: Any,
+        remote_instance: Instance,
         remote_root: str | None = None,
     ) -> str:
         """Ensure the remote repository is cloned/updated once per instance and return its root."""
@@ -143,7 +166,7 @@ class BaseOrchestrator:
         """Resolve local binaries and provision them to the remote host."""
         return await self._remote_exec.resolve_remote_binaries(executor, *config_paths)
 
-    async def rewrite_remote_options(self, remote_instance: Any, *option_sets: dict[str, Any] | None) -> None:
+    async def rewrite_remote_options(self, remote_instance: Instance, *option_sets: dict[str, object] | None) -> None:
         """Rewrite option dictionaries so that paths are valid for the remote environment."""
         await self._remote_exec.rewrite_remote_options(remote_instance, *option_sets)
 
@@ -156,12 +179,12 @@ class BaseOrchestrator:
         white_name: str,
         black_engine_binary_path: str,
         white_engine_binary_path: str,
-        black_options: dict[str, Any],
-        white_options: dict[str, Any],
+        black_options: dict[str, object],
+        white_options: dict[str, object],
         black_limits: TimeControlLimits,
         white_limits: TimeControlLimits,
         max_plies: int = 0,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         """Build the JSON spec consumed by remote pair runners."""
         return self._remote_exec.build_remote_run_spec(
             game_id=game_id,
@@ -180,11 +203,11 @@ class BaseOrchestrator:
     async def _prepare_remote_game_spec(
         self,
         *,
-        remote_instance: Any,
+        remote_instance: Instance,
         black_config_path: Path,
         white_config_path: Path,
-        black_options: dict[str, Any] | None,
-        white_options: dict[str, Any] | None,
+        black_options: dict[str, object] | None,
+        white_options: dict[str, object] | None,
         start_sfen: str,
         game_id: str,
         black_name: str,
@@ -192,7 +215,7 @@ class BaseOrchestrator:
         black_limits: TimeControlLimits,
         white_limits: TimeControlLimits,
         max_plies: int,
-    ) -> tuple[RemoteExecutor, str, dict[str, Any]]:
+    ) -> tuple[RemoteExecutor, str, dict[str, object]]:
         """Prepare executor, remote root, and run spec for remote pair execution."""
         return await self._remote_exec.prepare_remote_game_spec(
             remote_instance=remote_instance,
@@ -214,8 +237,8 @@ class BaseOrchestrator:
         self,
         *,
         num_workers: int,
-        engines: list[Any],
-        rules: Any,
+        engines: Sequence[EngineConfig],
+        rules: RulesConfig,
         start_progress: bool = True,
     ) -> None:
         """Initialize progress, worker state, GameRunner, and extra options.
@@ -231,7 +254,7 @@ class BaseOrchestrator:
         )
         self.game_to_worker: dict[int, int] = {}
         self.worker_busy: set[int] = set()
-        self.worker_snapshots: dict[int, dict[str, Any]] = {}
+        self.worker_snapshots: dict[int, WorkerSnapshot] = {}
         if self.api_server and start_progress:
             self.start_progress_consumer(
                 num_workers=self.num_workers,
@@ -243,7 +266,7 @@ class BaseOrchestrator:
             )
         self.game_runner = base_orchestrator_utils.create_game_runner_from_rules(
             rules,
-            engines,
+            list(engines),
             self.progress_queue,
         )
         if hasattr(self.game_runner, "set_engine_options_callback"):
@@ -254,7 +277,7 @@ class BaseOrchestrator:
     def _handle_engine_options(
         self,
         engine_name: str,
-        options: Mapping[str, Any],
+        options: Mapping[str, object],
         info: Mapping[str, str] | None,
     ) -> None:
         """Persist latest USI option snapshot for dashboard/API consumers."""
@@ -298,12 +321,12 @@ class BaseOrchestrator:
                 # no running loop (e.g. shutdown); ignore
                 pass
 
-    def get_engine_option_snapshots(self) -> dict[str, dict[str, Any]]:
+    def get_engine_option_snapshots(self) -> EngineOptionsSnapshots:
         """Return a deep copy of captured USI option snapshots."""
 
         return copy.deepcopy(self._engine_option_snapshots)
 
-    def get_engine_info_snapshots(self) -> dict[str, dict[str, str]]:
+    def get_engine_info_snapshots(self) -> EngineInfoSnapshots:
         """Return a shallow copy of engine info captured during handshake."""
 
         return {name: dict(info) for name, info in self._engine_info_snapshots.items()}
@@ -320,14 +343,20 @@ class BaseOrchestrator:
     def create_engine_pool(self, max_instances_per_engine: int) -> EnginePool:
         """Factory to create and attach an EnginePool with given capacity."""
         engine_configs = getattr(self, "engine_configs", None)
+        default_handshake_timeout = None
+        config = getattr(self, "config", None)
+        if config is not None:
+            sys_cfg = getattr(config, "system", None)
+            default_handshake_timeout = getattr(sys_cfg, "engine_handshake_timeout", None)
         self.engine_pool = EnginePool(
             max_instances_per_engine=max_instances_per_engine,
             engine_configs=engine_configs,
             instance_pool=self.instance_pool,
+            default_handshake_timeout=default_handshake_timeout,
         )
         return self.engine_pool
 
-    async def _notify_game_complete(self, event: GameCompletionEvent) -> None:
+    async def _notify_game_complete(self, event: GameCompletionEvent[Any]) -> None:
         """Forward a completion event to runner-provided lifecycle hooks."""
 
         await self._hooks.on_game_complete(event)
@@ -339,41 +368,34 @@ class BaseOrchestrator:
     class EngineGameSpec:
         pool_key: str
         config_path: Path
-        extra_options: dict[str, Any] | None
+        extra_options: dict[str, object] | None
         instance_override: str | None = None
         role: Literal["black", "white"] = "black"
+
+    @dataclass
+    class GameExecutionSpec:
+        black_item: BaseOrchestrator.EngineGameSpec
+        white_item: BaseOrchestrator.EngineGameSpec
+        initial_sfen: str
+        game_id: str
+        black_limits: TimeControlLimits | None
+        white_limits: TimeControlLimits | None
+        before_game_hook: BeforeGameHook | None = None
+        game_round: int | None = None
+        on_game_start: Callable[[], Awaitable[None]] | None = None
 
     # --- Single game execution (shared) ----------------------------------
     async def _execute_game(
         self,
-        *,
-        black_item: BaseOrchestrator.EngineGameSpec,
-        white_item: BaseOrchestrator.EngineGameSpec,
-        initial_sfen: str,
-        game_id: str,
-        black_limits: TimeControlLimits | None,
-        white_limits: TimeControlLimits | None,
-        before_game_hook: (
-            Callable[[dict[str, AsyncUsiEngine]], Awaitable[dict[AsyncUsiEngine, str] | None]] | None
-        ) = None,
-        game_round: int | None = None,
-        on_game_start: Callable[[], Awaitable[None]] | None = None,
-    ) -> GameInfo:
+        spec: BaseOrchestrator.GameExecutionSpec,
+    ) -> rshogi.record.GameRecord:
         """Acquire engines, optionally apply pre-run hook, run a single game, and release engines.
 
         Args:
-            black_item: (pool_key, engine_config_path, extra_options) for black side
-            white_item: (pool_key, engine_config_path, extra_options) for white side
-            initial_sfen: Starting SFEN
-            game_id: Game identifier
-            black_limits: TimeControl limits for black (may be None)
-            white_limits: TimeControl limits for white (may be None)
-            before_game_hook: Optional async function that receives a mapping
-                {pool_key -> engine_instance} and may return a mapping
-                {engine_instance -> temporary_name} to be applied during the game
+            spec: Execution specification including engine assignments, time controls, and hooks.
 
         Returns:
-            GameInfo object from GameRunner
+            GameRecord object from GameRunner
         """
         ep = self.engine_pool
         assert ep is not None, "EnginePool not initialized"
@@ -390,15 +412,15 @@ class BaseOrchestrator:
         black_engine_spec = None
         white_engine_spec = None
         if pool is not None:
-            resource_requirements = self._collect_instance_usage(pool, black_item, white_item)
+            resource_requirements = self._collect_instance_usage(pool, spec.black_item, spec.white_item)
             if resource_requirements:
-                await self._await_instance_resources(pool, resource_requirements, game_id)
+                await self._await_instance_resources(pool, resource_requirements, spec.game_id)
                 slots_reserved = True
             if engine_configs is None:
                 raise AttributeError("engine_configs not initialized on orchestrator")
 
-            black_key = black_item.pool_key.split("#", 1)[0]
-            white_key = white_item.pool_key.split("#", 1)[0]
+            black_key = spec.black_item.pool_key.split("#", 1)[0]
+            white_key = spec.white_item.pool_key.split("#", 1)[0]
             if black_key not in engine_configs or white_key not in engine_configs:
                 raise KeyError("Engine config missing while recording active games")
 
@@ -406,12 +428,12 @@ class BaseOrchestrator:
             white_engine_spec = engine_configs[white_key]
 
             black_instance_id = (
-                getattr(black_item, "instance_override", None)
+                getattr(spec.black_item, "instance_override", None)
                 or getattr(black_engine_spec, "instance_id", None)
                 or "local"
             )
             white_instance_id = (
-                getattr(white_item, "instance_override", None)
+                getattr(spec.white_item, "instance_override", None)
                 or getattr(white_engine_spec, "instance_id", None)
                 or "local"
             )
@@ -433,7 +455,7 @@ class BaseOrchestrator:
                 [],
             ).append(
                 InstanceActiveGameSide(
-                    role="black", engine_name=str(black_engine_spec.name), pool_key=black_item.pool_key
+                    role="black", engine_name=str(black_engine_spec.name), pool_key=spec.black_item.pool_key
                 )
             )
             instance_role_map.setdefault(
@@ -441,27 +463,27 @@ class BaseOrchestrator:
                 [],
             ).append(
                 InstanceActiveGameSide(
-                    role="white", engine_name=str(white_engine_spec.name), pool_key=white_item.pool_key
+                    role="white", engine_name=str(white_engine_spec.name), pool_key=spec.white_item.pool_key
                 )
             )
 
-            black_tc_spec = black_limits.to_spec_str() if black_limits is not None else None
-            white_tc_spec = white_limits.to_spec_str() if white_limits is not None else None
+            black_tc_spec = spec.black_limits.to_spec_str() if spec.black_limits is not None else None
+            white_tc_spec = spec.white_limits.to_spec_str() if spec.white_limits is not None else None
 
             for inst_id, roles in instance_role_map.items():
                 for role in roles:
                     pool.record_active_game(
                         inst_id,
-                        game_id=game_id,
+                        game_id=spec.game_id,
                         black_engine=str(black_engine_spec.name)
                         if black_engine_spec is not None
-                        else black_item.pool_key,
+                        else spec.black_item.pool_key,
                         white_engine=str(white_engine_spec.name)
                         if white_engine_spec is not None
-                        else white_item.pool_key,
-                        initial_sfen=initial_sfen,
+                        else spec.white_item.pool_key,
+                        initial_sfen=spec.initial_sfen,
                         role=role,
-                        round_index=game_round,
+                        round_index=spec.game_round,
                         time_control_black=black_tc_spec,
                         time_control_white=white_tc_spec,
                     )
@@ -471,16 +493,16 @@ class BaseOrchestrator:
 
         # Convert specs to tuples for EnginePool API
         b_tuple = (
-            black_item.pool_key,
-            black_item.config_path,
-            black_item.extra_options,
-            getattr(black_item, "instance_override", None),
+            spec.black_item.pool_key,
+            spec.black_item.config_path,
+            spec.black_item.extra_options,
+            getattr(spec.black_item, "instance_override", None),
         )
         w_tuple = (
-            white_item.pool_key,
-            white_item.config_path,
-            white_item.extra_options,
-            getattr(white_item, "instance_override", None),
+            spec.white_item.pool_key,
+            spec.white_item.config_path,
+            spec.white_item.extra_options,
+            getattr(spec.white_item, "instance_override", None),
         )
 
         black_engine: AsyncUsiEngine | None = None
@@ -491,33 +513,32 @@ class BaseOrchestrator:
 
             # Build map for hooks to identify engines by their pool keys
             engines_by_key: dict[str, AsyncUsiEngine] = {
-                black_item.pool_key: black_engine,
-                white_item.pool_key: white_engine,
+                spec.black_item.pool_key: black_engine,
+                spec.white_item.pool_key: white_engine,
             }
 
             # Optional temporary name overrides from hook
             temp_names: dict[AsyncUsiEngine, str] | None = None
-            if before_game_hook is not None:
+            if spec.before_game_hook is not None:
                 # Let hook errors propagate; do not swallow unexpected failures
-                maybe_names = await before_game_hook(engines_by_key)
-                if isinstance(maybe_names, dict) and maybe_names:
+                maybe_names = await spec.before_game_hook(engines_by_key)
+                if maybe_names:
                     temp_names = maybe_names
 
-            def pick_display_name(spec: Any | None, pool_key: str, engine: AsyncUsiEngine) -> str:
-                spec_name = getattr(spec, "name", None)
-                if isinstance(spec_name, str) and spec_name:
-                    return spec_name
-                if isinstance(pool_key, str) and "#" in pool_key:
+            def pick_display_name(spec: EngineConfig | None, pool_key: str, engine: AsyncUsiEngine) -> str:
+                if spec is not None and spec.name:
+                    return spec.name
+                if "#" in pool_key:
                     return pool_key.split("#", 1)[0]
                 return engine.name
 
             black_override = temp_names.get(black_engine) if temp_names else None
             if not black_override:
-                black_override = pick_display_name(black_engine_spec, black_item.pool_key, black_engine)
+                black_override = pick_display_name(black_engine_spec, spec.black_item.pool_key, black_engine)
 
             white_override = temp_names.get(white_engine) if temp_names else None
             if not white_override:
-                white_override = pick_display_name(white_engine_spec, white_item.pool_key, white_engine)
+                white_override = pick_display_name(white_engine_spec, spec.white_item.pool_key, white_engine)
 
             black_participant = EngineParticipant(
                 black_engine,
@@ -532,15 +553,15 @@ class BaseOrchestrator:
 
             started_at = datetime.now(timezone.utc)
 
-            if on_game_start is not None:
-                await on_game_start()
+            if spec.on_game_start is not None:
+                await spec.on_game_start()
             game_info = await gr.run_game(
                 black_participant,
                 white_participant,
-                initial_sfen,
-                game_id,
-                black_time_control_limits=black_limits,
-                white_time_control_limits=white_limits,
+                spec.initial_sfen,
+                spec.game_id,
+                black_time_control_limits=spec.black_limits,
+                white_time_control_limits=spec.white_limits,
             )
             completed_at = datetime.now(timezone.utc)
             participation_records = self._collect_participation_records_local(
@@ -550,13 +571,14 @@ class BaseOrchestrator:
                 white_participant=white_participant,
                 black_spec=black_engine_spec,
                 white_spec=white_engine_spec,
-                black_pool_key=black_item.pool_key,
-                white_pool_key=white_item.pool_key,
+                black_pool_key=spec.black_item.pool_key,
+                white_pool_key=spec.white_item.pool_key,
                 started_at=started_at,
                 completed_at=completed_at,
             )
             if participation_records:
-                game_info._arena_participation = participation_records
+                encoded = serialize_participation_records(participation_records)
+                game_info.set_metadata_attribute("_arena_participation", encoded)
             return game_info
         finally:
             try:
@@ -565,9 +587,17 @@ class BaseOrchestrator:
                 logger.debug("Failed to reset latency callback: %s", exc, exc_info=True)
             if black_engine is not None and white_engine is not None:
                 try:
-                    await ep.release(white_item.pool_key, white_engine, white_item.instance_override)
+                    await ep.release(
+                        spec.white_item.pool_key,
+                        white_engine,
+                        spec.white_item.instance_override,
+                    )
                 finally:
-                    await ep.release(black_item.pool_key, black_engine, black_item.instance_override)
+                    await ep.release(
+                        spec.black_item.pool_key,
+                        black_engine,
+                        spec.black_item.instance_override,
+                    )
             # Release instance usage marks
             pool = self.instance_pool
             if pool is not None:
@@ -575,7 +605,7 @@ class BaseOrchestrator:
                     pool.release_resources(resource_requirements)
                 if instance_role_map:
                     for inst_id in instance_role_map:
-                        pool.clear_active_game(inst_id, game_id)
+                        pool.clear_active_game(inst_id, spec.game_id)
 
     def _collect_participation_records_local(
         self,
@@ -584,8 +614,8 @@ class BaseOrchestrator:
         white_engine: AsyncUsiEngine,
         black_participant: EngineParticipant,
         white_participant: EngineParticipant,
-        black_spec: Any | None,
-        white_spec: Any | None,
+        black_spec: object | None,
+        white_spec: object | None,
         black_pool_key: str,
         white_pool_key: str,
         started_at: datetime,
@@ -636,22 +666,22 @@ class BaseOrchestrator:
         self,
         *,
         engine_name: str,
-        spec: Any | None,
-        engine_config: Any | None,
+        spec: object | None,
+        engine_config: object | None,
         binary_path: str | None,
     ) -> EngineArtifactSnapshot:
         artifact: str | None = None
-        build_flags: dict[str, Any] = {}
-        metadata: dict[str, Any] = {}
+        build_flags: dict[str, object] = {}
+        metadata: dict[str, object] = {}
 
         if spec is not None:
             artifact = getattr(spec, "artifact", None) or artifact
             build_options = getattr(spec, "build_options", None)
             if isinstance(build_options, Mapping):
                 build_flags.update(build_options)
-            cfg_path = getattr(spec, "engine_config", None)
+            cfg_path = getattr(spec, "engine_path", None)
             if cfg_path is not None:
-                metadata["engine_config_path"] = str(cfg_path)
+                metadata["engine_path"] = str(cfg_path)
             overlays = getattr(spec, "options_overlays", None)
             if overlays:
                 metadata["options_overlays"] = [str(p) for p in overlays]
@@ -674,7 +704,7 @@ class BaseOrchestrator:
                 metadata["working_directory"] = str(working_dir)
 
         metadata = {k: v for k, v in metadata.items() if v is not None}
-        build_flags_payload: dict[str, Any] | None = build_flags or None
+        build_flags_payload: dict[str, object] | None = build_flags or None
         return EngineArtifactSnapshot(
             logical_name=engine_name,
             artifact=artifact,
@@ -697,7 +727,7 @@ class BaseOrchestrator:
                 return InstanceSnapshot(instance_id=instance_id)
         metrics = inst.metrics
         tags = tuple(inst.config.tags or [])
-        extra: dict[str, Any] = {
+        extra: dict[str, object] = {
             "slots": inst.config.slots,
             "reachable": metrics.reachable,
         }
@@ -730,17 +760,17 @@ class BaseOrchestrator:
         role: Literal["black", "white"],
         engine_name: str,
         display_name: str | None,
-        spec: Any | None,
-        engine_config: Any | None,
+        spec: object | None,
+        engine_config: object | None,
         binary_path: str | None,
         instance_id: str | None,
         started_at: datetime,
         completed_at: datetime,
         pool_key: str | None,
-        engine_options: Mapping[str, Any] | None,
-        go_options: Mapping[str, Any] | None,
-        environment: Mapping[str, Any] | None,
-        engine_info: Mapping[str, Any] | None,
+        engine_options: Mapping[str, object] | None,
+        go_options: Mapping[str, object] | None,
+        environment: Mapping[str, object] | None,
+        engine_info: Mapping[str, object] | None,
     ) -> GameParticipationRecord:
         artifact_snapshot = self._engine_artifact_snapshot(
             engine_name=engine_name,
@@ -750,7 +780,7 @@ class BaseOrchestrator:
         )
         instance_snapshot = self._instance_snapshot(instance_id)
 
-        build_flags: dict[str, Any] = {}
+        build_flags: dict[str, object] = {}
         if spec is not None:
             spec_build = getattr(spec, "build_options", None)
             if isinstance(spec_build, Mapping):
@@ -760,7 +790,7 @@ class BaseOrchestrator:
             if isinstance(cfg_build, Mapping):
                 build_flags.update(cfg_build)
 
-        extras: dict[str, Any] = {}
+        extras: dict[str, object] = {}
         if engine_options:
             extras["engine_options"] = dict(engine_options)
         if go_options:
@@ -813,7 +843,7 @@ class BaseOrchestrator:
                     instance = pool.ensure_local_instance()
                 else:
                     raise KeyError(f"instance '{instance_id}' is not registered in the instance pool")
-            slots_required = estimate_required_slots(spec, item.extra_options)
+            slots_required = estimate_required_slots(cast(HasOptions, spec), item.extra_options)
             current = usage.get(instance_id)
             if current is None:
                 usage[instance_id] = ResourceRequest(slots=slots_required, engines=1)
@@ -830,10 +860,16 @@ class BaseOrchestrator:
         requirements: Mapping[str, ResourceRequest],
         game_id: str,
         *,
-        poll_interval: float = 0.1,
-        max_interval: float = 1.0,
+        poll_interval: float | None = None,
+        max_interval: float | None = None,
     ) -> None:
         """Wait until all required resources are available, reserving them atomically."""
+        resolved_poll = poll_interval if poll_interval is not None else (self._resource_poll_interval or 0.1)
+        resolved_max = max_interval if max_interval is not None else (self._resource_poll_max_interval or 1.0)
+        if resolved_poll <= 0 or resolved_max <= 0:
+            raise ValueError("poll intervals must be positive")
+        if resolved_poll > resolved_max:
+            raise ValueError("poll_interval must be <= max_interval")
 
         # Validate hard capacity upfront to avoid waiting forever
         for instance_id, req in requirements.items():
@@ -860,7 +896,7 @@ class BaseOrchestrator:
                     "Adjust the instance's max_engines or redistribute engines."
                 )
 
-        delay = poll_interval
+        delay = resolved_poll
         while True:
             acquired = pool.try_acquire_resources(requirements)
             if acquired:
@@ -870,7 +906,7 @@ class BaseOrchestrator:
                 raise RuntimeError(f"Stop requested while waiting for instance resources (game {game_id})")
 
             await asyncio.sleep(delay)
-            delay = min(delay * 1.5, max_interval)
+            delay = min(delay * 1.5, resolved_max)
 
     # --- Worker assignment helpers ----------------------------------------
     def preassign_worker(
@@ -902,7 +938,7 @@ class BaseOrchestrator:
 
     # --- Callback helpers --------------------------------------------------
     @staticmethod
-    async def notify_callback(cb: Callable[..., Any] | None, *args: Any, **kwargs: Any) -> None:
+    async def notify_callback(cb: Callable[..., object] | None, *args: object, **kwargs: object) -> None:
         """Invoke a callback and surface failures with context."""
         if not cb:
             return
@@ -967,11 +1003,11 @@ class BaseOrchestrator:
         progress_queue: asyncio.Queue[tuple[int, int, str | None]],
         game_to_worker: dict[int, int],
         worker_busy: set[int],
-        worker_snapshots: dict[int, dict[str, Any]],
+        worker_snapshots: dict[int, WorkerSnapshot],
         on_summary_update: SummaryUpdateCallback | None = None,
     ) -> None:
         """Start shared progress consumer via ProgressHub."""
-        self._progress_hub.update_api_server(self.api_server)
+        self._progress_hub.update_api_server(cast(ProgressDashboardServerProtocol | None, self.api_server))
         self._progress_hub.start(
             num_workers=num_workers,
             progress_queue=progress_queue,
@@ -984,8 +1020,8 @@ class BaseOrchestrator:
     # --- Generic worker scheduler -----------------------------------------
     async def run_items_concurrently(
         self,
-        items: list[Any],
-        run_one: Callable[[Any], Awaitable[None]],
+        items: list[_T],
+        run_one: Callable[[_T], Awaitable[None]],
         concurrency_limit: int,
     ) -> None:
         """Run items concurrently with a semaphore and stop support."""
@@ -995,7 +1031,7 @@ class BaseOrchestrator:
         lock = asyncio.Lock()
         idx = {"i": 0}
 
-        async def next_item() -> Any | None:
+        async def next_item() -> _T | None:
             async with lock:
                 if self._stop_event.is_set():
                     return None
@@ -1012,10 +1048,10 @@ class BaseOrchestrator:
                     break
                 async with semaphore:
 
-                    async def _invoke(x: Any) -> None:
+                    async def _invoke(x: _T) -> None:
                         await run_one(x)
 
-                    t: asyncio.Task[Any] = asyncio.create_task(_invoke(it))
+                    t: asyncio.Task[None] = asyncio.create_task(_invoke(it))
                     self._running_tasks.add(t)
                     await t
                     self._running_tasks.discard(t)

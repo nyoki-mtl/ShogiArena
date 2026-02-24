@@ -69,10 +69,10 @@ check-all: check
 	uv run pre-commit run --all-files
 
 docs-build:
-	mkdocs build --strict
+	mdbook build docs/book
 
 docs docs-serve:
-	mkdocs serve --dev-addr 127.0.0.1:8000
+	mdbook serve docs/book --open
 
 # クリーンアップ
 clean:

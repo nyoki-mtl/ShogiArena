@@ -8,12 +8,12 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-import cshogi
-import cshogi.KI2
 from aiohttp import web
+from rshogi.core import Board
 
-from shogiarena.db import ShogiDB
-from shogiarena.utils.common.constants import MOVE_END
+from shogiarena.db import ShogiRepository
+from shogiarena.records.storage.db_store import DBRecordStore
+from shogiarena.utils.types.coerce import strict_int
 from shogiarena.web.dashboard.backend.http_helpers import json_error_response
 from shogiarena.web.dashboard.backend.live.schema import build_live_view_snapshot
 from shogiarena.web.dashboard.backend.tournament.api import TournamentAPI
@@ -25,6 +25,7 @@ from .params_service import SpsaParamsService
 from .store import SpsaStore
 from .streams import SpsaStreams
 from .summary_service import SpsaSummaryService
+from .types import ConvergenceAnalysis, UpdateEntry
 from .utils import (
     extract_variant_from_game_id,
     resolve_variant_id,
@@ -42,7 +43,7 @@ class SPSAAPI:
         db_path: Path,
         run_dir: Path | None,
         ensure_shogidb: Callable[[], None],
-        shogidb_supplier: Callable[[], ShogiDB | None],
+        shogidb_supplier: Callable[[], ShogiRepository | None],
     ) -> None:
         self._db_path = db_path
         self._run_dir = run_dir
@@ -232,7 +233,7 @@ class SPSAAPI:
         except ValueError as exc:
             message = str(exc) or "no events"
             return json_error_response(message, status=404, code="no_events")
-        response_payload = apply_detail_view(payload, detail_view)
+        response_payload = apply_detail_view({**payload}, detail_view)
         return web.json_response(response_payload)
 
     # ------------------------------------------------------------------
@@ -273,43 +274,76 @@ class SPSAAPI:
         self._ensure_shogidb()
         shogidb = self._get_shogidb()
         if shogidb is not None:
-            game_info = shogidb.export_to_game_info(game_name=game_id)
-            if game_info is None:
+            record_store = DBRecordStore(shogidb)
+            record = record_store.load(game_name=game_id)
+            if record is None:
                 return json_error_response("Game not found", status=404, code="game_not_found")
+            metadata = record.metadata
+            game_id_value = record.game_name or game_id
+            black_player = metadata.black_player or ""
+            white_player = metadata.white_player or ""
+            black_tc = record.black_time_control
+            white_tc = record.white_time_control
+            tc_black = black_tc.to_spec() if black_tc is not None else None
+            tc_white = white_tc.to_spec() if white_tc is not None else None
+            start_time = metadata.start_date
+            end_time = metadata.end_date
 
-            board = cshogi.Board(game_info.init_position_sfen if game_info.init_position_sfen != "startpos" else None)
+            initial_sfen_raw = record.init_position_sfen
+            initial_sfen = initial_sfen_raw if initial_sfen_raw != "startpos" else None
+            board = Board()
+            if initial_sfen:
+                board.set_sfen(initial_sfen)
             moves_usi: list[str] = []
             moves_ki2: list[str] = []
-            for move in game_info.moves:
-                if move in {None, 0}:
-                    break
-                if move == MOVE_END:
-                    break
-                if not board.is_legal(move):
-                    logger.error("Illegal move: %s", move)
-                    break
-                moves_ki2.append(cshogi.KI2.move_to_ki2(move, board))
-                moves_usi.append(cshogi.move_to_usi(move))
-                board.push(move)
-
+            eval_values: list[int | None] = []
+            nodes_values: list[int | None] = []
+            depth_values: list[int | None] = []
+            seldepth_values: list[int | None] = []
             move_times_ms: list[int | None] = []
-            move_times_src = getattr(game_info, "move_times_ms", None)
-            if isinstance(move_times_src, list) and any(value is not None for value in move_times_src):
-                move_times_ms = [int(value) if value is not None else None for value in move_times_src]
-
             wall_times_ms: list[int | None] = []
-            wall_times_src = getattr(game_info, "wall_times_ms", None)
-            if isinstance(wall_times_src, list) and any(value is not None for value in wall_times_src):
-                wall_times_ms = [int(value) if value is not None else None for value in wall_times_src]
-
             latency_deltas_ms: list[int | None] = []
-            latency_src = getattr(game_info, "latency_deltas_ms", None)
-            if isinstance(latency_src, list) and any(value is not None for value in latency_src):
-                latency_deltas_ms = [int(value) if value is not None else None for value in latency_src]
+            for move_entry in record.moves:
+                mv = move_entry.move
+                move_time = move_entry.time_ms
+                engine_info = move_entry.engine_info
+                move_text = mv.to_usi()
+                if not board.is_legal_move(mv):
+                    logger.error("Illegal move: %s", move_text)
+                    break
+                moves_ki2.append(board.move32_from_move(mv).to_ki2(board) or mv.to_usi())
+                moves_usi.append(move_text)
+                board.apply_move(mv)
+
+                eval_cp = engine_info.eval if engine_info is not None else None
+                nodes = engine_info.nodes if engine_info is not None else None
+                depth = engine_info.depth if engine_info is not None else None
+                seldepth = engine_info.seldepth if engine_info is not None else None
+                wall_time = engine_info.wall_time_ms if engine_info is not None else None
+                latency_delta = engine_info.latency_delta_ms if engine_info is not None else None
+                move_time_value = strict_int(move_time)
+                eval_value = strict_int(eval_cp)
+                nodes_value = strict_int(nodes)
+                depth_value = strict_int(depth)
+                seldepth_values.append(strict_int(seldepth))
+                wall_time_value = strict_int(wall_time)
+                latency_deltas_ms.append(strict_int(latency_delta))
+                move_times_ms.append(move_time_value)
+                eval_values.append(eval_value)
+                nodes_values.append(nodes_value)
+                depth_values.append(depth_value)
+                wall_times_ms.append(wall_time_value)
+
+            if not any(value is not None for value in move_times_ms):
+                move_times_ms = []
+            if not any(value is not None for value in wall_times_ms):
+                wall_times_ms = []
+            if not any(value is not None for value in latency_deltas_ms):
+                latency_deltas_ms = []
 
             eval_black, eval_white = TournamentAPI._compute_eval_arrays(
-                getattr(game_info, "eval_values", []),
-                game_info.init_position_sfen,
+                eval_values,
+                initial_sfen_raw,
                 len(moves_usi),
             )
 
@@ -320,29 +354,30 @@ class SPSAAPI:
             if update_idx_value is None:
                 resolved_variant = extract_variant_from_game_id(game_id) or resolved_variant
 
+            result_obj = record.result
             game_data = {
-                "game_id": game_info.game_name,
-                "black_player": game_info.black_player_name,
-                "white_player": game_info.white_player_name,
-                "black_name": game_info.black_player_name,
-                "white_name": game_info.white_player_name,
-                "result_code": int(game_info.game_result) if game_info.game_result is not None else None,
-                "initial_sfen": game_info.init_position_sfen,
-                "time_control_black": getattr(game_info, "black_time_control", None),
-                "time_control_white": getattr(game_info, "white_time_control", None),
+                "game_id": game_id_value,
+                "black_player": black_player,
+                "white_player": white_player,
+                "black_name": black_player,
+                "white_name": white_player,
+                "result_code": result_obj.value if result_obj is not None else None,
+                "initial_sfen": initial_sfen_raw,
+                "time_control_black": tc_black,
+                "time_control_white": tc_white,
                 "moves": moves_usi,
                 "ki2_moves": moves_ki2,
                 "eval_black": eval_black,
                 "eval_white": eval_white,
-                "nodes_values": getattr(game_info, "nodes_values", []) or [],
-                "depth_values": getattr(game_info, "depth_values", []) or [],
-                "seldepth_values": getattr(game_info, "seldepth_values", []) or [],
+                "nodes_values": nodes_values,
+                "depth_values": depth_values,
+                "seldepth_values": seldepth_values,
                 "move_times_ms": move_times_ms,
                 "wall_times_ms": wall_times_ms,
                 "latency_deltas_ms": latency_deltas_ms,
-                "total_plies": game_info.num_moves,
-                "start_time": game_info.start_date.isoformat() if game_info.start_date else None,
-                "end_time": game_info.end_date.isoformat() if game_info.end_date else None,
+                "total_plies": len(record.moves),
+                "start_time": start_time,
+                "end_time": end_time,
                 "variant_id": resolved_variant,
                 "phase": phase_value if isinstance(phase_value, str) else None,
             }
@@ -430,7 +465,7 @@ class SPSAAPI:
 
         return await self._streams.sse_convergence(request)
 
-    def _build_convergence_snapshot(self, request: web.Request | None = None) -> dict[str, Any]:
+    def _build_convergence_snapshot(self, request: web.Request | None = None) -> ConvergenceAnalysis:
         updates = self._data_service.load_index_updates()
         if len(updates) < 2:
             updates = self._data_service.collect_updates_from_events()
@@ -505,6 +540,6 @@ class SPSAAPI:
         result = self._data_service.compute_correlation_analysis(updates)
         return web.json_response(result)
 
-    def _collect_updates_from_events(self) -> list[dict[str, Any]]:
+    def _collect_updates_from_events(self) -> list[UpdateEntry]:
         """Expose raw event-derived updates (used by diagnostics and tests)."""
         return self._data_service.collect_updates_from_events()

@@ -11,6 +11,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
+import asyncssh
+
+from shogiarena.utils.types.types import JsonObject
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,8 +44,8 @@ class InstanceConfig:
     user: str | None = None
     port: int = 22
     identity_file: str | None = None
-    # slots <= 0 means "auto" (resolved from metrics when available)
-    slots: int = 0
+    # slots is None means "auto" (resolved from metrics when available)
+    slots: int | None = None
     max_engines: int | None = None
     tags: list[str] = field(default_factory=list)
     strict_host_key_checking: bool = True
@@ -57,10 +61,14 @@ class InstanceConfig:
 
         if not 1 <= self.port <= 65535:
             raise ValueError("Port must be between 1 and 65535")
-        if not isinstance(self.slots, int):
-            raise TypeError("slots must be an integer")
-        if self.slots < 0:
-            raise ValueError("slots must be >= 0 (0 means auto)")
+        if isinstance(self.slots, bool):
+            raise TypeError("slots must be an integer or null")
+        if self.slots is None:
+            pass
+        elif not isinstance(self.slots, int):
+            raise TypeError("slots must be an integer or null")
+        elif self.slots <= 0:
+            raise ValueError("slots must be positive or null (null means auto)")
 
         # Derive engine_dir for SSH from project_root when present
         if self.type == InstanceType.LOCAL:
@@ -76,7 +84,7 @@ class InstanceConfig:
             # Derive engine_dir from project_root consistently
             self.engine_dir = str(Path(self.project_root) / "data" / "engines")
 
-    def model_dump(self) -> dict[str, Any]:
+    def model_dump(self) -> JsonObject:
         """Convert to dictionary (compatibility method)."""
         return {
             "name": self.name,
@@ -124,7 +132,7 @@ class InstanceMetrics:
     network_rtt_recent_ms: float | None = None
     network_rtt_samples: int = 0
 
-    def model_dump(self) -> dict[str, Any]:
+    def model_dump(self) -> JsonObject:
         """Convert to dictionary (compatibility method)."""
         return {
             "timestamp": self.timestamp,
@@ -162,7 +170,7 @@ class InstanceActiveGameSide:
     engine_name: str
     pool_key: str
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> JsonObject:
         return {
             "role": self.role,
             "engine_name": self.engine_name,
@@ -194,7 +202,7 @@ class InstanceActiveGame:
         else:
             self.roles.append(role)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> JsonObject:
         return {
             "game_id": self.game_id,
             "black_engine": self.black_engine,
@@ -253,7 +261,8 @@ class Instance:
 
     def _slot_limit(self) -> int | None:
         """Resolve effective slot capacity (config or auto)."""
-        limit = int(self.config.slots)
+        raw_slots = self.config.slots
+        limit = int(raw_slots) if raw_slots is not None else 0
         if limit > 0:
             return limit
         metrics_cap = self.metrics.cpu_count
@@ -402,7 +411,7 @@ class Instance:
         if new_metrics.reachable:
             self.last_seen = time.time()
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> JsonObject:
         """Convert to dictionary for API responses."""
         slot_limit = self._slot_limit()
         engine_capacity = self.max_engine_capacity
@@ -445,7 +454,7 @@ class Instance:
         else:
             self.metrics.network_rtt_avg_ms = None
 
-    def start_network_probe(self, conn: Any, *, interval: float = 1.0) -> asyncio.Task[None]:
+    def start_network_probe(self, conn: asyncssh.SSHClientConnection, *, interval: float = 1.0) -> asyncio.Task[None]:
         """Start an SSH RTT probe loop for this instance."""
 
         if not self.is_ssh:
@@ -480,7 +489,7 @@ class Instance:
             return
         task.cancel()
 
-    async def _network_probe_loop(self, conn: Any, interval: float) -> None:
+    async def _network_probe_loop(self, conn: asyncssh.SSHClientConnection, interval: float) -> None:
         """Continuously issue lightweight commands to estimate SSH RTT."""
 
         while True:
@@ -507,7 +516,7 @@ class Instance:
             await asyncio.sleep(interval)
 
     @staticmethod
-    def _connection_closed(conn: Any) -> bool:
+    def _connection_closed(conn: asyncssh.SSHClientConnection) -> bool:
         """Best-effort check to see if an asyncssh connection is closing."""
 
         for attr in ("is_closing", "closing", "closed"):
@@ -563,6 +572,8 @@ class InstancesConfig:
                 _eng = str(Path(_proj) / "data" / "engines")
 
             raw_max_engines = inst_data.get("max_engines")
+            raw_slots = inst_data.get("slots")
+            slots = None if raw_slots in (None, "") else int(raw_slots)
             instance = InstanceConfig(
                 name=str(inst_data["name"]).strip(),
                 type=_type,
@@ -572,7 +583,7 @@ class InstancesConfig:
                 user=inst_data.get("user"),
                 port=inst_data.get("port", 22),
                 identity_file=inst_data.get("identity_file"),
-                slots=int(inst_data.get("slots", 0) or 0),
+                slots=slots,
                 max_engines=None if raw_max_engines in (None, "") else int(raw_max_engines),
                 tags=inst_data.get("tags", []),
                 strict_host_key_checking=bool(inst_data.get("strict_host_key_checking", True)),

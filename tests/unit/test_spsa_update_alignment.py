@@ -5,13 +5,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+import rshogi
+from rshogi.initial_positions import InitialPosition
 
 from shogiarena.arena.configs.spsa import load_config_yaml
 from shogiarena.arena.orchestrators.base_orchestrator_utils import numeric_game_id
 from shogiarena.arena.orchestrators.spsa_orchestrator import SpsaOrchestrator
 from shogiarena.arena.session import GameCompletionEvent, LifecycleHooksBase, SessionContext
+from shogiarena.arena.storage import FilesystemRunStorage
 from shogiarena.arena.tuning.param_io import read_params
-from shogiarena.records import GameInfo
 from shogiarena.utils.types.types import GameResult
 
 
@@ -63,7 +65,7 @@ async def test_spsa_update_matches_reference_script(tmp_path: Path) -> None:
         f"""
         experiment_name: exp
         engines:
-          - engine_config: "{engine_cfg}"
+          - engine_path: "{engine_cfg}"
             name: tuned
         rules:
           time_control:
@@ -85,7 +87,8 @@ async def test_spsa_update_matches_reference_script(tmp_path: Path) -> None:
     )
 
     cfg = load_config_yaml(str(config_yaml))
-    session = SessionContext.build(run_dir=tmp_path, num_workers=1, run_id="test")
+    storage = FilesystemRunStorage(tmp_path)
+    session = SessionContext.build(storage=storage, num_workers=1, run_id="test")
     orch = SpsaOrchestrator(cfg, session=session, hooks=LifecycleHooksBase())
     now = datetime.now(timezone.utc).isoformat()
     state = {
@@ -140,7 +143,7 @@ async def test_spsa_completion_reports_assigned_worker(tmp_path: Path) -> None:
         f"""
         experiment_name: exp
         engines:
-          - engine_config: "{engine_cfg}"
+          - engine_path: "{engine_cfg}"
             name: tuned
         rules:
           time_control:
@@ -160,14 +163,28 @@ async def test_spsa_completion_reports_assigned_worker(tmp_path: Path) -> None:
     )
 
     cfg = load_config_yaml(str(config_yaml))
-    session = SessionContext.build(run_dir=tmp_path, num_workers=2, run_id="test")
+    storage = FilesystemRunStorage(tmp_path)
+    session = SessionContext.build(storage=storage, num_workers=2, run_id="test")
     hooks = _CapturingHooks()
     orch = SpsaOrchestrator(cfg, session=session, hooks=hooks)
     params = read_params(params_path)
     orch.set_update_items([0], params, ["startpos"])
 
-    async def fake_execute_game(self, **_kwargs):  # type: ignore[no-untyped-def]
-        return GameInfo(game_name=_kwargs.get("game_id"), game_result=GameResult.DRAW_BY_REPETITION)
+    async def fake_execute_game(self, spec):  # type: ignore[no-untyped-def]
+        return rshogi.record.GameRecord.from_dict(
+            {
+                "metadata": {
+                    "game_name": spec.game_id,
+                    "game_type": "spsa",
+                    "black_player": "b",
+                    "white_player": "w",
+                    "attributes": {"game_name": spec.game_id, "game_type": "spsa"},
+                },
+                "init_position_sfen": InitialPosition.STANDARD.value,
+                "moves": [],
+                "result": {"result": GameResult.DRAW_BY_REPETITION.name, "ply_count": 0},
+            }
+        )
 
     orch._execute_game = fake_execute_game.__get__(orch, SpsaOrchestrator)  # type: ignore[assignment]
 
@@ -211,7 +228,7 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
         f"""
         experiment_name: exp
         engines:
-          - engine_config: "{engine_cfg}"
+          - engine_path: "{engine_cfg}"
             name: tuned
         rules:
           time_control:
@@ -231,7 +248,8 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
     )
 
     cfg = load_config_yaml(str(config_yaml))
-    session = SessionContext.build(run_dir=tmp_path, num_workers=2, run_id="test")
+    storage = FilesystemRunStorage(tmp_path)
+    session = SessionContext.build(storage=storage, num_workers=2, run_id="test")
     hooks = _CapturingHooks()
     orch = SpsaOrchestrator(cfg, session=session, hooks=hooks)
     params = read_params(params_path)
@@ -240,11 +258,22 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
     # Force preassignment failure so that initial resolved worker is None
     orch.worker_busy = {0, 1}
 
-    async def fake_execute_game(self, **kwargs):  # type: ignore[no-untyped-def]
-        game_id = kwargs.get("game_id")
-        assert isinstance(game_id, str)
-        orch.game_to_worker[numeric_game_id(game_id)] = 1
-        return GameInfo(game_name=game_id, game_result=GameResult.DRAW_BY_REPETITION)
+    async def fake_execute_game(self, spec):  # type: ignore[no-untyped-def]
+        orch.game_to_worker[numeric_game_id(spec.game_id)] = 1
+        return rshogi.record.GameRecord.from_dict(
+            {
+                "metadata": {
+                    "game_name": spec.game_id,
+                    "game_type": "spsa",
+                    "black_player": "b",
+                    "white_player": "w",
+                    "attributes": {"game_name": spec.game_id, "game_type": "spsa"},
+                },
+                "init_position_sfen": InitialPosition.STANDARD.value,
+                "moves": [],
+                "result": {"result": GameResult.DRAW_BY_REPETITION.name, "ply_count": 0},
+            }
+        )
 
     orch._execute_game = fake_execute_game.__get__(orch, SpsaOrchestrator)  # type: ignore[assignment]
 

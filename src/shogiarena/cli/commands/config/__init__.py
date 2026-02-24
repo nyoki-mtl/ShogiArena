@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -11,6 +13,7 @@ from urllib.parse import urlparse
 import yaml
 
 from shogiarena.utils.common.settings import (
+    OpenBenchSettings,
     RepoSettings,
     default_engine_dir_for_init,
     default_output_dir_for_init,
@@ -126,6 +129,7 @@ def config_init(args: argparse.Namespace) -> None:
         repos={},
         github_token=str(getattr(args, "github_token", "")).strip() or None,
         overlays={},
+        openbench=None,
     )
     print(f"Settings written to {settings_path}")
 
@@ -165,6 +169,15 @@ def _config_show(args: argparse.Namespace) -> None:
             },
             "github_token": "(set)" if settings.github_token else None,
             "overlays": {name: str(path) for name, path in settings.overlays.items()},
+            "openbench": (
+                {
+                    "server": settings.openbench.server,
+                    "username": settings.openbench.username,
+                    "password_env": settings.openbench.password_env,
+                }
+                if settings.openbench is not None
+                else None
+            ),
         }
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return
@@ -188,6 +201,13 @@ def _config_show(args: argparse.Namespace) -> None:
             print(f"  - {name}: {path}")
     else:
         print("overlays: (none)")
+    if settings.openbench is not None:
+        print("openbench:")
+        print(f"  server       : {settings.openbench.server}")
+        print(f"  username     : {settings.openbench.username}")
+        print(f"  password_env : {settings.openbench.password_env}")
+    else:
+        print("openbench: (none)")
 
 
 def _config_repo_set(args: argparse.Namespace) -> None:
@@ -209,6 +229,7 @@ def _config_repo_set(args: argparse.Namespace) -> None:
         repos=repos,
         github_token=settings.github_token,
         overlays=settings.overlays,
+        openbench=settings.openbench,
     )
 
     if args.clone:
@@ -232,6 +253,7 @@ def _config_repo_remove(args: argparse.Namespace) -> None:
         repos=repos,
         github_token=settings.github_token,
         overlays=settings.overlays,
+        openbench=settings.openbench,
     )
     print(f"Removed repo '{args.name}'")
 
@@ -264,7 +286,16 @@ def _config_wizard(args: argparse.Namespace) -> None:
     github_token = _prompt_github_token(default_token)
     repos = dict(settings.repos)
     overlays = dict(settings.overlays)
-    _maybe_add_yaneuraou_repo(repos, overlays, token=github_token or settings.github_token)
+    openbench = _prompt_openbench_settings(settings.openbench)
+    yaneuraou_repo_path = _maybe_add_yaneuraou_repo(repos, overlays, token=github_token or settings.github_token)
+    if yaneuraou_repo_path is not None:
+        _maybe_add_fukauraou_repo(
+            repos,
+            overlays,
+            token=github_token or settings.github_token,
+            base_repo_path=yaneuraou_repo_path,
+        )
+    _maybe_add_deeplearningshogi_repo(repos, overlays, token=github_token or settings.github_token)
     if _prompt_yes_no("他の repo を追加しますか？", default=False):
         while True:
             repo_input = _prompt_optional("Repo path or URL (blank to finish)")
@@ -308,6 +339,7 @@ def _config_wizard(args: argparse.Namespace) -> None:
         repos=repos,
         github_token=github_token or settings.github_token,
         overlays=overlays,
+        openbench=openbench,
     )
 
     print(f"Settings written to {settings_path}")
@@ -325,9 +357,9 @@ def _maybe_add_yaneuraou_repo(
     overlays: dict[str, Path],
     *,
     token: str | None,
-) -> None:
+) -> Path | None:
     if not _prompt_yes_no("YaneuraOu を追加しますか？（推奨）", default=True):
-        return
+        return None
     default_repo_base = default_output_dir_for_init().parent / "repos" / "YaneuraOu"
     repo_path = _prompt_path("YaneuraOu のクローン先パス", default_repo_base)
     if repo_path is None:
@@ -348,6 +380,38 @@ def _maybe_add_yaneuraou_repo(
     _clone_repo_or_exit(repos["YaneuraOu"], token=token)
     overlay_path = _ensure_yaneuraou_overlay()
     overlays.setdefault("YaneuraOu", overlay_path)
+    return repo_path
+
+
+def _maybe_add_fukauraou_repo(
+    repos: dict[str, RepoSettings],
+    overlays: dict[str, Path],
+    *,
+    token: str | None,
+    base_repo_path: Path | None,
+) -> None:
+    if base_repo_path is None:
+        return
+    if not _prompt_yes_no("FukauraOu (DLShogi互換) を追加しますか？", default=False):
+        return
+    repo_path = base_repo_path or (default_output_dir_for_init().parent / "repos" / "YaneuraOu")
+    _ensure_absolute_path(repo_path, "Repo path")
+    default_build_config = default_output_dir_for_init().parent / "builds" / "fukauraou.yaml"
+    build_config = _prompt_path("Build config path", default_build_config)
+    if build_config is None:
+        raise SystemExit("Build config path is required")
+    _ensure_absolute_path(build_config, "Build config path")
+    cuda_path = _prompt_cuda_path(_detect_cuda_path())
+    repos["FukauraOu"] = RepoSettings(
+        name="FukauraOu",
+        path=repo_path,
+        url="https://github.com/yaneurao/YaneuraOu.git",
+        build_config=build_config,
+    )
+    _ensure_build_config(build_config, repo_name="FukauraOu", cuda_path=cuda_path)
+    _clone_repo_or_exit(repos["FukauraOu"], token=token)
+    overlay_path = _ensure_fukauraou_overlay()
+    overlays.setdefault("FukauraOu", overlay_path)
 
 
 def _write_default_yaneuraou_build_config(path: Path) -> None:
@@ -391,6 +455,148 @@ def _write_default_yaneuraou_build_config(path: Path) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
+def _write_default_fukauraou_build_config(path: Path, *, cuda_path: Path | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    is_windows = sys.platform.startswith("win")
+    artifacts = (
+        [
+            {
+                "path": "{work_dir}/YaneuraOu-by-gcc.exe",
+                "chmod": "755",
+            }
+        ]
+        if is_windows
+        else [
+            {
+                "path": "{work_dir}/YaneuraOu-by-gcc",
+                "chmod": "755",
+            }
+        ]
+    )
+    cuda_root = cuda_path or Path("/usr/local/cuda")
+    payload = {
+        "work_dir": "{repo.path}/source",
+        "env": {
+            "CUDA_HOME": str(cuda_root),
+            "PATH": f"{cuda_root}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        },
+        "defaults": {
+            "compiler": "clang++",
+            "target": "tournament",
+            "jobs": 4,
+            "edition": "YANEURAOU_ENGINE_DEEP_TENSOR_RT_UBUNTU",
+        },
+        "commands": [
+            ["make", "clean"],
+            [
+                "make",
+                "-j{opts.jobs}",
+                "{opts.target}",
+                "TARGET_CPU={opts.target_cpu}",
+                "COMPILER={opts.compiler}",
+                "YANEURAOU_EDITION={opts.edition}",
+                f"EXTRA_CPPFLAGS=-I{cuda_root}/include",
+                f"EXTRA_LDFLAGS=-L{cuda_root}/lib64",
+                f"EXTRA_LDFLAGS+=-L{cuda_root}/lib64/stubs",
+            ],
+        ],
+        "artifacts": artifacts,
+    }
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+def _write_default_deeplearningshogi_build_config(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    is_windows = sys.platform.startswith("win")
+    artifacts = (
+        [
+            {
+                "path": "{work_dir}/bin/usi.exe",
+                "chmod": "755",
+            }
+        ]
+        if is_windows
+        else [
+            {
+                "path": "{work_dir}/bin/usi",
+                "chmod": "755",
+            }
+        ]
+    )
+    payload = {
+        "work_dir": "{repo.path}/usi",
+        "env": {
+            "CUDA_HOME": "/usr/local/cuda",
+            "PATH": "/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        },
+        "defaults": {
+            "jobs": 4,
+        },
+        "commands": [
+            ["make", "clean"],
+            ["make", "-j{opts.jobs}"],
+        ],
+        "artifacts": artifacts,
+    }
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+def _ensure_deeplearningshogi_overlay() -> Path:
+    overlay_path = default_output_dir_for_init().parent / "overlays" / "DeepLearningShogi.yaml"
+    if overlay_path.exists():
+        return overlay_path
+    overlay_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "options": {},
+        "engine": {
+            "isready_lock_template": "{DNN_Model}.{DNN_Batch_Size}.serialized",
+            "isready_lock_check_templates": [
+                "{DNN_Model}.*.{DNN_Batch_Size}*.serialized",
+                "{DNN_Model2}.*.{DNN_Batch_Size2}*.serialized",
+                "{DNN_Model3}.*.{DNN_Batch_Size3}*.serialized",
+                "{DNN_Model4}.*.{DNN_Batch_Size4}*.serialized",
+                "{DNN_Model5}.*.{DNN_Batch_Size5}*.serialized",
+                "{DNN_Model6}.*.{DNN_Batch_Size6}*.serialized",
+                "{DNN_Model7}.*.{DNN_Batch_Size7}*.serialized",
+                "{DNN_Model8}.*.{DNN_Batch_Size8}*.serialized",
+            ],
+            "isready_lock_skip_if_exists": True,
+        },
+    }
+    overlay_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return overlay_path
+
+
+def _maybe_add_deeplearningshogi_repo(
+    repos: dict[str, RepoSettings],
+    overlays: dict[str, Path],
+    *,
+    token: str | None,
+) -> None:
+    if not _prompt_yes_no("DeepLearningShogi を追加しますか？", default=False):
+        return
+    default_repo_base = default_output_dir_for_init().parent / "repos" / "DeepLearningShogi"
+    repo_path = _prompt_path("DeepLearningShogi のクローン先パス", default_repo_base)
+    if repo_path is None:
+        raise SystemExit("DeepLearningShogi repo path is required")
+    default_build_config = default_output_dir_for_init().parent / "builds" / "deeplearningshogi.yaml"
+    build_config = _prompt_path("Build config path", default_build_config)
+    if build_config is None:
+        raise SystemExit("Build config path is required")
+    _ensure_absolute_path(repo_path, "Repo path")
+    _ensure_absolute_path(build_config, "Build config path")
+    repos["DeepLearningShogi"] = RepoSettings(
+        name="DeepLearningShogi",
+        path=repo_path,
+        url="https://github.com/TadaoYamaoka/DeepLearningShogi.git",
+        build_config=build_config,
+    )
+    _ensure_build_config(build_config, repo_name="DeepLearningShogi")
+    _clone_repo_or_exit(repos["DeepLearningShogi"], token=token)
+    overlay_path = _ensure_deeplearningshogi_overlay()
+    overlays.setdefault("DeepLearningShogi", overlay_path)
+
+
 def _ensure_yaneuraou_overlay() -> Path:
     overlay_path = default_output_dir_for_init().parent / "overlays" / "YaneuraOu.yaml"
     if overlay_path.exists():
@@ -402,6 +608,29 @@ def _ensure_yaneuraou_overlay() -> Path:
             "NetworkDelay": 0,
             "NetworkDelay2": 0,
         }
+    }
+    overlay_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return overlay_path
+
+
+def _ensure_fukauraou_overlay() -> Path:
+    overlay_path = default_output_dir_for_init().parent / "overlays" / "FukauraOu.yaml"
+    if overlay_path.exists():
+        return overlay_path
+    overlay_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "options": {
+            "BookFile": "no_book",
+            "NetworkDelay": 0,
+            "NetworkDelay2": 0,
+        },
+        "engine": {
+            "isready_lock_template": "{EvalDir}/{DNN_Model}.{DNN_Batch_Size}.tensorrt",
+            "isready_lock_check_templates": [
+                "{EvalDir}/{DNN_Model}.*.{DNN_Batch_Size}.TRT*.serialized",
+            ],
+            "isready_lock_skip_if_exists": True,
+        },
     }
     overlay_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     return overlay_path
@@ -430,10 +659,14 @@ def _write_default_build_config(path: Path, *, repo_name: str) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
-def _ensure_build_config(path: Path, *, repo_name: str) -> None:
+def _ensure_build_config(path: Path, *, repo_name: str, cuda_path: Path | None = None) -> None:
     if not path.exists():
         if repo_name == "YaneuraOu":
             _write_default_yaneuraou_build_config(path)
+        elif repo_name == "FukauraOu":
+            _write_default_fukauraou_build_config(path, cuda_path=cuda_path)
+        elif repo_name == "DeepLearningShogi":
+            _write_default_deeplearningshogi_build_config(path)
         else:
             _write_default_build_config(path, repo_name=repo_name)
         print(f"Wrote default build_config to {path}")
@@ -446,9 +679,45 @@ def _ensure_build_config(path: Path, *, repo_name: str) -> None:
         raise SystemExit("Invalid build_config; aborting.")
     if repo_name == "YaneuraOu":
         _write_default_yaneuraou_build_config(path)
+    elif repo_name == "FukauraOu":
+        _write_default_fukauraou_build_config(path, cuda_path=cuda_path)
+    elif repo_name == "DeepLearningShogi":
+        _write_default_deeplearningshogi_build_config(path)
     else:
         _write_default_build_config(path, repo_name=repo_name)
     print(f"Rewrote build_config at {path}")
+
+
+def _detect_cuda_path() -> Path | None:
+    nvcc_path = shutil.which("nvcc")
+    if not nvcc_path:
+        return None
+    try:
+        subprocess.run([nvcc_path, "-V"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    cuda_root = Path(nvcc_path).resolve().parent.parent
+    if (cuda_root / "bin" / "nvcc").exists():
+        return cuda_root
+    return None
+
+
+def _prompt_cuda_path(detected: Path | None) -> Path | None:
+    if detected is not None:
+        if not _prompt_yes_no(f"CUDA を検出しました ({detected}). build config に設定しますか？", default=True):
+            return None
+        path = _prompt_path("CUDA root path", detected)
+        if path is None:
+            raise SystemExit("CUDA path is required")
+        _ensure_absolute_path(path, "CUDA path")
+        return path
+    if not _prompt_yes_no("CUDA path を build config に設定しますか？", default=False):
+        return None
+    path = _prompt_path("CUDA root path", Path("/usr/local/cuda"))
+    if path is None:
+        raise SystemExit("CUDA path is required")
+    _ensure_absolute_path(path, "CUDA path")
+    return path
 
 
 def _prompt_optional(label: str) -> str:
@@ -466,6 +735,32 @@ def _prompt_github_token(existing: str | None) -> str | None:
     print("必要権限: 対象リポジトリの Contents (Read-only で OK)")
     token = _prompt_secret("GitHub token")
     return token or existing
+
+
+def _prompt_openbench_settings(existing: OpenBenchSettings | None) -> OpenBenchSettings | None:
+    if not _prompt_yes_no("OpenBench/ShogiBench 連携設定を行いますか？", default=False):
+        return existing
+
+    default_server = existing.server if existing is not None else ""
+    default_username = existing.username if existing is not None else ""
+    default_env = existing.password_env if existing is not None else "OPENBENCH_PASSWORD"
+
+    server = _prompt_optional(f"OpenBench server URL (blank to keep: {default_server or 'none'})")
+    username = _prompt_optional(f"OpenBench username (blank to keep: {default_username or 'none'})")
+    password_env = _prompt_optional(f"Password env var (blank to keep: {default_env})")
+
+    resolved_server = server or default_server or None
+    resolved_username = username or default_username or None
+    resolved_env = password_env or default_env
+
+    if not resolved_server or not resolved_username:
+        print("OpenBench 設定は server/username が必要なため保存しません。")
+        return existing
+    return OpenBenchSettings(
+        server=resolved_server,
+        username=resolved_username,
+        password_env=resolved_env,
+    )
 
 
 def _clone_repo_or_exit(repo: RepoSettings, *, token: str | None) -> None:

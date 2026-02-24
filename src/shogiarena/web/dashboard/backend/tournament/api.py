@@ -11,21 +11,30 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import unquote
 
-import cshogi
-import cshogi.KI2
+import rshogi
 from aiohttp import web
+from rshogi.core import Board, Move
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import aliased
 
 from shogiarena.arena.services.persistence.db_service import ArenaDBService
 from shogiarena.arena.services.statistics.btd import BTDEstimator
-from shogiarena.db import Game, Player, ShogiDB
-from shogiarena.utils.common.constants import MOVE_END
-from shogiarena.utils.types.types import GameResult
+from shogiarena.db import Game, Player, ShogiRepository
+from shogiarena.db.factory import SQLiteShogiDBFactory
+from shogiarena.records.storage.db_store import DBRecordStore
+from shogiarena.utils.types.coerce import coerce_game_result, strict_int
+from shogiarena.utils.types.types import EngineOptionsSnapshots, GameRecordPlayersDict
 from shogiarena.web.dashboard.backend.http_helpers import json_error_response
+from shogiarena.web.dashboard.backend.tournament.types import (
+    PairStatsEntry,
+    ProgressPayload,
+    StandingEntry,
+    StandingsPayload,
+    TournamentGameEntry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +48,8 @@ class TournamentAPI:
         db_path: Path,
         run_dir: Path,
         ensure_shogidb: Callable[[], None],
-        shogidb_supplier: Callable[[], ShogiDB | None],
-        engine_options_supplier: Callable[[], dict[str, dict[str, Any]]] | None = None,
+        shogidb_supplier: Callable[[], ShogiRepository | None],
+        engine_options_supplier: Callable[[], EngineOptionsSnapshots] | None = None,
         engine_info_supplier: Callable[[], dict[str, dict[str, str]]] | None = None,
     ) -> None:
         self._db_path = db_path
@@ -52,7 +61,7 @@ class TournamentAPI:
         self._tournament_sse_seq = 0
 
     @staticmethod
-    def _hash_games_payload(games: Sequence[Mapping[str, Any]]) -> str:
+    def _hash_games_payload(games: Sequence[Mapping[str, object]]) -> str:
         try:
             payload = json.dumps(list(games), sort_keys=True, ensure_ascii=False).encode("utf-8")
         except (TypeError, ValueError):  # pragma: no cover - defensive
@@ -82,7 +91,7 @@ class TournamentAPI:
     @classmethod
     def _compute_eval_arrays(
         cls,
-        values: Any,
+        values: object,
         initial_sfen: str | None,
         expected_length: int,
     ) -> tuple[list[float | None], list[float | None]]:
@@ -99,7 +108,7 @@ class TournamentAPI:
                 continue
             if not isinstance(raw, int | float):
                 try:
-                    numeric = float(raw)
+                    numeric = float(cast(str, raw))
                 except (TypeError, ValueError) as error:
                     raise web.HTTPInternalServerError(
                         reason="Tournament eval values must be numeric",
@@ -121,6 +130,12 @@ class TournamentAPI:
             eval_white.extend([None] * padding)
 
         return (eval_black, eval_white)
+
+    @staticmethod
+    def _extract_move_entry(
+        entry: rshogi.record.MoveRecord,
+    ) -> tuple[Move, int | None, rshogi.record.MoveEngineInfo | None]:
+        return (entry.move, entry.time_ms, entry.engine_info)
 
     @staticmethod
     def _compute_pair_los(wins_a: int, wins_b: int, draws: int) -> float | None:
@@ -150,7 +165,7 @@ class TournamentAPI:
         return parsed if parsed >= 0 else None
 
     @staticmethod
-    def _inject_resume_from(payload: dict[str, Any], last_event_id: int | None) -> dict[str, Any]:
+    def _inject_resume_from(payload: dict[str, object], last_event_id: int | None) -> dict[str, object]:
         if last_event_id is None:
             return payload
         if "resume_from" in payload:
@@ -160,7 +175,7 @@ class TournamentAPI:
         return next_payload
 
     @staticmethod
-    def _format_sse_event(event_type: str, payload: dict[str, Any], *, event_id: str | None = None) -> bytes:
+    def _format_sse_event(event_type: str, payload: dict[str, object], *, event_id: str | None = None) -> bytes:
         parts = []
         if event_id is not None:
             parts.append(f"id: {event_id}")
@@ -168,8 +183,8 @@ class TournamentAPI:
         parts.append(f"data: {json.dumps(payload, ensure_ascii=False)}")
         return ("\n".join(parts) + "\n\n").encode()
 
-    def _build_standings_payload(self) -> dict[str, Any]:
-        db_service = ArenaDBService(self._db_path)
+    def _build_standings_payload(self) -> StandingsPayload:
+        db_service = ArenaDBService(SQLiteShogiDBFactory(self._db_path))
         games = db_service.get_all_games()
 
         engine_stats: dict[str, dict[str, float]] = {}
@@ -186,7 +201,7 @@ class TournamentAPI:
             engine_stats[black]["games"] += 1
             engine_stats[white]["games"] += 1
 
-            game_result = result if isinstance(result, GameResult) else GameResult(int(result))
+            game_result = coerce_game_result(result, strict=True)
             if game_result.is_black_win():
                 engine_stats[black]["wins"] += 1
                 engine_stats[white]["losses"] += 1
@@ -202,18 +217,21 @@ class TournamentAPI:
 
         estimator = BTDEstimator().estimate(
             (
-                {
-                    "black_player": game.get("black_engine"),
-                    "white_player": game.get("white_engine"),
-                    "result": game.get("result"),
-                }
+                cast(
+                    GameRecordPlayersDict,
+                    {
+                        "black_player": game["black_engine"],
+                        "white_player": game["white_engine"],
+                        "result": game["result"],
+                    },
+                )
                 for game in games
             ),
             engine_names=engine_names,
         )
         ratings = {name: 1500.0 + float(rating) for name, rating in estimator.ratings.items()}
 
-        standings: list[dict[str, Any]] = []
+        standings: list[StandingEntry] = []
         for engine, stats in engine_stats.items():
             points = stats["wins"] + stats["draws"] * 0.5
             win_rate = stats["wins"] / stats["games"] if stats["games"] > 0 else 0
@@ -227,6 +245,7 @@ class TournamentAPI:
                     "losses": stats["losses"],
                     "win_rate": win_rate,
                     "rating": ratings.get(engine, 1500.0),
+                    "rank": 0,
                 }
             )
 
@@ -234,7 +253,7 @@ class TournamentAPI:
         for index, standing in enumerate(standings):
             standing["rank"] = index + 1
 
-        engines_meta: list[dict[str, Any]] = []
+        engines_meta: list[dict[str, object]] = []
         summary_btd_path = self._run_dir / "summary_btd.json"
         if summary_btd_path.exists():
             with open(summary_btd_path, encoding="utf-8") as handle:
@@ -247,7 +266,7 @@ class TournamentAPI:
             "updated_at": datetime.now().isoformat(),
         }
 
-    def _build_progress_payload(self) -> dict[str, Any]:
+    def _build_progress_payload(self) -> ProgressPayload:
         run_state_path = self._run_dir / "run_state.json"
         if run_state_path.exists():
             state = json.loads(run_state_path.read_text(encoding="utf-8"))
@@ -268,7 +287,7 @@ class TournamentAPI:
                 "updatedAt": datetime.now().isoformat(),
             }
 
-        db_service = ArenaDBService(self._db_path)
+        db_service = ArenaDBService(SQLiteShogiDBFactory(self._db_path))
         games = db_service.get_all_games()
         completed = len(games)
         return {
@@ -349,7 +368,7 @@ class TournamentAPI:
             data_stmt = data_stmt.order_by(Game.end_date.desc()).limit(limit).offset(offset)
 
             rows = session.execute(data_stmt).all()
-            games: list[dict[str, Any]] = []
+            games: list[TournamentGameEntry] = []
             for (
                 game_name,
                 black_player,
@@ -400,7 +419,7 @@ class TournamentAPI:
         limit = max(1, min(limit_raw, 500))
         offset = max(0, offset_raw)
 
-        def _format_game_row(row: Mapping[str, Any]) -> dict[str, Any]:
+        def _format_game_row(row: Mapping[str, object]) -> TournamentGameEntry:
             end_time = row.get("end_time")
             if isinstance(end_time, datetime):
                 end_time_iso = end_time.isoformat()
@@ -421,7 +440,7 @@ class TournamentAPI:
                 "time_control_white": row.get("time_control_white"),
             }
 
-        games_payload: list[dict[str, Any]] = []
+        games_payload: list[TournamentGameEntry] = []
         total_count = 0
 
         self._ensure_shogidb()
@@ -492,77 +511,99 @@ class TournamentAPI:
         self._ensure_shogidb()
         shogidb = self._get_shogidb()
         if shogidb is not None:
-            game_info = shogidb.export_to_game_info(game_name=game_id)
-            if game_info is None:
+            record_store = DBRecordStore(shogidb)
+            record = record_store.load(game_name=game_id)
+            if record is None:
                 return json_error_response("Game not found", status=404, code="game_not_found")
+            metadata = record.metadata
+            game_id_value = record.game_name or game_id
+            black_player = metadata.black_player or ""
+            white_player = metadata.white_player or ""
+            black_tc = record.black_time_control
+            white_tc = record.white_time_control
+            tc_black = black_tc.to_spec() if black_tc is not None else None
+            tc_white = white_tc.to_spec() if white_tc is not None else None
+            start_time = metadata.start_date
+            end_time = metadata.end_date
 
-            board = cshogi.Board(game_info.init_position_sfen if game_info.init_position_sfen != "startpos" else None)
+            initial_sfen_raw = record.init_position_sfen
+            initial_sfen = initial_sfen_raw if initial_sfen_raw != "startpos" else None
+            board = Board()
+            if initial_sfen:
+                board.set_sfen(initial_sfen)
             moves_usi: list[str] = []
             moves_ki2: list[str] = []
-            for move in game_info.moves:
-                if move == 0 or move is None:
-                    break
-                if move == MOVE_END:
-                    break
-                if not board.is_legal(move):
-                    logger.error("Illegal move: %s", move)
-                    break
-                ki2_move = cshogi.KI2.move_to_ki2(move, board)
-                moves_ki2.append(ki2_move)
-                usi_move = cshogi.move_to_usi(move)
-                moves_usi.append(usi_move)
-                board.push(move)
-
+            eval_values: list[int | None] = []
+            nodes_values: list[int | None] = []
+            depth_values: list[int | None] = []
+            seldepth_values: list[int | None] = []
             move_times_ms: list[int | None] = []
-            move_times_src = getattr(game_info, "move_times_ms", None)
-            if (
-                move_times_src
-                and isinstance(move_times_src, list)
-                and any(value is not None for value in move_times_src)
-            ):
-                move_times_ms = [int(value) if value is not None else None for value in move_times_src]
-
             wall_times_ms: list[int | None] = []
-            wall_times_src = getattr(game_info, "wall_times_ms", None)
-            if (
-                wall_times_src
-                and isinstance(wall_times_src, list)
-                and any(value is not None for value in wall_times_src)
-            ):
-                wall_times_ms = [int(value) if value is not None else None for value in wall_times_src]
-
             latency_deltas_ms: list[int | None] = []
-            latency_src = getattr(game_info, "latency_deltas_ms", None)
-            if latency_src and isinstance(latency_src, list) and any(value is not None for value in latency_src):
-                latency_deltas_ms = [int(value) if value is not None else None for value in latency_src]
+            for move_entry in record.moves:
+                mv, move_time, engine_info = self._extract_move_entry(move_entry)
+                move_text = mv.to_usi()
+                if not board.is_legal_move(mv):
+                    logger.error("Illegal move: %s", move_text)
+                    break
+                moves_ki2.append(board.move32_from_move(mv).to_ki2(board) or mv.to_usi())
+                moves_usi.append(move_text)
+                board.apply_move(mv)
+
+                eval_cp = engine_info.eval if engine_info is not None else None
+                nodes = engine_info.nodes if engine_info is not None else None
+                depth = engine_info.depth if engine_info is not None else None
+                seldepth = engine_info.seldepth if engine_info is not None else None
+                wall_time = engine_info.wall_time_ms if engine_info is not None else None
+                latency_delta = engine_info.latency_delta_ms if engine_info is not None else None
+                move_time_value = strict_int(move_time)
+                eval_value = strict_int(eval_cp)
+                nodes_value = strict_int(nodes)
+                depth_value = strict_int(depth)
+                seldepth_values.append(strict_int(seldepth))
+                wall_time_value = strict_int(wall_time)
+                latency_deltas_ms.append(strict_int(latency_delta))
+                move_times_ms.append(move_time_value)
+                eval_values.append(eval_value)
+                nodes_values.append(nodes_value)
+                depth_values.append(depth_value)
+                wall_times_ms.append(wall_time_value)
+
+            if not any(value is not None for value in move_times_ms):
+                move_times_ms = []
+            if not any(value is not None for value in wall_times_ms):
+                wall_times_ms = []
+            if not any(value is not None for value in latency_deltas_ms):
+                latency_deltas_ms = []
 
             eval_black, eval_white = self._compute_eval_arrays(
-                getattr(game_info, "eval_values", []),
-                game_info.init_position_sfen,
+                eval_values,
+                initial_sfen_raw,
                 len(moves_usi),
             )
 
+            result_obj = record.result
             game_data = {
-                "game_id": game_info.game_name,
-                "black_player": game_info.black_player_name,
-                "white_player": game_info.white_player_name,
-                "result_code": int(game_info.game_result) if game_info.game_result is not None else None,
-                "initial_sfen": game_info.init_position_sfen,
-                "time_control_black": getattr(game_info, "black_time_control", None),
-                "time_control_white": getattr(game_info, "white_time_control", None),
+                "game_id": game_id_value,
+                "black_player": black_player,
+                "white_player": white_player,
+                "result_code": result_obj.value if result_obj is not None else None,
+                "initial_sfen": initial_sfen_raw,
+                "time_control_black": tc_black,
+                "time_control_white": tc_white,
                 "moves": moves_usi,
                 "ki2_moves": moves_ki2,
                 "eval_black": eval_black,
                 "eval_white": eval_white,
-                "nodes_values": getattr(game_info, "nodes_values", []) or [],
-                "depth_values": getattr(game_info, "depth_values", []) or [],
-                "seldepth_values": getattr(game_info, "seldepth_values", []) or [],
+                "nodes_values": nodes_values,
+                "depth_values": depth_values,
+                "seldepth_values": seldepth_values,
                 "move_times_ms": move_times_ms,
                 "wall_times_ms": wall_times_ms,
                 "latency_deltas_ms": latency_deltas_ms,
-                "total_plies": game_info.num_moves,
-                "start_time": game_info.start_date.isoformat() if game_info.start_date else None,
-                "end_time": game_info.end_date.isoformat() if game_info.end_date else None,
+                "total_plies": len(record.moves),
+                "start_time": start_time,
+                "end_time": end_time,
             }
 
             return web.json_response(game_data)
@@ -573,7 +614,7 @@ class TournamentAPI:
         return web.json_response(self._build_standings_payload())
 
     async def get_head_to_head(self, request: web.Request) -> web.Response:
-        db_service = ArenaDBService(self._db_path)
+        db_service = ArenaDBService(SQLiteShogiDBFactory(self._db_path))
         games = db_service.get_all_games()
 
         head_to_head: dict[tuple[str, str], dict[str, Any]] = {}
@@ -594,7 +635,7 @@ class TournamentAPI:
 
             head_to_head[pair]["total"] = int(head_to_head[pair].get("total", 0)) + 1
 
-            game_result = result if isinstance(result, GameResult) else GameResult(int(result))
+            game_result = coerce_game_result(result, strict=True)
             if game_result.is_black_win():
                 if black == pair[0]:
                     head_to_head[pair][f"{pair[0]}_wins"] = int(head_to_head[pair].get(f"{pair[0]}_wins", 0)) + 1
@@ -613,7 +654,7 @@ class TournamentAPI:
         )
 
     async def get_pair_stats(self, request: web.Request) -> web.Response:
-        db_service = ArenaDBService(self._db_path)
+        db_service = ArenaDBService(SQLiteShogiDBFactory(self._db_path))
         games = db_service.get_all_games()
 
         pair_records: dict[tuple[str, str], dict[str, Any]] = {}
@@ -635,7 +676,7 @@ class TournamentAPI:
             )
 
             record["games"] += 1
-            game_result = result if isinstance(result, GameResult) else GameResult(int(result))
+            game_result = coerce_game_result(result, strict=True)
             if game_result.is_black_win():
                 winner = black
             elif game_result.is_white_win():
@@ -649,7 +690,7 @@ class TournamentAPI:
             wins_map = record["wins"]
             wins_map[winner] = int(wins_map.get(winner, 0)) + 1
 
-        pairs_payload: list[dict[str, Any]] = []
+        pairs_payload: list[PairStatsEntry] = []
         for (engine_a, engine_b), record in pair_records.items():
             total = int(record.get("games", 0))
             draws = int(record.get("draws", 0))
@@ -711,7 +752,7 @@ class TournamentAPI:
         last_heartbeat = time.monotonic()
         last_signature: str | None = None
 
-        async def push_event(payload: dict[str, Any]) -> None:
+        async def push_event(payload: dict[str, object]) -> None:
             payload = self._inject_resume_from(payload, last_event_id)
             seq = self._next_tournament_seq()
             envelope = dict(payload)

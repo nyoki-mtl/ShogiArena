@@ -114,6 +114,11 @@ export function createLayoutController(deps: LayoutDependencies): LayoutControll
         if (!cardEl) return;
         cardEl.setAttribute('draggable', 'true');
         cardEl.addEventListener('dragstart', (event) => {
+            const target = event.target as Element | null;
+            if (target?.closest('[data-skip-card-select="true"]')) {
+                event.preventDefault();
+                return;
+            }
             const cardIdRaw = cardEl.dataset.cardId;
             const parsed = parseLiveCardId(cardIdRaw ?? '');
             draggingCardRef.value = typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : null;

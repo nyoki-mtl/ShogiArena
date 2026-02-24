@@ -47,6 +47,13 @@ const MODE_CONFIG_MAP: Record<DashboardRuntimeMode, DashboardModeConfig> = {
         disableGamesTab: false,
         disableSpsaModule: false,
     },
+    generate: {
+        mode: 'generate',
+        visibleTabs: ['live', 'generate', 'rules', 'engines', 'instances'],
+        disableTournamentTabs: true,
+        disableGamesTab: true,
+        disableSpsaModule: true,
+    },
 };
 
 function normalizeRuntimeMode(value: unknown): DashboardRuntimeMode {
@@ -55,6 +62,7 @@ function normalizeRuntimeMode(value: unknown): DashboardRuntimeMode {
         if (trimmed === 'spsa') return 'spsa';
         if (trimmed === 'match') return 'match';
         if (trimmed === 'sprt') return 'sprt';
+        if (trimmed === 'generate') return 'generate';
         if (trimmed === 'tournament' || trimmed === 'gauntlet' || trimmed === 'roundrobin') {
             return 'tournament';
         }
@@ -102,6 +110,7 @@ export function applyTabConfiguration(tabs: DashboardTabsApi | undefined, mode: 
     const allTabs: DashboardTabId[] = [
         'live',
         'match',
+        'generate',
         'sprt',
         'tournament',
         'openings',

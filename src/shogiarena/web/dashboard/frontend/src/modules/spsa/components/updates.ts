@@ -46,13 +46,14 @@ const RESULT_DETAIL_MAP: Readonly<Record<number, { detail?: string; abbr?: strin
     4: { detail: 'declaration' },
     5: { detail: 'declaration' },
     6: { detail: 'max plies', abbr: 'M' },
+    10: { detail: 'impasse', abbr: 'I' },
     8: { detail: 'illegal move' },
     9: { detail: 'illegal move' },
     12: { detail: 'illegal move' },
     13: { detail: 'illegal move' },
+    11: { detail: 'paused', abbr: 'P' },
     16: { detail: 'timeout', abbr: 'T' },
     17: { detail: 'timeout', abbr: 'T' },
-    10: { detail: 'paused', abbr: 'P' },
 });
 
 export function renderUpdatesLoading(): void {
@@ -772,6 +773,7 @@ function resolveOutcomeSymbol(outcome: GameOutcomeKind, detailKey: string, abbrR
         if (abbr) return abbr.length === 1 ? abbr : abbr.charAt(0);
         if (detailKey === 'repetition') return 'R';
         if (detailKey === 'max plies') return 'M';
+        if (detailKey === 'impasse') return 'I';
         if (detailKey === 'timeout') return 'T';
     }
     if (outcome === 'paused') {

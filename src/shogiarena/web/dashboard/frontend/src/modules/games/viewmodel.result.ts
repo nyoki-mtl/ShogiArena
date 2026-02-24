@@ -56,6 +56,7 @@ function resolveOutcomeSymbol(outcome: GameOutcomeInfo['outcome'], detailKey: st
         }
         if (detailKey === 'repetition') return 'R';
         if (detailKey === 'max plies') return 'M';
+        if (detailKey === 'impasse') return 'I';
         if (detailKey === 'timeout') return 'T';
     }
     if (outcome === 'paused') {

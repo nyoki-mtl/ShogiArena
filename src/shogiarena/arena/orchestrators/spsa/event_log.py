@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from shogiarena.arena.configs.spsa import SpsaConfig
+from shogiarena.arena.configs.spsa import SpsaRunConfig
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def append_event(run_dir: Path, session_uuid: str, payload: dict[str, Any]) -> N
 
 def update_index_json(
     run_dir: Path,
-    config: SpsaConfig,
+    config: SpsaRunConfig,
     *,
     update_idx: int,
     params: dict[str, float],

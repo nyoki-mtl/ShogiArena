@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+
+import rshogi
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +20,7 @@ class TimeControlSpecParseError(ValueError):
     """Raised when parsing a time-control spec string fails."""
 
 
-@dataclass
-class TimeControlLimits:
+class TimeControlLimits(BaseModel):
     """
     Time control configuration limits.
 
@@ -181,6 +182,19 @@ class TimeControlLimits:
         )
 
 
+def limits_to_record_time_spec(limits: TimeControlLimits) -> str:
+    """Convert arena limits (ms units) into rshogi record time-control spec."""
+    fixed_time_ms = limits.fixed_time_ms
+    if fixed_time_ms:
+        base_seconds = max(int(fixed_time_ms) // 1000, 0)
+        return rshogi.record.TimeControl(base_seconds, 0, 0).to_spec()
+
+    base_seconds = max(int(limits.time_ms or 0) // 1000, 0)
+    byoyomi_seconds = max(int(limits.byoyomi_ms or 0) // 1000, 0)
+    increment_seconds = max(int(limits.increment_ms or 0) // 1000, 0)
+    return rshogi.record.TimeControl(base_seconds, byoyomi_seconds, increment_seconds).to_spec()
+
+
 class TimeControl:
     """
     Time control management for USI engines.
@@ -192,7 +206,7 @@ class TimeControl:
     - Expiry detection with safety margins
     """
 
-    def __init__(self, limits: TimeControlLimits):
+    def __init__(self, limits: TimeControlLimits) -> None:
         """
         Initialize time control with given limits.
 

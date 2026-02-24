@@ -24,6 +24,7 @@ work_dir/
 wandb/
 .secrets/
 site/
+docs/book/build/
 
 # Keep README files in otherwise ignored directories
 !data/README.md

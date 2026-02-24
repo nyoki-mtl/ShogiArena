@@ -12,7 +12,7 @@ hosts:                                  # 必須。空にするとエラー
 user: "arena"                           # 必須。SSH ログインユーザー
 identity_file: "~/.ssh/arena_cluster"   # 任意。既定: null
 project_root: "/opt/shogiarena"         # 任意。既定: ~/ShogiArena-remote
-slots: 6                                # 任意。既定: 0 (無制限)
+slots: 6                                # 任意。null で自動判定
 max_engines: 3                          # 任意。既定: null -> slots と同値
 tags: ["remote", "cluster"]             # 任意。既定: []
 strict_host_key_checking: true          # 任意。既定: false

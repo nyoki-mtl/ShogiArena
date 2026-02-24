@@ -1,13 +1,13 @@
-import type { DashboardCore } from '@/types/dashboard';
-import type { DashboardNavigationApi, DashboardTabId } from '@/types/globals';
-import type { DashboardRulesApi } from './public';
 import type {
     TournamentDashboardAPI,
     TournamentRulesConfig,
     TournamentSprtSummary,
     TournamentSummary,
 } from '@/modules/tournament/types';
+import type { DashboardCore } from '@/types/dashboard';
+import type { DashboardNavigationApi, DashboardTabId } from '@/types/globals';
 import type { JsonObject } from '@/types/shared';
+import type { DashboardRulesApi } from './public';
 
 export interface RuleCard {
     title?: string;
@@ -29,8 +29,7 @@ export interface AdjudicationConfig {
     enable_max_plies?: boolean;
     max_moves_to_draw?: number;
     max_moves?: number;
-    enable_resign?: boolean;
-    resign_threshold?: number;
+    resign_threshold_cp?: number;
     resign_confirm_count?: number;
     hysteresis?: number;
     engine_max_ply_option_names?: string[];
@@ -90,6 +89,8 @@ export interface RulesSummary extends TournamentSummary {
     engineTimeControls?: Record<string, string>;
     defaultTimeControl?: string;
     flipPolicy?: string | null;
+    generateConfig?: JsonObject | null;
+    recordsOutput?: JsonObject | null;
 }
 
 export interface RulesWindow extends Window {

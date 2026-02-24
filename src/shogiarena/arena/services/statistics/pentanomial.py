@@ -12,10 +12,11 @@ This is a best-effort aggregation from the DB; incomplete pairs are ignored.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any
+from typing import TypedDict
 
 from shogiarena.arena.services.persistence.db_service import ArenaDBService
-from shogiarena.utils.types.types import GameResult
+from shogiarena.utils.types.coerce import coerce_game_result
+from shogiarena.utils.types.types import GameRecordPlayersDict
 
 
 def _normalize_pair(a: str, b: str) -> tuple[str, str]:
@@ -24,7 +25,12 @@ def _normalize_pair(a: str, b: str) -> tuple[str, str]:
     return (a, b) if a <= b else (b, a)
 
 
-def compute_pentanomial(db: ArenaDBService) -> dict[str, Any]:
+class PentanomialResult(TypedDict):
+    pairs: int
+    bins: dict[str, int]
+
+
+def compute_pentanomial(db: ArenaDBService) -> PentanomialResult:
     """Compute pentanomial distribution from stored games.
 
     Returns a dict with keys:
@@ -33,14 +39,14 @@ def compute_pentanomial(db: ArenaDBService) -> dict[str, Any]:
     """
     games = db.get_games_with_players()
     # Group by (pair_key, sfen)
-    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    groups: dict[tuple[str, str, str], list[GameRecordPlayersDict]] = defaultdict(list)
     for g in games:
-        a = str(g.get("black_player", ""))
-        b = str(g.get("white_player", ""))
+        a = str(g["black_player"])
+        b = str(g["white_player"])
         if not a or not b:
             continue
         key = _normalize_pair(a, b)
-        sfen = str(g.get("initial_sfen", "startpos"))
+        sfen = str(g.get("initial_sfen") or "startpos")
         groups[(key[0], key[1], sfen)].append(g)
 
     bins = {"2.0": 0, "1.5": 0, "1.0": 0, "0.5": 0, "0.0": 0}
@@ -62,22 +68,7 @@ def compute_pentanomial(db: ArenaDBService) -> dict[str, Any]:
             score = 0.0
 
             # g1: e1 is black
-            r1 = g1.get("result")
-            gr1: GameResult | None
-            if isinstance(r1, GameResult):
-                gr1 = r1
-            elif isinstance(r1, int):
-                try:
-                    gr1 = GameResult(r1)
-                except (ValueError, TypeError):
-                    gr1 = None
-            elif isinstance(r1, str):
-                try:
-                    gr1 = GameResult(int(r1))
-                except (ValueError, TypeError):
-                    gr1 = None
-            else:
-                gr1 = None
+            gr1 = coerce_game_result(g1.get("result"))
             if gr1 is not None:
                 if gr1.is_black_win():
                     score += 1.0
@@ -86,22 +77,7 @@ def compute_pentanomial(db: ArenaDBService) -> dict[str, Any]:
             # else loss => +0
 
             # g2: e1 is white
-            r2 = g2.get("result")
-            gr2: GameResult | None
-            if isinstance(r2, GameResult):
-                gr2 = r2
-            elif isinstance(r2, int):
-                try:
-                    gr2 = GameResult(r2)
-                except (ValueError, TypeError):
-                    gr2 = None
-            elif isinstance(r2, str):
-                try:
-                    gr2 = GameResult(int(r2))
-                except (ValueError, TypeError):
-                    gr2 = None
-            else:
-                gr2 = None
+            gr2 = coerce_game_result(g2.get("result"))
             if gr2 is not None:
                 if gr2.is_white_win():
                     score += 1.0

@@ -15,7 +15,7 @@ from shogiarena.arena.instances.provision import Provisioner, ProvisionError
 from shogiarena.cli.commands._helpers import load_instance_pool_from_sources
 from shogiarena.cli.errors import CliArgumentError, CliError
 from shogiarena.utils.common.paths import resolve_path_like
-from shogiarena.utils.common.run_paths import run_dir_for_name, run_group_dir, run_group_dir_for_name
+from shogiarena.utils.common.run_paths import default_run_dir, run_dir_for_name, run_group_dir, run_group_dir_for_name
 
 LOGGER = logging.getLogger(__name__)
 
@@ -49,69 +49,53 @@ class BaseRunCommand:
                 return pool
         return InstancePool.load_default_local()
 
-    def apply_run_dir_override(
+    def resolve_run_dir_path(
         self,
-        config: Any,
         config_file: Path,
         output_dir: Path,
-        run_name: str | None,
+        experiment_name: str | None,
         run_dir_override: str | None,
-    ) -> None:
-        def _assign_run_dir(value: Path) -> None:
-            if not hasattr(config, "run_dir"):
-                return
-            current = getattr(config, "run_dir", None)
-            if isinstance(current, Path):
-                config.run_dir = value
-            else:
-                config.run_dir = str(value)
-
+    ) -> Path:
         if run_dir_override:
-            # Explicit path overrides everything
-            path = Path(resolve_path_like(run_dir_override))
-            _assign_run_dir(path)
-            return
-
-        # If run_name is provided, use standard naming scheme
-        if run_name:
+            return Path(resolve_path_like(run_dir_override))
+        if experiment_name:
             try:
-                path = run_dir_for_name(config_file, output_dir, run_name)
-                _assign_run_dir(path)
+                return run_dir_for_name(config_file, output_dir, experiment_name)
             except ValueError as exc:
                 raise CliArgumentError(str(exc)) from exc
+        return default_run_dir(config_file, output_dir)
 
     def prompt_resume(
         self,
-        config: Any,
         config_file: Path,
         output_dir: Path,
-        run_name: str | None,
+        experiment_name: str | None,
         run_dir_override: str | None,
-        overwrite: bool,
+        no_resume: bool,
         dry_run: bool,
         scan_candidates_fn: Callable[[Path], list[dict[str, Any]]],
         match_hash: str | None = None,
-    ) -> None:
+    ) -> Path | None:
         """Interactive prompt to resume previous runs if applicable."""
-        if run_dir_override or overwrite or dry_run:
-            return
+        if run_dir_override or no_resume or dry_run:
+            return None
         if not sys.stdin.isatty():
-            return
+            return None
 
         try:
             group_dir = (
-                run_group_dir_for_name(config_file, output_dir, run_name)
-                if run_name
+                run_group_dir_for_name(config_file, output_dir, experiment_name)
+                if experiment_name
                 else run_group_dir(config_file, output_dir)
             )
         except ValueError:
-            return
+            return None
         if not group_dir.exists():
-            return
+            return None
 
         candidates = scan_candidates_fn(group_dir)
         if not candidates:
-            return
+            return None
 
         resumable: list[dict[str, Any]] = []
         print("Found previous runs for this config:")
@@ -132,7 +116,7 @@ class BaseRunCommand:
 
         if not resumable:
             self._confirm_new_run()
-            return
+            return None
 
         for idx, item in enumerate(resumable, start=1):
             item["idx"] = idx
@@ -149,7 +133,7 @@ class BaseRunCommand:
             if choice in {"q", "quit"}:
                 raise SystemExit(0)
             if choice in {"n", "new"}:
-                return
+                return None
             if not choice.isdigit():
                 print("Please enter a number, N, or Q.")
                 continue
@@ -160,9 +144,7 @@ class BaseRunCommand:
                 continue
 
             # Apply selection
-            if hasattr(config, "run_dir"):
-                config.run_dir = selected["path"]
-            return
+            return selected["path"]
 
     def _confirm_new_run(self) -> None:
         while True:
@@ -209,16 +191,16 @@ class BaseRunCommand:
                 return
 
             # Determine local engine path
-            # SPSA has engine_dir, Arena has engine_config -> engine_path
+            # SPSA has engine_dir, Arena/Tournament has engine_path
             local_path: Path | None = None
 
             # SPSA style
             if hasattr(engine_spec, "engine_dir") and engine_spec.engine_dir:
                 local_path = Path(engine_spec.engine_dir)
 
-            # Arena style
-            elif hasattr(engine_spec, "engine_config"):
-                cfg_path = engine_spec.engine_config
+            # Tournament style (EngineConfig.engine_path)
+            elif hasattr(engine_spec, "engine_path"):
+                cfg_path = engine_spec.engine_path
                 if cfg_path and Path(cfg_path).exists():
                     with open(cfg_path, encoding="utf-8") as f:
                         raw = yaml.safe_load(f) or {}

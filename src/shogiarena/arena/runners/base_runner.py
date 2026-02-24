@@ -3,56 +3,45 @@ from __future__ import annotations
 import asyncio
 import logging
 import typing as t
-from collections.abc import Awaitable, Mapping, Sequence
-from dataclasses import asdict, is_dataclass
+import warnings
+from collections.abc import Awaitable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
+from shogiarena.arena.configs.base import RulesConfig
 from shogiarena.arena.instances.pool import InstancePool
 from shogiarena.arena.orchestrators.base_orchestrator import BaseOrchestrator
+from shogiarena.arena.results.base import RunResultBase
+from shogiarena.arena.services.persistence.result_store import ResultStore, RunStorageResultStore
 from shogiarena.arena.session import (
     GameLifecycleHooks,
     LifecycleHooksBase,
     SessionContext,
     SessionStopController,
 )
+from shogiarena.arena.storage import RunStorage
+from shogiarena.utils.types.types import JsonObject
 from shogiarena.web.dashboard.backend.assets_writer import DashboardProfile
 
 from .dashboard_manager import DashboardManager
+from .reporting import NullProgressReporter, ProgressReporter
 from .run_controller import RunController
 from .session_flow import SessionFlow
+from .tqdm_reporter import TqdmProgressReporter
 
 logger = logging.getLogger(__name__)
 
 
-def _jsonify(value: Any) -> Any:
-    if is_dataclass(value) and not isinstance(value, type):
-        return _jsonify(asdict(value))
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, Mapping):
-        return {str(k): _jsonify(v) for k, v in value.items()}
-    if isinstance(value, Sequence) and not isinstance(value, (str | bytes | bytearray)):
-        return [_jsonify(v) for v in value]
-    if isinstance(value, set):
-        return [_jsonify(v) for v in value]
-    return value
-
-
-def serialize_rules_config(rules: Any) -> dict[str, Any]:
+def serialize_rules_config(rules: RulesConfig | None) -> JsonObject:
     if rules is None:
         return {}
-    if not (is_dataclass(rules) and not isinstance(rules, type)):
-        raise TypeError("rules configuration must be a dataclass instance")
 
-    payload = _jsonify(asdict(rules))
-    if not isinstance(payload, dict):
-        raise TypeError("Failed to serialise rules configuration")
+    payload: JsonObject = rules.model_dump(mode="json")
 
-    time_control = getattr(rules, "time_control", None)
-    if time_control is not None:
+    if rules.time_control is not None:
         try:
-            payload["time_control_spec"] = time_control.to_spec_str()
+            payload["time_control_spec"] = rules.time_control.to_spec_str()
         except (RuntimeError, ValueError, TypeError) as exc:  # pragma: no cover - defensive
             logger.warning("Failed to encode time control spec: %s", exc)
     return payload
@@ -60,6 +49,45 @@ def serialize_rules_config(rules: Any) -> dict[str, Any]:
 
 TFinal = TypeVar("TFinal", covariant=True)
 TRun = TypeVar("TRun")
+
+
+@dataclass(slots=True)
+class RunOptions:
+    no_resume: bool = False
+
+
+@dataclass
+class SessionContextManager:
+    context: SessionContext | None = None
+    hooks: GameLifecycleHooks | None = None
+    stop_controller: SessionStopController = field(default_factory=SessionStopController)
+
+    def set_context(self, session_context: SessionContext | None) -> None:
+        self.context = session_context
+
+    def set_hooks(self, hooks: GameLifecycleHooks) -> None:
+        self.hooks = hooks
+
+    def reset_stop_controller(self, controller: SessionStopController) -> None:
+        self.stop_controller = controller
+
+
+@dataclass
+class DashboardCoordinator:
+    manager: DashboardManager
+    api_server: Any | None = None
+
+    def ensure_assets(self, run_dir: Path, num_workers: int) -> None:
+        self.manager.ensure_assets(run_dir, num_workers)
+
+    async def start_server(self, run_dir: Path, preferred_port: int, num_workers: int) -> int:
+        port = await self.manager.start_server(run_dir, preferred_port, num_workers)
+        self.api_server = self.manager.api_server
+        return port
+
+    async def stop_server(self) -> None:
+        await self.manager.stop_server()
+        self.api_server = self.manager.api_server
 
 
 class BaseSessionRunner(Generic[TFinal, TRun]):
@@ -75,6 +103,9 @@ class BaseSessionRunner(Generic[TFinal, TRun]):
         self,
         instance_pool: InstancePool | None = None,
         *,
+        storage: RunStorage,
+        run_options: RunOptions | None = None,
+        progress_reporter: ProgressReporter | None = None,
         dashboard_profiles: Sequence[DashboardProfile] | None = None,
     ) -> None:
         if dashboard_profiles is not None:
@@ -87,37 +118,40 @@ class BaseSessionRunner(Generic[TFinal, TRun]):
             instance_pool = InstancePool.load_default_local() or InstancePool()
             instance_pool.ensure_local_instance()
         self.instance_pool: InstancePool | None = instance_pool
-        self._session_context: SessionContext | None = None
-        self._lifecycle_hooks: GameLifecycleHooks | None = None
-        self._stop_controller = SessionStopController()
+        self._storage = storage
+        self._run_options = run_options or RunOptions()
+        self._progress = progress_reporter or NullProgressReporter()
+        self._session_manager = SessionContextManager()
         self._dashboard_manager = DashboardManager(
             instance_pool=self.instance_pool,
             session_runner=self,
             profiles=self.dashboard_profiles,
         )
+        self._dashboard = DashboardCoordinator(self._dashboard_manager)
         self._run_controller = RunController(
             attach_orchestrator=self.attach_orchestrator,
             detach_orchestrator=self._detach_orchestrator,
             stop_services=self.stop_services,
         )
         self._session_flow = SessionFlow(self)
+        self._result_store: ResultStore = RunStorageResultStore(storage)
 
     dashboard_profiles: tuple[DashboardProfile, ...] = ("tournament", "spsa", "match", "sprt")
 
     # --- Dashboard assets -------------------------------------------------
     def ensure_dashboard_assets(self, run_dir: Path, num_workers: int) -> None:
-        self._dashboard_manager.ensure_assets(run_dir, num_workers)
+        self._dashboard.ensure_assets(run_dir, num_workers)
 
     # --- Dashboard server lifecycle --------------------------------------
     async def start_dashboard_server(self, run_dir: Path, preferred_port: int, num_workers: int) -> int:
         """Start the dashboard API server with port fallback."""
-        port = await self._dashboard_manager.start_server(run_dir, preferred_port, num_workers)
-        self.api_server = self._dashboard_manager.api_server
+        port = await self._dashboard.start_server(run_dir, preferred_port, num_workers)
+        self.api_server = self._dashboard.api_server
         return port
 
     async def stop_dashboard_server(self) -> None:
-        await self._dashboard_manager.stop_server()
-        self.api_server = self._dashboard_manager.api_server
+        await self._dashboard.stop_server()
+        self.api_server = self._dashboard.api_server
 
     # --- Orchestrator coordination ---------------------------------------
     def attach_orchestrator(self, orch: BaseOrchestrator) -> None:
@@ -169,7 +203,7 @@ class BaseSessionRunner(Generic[TFinal, TRun]):
         return await self._run_controller.run_orchestrator(orchestrator, run_coro)
 
     # --- Synchronous wrapper ---------------------------------------------
-    def run_sync(self) -> TFinal | None:
+    def run_sync(self, *, progress_reporter: ProgressReporter | None = None, tqdm: bool = False) -> TFinal | None:
         """Run the async runner from synchronous code.
 
         - Installs/uses the same cooperative shutdown semantics as run().
@@ -177,16 +211,29 @@ class BaseSessionRunner(Generic[TFinal, TRun]):
         - Returns the result of run() or None if cancelled.
         """
         try:
-            return asyncio.run(self.run())
+            return asyncio.run(self.run(progress_reporter=progress_reporter, tqdm=tqdm))
         except (KeyboardInterrupt, asyncio.CancelledError):
             logger.warning("Cancelled by user (SIGINT)")
             asyncio.run(self.shutdown())
             return None
 
     # --- Template run flow ------------------------------------------------
-    async def run(self) -> TFinal | None:
+    async def run(self, *, progress_reporter: ProgressReporter | None = None, tqdm: bool = False) -> TFinal | None:
         """Standard session run flow used by all runners."""
-        return await self._session_flow.run()
+        previous = self._progress
+        if progress_reporter is not None and tqdm:
+            warnings.warn(
+                "Both progress_reporter and tqdm=True were provided; progress_reporter takes priority.",
+                stacklevel=2,
+            )
+        if progress_reporter is None and tqdm:
+            progress_reporter = TqdmProgressReporter()
+        if progress_reporter is not None:
+            self._progress = progress_reporter
+        try:
+            return await self._session_flow.run()
+        finally:
+            self._progress = previous
 
     # no helper needed; subclasses implement BaseOrchestrator.run()
 
@@ -217,11 +264,14 @@ class BaseSessionRunner(Generic[TFinal, TRun]):
         return LifecycleHooksBase(controller)
 
     def set_lifecycle_hooks(self, hooks: GameLifecycleHooks) -> None:
-        self._lifecycle_hooks = hooks
+        self._session_manager.set_hooks(hooks)
 
     @property
     def stop_controller(self) -> SessionStopController:
-        return self._stop_controller
+        return self._session_manager.stop_controller
+
+    def reset_stop_controller(self, controller: SessionStopController) -> None:
+        self._session_manager.reset_stop_controller(controller)
 
     def services_closed(self) -> bool:
         return self._services_closed
@@ -230,14 +280,19 @@ class BaseSessionRunner(Generic[TFinal, TRun]):
         return None
 
     def set_session_context(self, session_context: SessionContext | None) -> None:
-        self._session_context = session_context
+        self._session_manager.set_context(session_context)
+        if session_context is not None:
+            try:
+                session_context.save_to_storage()
+            except (OSError, ValueError, TypeError) as exc:
+                logger.warning("Failed to persist session context: %s", exc)
 
     async def run_pre_orchestration_hooks(self, orchestrator: BaseOrchestrator) -> None:  # optional
         return
 
     def _resolve_dashboard_run_dir(self) -> Path | None:
-        if self._session_context is not None:
-            ctx_run_dir = getattr(self._session_context, "run_dir", None)
+        if self._session_manager.context is not None:
+            ctx_run_dir = getattr(self._session_manager.context, "run_dir", None)
             if ctx_run_dir is not None:
                 try:
                     return Path(ctx_run_dir)
@@ -257,7 +312,22 @@ class BaseSessionRunner(Generic[TFinal, TRun]):
                 return Path(direct)
             except TypeError:
                 return None
+        if self._storage is not None:
+            try:
+                return Path(self._storage.run_dir)
+            except TypeError:
+                return None
         return None
 
+    @property
+    def storage(self) -> RunStorage:
+        return self._storage
+
+    @property
+    def progress(self) -> ProgressReporter:
+        return self._progress
+
     async def finalize_and_persist(self, run_result: TRun | None) -> TFinal | None:  # optional
+        if isinstance(run_result, RunResultBase):
+            self._result_store.save_result(run_result)
         return t.cast(TFinal | None, run_result)

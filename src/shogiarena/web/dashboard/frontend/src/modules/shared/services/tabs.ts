@@ -84,12 +84,19 @@ function notifyModules(owner: TabsWindow, tabId: DashboardTabId): void {
     owner.DashboardSpsa?.setActive?.(tabId === 'spsa');
     owner.DashboardMatch?.setActive?.(tabId === 'match');
     owner.DashboardSprt?.setActive?.(tabId === 'sprt');
+    owner.DashboardGenerate?.setActive?.(tabId === 'generate');
     owner.DashboardTournament?.setOpeningsActive?.(tabId === 'openings');
     owner.DashboardTournament?.notifyTabChange?.(tabId);
 
     // Update unified store's active source when switching to tournament/openings or SPSA tabs.
     // This ensures engine meta merge priority uses the currently active data source.
-    if (tabId === 'tournament' || tabId === 'openings' || tabId === 'match' || tabId === 'sprt') {
+    if (
+        tabId === 'tournament' ||
+        tabId === 'openings' ||
+        tabId === 'match' ||
+        tabId === 'sprt' ||
+        tabId === 'generate'
+    ) {
         summaryStore.setActiveSource('tournament');
     } else if (tabId === 'spsa') {
         summaryStore.setActiveSource('spsa');

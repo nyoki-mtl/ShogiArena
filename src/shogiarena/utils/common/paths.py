@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any
 
 from shogiarena.utils.common import project_dirs
 
@@ -82,11 +81,11 @@ def is_path_option_key(name: str) -> bool:
 
 def maybe_resolve_path_option(
     name: str,
-    value: Any,
+    value: object,
     *,
     output_dir: Path | None = None,
     engine_dir: Path | None = None,
-) -> Any:
+) -> object:
     """Resolve a USI option value only when the key is path-typed.
 
     Non-string values are returned unchanged. Strings are resolved through

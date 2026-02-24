@@ -5,8 +5,9 @@ import math
 import time
 from typing import TYPE_CHECKING, Any
 
+import rshogi.record
+
 from shogiarena.arena.services.statistics.sprt import Sprt, SprtDecision, SprtResult
-from shogiarena.records import GameInfo
 
 from .identifiers import variant_token
 
@@ -79,13 +80,11 @@ async def run_ltc_regression(
 
     stop_due_to_sprt = False
 
-    def _submit_to_sprt(game: GameInfo | None, tuned_as_black: bool) -> None:
+    def _submit_to_sprt(game: rshogi.record.GameRecord, tuned_as_black: bool) -> None:
         nonlocal sprt_result, sprt_decision, stop_due_to_sprt
-        if sprt is None or game is None:
+        if sprt is None:
             return
-        result = getattr(game, "game_result", None)
-        if result is None:
-            return
+        result = game.result
         normalized = orchestrator._ltc_normalize_result_for_sprt(result, tuned_as_black)
         sprt_result = sprt.add_game_result(normalized)
         sprt_decision = sprt_result.decision
@@ -113,13 +112,9 @@ async def run_ltc_regression(
 
         pairs_completed += 1
 
-        def _accumulate(game: GameInfo | None, tuned_as_black: bool) -> None:
+        def _accumulate(game: rshogi.record.GameRecord, tuned_as_black: bool) -> None:
             nonlocal tuned_wins, baseline_wins, draws, total_games_played
-            if game is None:
-                return
-            result = game.game_result
-            if result is None:
-                return
+            result = game.result
             total_games_played += 1
             if result.is_draw():
                 draws += 1

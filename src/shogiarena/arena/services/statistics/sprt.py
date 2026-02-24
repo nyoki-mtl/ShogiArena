@@ -9,10 +9,25 @@ import logging
 import math
 from dataclasses import dataclass
 from enum import Enum
+from typing import TypedDict
 
 from shogiarena.utils.types.types import GameResult
 
 logger = logging.getLogger(__name__)
+
+
+class SprtStateSnapshot(TypedDict):
+    """SPRT ステートのスナップショット（pause/resume 用）。"""
+
+    elo0: float
+    elo1: float
+    alpha: float
+    beta: float
+    wins: int
+    draws: int
+    losses: int
+    games_played: int
+    llr: float
 
 
 class SprtDecision(Enum):
@@ -47,7 +62,7 @@ class Sprt:
     using Type I and Type II error rates alpha and beta.
     """
 
-    def __init__(self, elo0: float, elo1: float, alpha: float = 0.05, beta: float = 0.05):
+    def __init__(self, elo0: float, elo1: float, alpha: float = 0.05, beta: float = 0.05) -> None:
         """
         Initialize SPRT test.
 
@@ -80,6 +95,36 @@ class Sprt:
 
         logger.debug(f"SPRT initialized: H0={elo0}, H1={elo1}, alpha={alpha}, beta={beta}")
         logger.debug(f"SPRT bounds: lower={self.lower_bound:.4f}, upper={self.upper_bound:.4f}")
+
+    def to_snapshot(self) -> dict[str, float | int]:
+        """Serialize SPRT state for pause/resume."""
+        return {
+            "elo0": self.elo0,
+            "elo1": self.elo1,
+            "alpha": self.alpha,
+            "beta": self.beta,
+            "wins": self.wins,
+            "draws": self.draws,
+            "losses": self.losses,
+            "games_played": self.games_played,
+            "llr": self.llr,
+        }
+
+    @classmethod
+    def from_snapshot(cls, snapshot: SprtStateSnapshot) -> "Sprt":
+        """Restore SPRT state from a snapshot."""
+        sprt = cls(
+            elo0=float(snapshot.get("elo0", 0.0)),
+            elo1=float(snapshot.get("elo1", 0.0)),
+            alpha=float(snapshot.get("alpha", 0.05)),
+            beta=float(snapshot.get("beta", 0.05)),
+        )
+        sprt.wins = int(snapshot.get("wins", 0))
+        sprt.draws = int(snapshot.get("draws", 0))
+        sprt.losses = int(snapshot.get("losses", 0))
+        sprt.games_played = int(snapshot.get("games_played", 0))
+        sprt.llr = float(snapshot.get("llr", 0.0))
+        return sprt
 
     def add_game_result(self, result: GameResult) -> SprtResult:
         """

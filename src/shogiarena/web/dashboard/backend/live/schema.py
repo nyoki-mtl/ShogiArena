@@ -5,12 +5,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from shogiarena.utils.types.coerce import coerce_bool, coerce_int, coerce_str
+from shogiarena.web.dashboard.backend.live.types import LiveViewProgress, LiveViewSnapshot
+
 LiveViewMode = str
 
 
 def build_live_view_snapshot(
     summary_snapshot: Mapping[str, Any] | None,
-) -> dict[str, Any]:
+) -> LiveViewSnapshot:
     """Build a normalized Live View envelope from summary payloads."""
 
     summary_payload: Mapping[str, Any] = summary_snapshot or {}
@@ -55,7 +58,7 @@ def _normalize_mode_value(candidate: Any) -> LiveViewMode | None:
     return "tournament"
 
 
-def _derive_progress(summary: Mapping[str, Any], mode: LiveViewMode) -> dict[str, Any] | None:
+def _derive_progress(summary: Mapping[str, Any], mode: LiveViewMode) -> LiveViewProgress | None:
     if not summary:
         return None
 
@@ -63,9 +66,9 @@ def _derive_progress(summary: Mapping[str, Any], mode: LiveViewMode) -> dict[str
     if not isinstance(games, Mapping):
         return None
 
-    completed = _coerce_int(games.get("completed"))
-    total = _coerce_int(games.get("total"))
-    cancelled = _coerce_int(games.get("cancelled"))
+    completed = coerce_int(games.get("completed"))
+    total = coerce_int(games.get("total"))
+    cancelled = coerce_int(games.get("cancelled"))
 
     if mode == "spsa":
         unit_label = "updates"
@@ -74,10 +77,14 @@ def _derive_progress(summary: Mapping[str, Any], mode: LiveViewMode) -> dict[str
         unit_label = "games"
         kind = mode if mode in {"sprt", "match"} else "games"
 
-    timestamp = _coerce_string(summary.get("timestamp"))
-    fallback_state = "finished" if _coerce_bool(summary.get("tournamentFinished")) else "normal"
+    timestamp = coerce_str(summary.get("timestamp"))
+    _raw_finished = summary.get("tournamentFinished")
+    _is_finished = (isinstance(_raw_finished, str) and _raw_finished.strip().lower() == "finished") or coerce_bool(
+        _raw_finished
+    )
+    fallback_state = "finished" if _is_finished else "normal"
     progress_state = _normalize_progress_state(summary.get("liveViewProgressState")) or fallback_state
-    is_final = _coerce_bool(summary.get("tournamentFinished"))
+    is_final = _is_finished
     if mode == "sprt":
         status = summary.get("status")
         if isinstance(status, Mapping):
@@ -117,45 +124,6 @@ def _normalize_progress_state(candidate: Any) -> str | None:
     if value in {"normal", "paused", "draining", "finished"}:
         return value
     return None
-
-
-def _coerce_int(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return None
-        try:
-            return int(stripped)
-        except ValueError:
-            return None
-    return None
-
-
-def _coerce_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int | float):
-        return bool(value)
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"1", "true", "yes", "finished"}:
-            return True
-        if lowered in {"0", "false", "no"}:
-            return False
-    return False
-
-
-def _coerce_string(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    stripped = value.strip()
-    return stripped or None
 
 
 __all__ = ["build_live_view_snapshot"]

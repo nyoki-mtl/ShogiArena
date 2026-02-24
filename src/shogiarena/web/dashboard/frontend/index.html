@@ -38,6 +38,14 @@
                     <button class="dashboard-tab __MATCH_TAB_ACTIVE__" data-dashboard-tab="match" id="tabMatch" aria-selected="__MATCH_TAB_SELECTED__">
                         Match
                     </button>
+                    <button
+                        class="dashboard-tab __GENERATE_TAB_ACTIVE__"
+                        data-dashboard-tab="generate"
+                        id="tabGenerate"
+                        aria-selected="__GENERATE_TAB_SELECTED__"
+                    >
+                        Generate
+                    </button>
                     <button class="dashboard-tab __SPRT_TAB_ACTIVE__" data-dashboard-tab="sprt" id="tabSprt" aria-selected="__SPRT_TAB_SELECTED__">
                         SPRT
                     </button>
@@ -73,7 +81,7 @@
                     role="progressbar"
                     aria-label="Dashboard progress"
                     class="tab-content active"
-                    data-tab-content="live match sprt tournament openings rules engines instances games spsa"
+                    data-tab-content="live match generate sprt tournament openings rules engines instances games spsa"
                 >
                     <div id="progressFill" aria-hidden="true"></div>
                     <div id="progressText" aria-live="polite">0 / 0</div>
@@ -84,7 +92,7 @@
                 id="extraStats"
                 aria-label="Advanced Stats"
                 class="tab-content active space-y-2 text-sm text-slate-300"
-                data-tab-content="live match sprt tournament openings rules engines instances games spsa"
+                data-tab-content="live match generate sprt tournament openings rules engines instances games spsa"
             >
                 <div id="sprtBox" class="text-xs uppercase tracking-wide text-dashboard-neutral"></div>
                 <div id="pentaBox" class="text-xs uppercase tracking-wide text-dashboard-neutral"></div>
@@ -258,6 +266,42 @@
                             </div>
                             <div class="sprt-card__body">
                                 <div id="sprtTimelineChart" class="sprt-chart"></div>
+                            </div>
+                        </div>
+                    </section>
+                </section>
+
+                <section
+                    class="tab-content __GENERATE_CONTENT_ACTIVE__ space-y-5"
+                    id="generateTab"
+                    data-tab-content="generate"
+                    aria-label="Generate"
+                >
+                    <section class="generate-hero">
+                        <div class="generate-card generate-summary-card">
+                            <div class="generate-card__header">
+                                <div>
+                                    <p class="generate-card__eyebrow">Generate</p>
+                                    <h2>Summary</h2>
+                                </div>
+                            </div>
+                            <div class="generate-kpis" id="generateSummary">
+                                <div class="generate-kpi">
+                                    <p class="generate-kpi__label">Total Games</p>
+                                    <p class="generate-kpi__value" id="generateTotalGames">-</p>
+                                </div>
+                                <div class="generate-kpi">
+                                    <p class="generate-kpi__label">Total Positions</p>
+                                    <p class="generate-kpi__value" id="generateTotalPositions">-</p>
+                                </div>
+                                <div class="generate-kpi">
+                                    <p class="generate-kpi__label">Files</p>
+                                    <p class="generate-kpi__value" id="generateTotalFiles">-</p>
+                                </div>
+                                <div class="generate-kpi">
+                                    <p class="generate-kpi__label">Total Bytes</p>
+                                    <p class="generate-kpi__value" id="generateTotalBytes">-</p>
+                                </div>
                             </div>
                         </div>
                     </section>

@@ -65,6 +65,7 @@ async def load_engine(
             output_dir=project_dirs.output_dir,
             engine_dir=project_dirs.engine_dir,
         )
+    config = config.resolve_isready_lock_key()
 
     pool = instance_pool or InstancePool.load_default_local() or InstancePool()
     instance = _resolve_instance(pool, instance_id)

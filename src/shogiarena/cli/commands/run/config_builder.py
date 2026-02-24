@@ -80,19 +80,19 @@ def materialize_engine_configs(
     for idx, engine in enumerate(engines, 1):
         if isinstance(engine.get("artifact"), str) and str(engine["artifact"]).strip():
             continue
-        if isinstance(engine.get("engine_config"), str) and str(engine["engine_config"]).strip():
-            engine["engine_config"] = str(Path(resolve_path_like(str(engine["engine_config"]))).resolve())
+        if isinstance(engine.get("engine_path"), str) and str(engine["engine_path"]).strip():
+            engine["engine_path"] = str(Path(resolve_path_like(str(engine["engine_path"]))).resolve())
             continue
 
-        engine_path = engine.pop("engine_path", None) or engine.pop("path", None) or engine.pop("binary", None)
-        if engine_path is None:
-            raise CliArgumentError("engine must specify artifact, engine_config, or engine_path")
+        binary_path = engine.pop("path", None) or engine.pop("binary", None)
+        if binary_path is None:
+            raise CliArgumentError("engine must specify artifact, engine_path, or path/binary")
 
-        resolved_path = Path(resolve_path_like(str(engine_path))).resolve()
+        resolved_path = Path(resolve_path_like(str(binary_path))).resolve()
         if not resolved_path.exists():
-            raise CliArgumentError(f"engine_path not found: {resolved_path}")
+            raise CliArgumentError(f"engine binary not found: {resolved_path}")
         if not resolved_path.is_file():
-            raise CliArgumentError(f"engine_path is not a file: {resolved_path}")
+            raise CliArgumentError(f"engine binary is not a file: {resolved_path}")
 
         name = str(engine.get("name") or f"engine-{idx}")
         payload: dict[str, Any] = {
@@ -104,10 +104,15 @@ def materialize_engine_configs(
         _merge_if_present(payload, engine, "environment")
         _merge_if_present(payload, engine, "go_options")
         _merge_if_present(payload, engine, "enable_early_ponder")
+        _merge_if_present(payload, engine, "mate_default_ply_limit")
+        _merge_if_present(payload, engine, "mate_default_node_limit")
+        _merge_if_present(payload, engine, "mate_default_infinite")
+        _merge_if_present(payload, engine, "mate_wait_for_bestmove")
+        _merge_if_present(payload, engine, "isready_sync_strategy")
 
         config_path = config_dir / f"{name}.yaml"
         config_path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=False), encoding="utf-8")
-        engine["engine_config"] = str(config_path)
+        engine["engine_path"] = str(config_path)
 
 
 def write_temp_config(payload: dict[str, Any], *, label: str) -> Path:

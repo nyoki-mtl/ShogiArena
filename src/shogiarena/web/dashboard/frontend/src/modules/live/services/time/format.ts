@@ -1,21 +1,28 @@
 import { parseTimeControlSpec } from './parse';
 import type { ParsedTimeControlSpec } from '@/modules/live/types/time';
 
+function pad2(value: number): string {
+    return String(value).padStart(2, '0');
+}
+
+function formatClockSeconds(totalSeconds: number, options?: { padMinutes?: boolean }): string {
+    const secondsSafe = Math.max(0, Math.trunc(totalSeconds));
+    const minutesTotal = Math.floor(secondsSafe / 60);
+    const seconds = secondsSafe % 60;
+    const hours = Math.floor(minutesTotal / 60);
+    const minutes = minutesTotal % 60;
+    if (hours > 0) {
+        return `${hours}:${pad2(minutes)}:${pad2(seconds)}`;
+    }
+    const padMinutes = options?.padMinutes === true;
+    const minuteText = padMinutes ? pad2(minutesTotal) : `${minutesTotal}`;
+    return `${minuteText}:${pad2(seconds)}`;
+}
+
 export function formatRemain(ms: number | string | null | undefined): string {
     const totalMs = Math.max(0, Number(ms ?? 0));
-    const totalSeconds = Math.floor(totalMs / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    const tenths = Math.floor((totalMs % 1000) / 100);
-    if (minutes >= 60) {
-        const hours = Math.floor(minutes / 60);
-        const remMinutes = minutes % 60;
-        return `${hours}:${String(remMinutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    }
-    if (minutes >= 1) {
-        return `${minutes}:${String(seconds).padStart(2, '0')}`;
-    }
-    return `${String(seconds).padStart(2, '0')}.${tenths}`;
+    const totalSeconds = Math.ceil(totalMs / 1000);
+    return formatClockSeconds(totalSeconds);
 }
 
 export function formatInc(ms: number | string | null | undefined): string {
@@ -37,17 +44,13 @@ export function formatInc(ms: number | string | null | undefined): string {
 export function formatCountUp(ms: number | string | null | undefined): string {
     const totalMs = Math.max(0, Number(ms ?? 0));
     const totalSeconds = Math.floor(totalMs / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    const tenths = Math.floor((totalMs % 1000) / 100);
-    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${tenths}`;
+    return formatClockSeconds(totalSeconds, { padMinutes: true });
 }
 
 export function formatByoyomi(ms: number | string | null | undefined): string {
     const totalMs = Math.max(0, Number(ms ?? 0));
-    const seconds = Math.floor(totalMs / 1000);
-    const tenths = Math.floor((totalMs % 1000) / 100);
-    return `${String(seconds).padStart(2, '0')}.${tenths}`;
+    const seconds = Math.ceil(totalMs / 1000);
+    return `${seconds}`;
 }
 
 function formatSI(value: number): string {

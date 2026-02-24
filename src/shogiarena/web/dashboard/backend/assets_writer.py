@@ -12,8 +12,8 @@ from shogiarena.web.dashboard.backend.live.diagnostics import load_live_diagnost
 LIVE_DIAGNOSTICS_PLACEHOLDER = "__LIVE_DIAGNOSTICS_CONFIG__"
 PROFILE_PLACEHOLDER = "__DASHBOARD_PROFILE__"
 PROFILE_METADATA_FILENAME = ".dashboard_profiles.json"
-DashboardProfile = Literal["tournament", "spsa", "match", "sprt"]
-PROFILE_KEYS: tuple[DashboardProfile, ...] = ("tournament", "spsa", "match", "sprt")
+DashboardProfile = Literal["tournament", "spsa", "match", "sprt", "generate"]
+PROFILE_KEYS: tuple[DashboardProfile, ...] = ("tournament", "spsa", "match", "sprt", "generate")
 
 
 def _replace_block(content: str, start_marker: str, end_marker: str, replacement: str) -> str:
@@ -64,7 +64,7 @@ def _render_template(
 
 def _normalize_profiles(profiles: Iterable[DashboardProfile] | None) -> tuple[DashboardProfile, ...]:
     if profiles is None:
-        return ("tournament", "spsa", "match", "sprt")
+        return ("tournament", "spsa", "match", "sprt", "generate")
     normalized: list[DashboardProfile] = []
     for profile in profiles:
         if profile not in PROFILE_KEYS:
@@ -106,6 +106,7 @@ def _write_html_variants(
         is_match = primary_profile == "match"
         is_sprt = primary_profile == "sprt"
         is_tournament = primary_profile == "tournament"
+        is_generate = primary_profile == "generate"
         replacements = {
             PROFILE_PLACEHOLDER: primary_profile,
             "__LIVE_TAB_ACTIVE__": "active" if is_tournament else "",
@@ -116,9 +117,12 @@ def _write_html_variants(
             "__MATCH_TAB_SELECTED__": "true" if is_match else "false",
             "__SPRT_TAB_ACTIVE__": "active" if is_sprt else "",
             "__SPRT_TAB_SELECTED__": "true" if is_sprt else "false",
+            "__GENERATE_TAB_ACTIVE__": "active" if is_generate else "",
+            "__GENERATE_TAB_SELECTED__": "true" if is_generate else "false",
             "__LIVE_CONTENT_ACTIVE__": "active" if is_tournament else "",
             "__SPSA_CONTENT_ACTIVE__": "active" if is_spsa else "",
             "__MATCH_CONTENT_ACTIVE__": "active" if is_match else "",
+            "__GENERATE_CONTENT_ACTIVE__": "active" if is_generate else "",
             "__SPRT_CONTENT_ACTIVE__": "active" if is_sprt else "",
         }
         for key, value in replacements.items():

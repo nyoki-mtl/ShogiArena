@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from json import JSONDecodeError
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 from aiohttp import web
 from aiohttp.web_exceptions import HTTPBadRequest
@@ -20,7 +20,10 @@ from shogiarena.arena.instances.provision import Provisioner, ProvisionError
 from shogiarena.arena.instances.store import InstanceConfigStore
 from shogiarena.arena.services.persistence.db_service import ArenaDBService
 from shogiarena.arena.services.persistence.records import InstanceSnapshot
+from shogiarena.db.factory import SQLiteShogiDBFactory
 from shogiarena.utils.common import project_dirs
+from shogiarena.utils.types.coerce import coerce_int_strict, coerce_str
+from shogiarena.utils.types.types import JsonObject
 from shogiarena.web.dashboard.backend.http_helpers import json_error_response
 
 logger = logging.getLogger(__name__)
@@ -50,7 +53,7 @@ class InstancesAPIHandler:
         self._health_check_min_interval = self._load_health_check_min_interval()
         self._health_check_lock = asyncio.Lock()
         self._instances_updated = asyncio.Event()
-        self._update_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._update_queue: asyncio.Queue[JsonObject] = asyncio.Queue()
 
     @staticmethod
     def _load_health_check_min_interval() -> float:
@@ -85,8 +88,8 @@ class InstancesAPIHandler:
         self._update_queue.put_nowait(payload)
         self._instances_updated.set()
 
-    async def _drain_updates(self) -> list[dict[str, Any]]:
-        updates: list[dict[str, Any]] = []
+    async def _drain_updates(self) -> list[JsonObject]:
+        updates: list[JsonObject] = []
         while True:
             try:
                 updates.append(self._update_queue.get_nowait())
@@ -96,9 +99,9 @@ class InstancesAPIHandler:
 
     @staticmethod
     def _build_instances_delta(
-        snapshot: dict[str, Any],
-        updates: list[dict[str, Any]],
-    ) -> dict[str, Any] | None:
+        snapshot: JsonObject,
+        updates: list[JsonObject],
+    ) -> JsonObject | None:
         if not updates:
             return None
         upsert_ids: set[str] = set()
@@ -106,7 +109,12 @@ class InstancesAPIHandler:
         send_full = False
         for update in updates:
             kind = update.get("kind")
-            ids = update.get("instance_ids") or []
+            ids_raw = update.get("instance_ids")
+            ids: list[object]
+            if isinstance(ids_raw, list):
+                ids = cast(list[object], ids_raw)
+            else:
+                ids = []
             if kind == "full":
                 send_full = True
             elif kind == "remove":
@@ -123,7 +131,13 @@ class InstancesAPIHandler:
 
         instances = snapshot.get("instances", [])
         if isinstance(instances, list):
-            updated = [entry for entry in instances if isinstance(entry, dict) and entry.get("id") in upsert_ids]
+            updated = []
+            for entry in instances:
+                if not isinstance(entry, dict):
+                    continue
+                entry_id = dict(entry).get("id")
+                if isinstance(entry_id, str) and entry_id in upsert_ids:
+                    updated.append(entry)
         else:
             updated = []
 
@@ -146,7 +160,7 @@ class InstancesAPIHandler:
         return parsed if parsed >= 0 else None
 
     @staticmethod
-    def _inject_resume_from(payload: dict[str, Any], last_event_id: int | None) -> dict[str, Any]:
+    def _inject_resume_from(payload: JsonObject, last_event_id: int | None) -> JsonObject:
         if last_event_id is None:
             return payload
         if "resume_from" in payload:
@@ -156,7 +170,7 @@ class InstancesAPIHandler:
         return next_payload
 
     @staticmethod
-    def _format_sse_event(event_type: str, payload: dict[str, Any], *, event_id: str | None = None) -> bytes:
+    def _format_sse_event(event_type: str, payload: JsonObject, *, event_id: str | None = None) -> bytes:
         parts = []
         if event_id is not None:
             parts.append(f"id: {event_id}")
@@ -164,7 +178,7 @@ class InstancesAPIHandler:
         parts.append(f"data: {json.dumps(payload, ensure_ascii=False)}")
         return ("\n".join(parts) + "\n\n").encode()
 
-    def _build_instances_payload(self) -> dict[str, Any]:
+    def _build_instances_payload(self) -> JsonObject:
         pool = self._get_pool()
         instances = pool.list_instances()
         instance_data = [instance.to_dict() for instance in instances]
@@ -176,7 +190,7 @@ class InstancesAPIHandler:
         }
 
     @staticmethod
-    def _signature_for_instances_snapshot(snapshot: dict[str, Any]) -> str:
+    def _signature_for_instances_snapshot(snapshot: JsonObject) -> str:
         pruned = dict(snapshot)
         pruned.pop("timestamp", None)
         instances = pruned.get("instances")
@@ -197,9 +211,12 @@ class InstancesAPIHandler:
         return json.dumps(pruned, sort_keys=True, ensure_ascii=False)
 
     @staticmethod
-    def _normalize_tags(raw: Any) -> list[str]:
+    def _normalize_tags(raw: str | list[str] | None) -> list[str]:
         if raw is None:
             return []
+        if isinstance(raw, str):
+            stripped = raw.strip()
+            return [stripped] if stripped else []
         if not isinstance(raw, list):
             raise ValueError("tags must be a list of strings")
         tags: list[str] = []
@@ -211,22 +228,9 @@ class InstancesAPIHandler:
                 tags.append(tag)
         return tags
 
-    @staticmethod
-    def _coerce_int(value: Any, field: str) -> int:
-        if isinstance(value, bool):
-            raise ValueError(f"{field} must be an integer")
-        if isinstance(value, int | float):
-            return int(value)
-        if isinstance(value, str):
-            stripped = value.strip()
-            if not stripped:
-                raise ValueError(f"{field} must be an integer")
-            return int(stripped)
-        raise ValueError(f"{field} must be an integer")
-
     def _build_config_from_payload(
         self,
-        payload: dict[str, Any],
+        payload: JsonObject,
         *,
         existing: InstanceConfig | None = None,
     ) -> InstanceConfig:
@@ -256,13 +260,23 @@ class InstancesAPIHandler:
         if raw_slots is None:
             raise ValueError("slots is required")
         try:
-            slots = self._coerce_int(raw_slots, "slots")
+            slots = coerce_int_strict(raw_slots, "slots")
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
         if slots < 0:
             raise ValueError("slots must be >= 0 (0 means auto)")
 
-        tags = self._normalize_tags(payload.get("tags", existing.tags if existing is not None else None))
+        raw_tags_obj = payload.get("tags", existing.tags if existing is not None else None)
+        if raw_tags_obj is not None and not isinstance(raw_tags_obj, str | list):
+            raise ValueError("tags must be a list of strings")
+        if isinstance(raw_tags_obj, list):
+            for item in raw_tags_obj:
+                if not isinstance(item, str):
+                    raise ValueError("tags must contain only strings")
+            raw_tags: str | list[str] | None = cast(list[str], raw_tags_obj)
+        else:
+            raw_tags = raw_tags_obj
+        tags = self._normalize_tags(raw_tags)
 
         strict_hkc = payload.get("strict_host_key_checking")
         if strict_hkc is None and existing is not None:
@@ -290,14 +304,14 @@ class InstancesAPIHandler:
         if port_raw is None:
             port_raw = existing.port if existing is not None else 22
         try:
-            port = self._coerce_int(port_raw, "port")
+            port = coerce_int_strict(port_raw, "port")
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
 
         if inst_type is InstanceType.SSH:
-            if not host or not isinstance(host, str):
+            if not coerce_str(host):
                 raise ValueError("SSH instances require 'host'")
-            if not user or not isinstance(user, str):
+            if not coerce_str(user):
                 raise ValueError("SSH instances require 'user'")
         else:
             host = None
@@ -314,7 +328,7 @@ class InstancesAPIHandler:
             max_engines = None
         else:
             try:
-                max_engines = self._coerce_int(raw_max_engines, "max_engines")
+                max_engines = coerce_int_strict(raw_max_engines, "max_engines")
             except ValueError as exc:
                 raise ValueError(str(exc)) from exc
             if max_engines <= 0:
@@ -395,7 +409,7 @@ class InstancesAPIHandler:
         last_heartbeat = time.monotonic()
         last_signature: str | None = None
 
-        async def push_event(payload: dict[str, Any]) -> None:
+        async def push_event(payload: JsonObject) -> None:
             payload = self._inject_resume_from(payload, last_event_id)
             seq = self._next_instances_seq()
             envelope = dict(payload)
@@ -511,7 +525,7 @@ class InstancesAPIHandler:
         include_active = state in {"active", "all"}
         include_completed = state in {"completed", "all"}
 
-        def _to_iso(value: Any | None) -> str | None:
+        def _to_iso(value: object | None) -> str | None:
             if value is None:
                 return None
             if isinstance(value, int | float):
@@ -522,16 +536,16 @@ class InstancesAPIHandler:
                 return value.astimezone(timezone.utc).isoformat()
             return str(value)
 
-        games: list[dict[str, Any]] = []
+        games: list[JsonObject] = []
 
-        def _active_sort_key(item: dict[str, Any]) -> tuple[int, str]:
+        def _active_sort_key(item: JsonObject) -> tuple[int, str]:
             started = item.get("started_at")
             if isinstance(started, str):
                 return (0, started)
             return (1, "")
 
         if include_active:
-            active_entries: list[dict[str, Any]] = []
+            active_entries: list[JsonObject] = []
             for active in instance.active_games.values():
                 active_entries.append(
                     {
@@ -563,7 +577,7 @@ class InstancesAPIHandler:
                         code="history_unavailable",
                     )
                 try:
-                    with ArenaDBService(self._db_path) as db_service:
+                    with ArenaDBService(SQLiteShogiDBFactory(self._db_path)) as db_service:
                         history = db_service.get_instance_game_history(
                             instance_id,
                             limit=remaining_limit,
@@ -575,18 +589,23 @@ class InstancesAPIHandler:
 
                 for record in history:
                     role_payloads = []
-                    for role in record.get("roles", []):
+                    roles_raw = record.get("roles", [])
+                    if not isinstance(roles_raw, list):
+                        roles_raw = []
+                    for role_entry in roles_raw:
+                        if not isinstance(role_entry, dict):
+                            continue
                         role_payloads.append(
                             {
-                                "role": role.get("role"),
-                                "engine_name": role.get("engine_name"),
-                                "engine_display_name": role.get("engine_display_name"),
-                                "binary_path": role.get("binary_path"),
-                                "build_flags": role.get("build_flags"),
-                                "started_at": _to_iso(role.get("started_at")),
-                                "completed_at": _to_iso(role.get("completed_at")),
-                                "extra": role.get("extra"),
-                                "engine_artifact_id": role.get("engine_artifact_id"),
+                                "role": role_entry.get("role"),
+                                "engine_name": role_entry.get("engine_name"),
+                                "engine_display_name": role_entry.get("engine_display_name"),
+                                "binary_path": role_entry.get("binary_path"),
+                                "build_flags": role_entry.get("build_flags"),
+                                "started_at": _to_iso(role_entry.get("started_at")),
+                                "completed_at": _to_iso(role_entry.get("completed_at")),
+                                "extra": role_entry.get("extra"),
+                                "engine_artifact_id": role_entry.get("engine_artifact_id"),
                                 "local": True,
                             }
                         )
@@ -680,7 +699,7 @@ class InstancesAPIHandler:
             return json_error_response(str(exc), status=400, code="invalid_payload")
 
         in_use = instance.metrics.in_use_slots
-        if updated_config.slots > 0:
+        if updated_config.slots is not None:
             capacity = updated_config.slots
         else:
             cpu_count = instance.metrics.cpu_count
@@ -843,7 +862,7 @@ class InstancesAPIHandler:
             }
         )
 
-    async def _perform_health_check(self, instance: Instance, *, force: bool = False) -> dict[str, Any]:
+    async def _perform_health_check(self, instance: Instance, *, force: bool = False) -> JsonObject:
         """Perform health check on instance and update metrics."""
         try:
             logger.debug(f"Performing health check on instance {instance.name}")
@@ -897,7 +916,7 @@ class InstancesAPIHandler:
                     },
                 )
                 try:
-                    with ArenaDBService(self._db_path) as db_service:
+                    with ArenaDBService(SQLiteShogiDBFactory(self._db_path)) as db_service:
                         db_service.upsert_instance_spec(snapshot)
                 except Exception:
                     logger.exception("Failed to persist instance spec for %s", instance.name)
@@ -934,7 +953,7 @@ class InstancesAPIHandler:
                 *[self._perform_health_check(instance, force=force) for instance in instances],
             )
 
-    def _perform_drain(self, instance: Instance, drain: bool) -> dict[str, Any]:
+    def _perform_drain(self, instance: Instance, drain: bool) -> JsonObject:
         """Set drain status on instance."""
         old_drain = instance.drain
         if self.instance_pool is None:
@@ -967,7 +986,7 @@ class InstancesAPIHandler:
                 "timestamp": time.time(),
             }
 
-    async def _perform_provision(self, instance: Instance, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _perform_provision(self, instance: Instance, payload: JsonObject) -> JsonObject:
         if instance.type is not InstanceType.SSH:
             raise ValueError("provision is only supported for SSH instances")
 
@@ -976,12 +995,14 @@ class InstancesAPIHandler:
         mode = str(payload.get("mode") or "dir").strip().lower()
         executable = bool(payload.get("executable"))
 
-        if not isinstance(local_raw, str) or not local_raw.strip():
+        local_str = coerce_str(local_raw)
+        if not local_str:
             raise ValueError("'local_path' is required")
-        if not isinstance(remote_raw, str) or not remote_raw.strip():
+        remote_str = coerce_str(remote_raw)
+        if not remote_str:
             raise ValueError("'remote_path' is required")
 
-        local_path = self._resolve_local_path(local_raw)
+        local_path = self._resolve_local_path(local_str)
         if mode == "dir":
             if not local_path.is_dir():
                 raise ValueError("local_path must reference a directory when mode='dir'")
@@ -991,7 +1012,7 @@ class InstancesAPIHandler:
         else:
             raise ValueError("mode must be either 'dir' or 'file'")
 
-        remote_path = self._expand_remote_path(remote_raw, instance).strip()
+        remote_path = self._expand_remote_path(remote_str, instance).strip()
         if not remote_path:
             raise ValueError("remote_path resolved to an empty value")
 

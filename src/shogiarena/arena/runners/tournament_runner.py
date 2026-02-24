@@ -4,34 +4,53 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import random
+import re
+import warnings
 from collections import defaultdict
-from collections.abc import Iterable
-from dataclasses import asdict
+from collections.abc import Iterable, Mapping
+from contextlib import suppress
 from datetime import datetime, timezone
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
+import rshogi
 import yaml
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
-from shogiarena.arena.configs.base import AdjudicationSettings
-from shogiarena.arena.configs.tournament import ArenaConfig, EngineSpec, GameSpec, TournamentResults
+from shogiarena.arena.configs.tournament import (
+    EngineConfig,
+    GameSpec,
+    TournamentResults,
+    TournamentRunConfig,
+    _EngineWdlCounts,
+)
+from shogiarena.arena.engines.time_control import TimeControlLimits
 from shogiarena.arena.instances.pool import InstancePool
 from shogiarena.arena.orchestrators import base_orchestrator_utils
 from shogiarena.arena.orchestrators.base_orchestrator import BaseOrchestrator
 from shogiarena.arena.orchestrators.base_orchestrator_utils import build_time_control_limits
 from shogiarena.arena.orchestrators.tournament_orchestrator import TournamentOrchestrator
-from shogiarena.arena.runners.base_runner import BaseSessionRunner, _jsonify, serialize_rules_config
+from shogiarena.arena.runners.base_runner import BaseSessionRunner, RunOptions, serialize_rules_config
+from shogiarena.arena.runners.reporting import ProgressReporter
 from shogiarena.arena.runners.reschedule_loop import RescheduleAction, RescheduleDecision, RescheduleLoop
+from shogiarena.arena.runners.results import TournamentRunResult
 from shogiarena.arena.runners.session_context_builder import SessionContextBuilder
+from shogiarena.arena.runners.tqdm_reporter import TqdmProgressReporter
 from shogiarena.arena.scheduler.game_scheduler import GameScheduler, GauntletScheduler, create_scheduler
 from shogiarena.arena.services.artifacts.resolver import ArtifactResolver
+from shogiarena.arena.services.openbench import OpenBenchClient, OpenBenchClientConfig, OpenBenchError
 from shogiarena.arena.services.persistence.db_service import ArenaDBService
+from shogiarena.arena.services.persistence.records import (
+    GameParticipationRecord,
+    deserialize_participation_records,
+)
 from shogiarena.arena.services.statistics.btd import BTDEstimator
 from shogiarena.arena.services.statistics.pentanomial import compute_pentanomial
-from shogiarena.arena.services.statistics.rating_service import RatingService
-from shogiarena.arena.services.statistics.sprt import Sprt
+from shogiarena.arena.services.statistics.rating_service import EloRatingService
+from shogiarena.arena.services.statistics.sprt import Sprt, SprtStateSnapshot
 from shogiarena.arena.session import (
     GameCompletionEvent,
     GameLifecycleHooks,
@@ -39,13 +58,36 @@ from shogiarena.arena.session import (
     SessionContext,
     SessionStopController,
 )
-from shogiarena.records import GameInfo
+from shogiarena.arena.storage import RunStorage
+from shogiarena.records.storage.binary_writer import RecordBinaryWriter, RecordBinaryWriterConfig
 from shogiarena.utils.common import project_dirs
+from shogiarena.utils.common import settings as settings_mod
 from shogiarena.utils.common.paths import maybe_resolve_path_option, resolve_path_like
-from shogiarena.utils.types.types import GameResult
+from shogiarena.utils.types.coerce import coerce_int, coerce_str, datetime_to_iso, is_strict_numeric
+from shogiarena.utils.types.types import (
+    EngineInfoSnapshots,
+    EngineOptionsSnapshots,
+    GameResult,
+    JsonObject,
+    JsonValue,
+)
 from shogiarena.web.dashboard.backend.assets_writer import DashboardProfile
 
 logger = logging.getLogger(__name__)
+
+_OPENBENCH_SPRT_PAIR_PATTERN = re.compile(r"^\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]$")
+_GAME_RESULT_ERROR = GameResult.from_str("ERROR")
+_GAME_RESULT_BLACK_WIN_BY_DECLARATION = GameResult.from_str("BLACK_WIN_BY_DECLARATION")
+_GAME_RESULT_WHITE_WIN_BY_DECLARATION = GameResult.from_str("WHITE_WIN_BY_DECLARATION")
+_GAME_RESULT_BLACK_WIN_BY_FORFEIT = GameResult.from_str("BLACK_WIN_BY_FORFEIT")
+_GAME_RESULT_WHITE_WIN_BY_FORFEIT = GameResult.from_str("WHITE_WIN_BY_FORFEIT")
+
+
+def _extract_participation(record: rshogi.record.GameRecord) -> tuple[GameParticipationRecord, ...]:
+    raw = record.metadata.attributes.get("_arena_participation")
+    if not isinstance(raw, str) or not raw.strip():
+        return ()
+    return deserialize_participation_records(raw)
 
 
 _RESULT_ABBREVIATIONS: dict[GameResult, str] = {
@@ -53,31 +95,33 @@ _RESULT_ABBREVIATIONS: dict[GameResult, str] = {
     GameResult.WHITE_WIN: "W",
     GameResult.DRAW_BY_REPETITION: "R",
     GameResult.DRAW_BY_MAX_PLIES: "M",
-    GameResult.BLACK_WIN_BY_DECLARATION: "BD",
-    GameResult.WHITE_WIN_BY_DECLARATION: "WD",
-    GameResult.BLACK_WIN_BY_FORFEIT: "B",
-    GameResult.WHITE_WIN_BY_FORFEIT: "W",
+    GameResult.DRAW_BY_IMPASSE: "I",
+    _GAME_RESULT_BLACK_WIN_BY_DECLARATION: "BD",
+    _GAME_RESULT_WHITE_WIN_BY_DECLARATION: "WD",
+    _GAME_RESULT_BLACK_WIN_BY_FORFEIT: "B",
+    _GAME_RESULT_WHITE_WIN_BY_FORFEIT: "W",
     GameResult.BLACK_WIN_BY_ILLEGAL_MOVE: "BI",
     GameResult.WHITE_WIN_BY_ILLEGAL_MOVE: "WI",
     GameResult.BLACK_WIN_BY_TIMEOUT: "BT",
     GameResult.WHITE_WIN_BY_TIMEOUT: "WT",
     GameResult.PAUSED: "P",
-    GameResult.ERROR: "ERR",
+    _GAME_RESULT_ERROR: "ERR",
     GameResult.INVALID: "ERR",
 }
 
 
 _RESULT_REASON_SUFFIXES: dict[GameResult, str] = {
-    GameResult.BLACK_WIN_BY_DECLARATION: "by Declaration",
-    GameResult.WHITE_WIN_BY_DECLARATION: "by Declaration",
-    GameResult.BLACK_WIN_BY_FORFEIT: "by Forfeit",
-    GameResult.WHITE_WIN_BY_FORFEIT: "by Forfeit",
+    _GAME_RESULT_BLACK_WIN_BY_DECLARATION: "by Declaration",
+    _GAME_RESULT_WHITE_WIN_BY_DECLARATION: "by Declaration",
+    _GAME_RESULT_BLACK_WIN_BY_FORFEIT: "by Forfeit",
+    _GAME_RESULT_WHITE_WIN_BY_FORFEIT: "by Forfeit",
     GameResult.BLACK_WIN_BY_ILLEGAL_MOVE: "by Illegal Move",
     GameResult.WHITE_WIN_BY_ILLEGAL_MOVE: "by Illegal Move",
     GameResult.BLACK_WIN_BY_TIMEOUT: "by Timeout",
     GameResult.WHITE_WIN_BY_TIMEOUT: "by Timeout",
     GameResult.DRAW_BY_REPETITION: "by Repetition",
     GameResult.DRAW_BY_MAX_PLIES: "by Max Moves",
+    GameResult.DRAW_BY_IMPASSE: "by Impasse",
 }
 
 
@@ -91,7 +135,99 @@ class _CompletedGameSummary(TypedDict, total=False):
     end_time: str | None
 
 
-class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
+class _SummaryPayload(BaseModel):
+    """Pydantic model for a completed game summary entry in run_state.json."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    result_code: int | None = None
+    result_abbr: str | None = None
+    result_label: str | None = None
+    result_detail: str | None = None
+    total_plies: int | None = None
+    end_time: str | None = None
+
+    @field_validator("result_code", "total_plies", mode="before")
+    @classmethod
+    def _coerce_optional_int(cls, v: object) -> int | None:
+        if v is None:
+            return None
+        return coerce_int(v)
+
+    def to_completed_summary(self) -> _CompletedGameSummary:
+        """Convert to _CompletedGameSummary TypedDict."""
+        summary: _CompletedGameSummary = {}
+        summary["result_code"] = self.result_code
+        if self.result_abbr is not None:
+            summary["result_abbr"] = self.result_abbr
+        if self.result_label is not None:
+            summary["result_label"] = self.result_label
+        summary["result_detail"] = self.result_detail
+        summary["total_plies"] = self.total_plies
+        summary["end_time"] = self.end_time
+        return summary
+
+
+class _CancelledGameEntry(BaseModel):
+    """Pydantic model for a cancelled game entry in run_state.json."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    game_id: str = ""
+    black: str | None = None
+    white: str | None = None
+    round: int | None = None
+    sfen: str | None = None
+    assignment: Any = None
+    assigned_instance: Any = None
+
+
+class _RunStatePayload(BaseModel):
+    """Type-safe model for run_state.json deserialization."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    schedule_hash: str | None = None
+    completed_game_ids: list[str] = []
+    cancelled_game_ids: list[str] = []
+    sprt_state: dict[str, Any] | None = None
+    openbench_state: dict[str, Any] | None = None
+    completed_game_summaries: dict[str, _SummaryPayload] = {}
+    game_display_order: dict[str, int] = {}
+    original_total_games: int | None = None
+    game_instance_overrides: dict[str, Any] | None = None
+    cancelled_games: list[_CancelledGameEntry] = []
+
+    @field_validator("completed_game_summaries", mode="before")
+    @classmethod
+    def _filter_summaries(cls, v: object) -> dict[str, object]:
+        if not isinstance(v, dict):
+            return {}
+        return {k: val for k, val in v.items() if isinstance(k, str) and isinstance(val, dict)}
+
+    @field_validator("cancelled_games", mode="before")
+    @classmethod
+    def _filter_cancelled(cls, v: object) -> list[object]:
+        if not isinstance(v, list):
+            return []
+        return [e for e in v if isinstance(e, dict)]
+
+    @field_validator("game_display_order", mode="before")
+    @classmethod
+    def _coerce_display_order(cls, v: object) -> dict[str, int]:
+        if not isinstance(v, dict):
+            return {}
+        result: dict[str, int] = {}
+        for key, value in v.items():
+            if not isinstance(key, str):
+                continue
+            int_val = coerce_int(value)
+            if int_val is not None:
+                result[key] = int_val
+        return result
+
+
+class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
     dashboard_profiles = ("tournament",)
     """N-engine native tournament runner.
 
@@ -104,95 +240,140 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             super().__init__(controller)
             self._runner = runner
 
-        async def on_game_complete(self, event: GameCompletionEvent) -> None:
-            payload = event.payload
-            if not isinstance(payload, GameSpec):
-                raise TypeError("Tournament lifecycle hook expects GameSpec payload")
+        async def on_game_complete(self, event: GameCompletionEvent[GameSpec]) -> None:
             await self._runner._handle_game_completion(
-                payload,
+                event.payload,
                 event.game_info,
-                worker_idx=event.worker_idx,
+                _worker_idx=event.worker_idx,
                 stop_requested=event.stop_requested,
             )
 
-    def _build_rules_payload(self) -> dict[str, Any]:
+    def _build_rules_payload(self) -> JsonObject:
         payload = serialize_rules_config(self.config.rules)
-        if isinstance(payload.get("initial_positions"), dict):
-            payload.setdefault("flip_policy", payload["initial_positions"].get("flip_policy"))
+        initial_pos = payload.get("initial_positions")
+        if isinstance(initial_pos, dict):
+            payload.setdefault("flip_policy", initial_pos.get("flip_policy"))
         return payload
 
-    def _build_sprt_payload(self) -> dict[str, Any]:
-        sprt_conf = getattr(self.config, "sprt", None)
+    def _build_sprt_payload(self) -> JsonObject:
+        sprt_conf = self.config.sprt
         if sprt_conf is None:
             return {}
-        return _jsonify(asdict(sprt_conf))
+        return sprt_conf.model_dump(mode="json")
 
     @staticmethod
-    def _resolve_dashboard_profiles_for_config(config: ArenaConfig) -> tuple[DashboardProfile, ...]:
-        if getattr(config, "sprt", None) is not None:
+    def _resolve_dashboard_profiles_for_config(config: TournamentRunConfig) -> tuple[DashboardProfile, ...]:
+        if config.sprt is not None:
             return ("sprt",)
+        if config.generate is not None:
+            return ("generate",)
         exp_name = str(config.experiment_name or "").strip().lower()
         if exp_name == "match":
             return ("match",)
+        if exp_name == "generate":
+            return ("generate",)
         return ("tournament",)
 
+    def _is_generate_run(self) -> bool:
+        if self.config.generate is not None:
+            return True
+        exp_name = str(self.config.experiment_name or "").strip().lower()
+        return exp_name == "generate"
+
     def _resolve_tournament_type(self) -> str:
-        if getattr(self.config, "sprt", None) is not None:
+        if self.config.sprt is not None:
             return "sprt"
+        if self._is_generate_run():
+            return "generate"
         exp_name = str(self.config.experiment_name or "").strip().lower()
         if exp_name == "match":
             return "match"
         return str(self.config.tournament.scheduler)
 
     def _resolve_summary_source(self) -> str:
-        if getattr(self.config, "sprt", None) is not None:
+        if self.config.sprt is not None:
             return "sprt"
+        if self._is_generate_run():
+            return "generate"
         exp_name = str(self.config.experiment_name or "").strip().lower()
         if exp_name == "match":
             return "match"
         return "tournament"
 
+    def _build_metadata_attributes(self, existing: Mapping[str, str] | None) -> dict[str, str]:
+        attributes: dict[str, str] = {}
+        if existing is not None:
+            for key, value in existing.items():
+                if value is not None:
+                    attributes[str(key)] = str(value)
+        attributes["runMode"] = self._summary_source
+        experiment = str(self.config.experiment_name or "").strip()
+        if experiment:
+            attributes["experimentName"] = experiment
+        records_output = self.config.records_output
+        if records_output is not None:
+            attributes["recordFormat"] = records_output.format
+        return attributes
+
     def __init__(
         self,
-        config: ArenaConfig,
+        config: TournamentRunConfig,
         *,
         instance_pool: InstancePool | None = None,
-        overwrite: bool = False,
+        storage: RunStorage,
+        progress_reporter: ProgressReporter | None = None,
+        dashboard_enabled: bool | None = None,
+        no_resume: bool = False,
     ):
         """Initialize tournament runner.
 
         Args:
             config: Complete tournament configuration
         """
+        enabled = config.dashboard.enabled if dashboard_enabled is None else bool(dashboard_enabled)
+        if enabled and not storage.dashboard_compatible:
+            logger.warning("Dashboard disabled (storage is not dashboard-compatible)")
+            enabled = False
+        config.dashboard.enabled = enabled
+        run_options = RunOptions(no_resume=bool(no_resume))
         super().__init__(
             instance_pool=instance_pool,
+            storage=storage,
+            run_options=run_options,
+            progress_reporter=progress_reporter,
             dashboard_profiles=self._resolve_dashboard_profiles_for_config(config),
         )
         self.config = config
+        self.run_dir = storage.run_dir
+        self._dashboard_enabled = enabled
         self._summary_source = self._resolve_summary_source()
         # Create scheduler (inject baseline_count for gauntlet)
         self.scheduler: GameScheduler
         if config.tournament.scheduler == "gauntlet":
-            self.scheduler = GauntletScheduler(baseline_count=int(getattr(config.tournament, "baseline_count", 1)))
+            self.scheduler = GauntletScheduler(baseline_count=config.tournament.baseline_count)
         else:
             self.scheduler = create_scheduler(config.tournament.scheduler)
         self.game_schedule: list[GameSpec] = []
         self.completed_game_ids: set[str] = set()
         self._completed_game_summaries: dict[str, _CompletedGameSummary] = {}
-        self._overwrite = bool(overwrite)
+        self._run_options = run_options
 
         # Services
         self.db_service: ArenaDBService | None = None
-        self.rating_service: RatingService | None = None
+        self.rating_service: EloRatingService | None = None
         # SPRT state (optional)
         self._sprt: Sprt | None = None
         self._sprt_pair: tuple[str, str] | None = None
         self._sprt_min_games: int = 0
         # Cached metadata/time-control structures for dashboard summaries
-        self._engine_metadata_cache: list[dict[str, Any]] | None = None
+        self._engine_metadata_cache: list[JsonObject] | None = None
         self._engine_metadata_runtime_sig: str | None = None
         self._engine_time_controls_cache: tuple[dict[str, str], str | None] | None = None
         self._completion_lock: asyncio.Lock = asyncio.Lock()
+        self._record_writer: RecordBinaryWriter | None = None
+        self._openbench_client: OpenBenchClient | None = None
+        self._openbench_heartbeat_task: asyncio.Task[None] | None = None
+        self._openbench_heartbeat_error: OpenBenchError | None = None
         # Rescheduling coordination (dashboard-triggered)
         self._reschedule_lock: asyncio.Lock = asyncio.Lock()
         self._pending_reschedule: list[GameSpec] | None = None
@@ -209,13 +390,14 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         self._game_assignments: dict[str, dict[str, str | None]] = {}
         # Preserve display order so cancelled entries keep their slot numbers.
         self._game_display_order: dict[str, int] = {}
+        # Typed reference to tournament orchestrator (avoids isinstance checks)
+        self._tournament_orchestrator: TournamentOrchestrator | None = None
 
     def create_lifecycle_hooks(self, controller: SessionStopController) -> GameLifecycleHooks:
         return self._TournamentLifecycle(self, controller)
 
     def build_session_context(self) -> SessionContext:
-        rd = self.config.run_dir
-        assert rd is not None
+        rd = self.run_dir
         num_workers = int(self.config.tournament.num_parallel)
         run_id = str(self.config.experiment_name or rd.name)
         if self.db_service is None:
@@ -228,8 +410,16 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         }
         if self._sprt is not None:
             services["sprt"] = self._sprt
+        if not self._run_options.no_resume:
+            loaded = SessionContext.load_from_storage(
+                storage=self.storage,
+                instance_pool=self.instance_pool,
+                services=services,
+            )
+            if loaded is not None:
+                return loaded
         return SessionContextBuilder.for_tournament(
-            run_dir=rd,
+            storage=self.storage,
             num_workers=num_workers,
             instance_pool=self.instance_pool,
             run_id=run_id,
@@ -237,37 +427,44 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             scheduler=str(self.config.tournament.scheduler),
             games_per_pair=int(self.config.tournament.games_per_pair),
             num_engines=len(self.config.engines),
-            dashboard_enabled=bool(self.config.dashboard.enabled),
+            dashboard_enabled=bool(self._dashboard_enabled),
             services=services,
         )
 
     # run() is provided by BaseSessionRunner
 
     async def _stop_additional_services(self) -> None:
+        await self._stop_openbench_heartbeat_task()
+        self._openbench_heartbeat_error = None
+        if self._openbench_client is not None:
+            await self._openbench_client.close()
+            self._openbench_client = None
         if self.db_service:
             self.db_service.close()
             self.db_service = None
+        if self._record_writer is not None:
+            self._record_writer.close()
+            self._record_writer = None
 
     async def init_services(self) -> None:
         """Initialize database and rating services."""
         logger.debug("Initializing services")
 
         # Create run directory
-        rd = self.config.run_dir
-        assert rd is not None
+        rd = self.run_dir
         rd.mkdir(parents=True, exist_ok=True)
 
         # Initialize database service
-        db_path = rd / "game.db"
-        self.db_service = ArenaDBService(db_path)
+        self.db_service = self.storage.db_service()
         self.db_service.ensure_schema_compatibility()
 
         # Initialize rating service
-        self.rating_service = RatingService(
+        self.rating_service = EloRatingService(
             initial_rating=self.config.rating.initial, k_factor=self.config.rating.k_factor
         )
+        self._record_writer = self._create_record_writer()
         # Initialize optional SPRT (requires rating service)
-        sprt_conf = getattr(self.config, "sprt", None)
+        sprt_conf = self.config.sprt
         if sprt_conf is not None:
             self._sprt = Sprt(
                 elo0=float(sprt_conf.elo0),
@@ -275,15 +472,519 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                 alpha=float(sprt_conf.alpha),
                 beta=float(sprt_conf.beta),
             )
-            self._sprt_min_games = int(getattr(sprt_conf, "min_games", 0) or 0)
+            self._sprt_min_games = sprt_conf.min_games
             if len(self.config.engines) == 2:
                 self._sprt_pair = (str(self.config.engines[0].name), str(self.config.engines[1].name))
             else:
                 self._sprt_pair = None
+        await self._init_openbench_client()
         logger.debug("Services initialized (DB/Rating/SPRT)")
 
+    def _resolve_openbench_config(self) -> OpenBenchClientConfig | None:
+        raw = self.config.openbench
+        if raw is None or not raw.enabled:
+            return None
+        if len(self.config.engines) != 2:
+            raise ValueError("openbench.enabled=true requires exactly two engines")
+        if self.config.sprt is None:
+            raise ValueError("openbench.enabled=true requires sprt configuration")
+
+        settings_cfg = settings_mod.SETTINGS.openbench
+        server = raw.server or (settings_cfg.server if settings_cfg is not None else None)
+        username = raw.username or (settings_cfg.username if settings_cfg is not None else None)
+        raw_password_env = raw.password_env.strip()
+        settings_password_env = (
+            settings_cfg.password_env.strip() if settings_cfg is not None and settings_cfg.password_env else ""
+        )
+        if (
+            raw_password_env == "OPENBENCH_PASSWORD"
+            and settings_password_env
+            and settings_password_env != "OPENBENCH_PASSWORD"
+        ):
+            # OpenBenchConfig.password_env has a default value, so "omitted in run config" and
+            # "explicitly set to OPENBENCH_PASSWORD" are indistinguishable here.
+            # Prefer settings.openbench.password_env when it is explicitly customized.
+            password_env = settings_password_env
+        else:
+            password_env = raw_password_env or settings_password_env or "OPENBENCH_PASSWORD"
+        password = os.environ.get(password_env, "").strip()
+        if not password:
+            raise ValueError(
+                f"OpenBench password is missing. Set environment variable '{password_env}' (or override password_env)."
+            )
+        if not server:
+            raise ValueError("OpenBench server is not configured")
+        if not username:
+            raise ValueError("OpenBench username is not configured")
+
+        target_test_id: int | None
+        raw_target_test_id = raw.target_test_id
+        target_test_id = int(raw_target_test_id) if raw_target_test_id is not None else None
+        mode = raw.mode
+        if mode == "create_test" and target_test_id is None:
+            restored = self._load_openbench_target_from_run_state()
+            if restored is not None:
+                target_test_id = restored
+
+        create_payload: dict[str, str] | None = None
+        create_discovery_timeout_sec = 180.0
+        if mode == "create_test":
+            create_payload = self._build_openbench_create_payload(
+                openbench_server=server,
+                openbench_username=username,
+                openbench_password=password,
+            )
+            if raw.create is not None:
+                create_discovery_timeout_sec = raw.create.discovery_timeout_sec
+
+        return OpenBenchClientConfig(
+            enabled=True,
+            mode=mode,
+            server=server,
+            username=username,
+            password=password,
+            target_test_id=target_test_id,
+            submit_interval_games=int(raw.submit_interval_games),
+            strict=bool(raw.strict),
+            heartbeat_interval_sec=float(raw.heartbeat_interval_sec),
+            poll_interval_sec=float(raw.poll_interval_sec),
+            assignment_timeout_sec=float(raw.assignment_timeout_sec),
+            allow_insecure_http=bool(raw.allow_insecure_http),
+            concurrency=int(max(1, self.config.tournament.num_parallel)),
+            create_payload=create_payload,
+            create_discovery_timeout_sec=float(create_discovery_timeout_sec),
+        )
+
+    def _load_openbench_target_from_run_state(self) -> int | None:
+        run_state_path = self.run_dir / "run_state.json"
+        if not run_state_path.exists() or self._run_options.no_resume:
+            return None
+        try:
+            with open(run_state_path, encoding="utf-8") as f:
+                run_state = json.load(f)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            logger.warning("Failed to read run_state for OpenBench target reuse: %s", exc)
+            return None
+        openbench_state = run_state.get("openbench_state")
+        if not isinstance(openbench_state, dict):
+            return None
+        raw_target = openbench_state.get("target_test_id")
+        if is_strict_numeric(raw_target):
+            target_id = int(raw_target)
+            if target_id > 0:
+                return target_id
+        return None
+
+    def _build_openbench_create_payload(
+        self,
+        *,
+        openbench_server: str,
+        openbench_username: str,
+        openbench_password: str,
+    ) -> dict[str, str]:
+        openbench_cfg = self.config.openbench
+        create_cfg = openbench_cfg.create if openbench_cfg is not None else None
+        if create_cfg is None or create_cfg.payload is None:
+            raise ValueError("openbench.create.payload is required for mode=create_test")
+        payload_cfg = create_cfg.payload
+
+        dev_engine = (payload_cfg.dev_engine or "").strip()
+        base_engine = (payload_cfg.base_engine or "").strip()
+        if not dev_engine or not base_engine:
+            raise ValueError("openbench.create.payload.dev_engine/base_engine are required")
+
+        dev_spec = self.config.engines[0]
+        base_spec = self.config.engines[1]
+
+        dev_repo = self._resolve_openbench_repo_url(dev_spec, payload_cfg.dev_repo or "")
+        base_repo = self._resolve_openbench_repo_url(base_spec, payload_cfg.base_repo or "")
+        dev_branch = self._resolve_openbench_branch(dev_spec, payload_cfg.dev_branch or "")
+        base_branch = self._resolve_openbench_branch(base_spec, payload_cfg.base_branch or "")
+
+        dev_tc = self._resolve_openbench_time_control(
+            payload_cfg.dev_time_control or "",
+            base_tc=self.config.rules.time_control,
+            engine_tc=dev_spec.time_control,
+        )
+        base_tc = self._resolve_openbench_time_control(
+            payload_cfg.base_time_control or "",
+            base_tc=self.config.rules.time_control,
+            engine_tc=base_spec.time_control,
+        )
+
+        sprt_cfg = self.config.sprt
+        test_mode = payload_cfg.test_mode.strip().upper()
+        if test_mode not in {"SPRT", "GAMES"}:
+            raise ValueError("openbench.create.payload.test_mode must be SPRT or GAMES")
+        test_bounds = payload_cfg.test_bounds.strip()
+        if test_bounds == "auto":
+            if sprt_cfg is None:
+                raise ValueError("openbench.create.payload.test_bounds=auto requires sprt config")
+            test_bounds = f"[{float(sprt_cfg.elo0)}, {float(sprt_cfg.elo1)}]"
+        test_conf = payload_cfg.test_confidence.strip()
+        if test_conf == "auto":
+            if sprt_cfg is None:
+                raise ValueError("openbench.create.payload.test_confidence=auto requires sprt config")
+            test_conf = f"[{float(sprt_cfg.beta)}, {float(sprt_cfg.alpha)}]"
+        if test_mode == "SPRT":
+            lower_elo, upper_elo = self._parse_openbench_float_pair(
+                test_bounds,
+                field_name="openbench.create.payload.test_bounds",
+            )
+            if lower_elo >= upper_elo:
+                raise ValueError("openbench.create.payload.test_bounds must satisfy lower < upper")
+            beta_conf, alpha_conf = self._parse_openbench_float_pair(
+                test_conf,
+                field_name="openbench.create.payload.test_confidence",
+            )
+            if not 0.0 < beta_conf < 1.0 or not 0.0 < alpha_conf < 1.0:
+                raise ValueError("openbench.create.payload.test_confidence values must be within (0, 1)")
+
+        test_max_games_raw = payload_cfg.test_max_games
+        if test_max_games_raw == "auto":
+            max_games_val = int(sprt_cfg.max_games or 0) if sprt_cfg is not None else 0
+        else:
+            max_games_val = int(test_max_games_raw)
+        if test_mode == "GAMES" and max_games_val <= 0:
+            raise ValueError("openbench.create.payload.test_max_games must be > 0 when test_mode=GAMES")
+
+        scale_nps_raw = payload_cfg.scale_nps
+        if scale_nps_raw == "auto":
+            scale_nps = self._fetch_openbench_engine_nps(
+                base_engine,
+                openbench_server=openbench_server,
+                openbench_username=openbench_username,
+                openbench_password=openbench_password,
+            )
+        else:
+            scale_nps = int(scale_nps_raw)
+        if scale_nps <= 0:
+            raise ValueError("openbench.create.payload.scale_nps must be > 0")
+
+        dev_options = payload_cfg.dev_options.strip()
+        base_options = payload_cfg.base_options.strip()
+        for label, options in (("dev_options", dev_options), ("base_options", base_options)):
+            if not re.search(r"\bThreads=\d+\b", options):
+                raise ValueError(f"openbench.create.payload.{label} must include Threads=<int>")
+            if not re.search(r"\bHash=\d+\b", options):
+                raise ValueError(f"openbench.create.payload.{label} must include Hash=<int>")
+
+        throughput = payload_cfg.throughput
+        workload_size = payload_cfg.workload_size
+        if throughput <= 0:
+            raise ValueError("openbench.create.payload.throughput must be > 0")
+        if workload_size <= 0:
+            raise ValueError("openbench.create.payload.workload_size must be > 0")
+        upload_pgns = payload_cfg.upload_pgns.strip().upper()
+        if upload_pgns not in {"FALSE", "COMPACT", "VERBOSE"}:
+            raise ValueError("openbench.create.payload.upload_pgns must be FALSE, COMPACT, or VERBOSE")
+        scale_method = payload_cfg.scale_method.strip().upper()
+        if scale_method not in {"DEV", "BASE", "BOTH"}:
+            raise ValueError("openbench.create.payload.scale_method must be DEV, BASE, or BOTH")
+
+        configured_book_name = payload_cfg.book_name.strip()
+        book_name = self._resolve_openbench_book_name(
+            configured_book_name,
+            openbench_server=openbench_server,
+            openbench_username=openbench_username,
+            openbench_password=openbench_password,
+        )
+
+        return {
+            "dev_engine": dev_engine,
+            "base_engine": base_engine,
+            "dev_repo": dev_repo,
+            "base_repo": base_repo,
+            "dev_branch": dev_branch,
+            "base_branch": base_branch,
+            "dev_bench": payload_cfg.dev_bench.strip(),
+            "base_bench": payload_cfg.base_bench.strip(),
+            "dev_options": dev_options,
+            "base_options": base_options,
+            "dev_network": payload_cfg.dev_network.strip(),
+            "base_network": payload_cfg.base_network.strip(),
+            "dev_time_control": dev_tc,
+            "base_time_control": base_tc,
+            "book_name": book_name,
+            "upload_pgns": upload_pgns,
+            "test_mode": test_mode,
+            "test_bounds": test_bounds,
+            "test_confidence": test_conf,
+            "test_max_games": str(max_games_val),
+            "priority": str(payload_cfg.priority),
+            "throughput": str(throughput),
+            "workload_size": str(workload_size),
+            "syzygy_wdl": payload_cfg.syzygy_wdl.strip().upper(),
+            "syzygy_adj": payload_cfg.syzygy_adj.strip().upper(),
+            "win_adj": payload_cfg.win_adj.strip(),
+            "draw_adj": payload_cfg.draw_adj.strip(),
+            "scale_method": scale_method,
+            "scale_nps": str(scale_nps),
+        }
+
+    def _resolve_openbench_repo_url(self, engine_spec: EngineConfig, configured: str) -> str:
+        candidate = configured.strip()
+        if candidate and candidate != "auto":
+            return candidate
+        artifact = (engine_spec.artifact or "").strip()
+        if not artifact:
+            raise ValueError("openbench.create.payload.*_repo must be set when engine uses engine_path")
+        repo_name = artifact.split("/", 1)[0]
+        repo = project_dirs.repos.get(repo_name)
+        if repo is None or not repo.url:
+            raise ValueError(
+                f"openbench.create.payload repo URL for '{repo_name}' is missing. "
+                "Set settings repos URL or specify *_repo explicitly."
+            )
+        return str(repo.url)
+
+    @staticmethod
+    def _resolve_openbench_branch(engine_spec: EngineConfig, configured: str) -> str:
+        candidate = configured.strip()
+        if candidate and candidate != "auto":
+            return candidate
+        artifact = (engine_spec.artifact or "").strip()
+        if not artifact:
+            raise ValueError("openbench.create.payload.*_branch must be set when engine uses engine_path")
+        commit = artifact.split("/", 1)[1]
+        return commit
+
+    def _resolve_openbench_time_control(
+        self,
+        configured: str,
+        *,
+        base_tc: TimeControlLimits | None,
+        engine_tc: TimeControlLimits | None,
+    ) -> str:
+        value = configured.strip()
+        if value and value != "auto":
+            return value
+        limits = build_time_control_limits(base_tc, engine_tc)
+        if limits is None:
+            raise ValueError("openbench.create.payload.*_time_control is required (no rules.time_control configured)")
+        if limits.node_limit is not None:
+            return f"N={int(limits.node_limit)}"
+        if limits.depth_limit is not None:
+            return f"D={int(limits.depth_limit)}"
+        if limits.fixed_time_ms is not None:
+            return f"MT={int(limits.fixed_time_ms)}"
+        if limits.time_ms is None:
+            raise ValueError("Unable to convert time control for OpenBench create payload")
+        base_sec = float(limits.time_ms) / 1000.0
+        inc_ms = limits.increment_ms if limits.increment_ms is not None else limits.byoyomi_ms
+        inc_sec = float(inc_ms or 0) / 1000.0
+        return f"{base_sec:.1f}+{inc_sec:.2f}"
+
+    @staticmethod
+    def _parse_openbench_float_pair(value: str, *, field_name: str) -> tuple[float, float]:
+        match = _OPENBENCH_SPRT_PAIR_PATTERN.fullmatch(value)
+        if match is None:
+            raise ValueError(f"{field_name} must be formatted as [x, y]")
+        try:
+            left = float(match.group(1))
+            right = float(match.group(2))
+        except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
+            raise ValueError(f"{field_name} must contain numeric values") from exc
+        return left, right
+
+    def _fetch_openbench_engine_nps(
+        self,
+        engine_name: str,
+        *,
+        openbench_server: str,
+        openbench_username: str,
+        openbench_password: str,
+    ) -> int:
+        import urllib.parse
+        import urllib.request
+
+        endpoint = f"{str(openbench_server).rstrip('/')}/api/config/{urllib.parse.quote(engine_name)}/"
+        data = urllib.parse.urlencode({"username": openbench_username or "", "password": openbench_password}).encode(
+            "utf-8"
+        )
+        request = urllib.request.Request(endpoint, data=data, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (OSError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError(f"Failed to fetch OpenBench engine config for scale_nps=auto: {engine_name}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"OpenBench api/config returned invalid payload for engine: {engine_name}")
+        if "error" in payload:
+            raise ValueError(f"OpenBench api/config error for engine '{engine_name}': {payload['error']}")
+        nps_raw = payload.get("nps")
+        if not is_strict_numeric(nps_raw):
+            raise ValueError(f"OpenBench api/config missing nps for engine '{engine_name}'")
+        nps = int(nps_raw)
+        if nps <= 0:
+            raise ValueError(f"OpenBench api/config has non-positive nps for engine '{engine_name}'")
+        return nps
+
+    def _resolve_openbench_book_name(
+        self,
+        configured_book_name: str,
+        *,
+        openbench_server: str,
+        openbench_username: str,
+        openbench_password: str,
+    ) -> str:
+        if configured_book_name.upper() != "NONE":
+            return configured_book_name
+        try:
+            books = self._fetch_openbench_books(
+                openbench_server=openbench_server,
+                openbench_username=openbench_username,
+                openbench_password=openbench_password,
+            )
+        except ValueError as exc:
+            logger.warning("Failed to auto-resolve OpenBench book list: %s", exc)
+            return configured_book_name
+        if not books:
+            return configured_book_name
+        if any(book.upper() == "NONE" for book in books):
+            return configured_book_name
+        fallback = books[0]
+        logger.warning(
+            "openbench.create.payload.book_name=NONE is not available on server; falling back to '%s'",
+            fallback,
+        )
+        return fallback
+
+    def _fetch_openbench_books(
+        self,
+        *,
+        openbench_server: str,
+        openbench_username: str,
+        openbench_password: str,
+    ) -> list[str]:
+        import urllib.parse
+        import urllib.request
+
+        endpoint = f"{str(openbench_server).rstrip('/')}/api/config/"
+        data = urllib.parse.urlencode({"username": openbench_username or "", "password": openbench_password}).encode(
+            "utf-8"
+        )
+        request = urllib.request.Request(endpoint, data=data, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (OSError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("Failed to fetch OpenBench api/config payload") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("OpenBench api/config returned invalid payload")
+        if "error" in payload:
+            raise ValueError(f"OpenBench api/config error: {payload['error']}")
+        books_raw = payload.get("books")
+        if isinstance(books_raw, dict):
+            books = [str(key).strip() for key in books_raw.keys() if str(key).strip()]
+        elif isinstance(books_raw, list):
+            books = [str(item).strip() for item in books_raw if str(item).strip()]
+        else:
+            return []
+        return sorted(set(books))
+
+    async def _init_openbench_client(self) -> None:
+        self._openbench_heartbeat_error = None
+        cfg = self._resolve_openbench_config()
+        if cfg is None:
+            self._openbench_client = None
+            return
+        client = OpenBenchClient(
+            cfg,
+            tested_engine=str(self.config.engines[0].name),
+            base_engine=str(self.config.engines[1].name),
+        )
+        try:
+            await client.initialize()
+        except OpenBenchError as exc:
+            await client.close()
+            if cfg.strict:
+                raise
+            logger.warning("OpenBench initialization failed; continuing (strict=false): %s", exc)
+            self._openbench_client = None
+            return
+        self._openbench_client = client
+        self._start_openbench_heartbeat_task(client=client, interval_sec=cfg.heartbeat_interval_sec)
+
+    async def _sync_openbench_after_game(self) -> None:
+        self._raise_pending_openbench_background_error()
+        if self._openbench_client is None or self.db_service is None:
+            return
+        should_stop = await self._openbench_client.sync(self.db_service)
+        if should_stop:
+            self.stop_controller.request_stop(reason="openbench-stop")
+
+    async def _flush_openbench(self) -> None:
+        self._raise_pending_openbench_background_error()
+        if self._openbench_client is None or self.db_service is None:
+            return
+        should_stop = await self._openbench_client.flush(self.db_service)
+        if should_stop:
+            self.stop_controller.request_stop(reason="openbench-stop")
+
+    def _start_openbench_heartbeat_task(self, *, client: OpenBenchClient, interval_sec: float) -> None:
+        if self._openbench_heartbeat_task is not None:
+            self._openbench_heartbeat_task.cancel()
+        self._openbench_heartbeat_task = asyncio.create_task(
+            self._openbench_heartbeat_loop(client=client, interval_sec=interval_sec),
+            name="openbench-heartbeat",
+        )
+
+    async def _stop_openbench_heartbeat_task(self) -> None:
+        task = self._openbench_heartbeat_task
+        self._openbench_heartbeat_task = None
+        if task is None:
+            return
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    async def _openbench_heartbeat_loop(self, *, client: OpenBenchClient, interval_sec: float) -> None:
+        try:
+            while True:
+                await asyncio.sleep(interval_sec)
+                if self._openbench_client is not client:
+                    return
+                try:
+                    should_stop = await client.heartbeat()
+                except OpenBenchError as exc:
+                    if client.strict:
+                        logger.error("OpenBench heartbeat failed in strict mode: %s", exc)
+                        self._openbench_heartbeat_error = exc
+                        self.stop_controller.request_stop(reason="openbench-heartbeat-error")
+                        return
+                    logger.warning("OpenBench heartbeat failed; continuing (strict=false): %s", exc)
+                    continue
+                if should_stop:
+                    self.stop_controller.request_stop(reason="openbench-stop")
+                    return
+        except asyncio.CancelledError:
+            return
+
+    def _raise_pending_openbench_background_error(self) -> None:
+        if self._openbench_heartbeat_error is None:
+            return
+        exc = self._openbench_heartbeat_error
+        self._openbench_heartbeat_error = None
+        raise exc
+
+    def _create_record_writer(self) -> RecordBinaryWriter | None:
+        config = self.config.records_output
+        if config is None:
+            return None
+        output_dir = config.output_dir or (self.run_dir / "records")
+        file_prefix = config.file_prefix or config.format
+        writer_config = RecordBinaryWriterConfig(
+            format_id=config.format,
+            output_dir=output_dir,
+            max_positions_per_file=int(config.max_positions_per_file),
+            max_games_per_file=config.max_games_per_file,
+            file_prefix=str(file_prefix),
+        )
+        return RecordBinaryWriter(writer_config)
+
     @property
-    def engine_metadata(self) -> list[dict[str, Any]]:
+    def engine_metadata(self) -> list[JsonObject]:
         runtime_options, runtime_info = self._get_runtime_snapshots()
         try:
             runtime_sig = json.dumps(runtime_options, sort_keys=True, ensure_ascii=False)
@@ -298,35 +999,31 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             self._engine_metadata_runtime_sig = runtime_sig
         return self._engine_metadata_cache
 
-    def _get_runtime_snapshots(self) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, str]]]:
-        orchestrator = getattr(self, "_orchestrator", None)
-        runtime_options: dict[str, dict[str, Any]] = {}
-        runtime_info: dict[str, dict[str, str]] = {}
+    def _get_runtime_snapshots(self) -> tuple[EngineOptionsSnapshots, EngineInfoSnapshots]:
+        orchestrator = self._orchestrator
+        runtime_options: EngineOptionsSnapshots = {}
+        runtime_info: EngineInfoSnapshots = {}
         if orchestrator is not None:
-            get_opts = getattr(orchestrator, "get_engine_option_snapshots", None)
-            if callable(get_opts):
-                try:
-                    runtime_options = get_opts()
-                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                    logger.debug("Failed to fetch runtime USI options from orchestrator: %s", exc, exc_info=True)
-            get_info = getattr(orchestrator, "get_engine_info_snapshots", None)
-            if callable(get_info):
-                try:
-                    runtime_info = get_info()
-                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                    logger.debug("Failed to fetch runtime engine info from orchestrator: %s", exc, exc_info=True)
+            try:
+                runtime_options = orchestrator.get_engine_option_snapshots()
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                logger.debug("Failed to fetch runtime USI options from orchestrator: %s", exc, exc_info=True)
+            try:
+                runtime_info = orchestrator.get_engine_info_snapshots()
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                logger.debug("Failed to fetch runtime engine info from orchestrator: %s", exc, exc_info=True)
         return runtime_options, runtime_info
 
     def _collect_engine_metadata(
         self,
-        runtime_options: dict[str, dict[str, Any]],
-        runtime_info: dict[str, dict[str, str]],
-    ) -> list[dict[str, Any]]:
+        runtime_options: EngineOptionsSnapshots,
+        runtime_info: EngineInfoSnapshots,
+    ) -> list[JsonObject]:
         resolver = ArtifactResolver()
         base_extra_options = base_orchestrator_utils.compute_max_ply_extra_options(self.config.rules) or {}
-        cfg_source_path = getattr(self.config, "source_path", None)
+        cfg_source_path = self.config.source_path
 
-        def format_source(label: str, candidate: Any | None) -> str:
+        def format_source(label: str, candidate: object | None) -> str:
             if candidate:
                 try:
                     path_obj = Path(str(candidate)).expanduser().resolve(strict=False)
@@ -336,57 +1033,53 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             return label
 
         rules_source = format_source("rules.adjudication", cfg_source_path) if base_extra_options else None
-        metadata: list[dict[str, Any]] = []
-        run_dir = self.config.run_dir or self.config.output_dir
+        metadata: list[JsonObject] = []
+        run_dir = self.run_dir
         for engine in self.config.engines:
-            meta: dict[str, Any] = {
+            meta: JsonObject = {
                 "name": str(engine.name),
-                "engine_config_path": str(engine.engine_config) if engine.engine_config else None,
+                "engine_config_path": str(engine.engine_path) if engine.engine_path else None,
             }
             resolved_engine_path: str | None = None
-            if engine.engine_config is not None:
+            if engine.engine_path is not None:
                 meta.update(self._read_engine_config_metadata(engine, resolver))
-                resolved_engine_path = meta.get("engine_path")
+                ep = meta.get("engine_path")
+                resolved_engine_path = coerce_str(ep)
             else:
-                art = getattr(engine, "artifact", None)
-                build_overrides = getattr(engine, "build_options", {}) or {}
-                if isinstance(art, str) and art.strip():
+                art = engine.artifact
+                build_overrides = engine.build_options or {}
+                if art_str := coerce_str(art):
                     try:
-                        resolved_engine_path = str(resolver.resolve(art, overrides=build_overrides))
+                        resolved_engine_path = str(resolver.resolve(art_str, overrides=build_overrides))
                     except (OSError, RuntimeError, ValueError) as exc:
                         logger.debug("Failed to resolve engine binary for %s: %s", engine.name, exc, exc_info=True)
             if resolved_engine_path:
                 meta["engine_path"] = resolved_engine_path
-            if isinstance(engine.options, dict) and engine.options:
-                meta["extra_options"] = dict(engine.options)
-            overlay_opts = engine.load_overlay_options()
+            extra_opts: dict[str, object] = dict(engine.options) if engine.options else {}
+            if extra_opts:
+                meta["extra_options"] = extra_opts
+            overlay_opts = engine.load_overlay_options() or {}
             if overlay_opts:
                 meta["overlay_options"] = overlay_opts
-            merged = self._merge_option_dicts(
-                meta.get("config_options"),
-                meta.get("extra_options"),
-                meta.get("overlay_options"),
-            )
+            config_opts = cast(dict[str, JsonValue] | None, meta.get("config_options"))
+            merged = self._merge_option_dicts(config_opts, extra_opts or None, overlay_opts or None)
             source_map: dict[str, str] = {}
             source_details: dict[str, str] = {}
-            config_opts = meta.get("config_options")
-            if isinstance(config_opts, dict):
+            if config_opts:
                 for key in config_opts:
                     source_map[key] = "config"
                     source_details[key] = format_source("engine config", meta.get("engine_config_path"))
-            extra_opts = meta.get("extra_options")
-            if isinstance(extra_opts, dict):
+            if extra_opts:
                 for key in extra_opts:
                     source_map[key] = "override"
                     source_details[key] = format_source("engines[].options", cfg_source_path)
-            overlay_opt_map = meta.get("overlay_options")
-            if isinstance(overlay_opt_map, dict):
-                for key in overlay_opt_map:
+            if overlay_opts:
+                for key in overlay_opts:
                     source_map[key] = "overlay"
                     source_details[key] = format_source("options overlays", cfg_source_path)
             if base_extra_options:
                 for key, value in base_extra_options.items():
-                    merged[key] = value
+                    merged[key] = cast(JsonValue, value)
                     source_map.setdefault(key, "rules")
                     if rules_source:
                         source_details.setdefault(key, rules_source)
@@ -397,8 +1090,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                     meta["option_sources"] = source_map
                 if source_details:
                     meta["option_sources_details"] = source_details
-
-                resolved_options: dict[str, Any] = {}
+                resolved_options: JsonObject = {}
                 for key, value in merged.items():
                     try:
                         resolved_value = maybe_resolve_path_option(
@@ -416,48 +1108,49 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                             exc_info=True,
                         )
                         resolved_value = value
-                    resolved_options[key] = resolved_value
+                    resolved_options[key] = cast(JsonValue, resolved_value)
                 meta["resolved_options"] = resolved_options
 
-            runtime_opts = runtime_options.get(meta["name"])
+            engine_name = str(meta["name"])
+            runtime_opts = runtime_options.get(engine_name)
             if runtime_opts:
                 try:
                     meta["runtime_usi_options"] = json.loads(json.dumps(runtime_opts, ensure_ascii=False))
                 except (TypeError, ValueError):
                     meta["runtime_usi_options"] = dict(runtime_opts)
-            runtime_meta = runtime_info.get(meta["name"])
+            runtime_meta = runtime_info.get(engine_name)
             if runtime_meta:
                 meta["runtime_engine_info"] = dict(runtime_meta)
             metadata.append(meta)
         return metadata
 
-    def _read_engine_config_metadata(self, engine: EngineSpec, resolver: ArtifactResolver) -> dict[str, Any]:
-        config_path = engine.engine_config
+    def _read_engine_config_metadata(self, engine: EngineConfig, resolver: ArtifactResolver) -> JsonObject:
+        config_path = engine.engine_path
         if config_path is None:
             return {}
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         if not isinstance(raw, dict):
             raise TypeError(f"Engine config must be a mapping: {config_path}")
 
-        metadata: dict[str, Any] = {}
+        metadata: JsonObject = {}
         engine_path = raw.get("engine_path")
         artifact = raw.get("artifact")
         build_overrides_raw = raw.get("build_options")
         if build_overrides_raw is None:
-            build_overrides: dict[str, Any] = {}
+            build_overrides: JsonObject = {}
         elif isinstance(build_overrides_raw, dict):
             build_overrides = dict(build_overrides_raw)
         else:
             raise TypeError(f"build_options must be a mapping in engine config: {config_path}")
 
-        if isinstance(engine_path, str) and engine_path.strip():
+        if ep_str := coerce_str(engine_path):
             metadata["engine_path"] = resolve_path_like(
-                engine_path,
+                ep_str,
                 output_dir=project_dirs.output_dir,
                 engine_dir=project_dirs.engine_dir,
             )
-        elif isinstance(artifact, str) and artifact.strip():
-            metadata["engine_path"] = str(resolver.resolve(artifact, overrides=build_overrides))
+        elif art_str := coerce_str(artifact):
+            metadata["engine_path"] = str(resolver.resolve(art_str, overrides=build_overrides))
         elif engine_path is not None or artifact is not None:
             raise ValueError(f"Invalid engine config {config_path}: specify a non-empty engine_path or artifact")
 
@@ -470,10 +1163,10 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         return metadata
 
     @staticmethod
-    def _merge_option_dicts(*items: Any) -> dict[str, Any]:
-        merged: dict[str, Any] = {}
+    def _merge_option_dicts(*items: Mapping[str, object] | None) -> dict[str, object]:
+        merged: dict[str, object] = {}
         for entry in items:
-            if isinstance(entry, dict) and entry:
+            if entry:
                 merged.update(entry)
         return merged
 
@@ -488,17 +1181,15 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         mapping: dict[str, str | None] = {}
         for spec in self.config.engines:
             name = str(spec.name)
-            inst_raw = getattr(spec, "instance_id", None)
-            if isinstance(inst_raw, str):
-                normalized = inst_raw.strip()
-                if normalized:
-                    mapping[name] = normalized
-                    continue
+            inst_raw = spec.instance_id
+            if inst_str := coerce_str(inst_raw):
+                mapping[name] = inst_str
+                continue
             mapping[name] = "local"
         return mapping
 
     def _compute_engine_time_control_specs(self) -> tuple[dict[str, str], str | None]:
-        base_tc = getattr(self.config.rules, "time_control", None)
+        base_tc = self.config.rules.time_control
         engine_map: dict[str, str] = {}
         default_spec: str | None = None
 
@@ -507,7 +1198,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             default_spec = base_limits.to_spec_str()
 
         for engine in self.config.engines:
-            limits = build_time_control_limits(base_tc, getattr(engine, "time_control", None))
+            limits = build_time_control_limits(base_tc, engine.time_control)
             name = str(engine.name)
             if limits is None:
                 engine_map[name] = "-"
@@ -523,18 +1214,16 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
 
     # --- Template hooks implementation -----------------------------------
     async def prepare_run_dir(self) -> None:
-        rd = self.config.run_dir
-        assert rd is not None
+        rd = self.run_dir
         rd.mkdir(parents=True, exist_ok=True)
-        if self._overwrite:
+        if self._run_options.no_resume:
             self._cleanup_existing_run()
         self._write_run_metadata()
 
     def _write_run_metadata(self) -> None:
-        rd = self.config.run_dir
-        assert rd is not None
+        rd = self.run_dir
 
-        config_payload: dict[str, Any] | None = None
+        config_payload: JsonObject | None = None
         try:
             config_payload = self._serialize_config()
         except (TypeError, ValueError) as exc:  # pragma: no cover - defensive logging
@@ -564,26 +1253,8 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             except (OSError, TypeError, ValueError) as exc:  # pragma: no cover - defensive logging
                 logger.exception("Failed to write run metadata to %s: %s", metadata_path, exc)
 
-    def _serialize_config(self) -> dict[str, Any]:
-        raw = asdict(self.config)
-        serialized = self._convert_for_serialization(raw)
-        if not isinstance(serialized, dict):
-            raise TypeError("Serialized ArenaConfig must be a mapping")
-        return cast(dict[str, Any], serialized)
-
-    def _convert_for_serialization(self, value: Any) -> Any:
-        if isinstance(value, dict):
-            return {str(k): self._convert_for_serialization(v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [self._convert_for_serialization(v) for v in value]
-        if isinstance(value, tuple):
-            return [self._convert_for_serialization(v) for v in value]
-        if isinstance(value, set):
-            converted = [self._convert_for_serialization(v) for v in value]
-            return sorted(converted, key=lambda item: repr(item))
-        if isinstance(value, Path):
-            return str(value)
-        return value
+    def _serialize_config(self) -> JsonObject:
+        return self.config.model_dump(mode="json")
 
     @staticmethod
     def _detect_shogiarena_version() -> str:
@@ -596,19 +1267,16 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         await self._setup_tournament()
 
     def get_dashboard_params(self) -> tuple[Path, int, int] | None:
-        if not self.config.dashboard.enabled:
+        if not self._dashboard_enabled:
             return None
-        rd = self.config.run_dir
-        assert rd is not None
         return (
-            rd,
+            self.run_dir,
             int(self.config.dashboard.api_port),
             int(self.config.tournament.num_parallel),
         )
 
     async def seed_initial_summary(self) -> None:
-        rd = self.config.run_dir
-        assert rd is not None
+        rd = self.run_dir
 
         engine_names = [str(e.name) for e in self.config.engines]
         engines_meta = self.engine_metadata
@@ -618,10 +1286,10 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
 
         zero_stats = {name: {"wins": 0, "losses": 0, "draws": 0, "games": 0} for name in engine_names}
 
-        seed_summary: dict[str, Any] = {
+        seed_summary: JsonObject = {
             "tournamentType": self._resolve_tournament_type(),
             "mode": self._summary_source,
-            "flipPolicy": getattr(self.config.rules.initial_positions, "flip_policy", None),
+            "flipPolicy": self.config.rules.initial_positions.flip_policy,
             "numEngines": len(engine_names),
             "runDir": str(rd),
             "leaderboard": [],
@@ -660,15 +1328,23 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             seed_summary["rules"] = rules_payload
             seed_summary["initialPositions"] = rules_payload.get("initial_positions")
             seed_summary["repetitionOccurrencesToDraw"] = rules_payload.get("repetition_occurrences_to_draw")
+            ipos = rules_payload.get("initial_positions")
             seed_summary["flipPolicy"] = (
                 seed_summary.get("flipPolicy")
                 or rules_payload.get("flip_policy")
-                or (rules_payload.get("initial_positions") or {}).get("flip_policy")
+                or (ipos.get("flip_policy") if isinstance(ipos, dict) else None)
             )
             seed_summary["tournamentConfig"] = {"rules": rules_payload}
             sprt_payload = self._build_sprt_payload()
             if sprt_payload:
                 seed_summary.setdefault("sprt", sprt_payload)
+            if self._is_generate_run():
+                generate_conf = self.config.generate
+                if generate_conf is not None:
+                    seed_summary["generateConfig"] = generate_conf.model_dump(mode="json")
+                records_output = self.config.records_output
+                if records_output is not None:
+                    seed_summary["recordsOutput"] = records_output.model_dump(mode="json")
 
             if self.api_server is not None:
                 try:
@@ -704,8 +1380,8 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
 
     async def run_pre_orchestration_hooks(self, orchestrator: BaseOrchestrator) -> None:
         # Provide schedule to orchestrator before run if supported
-        if isinstance(orchestrator, TournamentOrchestrator):
-            orchestrator.set_schedule(self.game_schedule, self.completed_game_ids)
+        if self._tournament_orchestrator is not None:
+            self._tournament_orchestrator.set_schedule(self.game_schedule, self.completed_game_ids)
 
     async def _setup_tournament(self) -> bool:
         """Setup new tournament or resume existing.
@@ -714,11 +1390,10 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             True if resuming, False if new
         """
         # Check for existing run
-        rd = self.config.run_dir
-        assert rd is not None
+        rd = self.run_dir
         run_state_path = rd / "run_state.json"
 
-        if run_state_path.exists() and not self._overwrite:
+        if run_state_path.exists() and not self._run_options.no_resume:
             # Try to resume
             return await self._resume_tournament()
         else:
@@ -728,28 +1403,29 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
 
     async def _setup_new_tournament(self) -> None:
         """Setup a new tournament."""
-        logger.debug(f"Setting up new tournament in {self.config.run_dir}")
+        logger.debug("Setting up new tournament in %s", self.run_dir)
 
         # Warn about flip_policy choices for statistical robustness
-        flip = getattr(self.config.rules.initial_positions, "flip_policy", "")
+        flip = self.config.rules.initial_positions.flip_policy
         # Enforce: game_order=pairwise requires flip_policy=pair_both
         if self.config.tournament.game_order == "pairwise" and flip != "pair_both":
             raise ValueError("game_order='pairwise' requires initial_positions.flip_policy='pair_both'")
         # Warn if baseline_count specified but scheduler is not gauntlet
         if self.config.tournament.scheduler != "gauntlet":
-            if int(getattr(self.config.tournament, "baseline_count", 1)) != 1:
+            if int(self.config.tournament.baseline_count) != 1:
                 logger.warning(
                     "tournament.baseline_count is specified but scheduler is not 'gauntlet'; the value will be ignored."
                 )
 
         if flip != "pair_both":
-            if getattr(self.config, "sprt", None) is not None:
+            if self.config.sprt is not None:
                 logger.warning(
                     f"flip_policy is '{flip}'. For SPRT, flip_policy='pair_both' is recommended for paired samples."
                 )
             else:
-                logger.info(
-                    f"flip_policy is '{flip}'. Pentanomial stats will be based on available pairs only (reference)."
+                logger.debug(
+                    "flip_policy is '%s'. Pentanomial stats will be based on available pairs only (reference).",
+                    flip,
                 )
         else:
             # pair_both with odd games_per_pair produces one-sided leftovers
@@ -785,64 +1461,38 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         Returns:
             True if successfully resumed
         """
-        logger.info("Attempting to resume tournament")
+        logger.debug("Attempting to resume tournament")
 
-        # Load run state
-        rd = self.config.run_dir
-        assert rd is not None
+        # Load and validate run state
+        rd = self.run_dir
         run_state_path = rd / "run_state.json"
         with open(run_state_path) as f:
-            run_state = json.load(f)
+            raw = json.load(f)
+
+        try:
+            state = _RunStatePayload.model_validate(raw)
+        except ValidationError:
+            logger.warning("Failed to parse run_state.json, cannot resume")
+            return False
 
         # Validate schedule hash
         current_hash = self.config.get_schedule_hash()
-        saved_hash = run_state.get("schedule_hash")
-        if saved_hash != current_hash:
-            logger.warning("Configuration changed, cannot resume. Use --overwrite to start fresh.")
+        if state.schedule_hash != current_hash:
+            logger.warning("Configuration changed, cannot resume. Use --no-resume to start fresh.")
             return False
 
         # Load completed games
-        self.completed_game_ids = set(run_state.get("completed_game_ids", []))
+        self.completed_game_ids = set(state.completed_game_ids)
+        if self._sprt is not None and state.sprt_state is not None:
+            try:
+                self._sprt = Sprt.from_snapshot(cast(SprtStateSnapshot, state.sprt_state))
+            except (TypeError, ValueError) as exc:
+                logger.warning("Failed to restore SPRT state: %s", exc)
+        if self._openbench_client is not None and state.openbench_state is not None:
+            self._openbench_client.restore_state(state.openbench_state)
 
-        summaries_payload = run_state.get("completed_game_summaries")
-        parsed_summaries: dict[str, _CompletedGameSummary] = {}
-        if isinstance(summaries_payload, dict):
-            for gid, payload in summaries_payload.items():
-                if not isinstance(gid, str) or not isinstance(payload, dict):
-                    continue
-                summary: _CompletedGameSummary = {}
-                result_code_raw = payload.get("result_code")
-                if isinstance(result_code_raw, int | float) and not isinstance(result_code_raw, bool):
-                    summary["result_code"] = int(result_code_raw)
-                elif result_code_raw is None:
-                    summary["result_code"] = None
-
-                result_abbr_raw = payload.get("result_abbr")
-                if isinstance(result_abbr_raw, str):
-                    summary["result_abbr"] = result_abbr_raw
-
-                result_label_raw = payload.get("result_label")
-                if isinstance(result_label_raw, str):
-                    summary["result_label"] = result_label_raw
-
-                result_detail_raw = payload.get("result_detail")
-                if isinstance(result_detail_raw, str):
-                    summary["result_detail"] = result_detail_raw
-                elif result_detail_raw is None:
-                    summary["result_detail"] = None
-
-                total_plies_raw = payload.get("total_plies")
-                if isinstance(total_plies_raw, int | float) and not isinstance(total_plies_raw, bool):
-                    summary["total_plies"] = int(total_plies_raw)
-
-                end_time_raw = payload.get("end_time")
-                if isinstance(end_time_raw, str):
-                    summary["end_time"] = end_time_raw
-                elif end_time_raw is None:
-                    summary["end_time"] = None
-
-                parsed_summaries[gid] = summary
-
+        # Parse completed game summaries via Pydantic models
+        parsed_summaries = {gid: sp.to_completed_summary() for gid, sp in state.completed_game_summaries.items()}
         if parsed_summaries:
             self._completed_game_summaries = {
                 gid: parsed_summaries[gid] for gid in self.completed_game_ids if gid in parsed_summaries
@@ -861,20 +1511,8 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         # Apply same ordering/shuffle for resume
         self.game_schedule = self._reorder_and_shuffle(self.game_schedule)
 
-        display_order_payload = run_state.get("game_display_order")
-        if isinstance(display_order_payload, dict):
-            restored: dict[str, int] = {}
-            for key, value in display_order_payload.items():
-                if not isinstance(key, str):
-                    continue
-                if isinstance(value, int):
-                    restored[key] = value
-                elif isinstance(value, float) and value.is_integer():
-                    restored[key] = int(value)
-            if restored:
-                self._game_display_order = restored
-            else:
-                self._reset_display_order()
+        if state.game_display_order:
+            self._game_display_order = state.game_display_order
         else:
             self._reset_display_order()
 
@@ -883,25 +1521,24 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
 
         logger.debug(f"Resuming tournament: {len(self.completed_game_ids)} completed, {remaining} remaining games")
 
-        cancelled_ids = set(run_state.get("cancelled_game_ids", []))
-        cancelled_specs_payload = run_state.get("cancelled_games", []) or []
-        payload_by_id = {entry.get("game_id"): entry for entry in cancelled_specs_payload if isinstance(entry, dict)}
+        cancelled_ids = set(state.cancelled_game_ids)
+        payload_by_id = {entry.game_id: entry for entry in state.cancelled_games}
         self._cancelled_specs = {}
         retained_schedule: list[GameSpec] = []
         for spec in self.game_schedule:
             if spec.game_id in cancelled_ids:
                 entry = payload_by_id.get(spec.game_id)
-                if entry:
+                if entry is not None:
                     reconstructed = GameSpec(
-                        black_engine=str(entry.get("black", spec.black_engine)),
-                        white_engine=str(entry.get("white", spec.white_engine)),
-                        initial_sfen=str(entry.get("sfen", spec.initial_sfen)),
+                        black_engine=entry.black or spec.black_engine,
+                        white_engine=entry.white or spec.white_engine,
+                        initial_sfen=entry.sfen or spec.initial_sfen,
                         game_id=str(spec.game_id),
-                        round_num=int(entry.get("round", spec.round_num) or 0),
+                        round_num=entry.round if entry.round is not None else (spec.round_num or 0),
                     )
-                    assignment_payload = entry.get("assignment")
-                    if assignment_payload is None and "assigned_instance" in entry:
-                        assignment_payload = entry.get("assigned_instance")
+                    assignment_payload = entry.assignment
+                    if assignment_payload is None and entry.assigned_instance is not None:
+                        assignment_payload = entry.assigned_instance
                     self._apply_assignment_override(reconstructed, assignment_payload)
                     self._cancelled_specs[spec.game_id] = reconstructed
                 else:
@@ -916,18 +1553,16 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         self._ensure_display_order_for_specs(self._cancelled_specs.values())
 
         self.cancelled_game_ids = cancelled_ids
-        original_total = run_state.get("original_total_games")
-        if isinstance(original_total, int) and original_total > 0:
-            self.original_total_games = original_total
+        if state.original_total_games is not None and state.original_total_games > 0:
+            self.original_total_games = state.original_total_games
         else:
             self.original_total_games = len(self.game_schedule) + len(self.cancelled_game_ids)
 
-        overrides = run_state.get("game_instance_overrides")
-        if isinstance(overrides, dict):
+        if state.game_instance_overrides is not None:
             for spec in self.game_schedule:
-                self._apply_assignment_override(spec, overrides.get(spec.game_id))
+                self._apply_assignment_override(spec, state.game_instance_overrides.get(spec.game_id))
             for spec in self._cancelled_specs.values():
-                self._apply_assignment_override(spec, overrides.get(spec.game_id))
+                self._apply_assignment_override(spec, state.game_instance_overrides.get(spec.game_id))
 
         self._refresh_game_assignments()
         self._notify_schedule_available()
@@ -950,14 +1585,14 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         if self._schedule_wait_event.is_set():
             self._schedule_wait_event.clear()
             return
-        logger.info("Tournament drained; waiting for new schedule before resuming")
+        logger.debug("Tournament drained; waiting for new schedule before resuming")
         self._session_phase = "waiting"
         await self._schedule_wait_event.wait()
         self._schedule_wait_event.clear()
         self._session_phase = "running"
 
     @staticmethod
-    def _normalize_instance_id(value: str | None) -> str | None:
+    def _normalize_instance_id(value: object) -> str | None:
         if value is None:
             return None
         normalized = str(value).strip()
@@ -973,14 +1608,14 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         if b_spec is None or w_spec is None:
             return (None, None)
 
-        b_id = self._normalize_instance_id(getattr(b_spec, "instance_id", None)) or "local"
-        w_id = self._normalize_instance_id(getattr(w_spec, "instance_id", None)) or "local"
+        b_id = self._normalize_instance_id(b_spec.instance_id) or "local"
+        w_id = self._normalize_instance_id(w_spec.instance_id) or "local"
         return (b_id, w_id)
 
     def _resolve_assignment_for_spec(self, spec: GameSpec) -> dict[str, str | None]:
         default_black, default_white = self._infer_game_assignment(spec)
-        override_black = self._normalize_instance_id(getattr(spec, "assigned_instance_black", None))
-        override_white = self._normalize_instance_id(getattr(spec, "assigned_instance_white", None))
+        override_black = self._normalize_instance_id(spec.assigned_instance_black)
+        override_white = self._normalize_instance_id(spec.assigned_instance_white)
 
         resolved_black = override_black if override_black is not None else default_black
         resolved_white = override_white if override_white is not None else default_white
@@ -1001,8 +1636,8 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
 
     @staticmethod
     def _shared_override_label(spec: GameSpec) -> str | None:
-        black = TournamentRunner._normalize_instance_id(getattr(spec, "assigned_instance_black", None))
-        white = TournamentRunner._normalize_instance_id(getattr(spec, "assigned_instance_white", None))
+        black = TournamentRunner._normalize_instance_id(spec.assigned_instance_black)
+        white = TournamentRunner._normalize_instance_id(spec.assigned_instance_white)
         if black and white and black == white:
             return black
         if black and not white:
@@ -1013,13 +1648,13 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             return "split"
         return None
 
-    def _serialize_assignment_override(self, spec: GameSpec) -> dict[str, Any] | None:
-        black = self._normalize_instance_id(getattr(spec, "assigned_instance_black", None))
-        white = self._normalize_instance_id(getattr(spec, "assigned_instance_white", None))
-        require_install = bool(getattr(spec, "require_install", False))
+    def _serialize_assignment_override(self, spec: GameSpec) -> JsonObject | None:
+        black = self._normalize_instance_id(spec.assigned_instance_black)
+        white = self._normalize_instance_id(spec.assigned_instance_white)
+        require_install = bool(spec.require_install)
         if black is None and white is None and not require_install:
             return None
-        payload: dict[str, Any] = {}
+        payload: JsonObject = {}
         if black is not None:
             payload["black"] = black
         if white is not None:
@@ -1038,7 +1673,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             payload["mode"] = "shared"
         return payload or None
 
-    def _apply_assignment_override(self, spec: GameSpec, payload: Any) -> None:
+    def _apply_assignment_override(self, spec: GameSpec, payload: str | dict[str, object] | None) -> None:
         spec.assigned_instance_black = None
         spec.assigned_instance_white = None
         spec.require_install = False
@@ -1050,13 +1685,12 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             spec.assigned_instance_black = normalized
             spec.assigned_instance_white = normalized
             return
-        if not isinstance(payload, dict):
-            return
+        payload_dict = payload
 
-        shared = self._normalize_instance_id(payload.get("shared"))
-        black = self._normalize_instance_id(payload.get("black"))
-        white = self._normalize_instance_id(payload.get("white"))
-        mode = str(payload.get("mode") or "").strip().lower()
+        shared = self._normalize_instance_id(payload_dict.get("shared"))
+        black = self._normalize_instance_id(payload_dict.get("black"))
+        white = self._normalize_instance_id(payload_dict.get("white"))
+        mode = str(payload_dict.get("mode") or "").strip().lower()
 
         if mode == "shared" and shared is not None:
             spec.assigned_instance_black = shared
@@ -1070,19 +1704,18 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                 spec.assigned_instance_black = shared
                 spec.assigned_instance_white = shared
 
-        if bool(payload.get("require_install")):
+        if bool(payload_dict.get("require_install")):
             spec.require_install = True
 
     @staticmethod
     def _assignment_mode(spec: GameSpec) -> str:
-        black = TournamentRunner._normalize_instance_id(getattr(spec, "assigned_instance_black", None))
-        white = TournamentRunner._normalize_instance_id(getattr(spec, "assigned_instance_white", None))
+        black = TournamentRunner._normalize_instance_id(spec.assigned_instance_black)
+        white = TournamentRunner._normalize_instance_id(spec.assigned_instance_white)
         if black is None and white is None:
             return "auto"
         if black == white:
             return "shared"
         return "per_color"
-        return "auto"
 
     def _refresh_game_assignments(self) -> None:
         assignments: dict[str, dict[str, str | None]] = {}
@@ -1121,9 +1754,10 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
     def _write_schedule_file(self, schedule: list[GameSpec]) -> None:
         """Persist the provided schedule to the run directory for inspection."""
 
-        rd = self.config.run_dir
-        if rd is None:
+        if self._is_generate_run():
             return
+
+        rd = self.run_dir
         schedule_path = rd / "game_schedule.json"
         active_instances: dict[str, str] = {}
         if self.instance_pool is not None:
@@ -1144,15 +1778,15 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             if game_id in active_instances:
                 return active_instances[game_id]
             entry = self._game_assignments.get(game_id)
-            return entry.get("combined") if isinstance(entry, dict) else None
+            return entry.get("combined") if entry is not None else None
 
         def _resolved_assignment(game_id: str) -> tuple[str | None, str | None]:
             entry = self._game_assignments.get(game_id)
-            if isinstance(entry, dict):
+            if entry is not None:
                 return entry.get("black"), entry.get("white")
             return (None, None)
 
-        payload: list[dict[str, Any]] = []
+        payload: list[JsonObject] = []
         for spec in schedule:
             resolved_black, resolved_white = _resolved_assignment(spec.game_id)
             payload.append(
@@ -1167,7 +1801,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                     "assigned_override": self._shared_override_label(spec),
                     "assigned_override_black": self._normalize_instance_id(spec.assigned_instance_black),
                     "assigned_override_white": self._normalize_instance_id(spec.assigned_instance_white),
-                    "require_install": bool(getattr(spec, "require_install", False)),
+                    "require_install": bool(spec.require_install),
                     "resolved_instance_black": resolved_black,
                     "resolved_instance_white": resolved_white,
                 }
@@ -1188,7 +1822,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                         "assigned_override": self._shared_override_label(spec),
                         "assigned_override_black": self._normalize_instance_id(spec.assigned_instance_black),
                         "assigned_override_white": self._normalize_instance_id(spec.assigned_instance_white),
-                        "require_install": bool(getattr(spec, "require_install", False)),
+                        "require_install": bool(spec.require_install),
                         "resolved_instance_black": resolved_black,
                         "resolved_instance_white": resolved_white,
                     }
@@ -1245,7 +1879,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         self._write_schedule_file(self.game_schedule)
         self._save_run_state()
 
-        if self.config.dashboard.enabled:
+        if self._dashboard_enabled:
             await self._update_dashboard()
 
         self._notify_schedule_available()
@@ -1257,11 +1891,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         Args:
             finished: Whether tournament is complete
         """
-        adj_settings = self.config.rules.adjudication
-        if not isinstance(adj_settings, AdjudicationSettings):
-            adj_settings = AdjudicationSettings(**adj_settings)
-
-        summaries_for_state: dict[str, dict[str, Any]] = {}
+        summaries_for_state: dict[str, JsonObject] = {}
         for gid in self.completed_game_ids:
             summary = self._completed_game_summaries.get(gid)
             if not summary:
@@ -1275,7 +1905,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                 "end_time": summary.get("end_time"),
             }
 
-        config_payload: dict[str, Any] = {
+        config_payload: JsonObject = {
             "experiment_name": self.config.experiment_name,
             "engines": [e.name for e in self.config.engines],
             "tournament": {
@@ -1283,19 +1913,38 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                 "games_per_pair": self.config.tournament.games_per_pair,
                 "seed": self.config.tournament.seed,
             },
-            "rules": {
-                "adjudication": {
-                    "enable_max_plies": adj_settings.enable_max_plies,
-                    "max_plies": adj_settings.max_plies,
-                    "enable_resign": adj_settings.enable_resign,
-                },
-            },
+            "rules": self._build_rules_payload(),
         }
-        sprt_conf = getattr(self.config, "sprt", None)
+        sprt_conf = self.config.sprt
         if sprt_conf is not None:
-            config_payload["sprt"] = _jsonify(asdict(sprt_conf))
+            config_payload["sprt"] = sprt_conf.model_dump(mode="json")
+        openbench_conf = self.config.openbench
+        if openbench_conf is not None:
+            config_payload["openbench"] = openbench_conf.model_dump(mode="json")
+        records_output = self.config.records_output
+        if records_output is not None:
+            config_payload["records_output"] = records_output.model_dump(mode="json")
 
-        run_state: dict[str, Any] = {
+        if self._is_generate_run():
+            run_state: JsonObject = {
+                "config": config_payload,
+                "schedule_hash": self.config.get_schedule_hash(),
+                "total_games": len(self.game_schedule),
+                "completed_games_count": len(self.completed_game_ids),
+                "cancelled_games_count": len(self.cancelled_game_ids),
+                "finished": finished,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if self._openbench_client is not None:
+                run_state["openbench_state"] = self._openbench_client.snapshot_state()
+            rd = self.run_dir
+            run_state_path = rd / "run_state.json"
+            with open(run_state_path, "w") as f:
+                json.dump(run_state, f, indent=2)
+            return
+
+        run_state: JsonObject = {
             "config": config_payload,
             "schedule_hash": self.config.get_schedule_hash(),
             "total_games": len(self.game_schedule),
@@ -1309,8 +1958,12 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
+        if self._sprt is not None:
+            run_state["sprt_state"] = self._sprt.to_snapshot()
+        if self._openbench_client is not None:
+            run_state["openbench_state"] = self._openbench_client.snapshot_state()
 
-        cancelled_entries: list[dict[str, Any]] = []
+        cancelled_entries: list[JsonObject] = []
         for spec in self._cancelled_specs.values():
             entry = {
                 "game_id": spec.game_id,
@@ -1333,7 +1986,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                 shared_label = self._shared_override_label(spec)
                 if shared_label is not None:
                     entry["assigned_instance"] = shared_label
-            if bool(getattr(spec, "require_install", False)):
+            if bool(spec.require_install):
                 entry["require_install"] = True
             cancelled_entries.append(entry)
         run_state["cancelled_games"] = cancelled_entries
@@ -1341,7 +1994,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         if summaries_for_state:
             run_state["completed_game_summaries"] = summaries_for_state
 
-        overrides: dict[str, Any] = {}
+        overrides: JsonObject = {}
         for spec in self.game_schedule:
             assignment_payload = self._serialize_assignment_override(spec)
             if assignment_payload:
@@ -1354,17 +2007,15 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             # Persist per-game instance choices so a resume or dashboard refresh can restore the selection
             run_state["game_instance_overrides"] = overrides
 
-        rd = self.config.run_dir
-        assert rd is not None
+        rd = self.run_dir
         run_state_path = rd / "run_state.json"
         with open(run_state_path, "w") as f:
             json.dump(run_state, f, indent=2)
 
     def _cleanup_existing_run(self) -> None:
         """Remove existing run artifacts."""
-        logger.info("Cleaning up existing run")
-        rd = self.config.run_dir
-        assert rd is not None
+        logger.debug("Cleaning up existing run")
+        rd = self.run_dir
         self.cleanup_run_dir(
             rd,
             files=[
@@ -1397,15 +2048,16 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
 
         # Keep a reference for early stop coordination
         self._orchestrator = orchestrator
+        self._tournament_orchestrator = orchestrator
 
         return orchestrator
 
     async def _handle_game_completion(
         self,
         game_spec: GameSpec,
-        game_info: GameInfo,
+        game_info: rshogi.record.GameRecord,
         *,
-        worker_idx: int | None,
+        _worker_idx: int | None,
         stop_requested: bool,
     ) -> None:
         """Handle post-processing for a completed game."""
@@ -1413,56 +2065,90 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         update_dashboard = False
         async with self._completion_lock:
             self._engine_metadata_cache = None
-            game_info.black_player_name = game_spec.black_engine
-            game_info.white_player_name = game_spec.white_engine
-            summary = self._summarize_game_completion(game_info)
+            record = game_info
+            metadata_attrs = dict(record.metadata.attributes)
+            record.update_metadata(
+                {
+                    "black_player": game_spec.black_engine,
+                    "white_player": game_spec.white_engine,
+                    "game_type": ("generate" if self._is_generate_run() else "arena"),
+                }
+            )
+            for key, value in self._build_metadata_attributes(metadata_attrs).items():
+                record.set_metadata_attribute(str(key), str(value))
+            summary = self._summarize_game_completion(record)
 
             db = self.db_service
-            should_persist = game_info.game_result != GameResult.PAUSED
-            if should_persist and stop_requested and game_info.game_result in {GameResult.PAUSED, GameResult.ERROR}:
+            result = record.result
+            should_persist = result != GameResult.PAUSED
+            if should_persist and stop_requested and result in (GameResult.PAUSED, _GAME_RESULT_ERROR):
                 should_persist = False
             if should_persist and db is not None:
-                db.append_game_info_list([game_info])
-                participation = getattr(game_info, "_arena_participation", None)
+                db.append_record_list([record])
+                participation = _extract_participation(record)
                 if participation:
-                    game_id = db.get_game_id_by_name(str(game_info.game_name))
+                    game_id_raw = record.metadata.attributes.get("game_name")
+                    game_id_name = coerce_str(game_id_raw)
+                    game_id = db.get_game_id_by_name(str(game_id_name)) if game_id_name else None
                     if game_id is not None:
                         db.record_game_participation(game_id=game_id, participation=participation)
+            if should_persist and self._record_writer is not None:
+                self._record_writer.append_record(record)
 
-            if self.rating_service and game_info.game_result is not None:
-                self.rating_service.update_ratings(
+            rating_service = self.rating_service
+            if rating_service is not None:
+                rating_service.update_ratings(
                     game_spec.black_engine,
                     game_spec.white_engine,
-                    game_info.game_result,
+                    result,
                 )
 
             self.completed_game_ids.add(game_spec.game_id)
             self._completed_game_summaries[game_spec.game_id] = summary
-            self._save_run_state()
-
-            self._update_sprt_state(game_spec, game_info)
+            self._update_sprt_state(game_spec, record)
             if self._sprt and self._sprt.is_finished():
                 if self._sprt.games_played >= self._sprt_min_games:
                     self.stop_controller.request_stop(reason="sprt-finished")
-            update_dashboard = self.config.dashboard.enabled
+            try:
+                await self._sync_openbench_after_game()
+            except OpenBenchError as exc:
+                if self._openbench_client is not None and self._openbench_client.strict:
+                    raise
+                logger.warning("OpenBench submission failed; continuing (strict=false): %s", exc)
+            update_dashboard = self._dashboard_enabled
+            self._save_run_state()
 
         if update_dashboard:
             await self._update_dashboard()
 
+        result = record.result
+        result_code = result.value
+        self.progress.on_game_complete(
+            {
+                "game_id": game_spec.game_id,
+                "black": game_spec.black_engine,
+                "white": game_spec.white_engine,
+                "result_code": result_code,
+                "completed_games": len(self.completed_game_ids),
+                "total_games": self.original_total_games or len(self.game_schedule),
+            }
+        )
+
     @staticmethod
     def _result_detail_from_result(result: GameResult) -> str | None:
         detail_map = {
-            GameResult.BLACK_WIN_BY_DECLARATION: "declaration",
-            GameResult.WHITE_WIN_BY_DECLARATION: "declaration",
-            GameResult.BLACK_WIN_BY_FORFEIT: "forfeit",
-            GameResult.WHITE_WIN_BY_FORFEIT: "forfeit",
+            _GAME_RESULT_BLACK_WIN_BY_DECLARATION: "declaration",
+            _GAME_RESULT_WHITE_WIN_BY_DECLARATION: "declaration",
+            _GAME_RESULT_BLACK_WIN_BY_FORFEIT: "forfeit",
+            _GAME_RESULT_WHITE_WIN_BY_FORFEIT: "forfeit",
             GameResult.BLACK_WIN_BY_ILLEGAL_MOVE: "illegal move",
             GameResult.WHITE_WIN_BY_ILLEGAL_MOVE: "illegal move",
             GameResult.BLACK_WIN_BY_TIMEOUT: "timeout",
             GameResult.WHITE_WIN_BY_TIMEOUT: "timeout",
             GameResult.DRAW_BY_REPETITION: "repetition",
             GameResult.DRAW_BY_MAX_PLIES: "max plies",
-            GameResult.ERROR: "error",
+            GameResult.DRAW_BY_IMPASSE: "impasse",
+            _GAME_RESULT_ERROR: "error",
             GameResult.INVALID: "invalid",
             GameResult.PAUSED: "paused",
         }
@@ -1478,7 +2164,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             base = "Draw"
         elif result == GameResult.PAUSED:
             return "Paused"
-        elif result == GameResult.ERROR:
+        elif result == _GAME_RESULT_ERROR:
             return "Error"
         elif result == GameResult.INVALID:
             return "Invalid Game"
@@ -1491,9 +2177,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         return base
 
     @classmethod
-    def _classify_game_result(cls, result: GameResult | None) -> tuple[str, str, str | None]:
-        if result is None:
-            return "", "", None
+    def _classify_game_result(cls, result: GameResult) -> tuple[str, str, str | None]:
         detail = cls._result_detail_from_result(result)
         abbr = _RESULT_ABBREVIATIONS.get(result)
         if abbr is None:
@@ -1508,27 +2192,16 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         label = cls._format_result_label(result)
         return abbr, label, detail
 
-    def _summarize_game_completion(self, game_info: GameInfo) -> _CompletedGameSummary:
-        result_raw = getattr(game_info, "game_result", None)
-        result_obj: GameResult | None
-        if isinstance(result_raw, GameResult):
-            result_obj = result_raw
-        else:
-            result_obj = None
-            if result_raw is not None:
-                try:
-                    result_obj = GameResult(int(result_raw))
-                except (TypeError, ValueError):
-                    result_obj = None
-
-        result_code = int(result_obj) if isinstance(result_obj, GameResult) else None
+    def _summarize_game_completion(self, record: rshogi.record.GameRecord) -> _CompletedGameSummary:
+        result_obj = record.result
+        result_code = result_obj.value
         result_abbr, result_label, result_detail = self._classify_game_result(result_obj)
 
-        total_plies = int(getattr(game_info, "num_moves", 0) or 0)
-        start_date = getattr(game_info, "start_date", None)
-        end_date = getattr(game_info, "end_date", None)
-        start_time = start_date.isoformat() if isinstance(start_date, datetime) else None
-        end_time = end_date.isoformat() if isinstance(end_date, datetime) else None
+        total_plies = len(record.moves)
+        start_raw = record.metadata.start_date
+        end_raw = record.metadata.end_date
+        start_time = datetime_to_iso(start_raw)
+        end_time = datetime_to_iso(end_raw)
 
         summary: _CompletedGameSummary = {
             "result_code": result_code,
@@ -1541,14 +2214,12 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         }
         return summary
 
-    def _update_sprt_state(self, game_spec: GameSpec, game_info: GameInfo) -> None:
+    def _update_sprt_state(self, game_spec: GameSpec, game_info: rshogi.record.GameRecord) -> None:
         if self._sprt is None or self._sprt_pair is None:
             return
-        gr = getattr(game_info, "game_result", None)
-        if not isinstance(gr, GameResult):
-            return
+        gr = game_info.result
 
-        a, b = self._sprt_pair
+        a, _ = self._sprt_pair
         black = str(game_spec.black_engine)
         white = str(game_spec.white_engine)
 
@@ -1573,7 +2244,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
 
         self._sprt.add_game_result(result)
 
-    async def get_schedule_snapshot(self) -> dict[str, Any]:
+    async def get_schedule_snapshot(self) -> JsonObject:
         """Return a schedule summary with status for each game."""
 
         async with self._reschedule_lock:
@@ -1585,9 +2256,9 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         engine_instance_defaults: dict[str, str | None] = {}
         for spec in self.config.engines:
             name = str(spec.name)
-            inst_raw = getattr(spec, "instance_id", None)
-            if isinstance(inst_raw, str) and inst_raw.strip():
-                engine_instance_defaults[name] = inst_raw.strip()
+            inst_raw = spec.instance_id
+            if inst_str := coerce_str(inst_raw):
+                engine_instance_defaults[name] = inst_str
             else:
                 engine_instance_defaults[name] = "local"
 
@@ -1611,19 +2282,18 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                         pass
                     else:
                         active_instances[gid] = inst_name
-                    roles = getattr(active, "roles", []) or []
-                    if roles:
+                    if active.roles:
                         side_map = active_side_instances.setdefault(gid, {})
-                        for role in roles:
-                            if role and getattr(role, "role", None) in {"black", "white"}:
-                                side_map[str(role.role)] = inst_name
-                    started_raw = getattr(active, "started_at", None)
+                        for role in active.roles:
+                            if role.role in {"black", "white"}:
+                                side_map[role.role] = inst_name
+                    started_raw = active.started_at
                     if started_raw is not None:
                         if gid not in active_start_times:
                             active_start_times[gid] = started_raw
                         else:
                             existing = active_start_times[gid]
-                            if isinstance(existing, int | float) and isinstance(started_raw, int | float):
+                            if is_strict_numeric(existing) and is_strict_numeric(started_raw):
                                 active_start_times[gid] = min(existing, started_raw)
 
         self._ensure_display_order_for_specs(schedule_copy)
@@ -1639,7 +2309,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                 return "local"
             return None
 
-        items: list[dict[str, Any]] = []
+        items: list[JsonObject] = []
         for game_spec in schedule_copy:
             gid = game_spec.game_id
             display_order = self._ensure_display_order_for_id(gid)
@@ -1694,7 +2364,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                 "assigned_override_black": self._normalize_instance_id(game_spec.assigned_instance_black),
                 "assigned_override_white": self._normalize_instance_id(game_spec.assigned_instance_white),
                 "assigned_mode": self._assignment_mode(game_spec),
-                "require_install": bool(getattr(game_spec, "require_install", False)),
+                "require_install": bool(game_spec.require_install),
                 "resolved_instance_black": resolved_black,
                 "resolved_instance_white": resolved_white,
                 "black_instance": black_instance,
@@ -1708,16 +2378,17 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             start_time_value: str | None = None
             if summary:
                 summary_start = summary.get("start_time")
-                if isinstance(summary_start, str) and summary_start:
+                if summary_start:
                     start_time_value = summary_start
             if start_time_value is None:
                 raw_started = active_start_times.get(gid)
-                if isinstance(raw_started, int | float):
-                    start_time_value = datetime.fromtimestamp(raw_started, tz=timezone.utc).isoformat()
-                elif isinstance(raw_started, datetime):
-                    start_time_value = raw_started.astimezone(timezone.utc).isoformat()
-                elif isinstance(raw_started, str) and raw_started:
-                    start_time_value = raw_started
+                match raw_started:
+                    case int() | float():
+                        start_time_value = datetime.fromtimestamp(raw_started, tz=timezone.utc).isoformat()
+                    case datetime() as dt:
+                        start_time_value = dt.astimezone(timezone.utc).isoformat()
+                    case str() if raw_started:
+                        start_time_value = raw_started
             if summary:
                 entry.update(
                     {
@@ -1777,7 +2448,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                     "assigned_override_black": self._normalize_instance_id(cancelled_spec.assigned_instance_black),
                     "assigned_override_white": self._normalize_instance_id(cancelled_spec.assigned_instance_white),
                     "assigned_mode": self._assignment_mode(cancelled_spec),
-                    "require_install": bool(getattr(cancelled_spec, "require_install", False)),
+                    "require_install": bool(cancelled_spec.require_install),
                     "resolved_instance_black": resolved_black,
                     "resolved_instance_white": resolved_white,
                     "black_instance": resolved_black,
@@ -1819,7 +2490,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             "schedule": items,
         }
 
-    async def request_reschedule(self, *, seed: str | None = None) -> dict[str, Any]:
+    async def request_reschedule(self, *, seed: str | None = None) -> JsonObject:
         """Queue a reschedule using the provided seed and stop the current run."""
 
         if seed is None:
@@ -1878,7 +2549,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             "seed": str(new_seed),
         }
 
-    async def cancel_pending_games(self) -> dict[str, Any]:
+    async def cancel_pending_games(self) -> JsonObject:
         """Cancel remaining pending games while keeping the session alive for future schedules."""
 
         active_ids: set[str] = set()
@@ -1917,7 +2588,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         if self._orchestrator is not None:
             self._orchestrator.request_stop()
 
-        if self.config.dashboard.enabled:
+        if self._dashboard_enabled:
             await self._update_dashboard()
 
         return {
@@ -1928,7 +2599,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             "total_games": self.original_total_games,
         }
 
-    async def cancel_game(self, game_id: str) -> dict[str, Any]:
+    async def cancel_game(self, game_id: str) -> JsonObject:
         """Cancel a single pending game by its identifier."""
 
         pool = self.instance_pool
@@ -1971,7 +2642,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             self._write_schedule_file(self.game_schedule)
             self._save_run_state()
 
-        if self.config.dashboard.enabled:
+        if self._dashboard_enabled:
             await self._update_dashboard()
 
         pending_count = sum(
@@ -1987,7 +2658,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             "cancelled_count": len(self.cancelled_game_ids),
         }
 
-    async def restore_game(self, game_id: str) -> dict[str, Any]:
+    async def restore_game(self, game_id: str) -> JsonObject:
         """Restore a previously cancelled game back into the pending schedule."""
 
         pool = self.instance_pool
@@ -2030,16 +2701,15 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                 effective_order = max(self._game_display_order.values(), default=insert_index) + 1
             self._game_display_order[game_id] = effective_order
 
-            orchestrator = self._orchestrator
-            if isinstance(orchestrator, TournamentOrchestrator):
-                await orchestrator.enqueue_restored_game(restored_spec, effective_order)
+            if self._tournament_orchestrator is not None:
+                await self._tournament_orchestrator.enqueue_restored_game(restored_spec, effective_order)
 
             self._refresh_game_assignments()
             self._write_schedule_file(self.game_schedule)
             self._save_run_state()
             self._notify_schedule_available()
 
-        if self.config.dashboard.enabled:
+        if self._dashboard_enabled:
             await self._update_dashboard()
 
         pending_count = sum(
@@ -2064,7 +2734,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         black_instance: str | None = None,
         white_instance: str | None = None,
         require_install: bool = False,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         """Assign or clear preferred instances for a pending game."""
 
         normalized_mode = (mode or "auto").strip().lower()
@@ -2130,7 +2800,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             self._write_schedule_file(self.game_schedule)
             self._save_run_state()
 
-        if self.config.dashboard.enabled:
+        if self._dashboard_enabled:
             await self._update_dashboard()
 
         resolved = self._resolve_assignment_for_spec(target_spec)
@@ -2146,26 +2816,38 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             "require_install": bool(target_spec.require_install),
         }
 
-    async def run(self) -> TournamentResults | None:
+    async def run(
+        self,
+        *,
+        progress_reporter: ProgressReporter | None = None,
+        tqdm: bool = False,
+    ) -> TournamentRunResult | None:
         """Run tournament orchestration with support for dashboard rescheduling."""
-
-        await self.prepare_run_dir()
-        await self.prepare_domain()
-        await self.init_services()
-
-        dash = self.get_dashboard_params()
-        if dash is not None:
-            run_dir, port, num_workers = dash
-            await self.start_dashboard_server(run_dir, port, num_workers)
-            await self.seed_initial_summary()
-
-        session_context = self.build_session_context()
-        if session_context is not None:
-            self._session_context = session_context
-
-        controller = self._stop_controller
-
+        previous = self._progress
+        if progress_reporter is not None and tqdm:
+            warnings.warn(
+                "Both progress_reporter and tqdm=True were provided; progress_reporter takes priority.",
+                stacklevel=2,
+            )
+        if progress_reporter is None and tqdm:
+            progress_reporter = TqdmProgressReporter()
+        if progress_reporter is not None:
+            self._progress = progress_reporter
+        controller = self.stop_controller
         try:
+            await self.prepare_run_dir()
+            await self.prepare_domain()
+            await self.init_services()
+
+            dash = self.get_dashboard_params()
+            if dash is not None:
+                run_dir, port, num_workers = dash
+                await self.start_dashboard_server(run_dir, port, num_workers)
+                await self.seed_initial_summary()
+
+            session_context = self.build_session_context()
+            self.set_session_context(session_context)
+
             loop = RescheduleLoop()
 
             async def run_iteration(active_controller: SessionStopController) -> None:
@@ -2173,14 +2855,14 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                     return
                 self._session_phase = "running"
                 hooks = self.create_lifecycle_hooks(active_controller)
-                self._lifecycle_hooks = hooks
+                self.set_lifecycle_hooks(hooks)
                 orchestrator = await self.create_orchestrator(hooks, session_context)
                 await self.run_pre_orchestration_hooks(orchestrator)
                 await BaseSessionRunner.run_orchestrator(self, orchestrator, orchestrator.run())
                 self._session_phase = "draining"
 
             async def decide_next(active_controller: SessionStopController) -> RescheduleDecision:
-                if getattr(self, "_services_closed", False):
+                if self._services_closed:
                     self._session_phase = "stopped"
                     return RescheduleDecision(action=RescheduleAction.STOP)
 
@@ -2199,7 +2881,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                     return RescheduleDecision(action=RescheduleAction.CONTINUE, reset_controller=True)
 
                 if not self._pending_reschedule and not active_controller.stop_requested:
-                    logger.info("All scheduled games completed; stopping tournament runner")
+                    logger.debug("All scheduled games completed; stopping tournament runner")
                     self._stop_when_idle = True
                     return RescheduleDecision(action=RescheduleAction.STOP)
 
@@ -2210,7 +2892,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                 await self._wait_for_new_schedule()
 
             def on_reset(new_controller: SessionStopController) -> None:
-                self._stop_controller = new_controller
+                self.reset_stop_controller(new_controller)
 
             await loop.run(
                 controller=controller,
@@ -2220,25 +2902,38 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                 on_reset=on_reset,
             )
 
+            if self.services_closed():
+                # Ctrl+C handled inside run_orchestrator closes services; skip result computation.
+                self._session_phase = "finished"
+                self.progress.finalize({"status": "cancelled"})
+                return None
+
+            self._session_phase = "stopping"
+            final = await self._calculate_results()
+            await self._finalize_tournament(final)
+            await self.stop_services()
+            self._session_phase = "finished"
+            sprt_status = self._sprt.get_status() if self._sprt is not None else None
+            result = TournamentRunResult(
+                tournament=final,
+                sprt=sprt_status,
+                run_id=str(self.config.experiment_name or self.run_dir.name),
+                run_dir=self.run_dir,
+                storage=self.storage,
+            )
+            self.progress.finalize({"status": "finished", "result": result})
+            return result
+
         except (asyncio.CancelledError, KeyboardInterrupt):
             # Honour Ctrl+C while paused by making sure services stop exactly once.
             controller.request_stop(reason="cancelled")
             self._session_phase = "stopping"
             await self.stop_services()
             self._session_phase = "finished"
+            self.progress.finalize({"status": "cancelled"})
             return None
-
-        if self.services_closed():
-            # Ctrl+C handled inside run_orchestrator closes services; skip result computation.
-            self._session_phase = "finished"
-            return None
-
-        self._session_phase = "stopping"
-        final = await self._calculate_results()
-        await self._finalize_tournament(final)
-        await self.stop_services()
-        self._session_phase = "finished"
-        return final
+        finally:
+            self._progress = previous
 
     async def _calculate_results(self) -> TournamentResults:
         """Calculate final tournament results.
@@ -2254,14 +2949,15 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         games = db.get_games_with_players()
 
         # Calculate per-engine statistics
-        engine_stats: dict[str, dict[str, int]] = {}
+        engine_stats: dict[str, _EngineWdlCounts] = {}
         for engine in self.config.engines:
-            engine_stats[str(engine.name)] = {
+            entry: _EngineWdlCounts = {
                 "wins": 0,
                 "losses": 0,
                 "draws": 0,
                 "games": 0,
             }
+            engine_stats[str(engine.name)] = entry
 
         # Calculate per-pair results
         pair_results = {}
@@ -2271,9 +2967,6 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             black = game["black_player"]
             white = game["white_player"]
             result = game["result"]
-
-            if not isinstance(result, GameResult):
-                raise TypeError("Database returned a non-GameResult value for game result")
 
             # Update engine stats
             engine_stats[black]["games"] += 1
@@ -2338,12 +3031,12 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         cancelled_count = results.cancelled_games_count
         active_total_games = max(0, results.total_games - cancelled_count)
 
-        summary_data: dict[str, Any] = {
+        summary_data: dict[str, object] = {
             "tournamentType": self._resolve_tournament_type(),
             "mode": self._summary_source,
-            "flipPolicy": getattr(self.config.rules.initial_positions, "flip_policy", None),
+            "flipPolicy": self.config.rules.initial_positions.flip_policy,
             "numEngines": len(engine_names),
-            "runDir": str(self.config.run_dir) if self.config.run_dir is not None else None,
+            "runDir": str(self.run_dir),
             "leaderboard": leaderboard,
             "ratingInitial": self.config.rating.initial,
             "engines": engine_names,
@@ -2374,15 +3067,25 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             summary_data["rules"] = rules_payload
             summary_data["initialPositions"] = rules_payload.get("initial_positions")
             summary_data["repetitionOccurrencesToDraw"] = rules_payload.get("repetition_occurrences_to_draw")
+            ipos_val = rules_payload.get("initial_positions")
             summary_data["flipPolicy"] = (
                 summary_data.get("flipPolicy")
                 or rules_payload.get("flip_policy")
-                or (rules_payload.get("initial_positions") or {}).get("flip_policy")
+                or (ipos_val.get("flip_policy") if isinstance(ipos_val, dict) else None)
             )
             summary_data["tournamentConfig"] = {"rules": rules_payload}
             sprt_payload = self._build_sprt_payload()
             if sprt_payload and "sprt" not in summary_data:
                 summary_data["sprt"] = sprt_payload
+            if self._is_generate_run():
+                generate_conf = self.config.generate
+                if generate_conf is not None:
+                    summary_data["generateConfig"] = generate_conf.model_dump(mode="json")
+                records_output = self.config.records_output
+                if records_output is not None:
+                    summary_data["recordsOutput"] = records_output.model_dump(mode="json")
+        if self._record_writer is not None:
+            summary_data["recordsSummary"] = self._record_writer.get_records_summary()
 
         # Add BTD rating estimates for standings (order-independent ratings)
         games = self.db_service.get_games_with_players() if self.db_service else []
@@ -2394,8 +3097,8 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         btd = BTDEstimator().estimate(games, anchor_name=anchor_name, engine_names=engine_names)
         # Build nested covariance: {i: {j: cov}}
         cov_map: dict[str, dict[str, float]] = {}
-        rc = getattr(btd, "rating_cov", None)
-        if isinstance(rc, dict):
+        rc = btd.rating_cov
+        if rc is not None:
             for (i, j), v in rc.items():
                 cov_map.setdefault(i, {})[j] = float(v)
 
@@ -2460,10 +3163,8 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
                 )
 
         # Persist and broadcast summary
-        rd2 = self.config.run_dir
-        assert rd2 is not None
         if self.api_server:
-            schedule_snapshot: dict[str, Any] | None = None
+            schedule_snapshot: JsonObject | None = None
             try:
                 schedule_snapshot = await self.get_schedule_snapshot()
             except (RuntimeError, ValueError, OSError) as exc:  # pragma: no cover - defensive
@@ -2480,14 +3181,20 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         """
         logger.debug("Finalizing tournament")
 
+        try:
+            await self._flush_openbench()
+        except OpenBenchError as exc:
+            if self._openbench_client is not None and self._openbench_client.strict:
+                raise
+            logger.warning("OpenBench final flush failed; continuing (strict=false): %s", exc)
+
         # Mark as completed
         self._save_run_state(finished=True)
-        rd3 = self.config.run_dir
-        assert rd3 is not None
+        rd3 = self.run_dir
         (rd3 / "completed.flag").touch()
 
         # Final dashboard update
-        if self.config.dashboard.enabled:
+        if self._dashboard_enabled:
             await self._update_dashboard()
 
         # Write final results
@@ -2505,12 +3212,13 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
 
         # Log leaderboard
         leaderboard = results.get_leaderboard()
-        logger.info("TOURNAMENT RESULTS")
-        logger.info(f"{'Rank':<6} {'Engine':<20} {'Points':<10} {'W/D/L':<15} {'Win %':<10}")
+        logger.debug("TOURNAMENT RESULTS")
+        logger.debug(f"{'Rank':<6} {'Engine':<20} {'Points':<10} {'W/D/L':<15} {'Win %':<10}")
         for entry in leaderboard:
             wdl = f"{entry['wins']}/{entry['draws']}/{entry['losses']}"
-            win_pct = f"{entry['win_rate'] * 100:.1f}%"
-            logger.info(f"{entry['rank']:<6} {entry['engine']:<20} {entry['points']:<10.1f} {wdl:<15} {win_pct:<10}")
+            win_rate = cast(float, entry["win_rate"])
+            win_pct = f"{win_rate * 100:.1f}%"
+            logger.debug(f"{entry['rank']:<6} {entry['engine']:<20} {entry['points']:<10.1f} {wdl:<15} {win_pct:<10}")
 
         # Compute and print BTD ratings summary
         games = self.db_service.get_games_with_players() if self.db_service else []
@@ -2522,8 +3230,8 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         btd = BTDEstimator().estimate(games, anchor_name=anchor_name, engine_names=engine_names)
 
         # Standings by BTD rating
-        logger.info("BTD RATING ESTIMATES (order-independent, with draws + color)")
-        logger.info(f"{'Rank':<6} {'Engine':<20} {'R±95%CI':<18} {'Games':<8} {'Points':<8} {'W/D/L':<15}")
+        logger.debug("BTD RATING ESTIMATES (order-independent, with draws + color)")
+        logger.debug(f"{'Rank':<6} {'Engine':<20} {'R±95%CI':<18} {'Games':<8} {'Points':<8} {'W/D/L':<15}")
 
         # Build per-engine games/points from engine_stats
         stats = results.engine_stats
@@ -2539,7 +3247,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             g = int(s.get("wins", 0)) + int(s.get("draws", 0)) + int(s.get("losses", 0))
             pts = float(s.get("wins", 0)) + 0.5 * float(s.get("draws", 0))
             wdl = f"{s.get('wins', 0)}/{s.get('draws', 0)}/{s.get('losses', 0)}"
-            logger.info(f"{i:<6} {name:<20} {r:>6.1f}±{ci:>6.1f} {g:<8d} {pts:<8.1f} {wdl:<15}")
+            logger.debug(f"{i:<6} {name:<20} {r:>6.1f}±{ci:>6.1f} {g:<8d} {pts:<8.1f} {wdl:<15}")
 
         # Global parameters
         gci = 1.96 * (btd.gamma_elo_se or 0.0)
@@ -2569,7 +3277,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
             logger.debug(hdr + f"LOS={los_str}  W/D/L={wdl}")
 
         # Prepare engines metadata
-        engines_meta: list[dict[str, Any]] = []
+        engines_meta: list[JsonObject] = []
         for name in btd.ratings.keys():
             engines_meta.append({"name": name, "elo": float(btd.ratings[name])})
 
@@ -2603,8 +3311,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         # Add engines_meta to summary
         summary["enginesMeta"] = engines_meta
 
-        rd = self.config.run_dir
-        assert rd is not None
+        rd = self.run_dir
         out = rd / "summary_btd.json"
         with open(out, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
@@ -2621,7 +3328,7 @@ class TournamentRunner(BaseSessionRunner[TournamentResults, None]):
         order = self.config.tournament.game_order
         # Resolve auto
         if order == "auto":
-            flip = getattr(self.config.rules.initial_positions, "flip_policy", "")
+            flip = self.config.rules.initial_positions.flip_policy
             order = "pairwise" if flip == "pair_both" else "interleave"
         shuffle_seed = self.config.tournament.seed
 

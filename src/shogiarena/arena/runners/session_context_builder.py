@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
-from typing import Any
+from typing import TypeAlias, cast
 
 from shogiarena.arena.instances.pool import InstancePool
-from shogiarena.arena.session import SessionContext
+from shogiarena.arena.session import SessionContext, SessionMetadata
+from shogiarena.arena.storage import RunStorage
+
+SessionServices: TypeAlias = Mapping[str, object]
 
 
 class SessionContextBuilder:
@@ -16,26 +18,27 @@ class SessionContextBuilder:
     @staticmethod
     def for_spsa(
         *,
-        run_dir: Path,
+        storage: RunStorage,
         num_workers: int,
         instance_pool: InstancePool | None,
         run_id: str,
         experiment_name: str,
         dashboard_enabled: bool,
-        overwrite: bool,
+        no_resume: bool,
         session_uuid: str,
-        services: Mapping[str, Any],
+        services: SessionServices,
     ) -> SessionContext:
         metadata = {
             "runner_type": "spsa",
             "experiment_name": experiment_name,
             "dashboard_enabled": dashboard_enabled,
             "num_workers": int(num_workers),
-            "overwrite": overwrite,
+            "no_resume": no_resume,
             "session_uuid": session_uuid,
         }
+        metadata = cast(SessionMetadata, metadata)
         return SessionContext.build(
-            run_dir=run_dir,
+            storage=storage,
             num_workers=num_workers,
             instance_pool=instance_pool,
             run_id=run_id,
@@ -46,7 +49,7 @@ class SessionContextBuilder:
     @staticmethod
     def for_tournament(
         *,
-        run_dir: Path,
+        storage: RunStorage,
         num_workers: int,
         instance_pool: InstancePool | None,
         run_id: str,
@@ -55,7 +58,7 @@ class SessionContextBuilder:
         games_per_pair: int,
         num_engines: int,
         dashboard_enabled: bool,
-        services: Mapping[str, Any],
+        services: SessionServices,
     ) -> SessionContext:
         metadata = {
             "runner_type": "tournament",
@@ -65,8 +68,9 @@ class SessionContextBuilder:
             "num_engines": int(num_engines),
             "dashboard_enabled": dashboard_enabled,
         }
+        metadata = cast(SessionMetadata, metadata)
         return SessionContext.build(
-            run_dir=run_dir,
+            storage=storage,
             num_workers=num_workers,
             instance_pool=instance_pool,
             run_id=run_id,

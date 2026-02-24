@@ -1,4 +1,7 @@
-from .exporters import export_to_csa, export_to_kif
-from .game_info import GameInfo
+from .formats import get_codec, register_codec, supported_formats
 
-__all__ = ["GameInfo", "export_to_kif", "export_to_csa"]
+__all__ = [
+    "get_codec",
+    "register_codec",
+    "supported_formats",
+]

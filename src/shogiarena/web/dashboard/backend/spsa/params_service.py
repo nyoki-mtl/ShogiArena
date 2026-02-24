@@ -6,11 +6,13 @@ import logging
 import time
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, cast
 
 from shogiarena.arena.tuning.param_io import read_params
 
+from .models import SpsaMetaData
 from .store import SpsaStore
+from .types import ParamEntry, ParamsPayload
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,7 @@ class SpsaParamsService:
         self._cache_lock = Lock()
         self._cached_params_path: Path | None = None
         self._cached_params_signature: tuple[int, int] | None = None
-        self._cached_entries: list[dict[str, Any]] | None = None
+        self._cached_entries: list[ParamEntry] | None = None
 
     def load_variant_entry(self, variant_id: str) -> dict[str, Any] | None:
         """Return variant entry from ``engine_variants.json`` if available."""
@@ -33,7 +35,7 @@ class SpsaParamsService:
         entry = variants.get(variant_id)
         return entry if isinstance(entry, dict) else None
 
-    def build_params_payload(self) -> dict[str, Any]:
+    def build_params_payload(self) -> ParamsPayload:
         """Build the parameter summary payload used by the API."""
 
         meta_start = time.perf_counter()
@@ -84,24 +86,22 @@ class SpsaParamsService:
             # Use update_idx-based variant_id (v000001 format) instead of hash
             initial_variant_id = None
 
-        return {
-            "params": entries,
-            "variant_id": normalized_variant_id,
-            "num_params": num_params,
-            "num_used": num_used,
-            "num_clamped": num_clamped,
-            "clamped_ratio": clamped_ratio,
-            "initial_params": initial_params or None,
-            "diffs": diffs,
-            "initial_variant_id": initial_variant_id,
-        }
+        return ParamsPayload(
+            params=entries,
+            variant_id=normalized_variant_id,
+            num_params=num_params,
+            num_used=num_used,
+            num_clamped=num_clamped,
+            clamped_ratio=clamped_ratio,
+            initial_params=initial_params or None,
+            diffs=diffs,
+            initial_variant_id=initial_variant_id,
+        )
 
-    def _resolve_params_path(self, meta_data: dict[str, Any] | None) -> Path | None:
+    def _resolve_params_path(self, meta_data: SpsaMetaData) -> Path | None:
         candidates: list[Path] = []
-        if isinstance(meta_data, dict):
-            raw_path = meta_data.get("parameters_path")
-            if isinstance(raw_path, str) and raw_path.strip():
-                candidates.append(Path(raw_path))
+        if meta_data.parameters_path:
+            candidates.append(Path(meta_data.parameters_path))
 
         candidates.extend(self._candidate_param_paths())
 
@@ -132,22 +132,10 @@ class SpsaParamsService:
         return candidates
 
     @staticmethod
-    def _extract_initial_params(meta_data: dict[str, Any] | None) -> dict[str, float]:
-        if not isinstance(meta_data, dict):
-            return {}
-        raw = meta_data.get("initial_params")
-        if not isinstance(raw, dict):
-            return {}
+    def _extract_initial_params(meta_data: SpsaMetaData) -> dict[str, float]:
+        return dict(meta_data.initial_params)
 
-        initial_params: dict[str, float] = {}
-        for key, value in raw.items():
-            try:
-                initial_params[str(key)] = float(value)
-            except (TypeError, ValueError):
-                logger.debug("Skipping non-numeric initial param %s=%r", key, value)
-        return initial_params
-
-    def _read_params_entries(self, params_path: Path | None) -> list[dict[str, Any]]:
+    def _read_params_entries(self, params_path: Path | None) -> list[ParamEntry]:
         if params_path is None:
             return []
 
@@ -164,24 +152,24 @@ class SpsaParamsService:
             logger.warning("Failed to load parameters from %s: %s", params_path, exc, exc_info=exc)
             return []
 
-        formatted: list[dict[str, Any]] = []
+        formatted: list[ParamEntry] = []
         for entry in entries:
             formatted.append(
-                {
-                    "name": entry.name,
-                    "type": entry.type,
-                    "v": float(entry.v),
-                    "min": float(entry.min),
-                    "max": float(entry.max),
-                    "step": float(entry.step),
-                    "delta": float(entry.delta),
-                    "comment": entry.comment,
-                    "not_used": bool(entry.not_used),
-                }
+                ParamEntry(
+                    name=entry.name,
+                    type=entry.type,
+                    v=float(entry.v),
+                    min=float(entry.min),
+                    max=float(entry.max),
+                    step=float(entry.step),
+                    delta=float(entry.delta),
+                    comment=entry.comment,
+                    not_used=bool(entry.not_used),
+                )
             )
         return formatted
 
-    def _load_params_entries(self, params_path: Path | None) -> tuple[list[dict[str, Any]], bool]:
+    def _load_params_entries(self, params_path: Path | None) -> tuple[list[ParamEntry], bool]:
         signature = self._stat_signature(params_path)
         with self._cache_lock:
             if (
@@ -207,8 +195,8 @@ class SpsaParamsService:
         return entries, False
 
     @staticmethod
-    def _clone_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [dict(entry) for entry in entries]
+    def _clone_entries(entries: list[ParamEntry]) -> list[ParamEntry]:
+        return [cast(ParamEntry, {**entry}) for entry in entries]
 
     @staticmethod
     def _stat_signature(path: Path | None) -> tuple[int, int] | None:

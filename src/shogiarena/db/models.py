@@ -53,6 +53,8 @@ class Game(Base):
     time_control_black: Mapped[str | None] = mapped_column(String(128), nullable=True)
     time_control_white: Mapped[str | None] = mapped_column(String(128), nullable=True)
     init_position_sfen: Mapped[str] = mapped_column(String(144), nullable=False)
+    end_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
     black_player: Mapped[Player] = relationship("Player", foreign_keys=[black_player_id])
@@ -67,7 +69,8 @@ class Game(Base):
             f"result_code={self.result_code}, num_moves={self.num_moves}, "
             f"black_player_id={self.black_player_id}, white_player_id={self.white_player_id}, "
             f"time_control_black={self.time_control_black}, time_control_white={self.time_control_white}, "
-            f"init_position_sfen={self.init_position_sfen}, updated_date={self.updated_date})"
+            f"init_position_sfen={self.init_position_sfen}, end_time_ms={self.end_time_ms}, "
+            f"end_comment={self.end_comment}, updated_date={self.updated_date})"
         )
 
 
@@ -112,8 +115,8 @@ class EngineArtifact(Base):
     logical_name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     artifact: Mapped[str | None] = mapped_column(String(256), nullable=True)
     binary_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    build_flags: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    build_flags: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    metadata_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
@@ -146,7 +149,7 @@ class InstanceSpec(Base):
     gpu_count: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     tags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     instance_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    extra: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    extra: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
@@ -174,11 +177,11 @@ class GameInstanceParticipation(Base):
     )
     instance_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     binary_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    build_flags: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    build_flags: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     run_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    extra: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    extra: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
 
     engine_artifact = relationship("EngineArtifact")
     instance_spec = relationship(

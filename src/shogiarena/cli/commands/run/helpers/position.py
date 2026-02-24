@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from rshogi.core import normalize_usi_position
+
 from shogiarena.cli.errors import CliArgumentError
-from shogiarena.utils.board import normalize_sfen
 
 PositionTuple = tuple[str, tuple[str, ...]]
 
@@ -47,5 +48,5 @@ def parse_position_argument(text: str) -> PositionTuple:
             raise CliArgumentError("expected 'moves' keyword after base position")
         moves = tuple(tok.strip() for tok in remainder[1:] if tok.strip())
 
-    normalized = normalize_sfen(base_sfen)
+    normalized = normalize_usi_position(base_sfen)
     return normalized, tuple(moves)

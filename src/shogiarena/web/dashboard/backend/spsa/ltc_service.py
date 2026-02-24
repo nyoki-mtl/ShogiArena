@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping, Sequence
 from typing import Any
+
+from shogiarena.utils.types.coerce import coerce_float
 
 from .bradley_terry import (
     ELO_SCALE,
@@ -13,6 +16,18 @@ from .bradley_terry import (
     theta_to_elo,
 )
 from .store import SpsaStore
+from .types import LtcBestEstimate, LtcSummary
+
+
+def _coerce_int_round(value: Any) -> int | None:
+    """``coerce_float`` 経由で ``round`` し ``int`` に変換する。
+
+    ``_resolve_int`` の丸め（truncation ではなく四捨五入）を再現する。
+    """
+    f = coerce_float(value)
+    if f is None:
+        return None
+    return int(round(f))
 
 
 class SpsaLtcService:
@@ -28,18 +43,18 @@ class SpsaLtcService:
         self,
         *,
         enriched_results: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
+    ) -> LtcSummary:
         """Compute LTC regression summary from config, results, and index metadata."""
-        config_meta_raw = self._store.load_meta_data().get("ltc_regression")
-        config_meta = config_meta_raw if isinstance(config_meta_raw, dict) else None
+        ltc_config = self._store.load_meta_data().ltc_regression
+        config_meta = ltc_config.model_dump(exclude_none=True) if ltc_config is not None else None
 
         if enriched_results is None:
             raw_results = self._store.load_ltc_results()
             enriched_results = self._enrich_ltc_results(raw_results)
         latest = enriched_results[-1] if enriched_results else None
 
-        index_meta = self._store.load_index_metadata().get("ltc_regression")
-        index_meta_dict = index_meta if isinstance(index_meta, dict) else {}
+        ltc_index = self._store.load_index_metadata().ltc_regression
+        index_meta_dict: dict[str, Any] = ltc_index.model_dump(exclude_none=True) if ltc_index is not None else {}
 
         enabled = bool(config_meta.get("enabled")) if config_meta else bool(index_meta_dict)
 
@@ -60,19 +75,19 @@ class SpsaLtcService:
             winrate = latest.get("winrate")
 
         elo = index_meta_dict.get("elo") if index_meta_dict else None
-        best_estimate = None
+        best_estimate: LtcBestEstimate | None = None
         if latest is not None:
             elo = latest.get("best_elo_mean", elo)
-            best_estimate = {
-                "mean": latest.get("best_elo_mean"),
-                "variance": latest.get("best_elo_variance"),
-                "sigma": latest.get("best_elo_sigma"),
-                "lower": latest.get("best_elo_lower_1sigma"),
-                "upper": latest.get("best_elo_upper_1sigma"),
-                "source": latest.get("best_estimate_source"),
-                "composition_depth": latest.get("best_composition_depth"),
-                "prob_positive": latest.get("best_positive_probability"),
-            }
+            best_estimate = LtcBestEstimate(
+                mean=latest.get("best_elo_mean"),
+                variance=latest.get("best_elo_variance"),
+                sigma=latest.get("best_elo_sigma"),
+                lower=latest.get("best_elo_lower_1sigma"),
+                upper=latest.get("best_elo_upper_1sigma"),
+                source=latest.get("best_estimate_source"),
+                composition_depth=latest.get("best_composition_depth"),
+                prob_positive=latest.get("best_positive_probability"),
+            )
 
         pairs_played = index_meta_dict.get("pairs_played") if index_meta_dict else None
         if pairs_played is None and latest is not None:
@@ -90,27 +105,27 @@ class SpsaLtcService:
             if isinstance(decision_val, str):
                 sprt_decision = decision_val
 
-        summary = {
-            "enabled": enabled,
-            "status": status,
-            "config": config_meta,
-            "last_update_idx": last_update_idx,
-            "winrate": winrate,
-            "elo": elo,
-            "pairs_played": pairs_played,
-            "sprt": sprt,
-            "sprt_decision": sprt_decision,
-            "latest": latest,
-            "history_size": len(enriched_results),
-            "best_estimate": best_estimate,
-        }
+        summary = LtcSummary(
+            enabled=enabled,
+            status=status,
+            config=config_meta,
+            last_update_idx=last_update_idx,
+            winrate=winrate,
+            elo=elo,
+            pairs_played=pairs_played,
+            sprt=sprt,
+            sprt_decision=sprt_decision,
+            latest=latest,
+            history_size=len(enriched_results),
+            best_estimate=best_estimate,
+        )
         return summary
 
-    def enrich_ltc_results(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def enrich_ltc_results(self, results: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         """Return LTC results enriched with cumulative best estimates."""
         return self._enrich_ltc_results(results)
 
-    def _enrich_ltc_results(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _enrich_ltc_results(self, results: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         if not results:
             return []
 
@@ -186,9 +201,9 @@ class SpsaLtcService:
         for raw_entry in results:
             entry = dict(raw_entry)
 
-            update_idx = self._resolve_int(entry.get("update_idx"))
+            update_idx = _coerce_int_round(entry.get("update_idx"))
             ordinal = update_idx
-            baseline_idx = self._resolve_int(entry.get("baseline_update_idx"))
+            baseline_idx = _coerce_int_round(entry.get("baseline_update_idx"))
             if baseline_idx is None:
                 baseline_idx = current_best_idx
             if baseline_idx is None:
@@ -224,21 +239,21 @@ class SpsaLtcService:
                 current_best_depth = baseline_depth
                 current_best_source = baseline_source
 
-            tuned_wins = self._resolve_int(entry.get("tuned_wins"))
-            baseline_wins = self._resolve_int(entry.get("baseline_wins"))
-            draws = self._resolve_int(entry.get("draws"))
+            tuned_wins = _coerce_int_round(entry.get("tuned_wins"))
+            baseline_wins = _coerce_int_round(entry.get("baseline_wins"))
+            draws = _coerce_int_round(entry.get("draws"))
             if tuned_wins is None and sprt_dict:
-                tuned_wins = self._resolve_int(sprt_dict.get("wins"))
+                tuned_wins = _coerce_int_round(sprt_dict.get("wins"))
             if baseline_wins is None and sprt_dict:
-                baseline_wins = self._resolve_int(sprt_dict.get("losses"))
+                baseline_wins = _coerce_int_round(sprt_dict.get("losses"))
             if draws is None and sprt_dict:
-                draws = self._resolve_int(sprt_dict.get("draws"))
+                draws = _coerce_int_round(sprt_dict.get("draws"))
 
-            total_games = self._resolve_int(entry.get("total_games"))
+            total_games = _coerce_int_round(entry.get("total_games"))
             if total_games is None and sprt_dict:
-                total_games = self._resolve_int(sprt_dict.get("games"))
+                total_games = _coerce_int_round(sprt_dict.get("games"))
             if total_games is None and sprt_dict:
-                total_games = self._resolve_int(sprt_dict.get("games_played"))
+                total_games = _coerce_int_round(sprt_dict.get("games_played"))
             if total_games is None and tuned_wins is not None and baseline_wins is not None:
                 draws_val = draws if draws is not None else 0
                 total_games = tuned_wins + baseline_wins + draws_val
@@ -247,16 +262,16 @@ class SpsaLtcService:
             if tuned_wins is not None and baseline_wins is not None:
                 effective_games = tuned_wins + baseline_wins
 
-            winrate = self._resolve_float(entry.get("winrate"))
+            winrate = coerce_float(entry.get("winrate"))
             if winrate is None and sprt_dict:
-                winrate = self._resolve_float(sprt_dict.get("winrate"))
+                winrate = coerce_float(sprt_dict.get("winrate"))
             if winrate is None and tuned_wins is not None and total_games is not None and total_games > 0:
                 draws_val = draws if draws is not None else 0
                 winrate = (tuned_wins + draws_val * 0.5) / total_games
 
-            delta_mean = self._resolve_float(entry.get("elo"))
+            delta_mean = coerce_float(entry.get("elo"))
             if delta_mean is None and sprt_dict:
-                delta_mean = self._resolve_float(sprt_dict.get("elo"))
+                delta_mean = coerce_float(sprt_dict.get("elo"))
             if delta_mean is None:
                 delta_mean = self._elo_from_winrate(winrate)
 
@@ -352,12 +367,12 @@ class SpsaLtcService:
                 if isinstance(decision_value, str):
                     sprt_decision = decision_value
 
-            sprt_elo = self._resolve_float(sprt_dict.get("elo")) if sprt_dict else None
+            sprt_elo = coerce_float(sprt_dict.get("elo")) if sprt_dict else None
             sprt_games = None
             if sprt_dict:
-                sprt_games = self._resolve_int(sprt_dict.get("games"))
+                sprt_games = _coerce_int_round(sprt_dict.get("games"))
                 if sprt_games is None:
-                    sprt_games = self._resolve_int(sprt_dict.get("games_played"))
+                    sprt_games = _coerce_int_round(sprt_dict.get("games_played"))
 
             sprt_anchor_mean = prior_summary["mean"]
             sprt_point_value = None
@@ -416,10 +431,10 @@ class SpsaLtcService:
                     "sprt_result": sprt_decision,
                     "sprt_elo": sprt_elo,
                     "sprt_games": sprt_games,
-                    "sprt_llr": self._resolve_float(sprt_dict.get("llr")) if sprt_dict else None,
-                    "sprt_lower_bound": self._resolve_float(sprt_dict.get("lower")) if sprt_dict else None,
-                    "sprt_upper_bound": self._resolve_float(sprt_dict.get("upper")) if sprt_dict else None,
-                    "sprt_winrate": self._resolve_float(sprt_dict.get("winrate")) if sprt_dict else None,
+                    "sprt_llr": coerce_float(sprt_dict.get("llr")) if sprt_dict else None,
+                    "sprt_lower_bound": coerce_float(sprt_dict.get("lower")) if sprt_dict else None,
+                    "sprt_upper_bound": coerce_float(sprt_dict.get("upper")) if sprt_dict else None,
+                    "sprt_winrate": coerce_float(sprt_dict.get("winrate")) if sprt_dict else None,
                     "sprt_anchor_mean": sprt_anchor_mean,
                     "sprt_point_value": sprt_point_value,
                     "direct_vs_initial": baseline_idx == baseline_anchor,
@@ -430,46 +445,6 @@ class SpsaLtcService:
             enriched.append(entry)
 
         return enriched
-
-    @staticmethod
-    def _resolve_float(value: Any) -> float | None:
-        if isinstance(value, bool):
-            return float(value)
-        if isinstance(value, int | float):
-            if not math.isfinite(float(value)):
-                return None
-            return float(value)
-        if isinstance(value, str):
-            try:
-                parsed = float(value)
-            except ValueError:
-                return None
-            if not math.isfinite(parsed):
-                return None
-            return parsed
-        return None
-
-    @staticmethod
-    def _resolve_int(value: Any) -> int | None:
-        if isinstance(value, bool):
-            return int(value)
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            if not math.isfinite(value):
-                return None
-            return int(round(value))
-        if isinstance(value, str):
-            stripped = value.strip()
-            if not stripped:
-                return None
-            try:
-                if "." in stripped:
-                    return int(round(float(stripped)))
-                return int(stripped)
-            except ValueError:
-                return None
-        return None
 
     @staticmethod
     def _elo_from_winrate(winrate: float | None) -> float | None:

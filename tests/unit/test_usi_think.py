@@ -60,3 +60,14 @@ def test_time_increment_handles_none() -> None:
 
 def test_normalize_searchmoves() -> None:
     assert normalize_searchmoves(["a", "", " b "]) == ("a", "b")
+
+
+def test_ponder_command_places_ponder_immediately_after_go() -> None:
+    req = UsiThinkRequest(
+        btime=119000,
+        wtime=99500,
+        binc=1000,
+        winc=500,
+        ponder=True,
+    )
+    assert req.to_command() == "go ponder btime 119000 wtime 99500 binc 1000 winc 500"

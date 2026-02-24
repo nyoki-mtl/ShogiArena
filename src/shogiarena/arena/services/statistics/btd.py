@@ -15,13 +15,16 @@ import copy
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
 
-from shogiarena.utils.types.types import GameResult
+from shogiarena.utils.types.coerce import coerce_game_result
+from shogiarena.utils.types.types import GameRecordPlayersDict, GameResult
 
 # Elo/logistic scale mapping: r (Elo) -> t (natural logit space)
 _ELO_TO_LOGIT = 400.0 / math.log(10.0)
 _MAX_OPT_STEPS = 2000
+
+
+GameResultInput = str | int | GameResult | None
 
 
 @dataclass
@@ -84,7 +87,7 @@ class BTDEstimator:
 
     def estimate(
         self,
-        games: Iterable[dict[str, Any]],
+        games: Iterable[GameRecordPlayersDict],
         anchor_name: str | None = None,
         engine_names: Iterable[str] | None = None,
     ) -> BTDEstimate:
@@ -151,7 +154,10 @@ class BTDEstimator:
             w = str(record.get("white_player", ""))
             if not b or not w:
                 continue
-            bw, ww, dr = self._encode_result(record.get("result"))
+            raw_result = record.get("result")
+            if raw_result is not None and not isinstance(raw_result, str | int | GameResult):
+                continue
+            bw, ww, dr = self._encode_result(raw_result)
             if (bw + ww + dr) == 0:
                 continue
             enc.append((b, w, bw, ww, dr))
@@ -247,7 +253,7 @@ class BTDEstimator:
         )
 
     # --- internals -----------------------------------------------------
-    def _collect_engines(self, games: Iterable[dict[str, Any]]) -> set[str]:
+    def _collect_engines(self, games: Iterable[GameRecordPlayersDict]) -> set[str]:
         names: set[str] = set()
         for game in games:
             b = game.get("black_player")
@@ -259,27 +265,25 @@ class BTDEstimator:
         return names
 
     @staticmethod
-    def _encode_result(raw: Any) -> tuple[int, int, int]:
-        if isinstance(raw, GameResult):
-            return (
-                1 if raw.is_black_win() else 0,
-                1 if raw.is_white_win() else 0,
-                1 if raw.is_draw() else 0,
-            )
-        if isinstance(raw, int):
-            gr = GameResult(raw)
-            return BTDEstimator._encode_result(gr)
-        if isinstance(raw, str):
-            stripped = raw.strip()
-            if stripped.isdigit():
-                return BTDEstimator._encode_result(GameResult(int(stripped)))
-            res = stripped.upper()
-            return (
-                1 if "BLACK" in res else 0,
-                1 if "WHITE" in res else 0,
-                1 if "DRAW" in res else 0,
-            )
-        return (0, 0, 0)
+    def _encode_result(raw: GameResultInput) -> tuple[int, int, int]:
+        if raw is None:
+            return (0, 0, 0)
+        gr = coerce_game_result(raw)
+        if gr is None:
+            # 文字列名によるフォールバック (e.g. "BLACK_WIN")
+            if isinstance(raw, str):
+                res = raw.strip().upper()
+                return (
+                    1 if "BLACK" in res else 0,
+                    1 if "WHITE" in res else 0,
+                    1 if "DRAW" in res else 0,
+                )
+            return (0, 0, 0)
+        return (
+            1 if gr.is_black_win() else 0,
+            1 if gr.is_white_win() else 0,
+            1 if gr.is_draw() else 0,
+        )
 
     def _ll_and_grad(
         self,

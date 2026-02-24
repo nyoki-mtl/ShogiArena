@@ -10,21 +10,23 @@ import json
 import logging
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, cast
 
+import rshogi.record
 import yaml
+from rshogi.core import normalize_usi_position
 
-from shogiarena.arena.configs.tournament import ArenaConfig, GameSpec
+from shogiarena.arena.configs.tournament import EngineConfig, GameSpec, TournamentRunConfig
 from shogiarena.arena.engines.time_control import TimeControlLimits
-from shogiarena.arena.instances.models import InstanceActiveGameSide
+from shogiarena.arena.instances.models import Instance, InstanceActiveGameSide
 from shogiarena.arena.instances.pool import ResourceRequest
+from shogiarena.arena.services.persistence.records import serialize_participation_records
 from shogiarena.arena.session import GameCompletionEvent, GameLifecycleHooks, SessionContext
-from shogiarena.records import GameInfo
+from shogiarena.utils.types.coerce import coerce_int
+from shogiarena.utils.types.types import JsonValue
 
-from .base_orchestrator import BaseOrchestrator, SummaryUpdateCallback
+from .base_orchestrator import BaseOrchestrator, DashboardServerProtocol, SummaryUpdateCallback
 from .base_orchestrator_utils import (
     build_engine_config_map,
     build_remote_game_info,
@@ -48,14 +50,14 @@ class TournamentOrchestrator(BaseOrchestrator):
 
     def __init__(
         self,
-        config: ArenaConfig,
+        config: TournamentRunConfig,
         *,
         session: SessionContext,
         hooks: GameLifecycleHooks,
         summary_updater: SummaryUpdateCallback | None = None,
-        api_server: Any | None = None,  # Optional API server for SSE broadcasting
+        api_server: DashboardServerProtocol | None = None,  # Optional API server for SSE broadcasting
         cancelled_provider: Callable[[], set[str]] | None = None,
-    ):
+    ) -> None:
         """Initialize tournament orchestrator.
 
         Args:
@@ -70,9 +72,11 @@ class TournamentOrchestrator(BaseOrchestrator):
             summary_updater=summary_updater,
             session_context=session,
             hooks=hooks,
+            resource_poll_interval=config.system.resource_poll_interval,
+            resource_poll_max_interval=config.system.resource_poll_max_interval,
         )
         self.config = config
-        self.run_dir = session.run_dir
+        self.run_dir = session.storage.run_dir
         self.num_workers = session.num_workers
         # api_server is stored by BaseOrchestrator; no reassignment needed here
 
@@ -167,7 +171,7 @@ class TournamentOrchestrator(BaseOrchestrator):
                 async def _invoke(target: GameSpec) -> None:
                     await self._run_game(target)
 
-                task: asyncio.Task[Any] = asyncio.create_task(_invoke(spec))
+                task: asyncio.Task[None] = asyncio.create_task(_invoke(spec))
                 self._running_tasks.add(task)
                 try:
                     await task
@@ -202,55 +206,75 @@ class TournamentOrchestrator(BaseOrchestrator):
         self._display_order_map[spec.game_id] = display_order
         await self._enqueue_pending_game(spec, display_order=display_order)
 
-    def _prepare_engine_configs(self) -> dict[str, Any]:
+    def _prepare_engine_configs(self) -> dict[str, EngineConfig]:
         """Ensure each engine has a concrete YAML; synthesize from artifact if needed."""
-        out_entries: list[Any] = []
+        out_entries: list[EngineConfig] = []
         cfg_out_dir = self.run_dir / "engine_configs"
         for e in self.config.engines:
-            pth = getattr(e, "engine_config", None)
-            if isinstance(pth, Path) and pth.exists():
+            # Ensure overlay-provided engine settings (e.g., isready_lock_*) are applied
+            # before writing out the engine config YAML.
+            build_usi_options(getattr(self, "extra_options", None), e)
+            if e.engine_path is not None and e.engine_path.exists():
                 out_entries.append(e)
                 continue
 
-            art = getattr(e, "artifact", None)
-            if isinstance(art, str) and art.strip():
-                bopts = getattr(e, "build_options", {}) or {}
-                cpu = bopts.get("target_cpu") if isinstance(bopts, dict) else None
-                if not cpu or not str(cpu).strip():
-                    raise ValueError(f"Engine '{getattr(e, 'name', 'engine')}' requires build_options.target_cpu")
+            art = e.artifact
+            if art and art.strip():
+                bopts = e.build_options or {}
                 # Derive短いファイル名: commit + 安定化ハッシュ
                 m = re.match(r"^([A-Za-z0-9._-]+)/([A-Fa-f0-9]{6,40})$", art.strip())
 
-                def _normalize_for_hash(value: Any) -> Any:
-                    if isinstance(value, dict):
-                        return {str(k): _normalize_for_hash(value[k]) for k in sorted(value)}
-                    if isinstance(value, list | tuple):
-                        return [_normalize_for_hash(v) for v in value]
-                    return value
+                def _normalize_for_hash(value: JsonValue) -> JsonValue:
+                    match value:
+                        case dict():
+                            return {str(k): _normalize_for_hash(value[k]) for k in sorted(value)}
+                        case list() | tuple():
+                            return [_normalize_for_hash(v) for v in value]
+                        case _:
+                            return value
 
                 normalized_payload = {
                     "artifact": art.strip(),
-                    "build_options": _normalize_for_hash(bopts if isinstance(bopts, dict) else {}),
+                    "build_options": _normalize_for_hash(dict(bopts)),
                 }
                 raw = json.dumps(normalized_payload, sort_keys=True, separators=(",", ":"), default=str)
                 hash_suffix = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
                 repo = m.group(1).lower() if m else "artifact"
                 commit = m.group(2).lower() if m else None
                 fname = f"{repo}_{commit}_{hash_suffix}.yaml" if commit else f"{repo}_{hash_suffix}.yaml"
-                y: dict[str, Any] = {"artifact": art, "build_options": dict(bopts)}
-                if getattr(e, "name", None):
+                y: dict[str, object] = {"artifact": art, "build_options": dict(bopts)}
+                if e.name:
                     y["name"] = e.name
+                if e.mate_default_ply_limit is not None and e.mate_default_ply_limit > 0:
+                    y["mate_default_ply_limit"] = e.mate_default_ply_limit
+                if e.mate_default_node_limit is not None and e.mate_default_node_limit > 0:
+                    y["mate_default_node_limit"] = e.mate_default_node_limit
+                y["mate_default_infinite"] = e.mate_default_infinite
+                y["mate_wait_for_bestmove"] = e.mate_wait_for_bestmove
+                if e.isready_sync_strategy:
+                    y["isready_sync_strategy"] = e.isready_sync_strategy
+                if e.isready_lock_key and e.isready_lock_key.strip():
+                    y["isready_lock_key"] = e.isready_lock_key.strip()
+                if e.isready_lock_template and e.isready_lock_template.strip():
+                    y["isready_lock_template"] = e.isready_lock_template.strip()
+                if e.isready_lock_check_key and e.isready_lock_check_key.strip():
+                    y["isready_lock_check_key"] = e.isready_lock_check_key.strip()
+                if e.isready_lock_check_template and e.isready_lock_check_template.strip():
+                    y["isready_lock_check_template"] = e.isready_lock_check_template.strip()
+                if e.isready_lock_check_templates:
+                    y["isready_lock_check_templates"] = [str(item) for item in e.isready_lock_check_templates]
+                y["isready_lock_skip_if_exists"] = e.isready_lock_skip_if_exists
+                if e.handshake_timeout is not None:
+                    y["handshake_timeout"] = float(e.handshake_timeout)
                 cfg_out_dir.mkdir(parents=True, exist_ok=True)
                 out_path = cfg_out_dir / fname
                 out_path.write_text(yaml.safe_dump(y, sort_keys=False), encoding="utf-8")
                 # Attach back
-                cast(Any, e).engine_config = out_path
+                e.engine_path = out_path
                 out_entries.append(e)
                 continue
 
-            raise ValueError(
-                f"Engine '{getattr(e, 'name', 'engine')}' must provide engine_config or artifact with build_options"
-            )
+            raise ValueError(f"Engine '{e.name or 'engine'}' must provide engine_path or artifact with build_options")
 
         return build_engine_config_map(out_entries)
 
@@ -284,12 +308,32 @@ class TournamentOrchestrator(BaseOrchestrator):
 
         # Prepare items and time controls
         black_item, white_item, black_limits, white_limits = self._prepare_game_items(game_spec)
+        progress_q = self.progress_queue
+        if progress_q is not None:
+            initial_sfen = normalize_usi_position(game_spec.initial_sfen or "startpos")
+            black_tc_spec = black_limits.to_spec_str() if black_limits is not None else None
+            white_tc_spec = white_limits.to_spec_str() if white_limits is not None else None
+            enqueue_progress_event(
+                progress_q,
+                game_spec.game_id,
+                {
+                    "type": "game_assigned",
+                    "game_id": game_spec.game_id,
+                    "initial_sfen": initial_sfen,
+                    "black_name": str(game_spec.black_engine),
+                    "white_name": str(game_spec.white_engine),
+                    "time_control_black": black_tc_spec,
+                    "time_control_white": white_tc_spec,
+                },
+                fallback_move_count=0,
+                allow_default_str=True,
+            )
 
-        pool = getattr(self, "instance_pool", None)
+        pool = self.instance_pool
         b_spec = self.engine_configs.get(game_spec.black_engine)
         w_spec = self.engine_configs.get(game_spec.white_engine)
-        default_black_id = getattr(b_spec, "instance_id", None) if b_spec is not None else None
-        default_white_id = getattr(w_spec, "instance_id", None) if w_spec is not None else None
+        default_black_id = b_spec.instance_id if b_spec is not None else None
+        default_white_id = w_spec.instance_id if w_spec is not None else None
         black_instance_id = black_item.instance_override or default_black_id
         white_instance_id = white_item.instance_override or default_white_id
 
@@ -302,7 +346,7 @@ class TournamentOrchestrator(BaseOrchestrator):
                 same_instance_remote = True
                 remote_instance = inst
 
-        if getattr(game_spec, "require_install", False):
+        if game_spec.require_install:
             await self._ensure_remote_install({black_instance_id, white_instance_id})
             game_spec.require_install = False
 
@@ -318,7 +362,7 @@ class TournamentOrchestrator(BaseOrchestrator):
             )
         else:
             # Execute single game via shared helper (handles acquire/release)
-            game_info = await self._execute_game(
+            exec_spec = BaseOrchestrator.GameExecutionSpec(
                 black_item=black_item,
                 white_item=white_item,
                 initial_sfen=game_spec.initial_sfen,
@@ -327,6 +371,7 @@ class TournamentOrchestrator(BaseOrchestrator):
                 white_limits=white_limits,
                 game_round=game_spec.round_num,
             )
+            game_info = await self._execute_game(exec_spec)
 
         # Resolve worker index for completion broadcast (handle deferred preassignment)
         worker_idx = preassigned_worker if preassigned_worker is not None else self.game_to_worker.get(numeric_id, 0)
@@ -339,11 +384,11 @@ class TournamentOrchestrator(BaseOrchestrator):
             stop_requested=self._stop_event.is_set(),
         )
         await self._notify_game_complete(event)
-        logger.debug(f"Game {game_spec.game_id} completed: {game_info.game_result}")
+        logger.debug("Game %s completed: %s", game_spec.game_id, game_info.result.value)
 
     async def _ensure_remote_install(self, instance_ids: set[str | None]) -> None:
         """Ensure remote instances have the arena repository prepared when requested."""
-        pool = getattr(self, "instance_pool", None)
+        pool = self.instance_pool
         if pool is None:
             return
         for inst_id in {i for i in instance_ids if i and i != "local"}:
@@ -364,17 +409,17 @@ class TournamentOrchestrator(BaseOrchestrator):
         worker_idx: int,
         black_limits: TimeControlLimits,
         white_limits: TimeControlLimits,
-        remote_instance: Any,
+        remote_instance: Instance,
         black_item: BaseOrchestrator.EngineGameSpec,
         white_item: BaseOrchestrator.EngineGameSpec,
-    ) -> GameInfo:
+    ) -> rshogi.record.GameRecord:
         """Run a single scheduled game by executing both engines on the same SSH instance.
 
         Mirrors the SPSA remote runner path and streams JSON events back to the
         local progress queue for dashboard updates.
         """
-        pool = getattr(self, "instance_pool", None)
-        instance_id = getattr(remote_instance, "name", None)
+        pool = self.instance_pool
+        instance_id = remote_instance.name
         recorded_roles: list[InstanceActiveGameSide] = []
         resource_requirements: dict[str, ResourceRequest] = {}
         slots_reserved = False
@@ -391,8 +436,8 @@ class TournamentOrchestrator(BaseOrchestrator):
         # Build per-engine options overlay (max-move sync handled separately by GameRunner)
         b_cfg_spec = self.engine_configs.get(b_name)
         w_cfg_spec = self.engine_configs.get(w_name)
-        b_opts = build_usi_options(getattr(self, "extra_options", None), b_cfg_spec) or {}
-        w_opts = build_usi_options(getattr(self, "extra_options", None), w_cfg_spec) or {}
+        b_opts = build_usi_options(self.extra_options, b_cfg_spec) if b_cfg_spec is not None else {}
+        w_opts = build_usi_options(self.extra_options, w_cfg_spec) if w_cfg_spec is not None else {}
 
         max_plies = max_plies_from_rules(self.config.rules)
         executor = None
@@ -400,7 +445,7 @@ class TournamentOrchestrator(BaseOrchestrator):
         spec = None
 
         # Bridge streamed events to progress queue and aggregate per-move stats
-        progress_q = getattr(self, "progress_queue", None)
+        progress_q = self.progress_queue
         last_ply_seen = 0
         agg_moves: list[str] = []
         agg_move_times: list[int | None] = []
@@ -410,29 +455,24 @@ class TournamentOrchestrator(BaseOrchestrator):
         agg_seldepth: list[int | None] = []
         agg_evals: list[int | None] = []
 
-        def _on_event(ev: dict[str, Any]) -> None:
+        def _on_event(ev: dict[str, object]) -> None:
             nonlocal last_ply_seen
             if ev.get("type") == "move_progress":
                 try:
-                    last_ply_seen = max(last_ply_seen, int(ev.get("ply", 0) or 0))
+                    ply = coerce_int(ev.get("ply")) or 0
+                    last_ply_seen = max(last_ply_seen, ply)
                 except (TypeError, ValueError):
                     # Keep prior last_ply_seen if payload is malformed
                     logger.debug("Malformed ply in event: %s", ev.get("ply"))
                 move = ev.get("move")
                 if isinstance(move, str) and move.strip():
                     agg_moves.append(move)
-                    agg_evals.append(int(ev["eval_cp"])) if ev.get("eval_cp") is not None else agg_evals.append(None)
-                    agg_nodes.append(int(ev["nodes"])) if ev.get("nodes") is not None else agg_nodes.append(None)
-                    agg_depth.append(int(ev["depth"])) if ev.get("depth") is not None else agg_depth.append(None)
-                    agg_seldepth.append(int(ev["seldepth"])) if ev.get("seldepth") is not None else agg_seldepth.append(
-                        None
-                    )
-                    agg_move_times.append(int(ev["time_ms"])) if ev.get(
-                        "time_ms"
-                    ) is not None else agg_move_times.append(None)
-                    agg_wall_times.append(int(ev["wall_time_ms"])) if ev.get(
-                        "wall_time_ms"
-                    ) is not None else agg_wall_times.append(None)
+                    agg_evals.append(coerce_int(ev.get("eval_cp")))
+                    agg_nodes.append(coerce_int(ev.get("nodes")))
+                    agg_depth.append(coerce_int(ev.get("depth")))
+                    agg_seldepth.append(coerce_int(ev.get("seldepth")))
+                    agg_move_times.append(coerce_int(ev.get("time_ms")))
+                    agg_wall_times.append(coerce_int(ev.get("wall_time_ms")))
             enqueue_progress_event(
                 progress_q,
                 game_spec.game_id,
@@ -505,7 +545,7 @@ class TournamentOrchestrator(BaseOrchestrator):
         if final_result is None:
             raise RuntimeError("Remote game did not produce a result_code in move_progress events")
 
-        # Build GameInfo from final
+        # Build GameRecord from final
 
         gi = build_remote_game_info(
             start_sfen=game_spec.initial_sfen,
@@ -525,8 +565,24 @@ class TournamentOrchestrator(BaseOrchestrator):
         )
 
         completed_at = datetime.now(timezone.utc)
-        black_section = spec.get("black", {}) if isinstance(spec, dict) else {}
-        white_section = spec.get("white", {}) if isinstance(spec, dict) else {}
+        black_section_obj = spec.get("black") if isinstance(spec, dict) else None
+        white_section_obj = spec.get("white") if isinstance(spec, dict) else None
+        black_section: Mapping[str, object] = (
+            {str(k): v for k, v in black_section_obj.items()} if isinstance(black_section_obj, Mapping) else {}
+        )
+        white_section: Mapping[str, object] = (
+            {str(k): v for k, v in white_section_obj.items()} if isinstance(white_section_obj, Mapping) else {}
+        )
+        black_binary = black_section.get("engine_path")
+        white_binary = white_section.get("engine_path")
+        black_options_obj = black_section.get("options")
+        white_options_obj = white_section.get("options")
+        black_engine_options: Mapping[str, object] | None = (
+            {str(k): v for k, v in black_options_obj.items()} if isinstance(black_options_obj, Mapping) else None
+        )
+        white_engine_options: Mapping[str, object] | None = (
+            {str(k): v for k, v in white_options_obj.items()} if isinstance(white_options_obj, Mapping) else None
+        )
         participation_records = [
             self._construct_participation_record(
                 role="black",
@@ -534,12 +590,12 @@ class TournamentOrchestrator(BaseOrchestrator):
                 display_name=b_name,
                 spec=b_cfg_spec,
                 engine_config=None,
-                binary_path=black_section.get("engine_path"),
+                binary_path=str(black_binary) if isinstance(black_binary, str) else None,
                 instance_id=instance_id,
                 started_at=started_at,
                 completed_at=completed_at,
                 pool_key=black_item.pool_key,
-                engine_options=black_section.get("options"),
+                engine_options=black_engine_options,
                 go_options=None,
                 environment=None,
                 engine_info=None,
@@ -550,25 +606,26 @@ class TournamentOrchestrator(BaseOrchestrator):
                 display_name=w_name,
                 spec=w_cfg_spec,
                 engine_config=None,
-                binary_path=white_section.get("engine_path"),
+                binary_path=str(white_binary) if isinstance(white_binary, str) else None,
                 instance_id=instance_id,
                 started_at=started_at,
                 completed_at=completed_at,
                 pool_key=white_item.pool_key,
-                engine_options=white_section.get("options"),
+                engine_options=white_engine_options,
                 go_options=None,
                 environment=None,
                 engine_info=None,
             ),
         ]
         if participation_records:
-            gi._arena_participation = participation_records
+            encoded = serialize_participation_records(participation_records)
+            gi.set_metadata_attribute("_arena_participation", encoded)
 
         logger.debug(
             "[%s] end game %s: result=%s",
             remote_instance.name,
             game_spec.game_id,
-            int(gi.game_result) if gi.game_result is not None else None,
+            gi.result.value,
         )
         return gi
 
@@ -594,10 +651,10 @@ class TournamentOrchestrator(BaseOrchestrator):
         white_extras = build_usi_options(self.extra_options, white_config_spec)
 
         # Per-side time control limits (merge rules + per-engine overrides)
-        base_tc = getattr(self.config.rules, "time_control", None)
+        base_tc = self.config.rules.time_control
 
-        def pick_limits(spec: Any) -> Any:
-            limits = build_time_control_limits(base_tc, getattr(spec, "time_control", None))
+        def pick_limits(spec: EngineConfig) -> TimeControlLimits:
+            limits = build_time_control_limits(base_tc, spec.time_control)
             if limits is None:
                 raise RuntimeError(
                     "Missing required time_control for tournament engine. "
@@ -608,19 +665,25 @@ class TournamentOrchestrator(BaseOrchestrator):
         black_limits = pick_limits(black_config_spec)
         white_limits = pick_limits(white_config_spec)
 
-        black_override = getattr(game_spec, "assigned_instance_black", None)
-        white_override = getattr(game_spec, "assigned_instance_white", None)
+        black_override = game_spec.assigned_instance_black
+        white_override = game_spec.assigned_instance_white
+        black_path = black_config_spec.engine_path
+        white_path = white_config_spec.engine_path
+        if black_path is None:
+            raise ValueError(f"Engine '{game_spec.black_engine}' is missing a resolved engine_path")
+        if white_path is None:
+            raise ValueError(f"Engine '{game_spec.white_engine}' is missing a resolved engine_path")
 
         black_item = BaseOrchestrator.EngineGameSpec(
             pool_key=make_role_pool_key(game_spec.black_engine, "black"),
-            config_path=black_config_spec.engine_config,
+            config_path=black_path,
             extra_options=black_extras,
             instance_override=black_override,
             role="black",
         )
         white_item = BaseOrchestrator.EngineGameSpec(
             pool_key=make_role_pool_key(game_spec.white_engine, "white"),
-            config_path=white_config_spec.engine_config,
+            config_path=white_path,
             extra_options=white_extras,
             instance_override=white_override,
             role="white",

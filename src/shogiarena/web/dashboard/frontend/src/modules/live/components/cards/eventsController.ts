@@ -10,9 +10,11 @@ import { mergeWorkerSnapshotMutable } from '@/modules/live/services/updates/work
 import type { WorkerSnapshotUpdate } from '@/modules/live/types/updates';
 import { debugCheckWorkerSnapshotLegality } from '@/modules/live/utils/debug/legalMoveCheck';
 import { createEmptyWorkerSnapshot } from '@/modules/live/utils';
+import { asEngineStatusSnapshot, shouldRunEngineClock } from '@/modules/live/utils/engineStatus';
 import {
     maybeApplyImmediateClockStart,
     queueClockCorrections,
+    resetWorkerRuntimeClockStateForNewGame,
     syncClockToTurnBoundary,
     updateTimeControlState,
 } from '@/modules/live/utils/clockSync';
@@ -88,6 +90,75 @@ function mergeSnapshotDelta(
     return merged;
 }
 
+function toClockPayload(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+}
+
+function pickClockField(
+    snapshot: Record<string, unknown>,
+    nestedClock: Record<string, unknown> | null,
+    keys: string[],
+): unknown {
+    for (const key of keys) {
+        if (nestedClock && nestedClock[key] !== undefined) return nestedClock[key];
+        if (snapshot[key] !== undefined) return snapshot[key];
+    }
+    return undefined;
+}
+
+function extractClockPayloadFromSnapshot(snapshotRecord: Record<string, unknown>): Record<string, unknown> | null {
+    const nestedClock = toClockPayload(snapshotRecord.clock);
+    const payload: Record<string, unknown> = {};
+
+    const assign = (target: string, keys: string[]) => {
+        const value = pickClockField(snapshotRecord, nestedClock, keys);
+        if (value !== undefined) payload[target] = value;
+    };
+
+    assign('active', ['active', '_clock_active']);
+    assign('black_remain_ms', ['black_remain_ms', '_black_remain_ms', 'blackRemainMs']);
+    assign('white_remain_ms', ['white_remain_ms', '_white_remain_ms', 'whiteRemainMs']);
+    assign('started_at_ms', ['started_at_ms', '_clock_started_at_ms', 'startedAtMs']);
+    assign('occurred_at_ms', ['occurred_at_ms', 'occurredAtMs']);
+    assign('byoyomi_ms_black', ['byoyomi_ms_black', 'byoyomiMsBlack']);
+    assign('byoyomi_ms_white', ['byoyomi_ms_white', 'byoyomiMsWhite']);
+    assign('time_control_black', ['time_control_black', 'timeControlBlack']);
+    assign('time_control_white', ['time_control_white', 'timeControlWhite']);
+
+    return Object.keys(payload).length > 0 ? payload : null;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function toClockSide(value: unknown): 'black' | 'white' | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'black' || normalized === 'white') return normalized;
+    return null;
+}
+
+function inferIncrementSide(payload: Record<string, unknown>): 'black' | 'white' | null {
+    const direct = toClockSide(payload.side);
+    if (direct) return direct;
+    const preBlack = toFiniteNumber(payload.pre_black_remain_ms ?? payload.preBlackRemainMs);
+    const preWhite = toFiniteNumber(payload.pre_white_remain_ms ?? payload.preWhiteRemainMs);
+    const postBlack = toFiniteNumber(payload.black_remain_ms ?? payload.blackRemainMs);
+    const postWhite = toFiniteNumber(payload.white_remain_ms ?? payload.whiteRemainMs);
+    if (preBlack != null && preWhite != null && postBlack != null && postWhite != null) {
+        const deltaBlack = postBlack - preBlack;
+        const deltaWhite = postWhite - preWhite;
+        if (deltaBlack !== 0 && deltaWhite === 0) return 'black';
+        if (deltaWhite !== 0 && deltaBlack === 0) return 'white';
+    }
+    const active = toClockSide(payload.active);
+    if (active === 'black') return 'white';
+    if (active === 'white') return 'black';
+    return null;
+}
+
 interface LiveCardsEventsControllerDeps {
     core: DashboardCore;
     getCards: () => LiveCardState[];
@@ -115,6 +186,7 @@ interface LiveCardsEventsControllerDeps {
     toNumber: (value: unknown, fallback?: number) => number;
     cacheWorkerSnapshot: (workerIdx: number, data: WorkerSnapshotRecord | null | undefined) => void;
     updateCardData: (cardState: LiveCardState) => Promise<void> | void;
+    handleEngineLogEvent?: (payload: unknown) => void;
 }
 
 export interface LiveCardsEventsController {
@@ -158,6 +230,7 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
         toNumber,
         cacheWorkerSnapshot,
         updateCardData,
+        handleEngineLogEvent,
     } = deps;
 
     const { state, events, showNotice } = core;
@@ -214,6 +287,8 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
         mergedNonMoveDelta?: WorkerSnapshotUpdate;
     };
     const pendingVmByWorker = new Map<number, PendingVmEntry>();
+    const lastVmFlashKeyByWorker = new Map<number, string>();
+    const lastVmIncrementOccurredAtByWorker = new Map<number, number>();
     let pendingRafId: number | null = null;
     const inFlightUpdateByCardId = new Map<LiveCardState['id'], Promise<unknown>>();
     const inFlightStartedAtByCardId = new Map<LiveCardState['id'], number>();
@@ -233,6 +308,11 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
         typeof document === 'undefined' ||
         typeof document.visibilityState !== 'string' ||
         document.visibilityState === 'visible';
+
+    const canRunWorkerClock = (workerIdx: number): boolean => {
+        const ws = getWorkerState(state, workerIdx);
+        return Boolean(ws.engineStatus) && shouldRunEngineClock(ws.engineStatus);
+    };
 
     const scheduleFrame = (): void => {
         // OFF mode: do not schedule any frames. Live updates are stopped.
@@ -330,22 +410,17 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
             stopWorkerClockTimer(workerIdx);
             return;
         }
-        // Sync tempo determines clock update strategy:
-        // - 'off': stop clock timer, no updates (live updates stopped)
-        // - 'unlimited' or 'auto': use 100ms interval for smooth ticking
-        // - 2/4/8 (fixed tempo): update clock synchronously with refresh
+        // Clock ticking is independent from sync tempo (except OFF).
         const syncTempo = getSyncTempo();
         if (syncTempo === 'off') {
-            // OFF mode: stop clock timer, no updates.
             stopWorkerClockTimer(workerIdx);
-        } else if (syncTempo === 'unlimited' || syncTempo === 'auto') {
-            startWorkerClockTimer(workerIdx);
-            // Sync clock/turn highlight with the move refresh frame before the 100ms ticker kicks in.
-            updateWorkerClockDisplay(workerIdx);
         } else {
-            // Fixed tempo: stop any existing interval and update clock display directly.
-            // This ensures perfect sync with moves/eval/nodes.
-            stopWorkerClockTimer(workerIdx);
+            if (canRunWorkerClock(workerIdx)) {
+                startWorkerClockTimer(workerIdx);
+            } else {
+                stopWorkerClockTimer(workerIdx);
+            }
+            // Keep clock and turn highlight in sync with each refresh frame.
             updateWorkerClockDisplay(workerIdx);
         }
     };
@@ -573,6 +648,23 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
         }
         const snapshotAfter = peekWorkerSnapshotRecord(state, workerIdx);
         const gidAfter = extractSnapshotGid(snapshotAfter ?? null);
+        let gidChanged = false;
+        if (gidAfter) {
+            const ws = getWorkerState(state, workerIdx);
+            if (ws.currentGameId && ws.currentGameId !== gidAfter) {
+                ws.prevGameId = ws.currentGameId;
+                gidChanged = true;
+            } else if (!ws.currentGameId) {
+                gidChanged = true;
+            }
+            if (gidChanged) {
+                resetWorkerRuntimeClockStateForNewGame(ws);
+                ws.engineStatus = undefined;
+            }
+            ws.currentGameId = gidAfter;
+            ws.lastGameId = gidAfter;
+            setWorkerState(state, workerIdx, ws);
+        }
         const lastMoveDelta = entry.moveDeltas.length ? entry.moveDeltas[entry.moveDeltas.length - 1] : undefined;
         if (isDocumentVisible()) {
             debugCheckWorkerSnapshotLegality(
@@ -582,6 +674,11 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
             );
         }
         tAfterSnapshot = getNow();
+
+        const snapshotClockPayload =
+            snapshotAfter && typeof snapshotAfter === 'object'
+                ? extractClockPayloadFromSnapshot(snapshotAfter as Record<string, unknown>)
+                : null;
 
         if (snapshotAfter && typeof snapshotAfter === 'object') {
             const ws = getWorkerState(state, workerIdx);
@@ -593,6 +690,45 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
                 typeof snapshotRecord.time_control_white === 'string' ? snapshotRecord.time_control_white.trim() : '';
             if (tcBlack) ws.timeControlBlack = tcBlack;
             if (tcWhite) ws.timeControlWhite = tcWhite;
+            const snapshotEngineStatus = asEngineStatusSnapshot(snapshotRecord.engine_status);
+            if (snapshotEngineStatus) {
+                ws.engineStatus = snapshotEngineStatus;
+            } else if (entry.mergedNonMoveDelta) {
+                const deltaEngineStatus = asEngineStatusSnapshot(
+                    (entry.mergedNonMoveDelta as Record<string, unknown>).engine_status,
+                );
+                if (deltaEngineStatus) {
+                    ws.engineStatus = deltaEngineStatus;
+                }
+            }
+            if (snapshotClockPayload) {
+                const now = Date.now();
+                queueClockCorrections(ws, snapshotClockPayload, 'snapshot', now);
+                maybeApplyImmediateClockStart(ws, snapshotClockPayload, now);
+                updateTimeControlState(
+                    ws,
+                    snapshotClockPayload.time_control_black ?? snapshotClockPayload.timeControlBlack,
+                    snapshotClockPayload.time_control_white ?? snapshotClockPayload.timeControlWhite,
+                );
+                const snapshotTcBlack =
+                    snapshotClockPayload.time_control_black ?? snapshotClockPayload.timeControlBlack;
+                const snapshotTcWhite =
+                    snapshotClockPayload.time_control_white ?? snapshotClockPayload.timeControlWhite;
+                if (typeof snapshotTcBlack === 'string') {
+                    ws.timeControlBlack = snapshotTcBlack;
+                }
+                if (typeof snapshotTcWhite === 'string') {
+                    ws.timeControlWhite = snapshotTcWhite;
+                }
+                const snapshotByoBlack = snapshotClockPayload.byoyomi_ms_black ?? snapshotClockPayload.byoyomiMsBlack;
+                const snapshotByoWhite = snapshotClockPayload.byoyomi_ms_white ?? snapshotClockPayload.byoyomiMsWhite;
+                if (typeof snapshotByoBlack === 'number') {
+                    ws.byoyomiMsBlack = snapshotByoBlack;
+                }
+                if (typeof snapshotByoWhite === 'number') {
+                    ws.byoyomiMsWhite = snapshotByoWhite;
+                }
+            }
             setWorkerState(state, workerIdx, ws);
         }
 
@@ -601,21 +737,54 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
             const clock = vm.clock as Record<string, unknown>;
             const now = Date.now();
             queueClockCorrections(ws, clock, 'snapshot', now);
-            updateTimeControlState(ws, clock.time_control_black, clock.time_control_white);
+            updateTimeControlState(
+                ws,
+                clock.time_control_black ?? clock.timeControlBlack,
+                clock.time_control_white ?? clock.timeControlWhite,
+            );
             maybeApplyImmediateClockStart(ws, clock, now);
-            if (typeof clock.time_control_black === 'string') {
-                ws.timeControlBlack = clock.time_control_black;
+            const tcBlack = clock.time_control_black ?? clock.timeControlBlack;
+            const tcWhite = clock.time_control_white ?? clock.timeControlWhite;
+            if (typeof tcBlack === 'string') {
+                ws.timeControlBlack = tcBlack;
             }
-            if (typeof clock.time_control_white === 'string') {
-                ws.timeControlWhite = clock.time_control_white;
+            if (typeof tcWhite === 'string') {
+                ws.timeControlWhite = tcWhite;
             }
-            if (typeof clock.byoyomi_ms_black === 'number') {
-                ws.byoyomiMsBlack = clock.byoyomi_ms_black;
+            const byoBlack = clock.byoyomi_ms_black ?? clock.byoyomiMsBlack;
+            const byoWhite = clock.byoyomi_ms_white ?? clock.byoyomiMsWhite;
+            if (typeof byoBlack === 'number') {
+                ws.byoyomiMsBlack = byoBlack;
             }
-            if (typeof clock.byoyomi_ms_white === 'number') {
-                ws.byoyomiMsWhite = clock.byoyomi_ms_white;
+            if (typeof byoWhite === 'number') {
+                ws.byoyomiMsWhite = byoWhite;
             }
             setWorkerState(state, workerIdx, ws);
+        }
+
+        const clockIncrementDelta = (() => {
+            const delta = (entry.mergedNonMoveDelta ?? vm.snapshotDelta) as Record<string, unknown> | undefined;
+            if (!delta || typeof delta !== 'object') return null;
+            const type = typeof delta.type === 'string' ? delta.type.trim().toLowerCase() : '';
+            return type === 'clock_increment' ? delta : null;
+        })();
+        if (!clockIncrementDelta && vm.clock && typeof vm.clock === 'object') {
+            const source = vm.clock as Record<string, unknown>;
+            const side = inferIncrementSide(source);
+            const incMs = toFiniteNumber(source.applied_increment_ms ?? source.appliedIncrementMs) ?? 0;
+            const occurredAtMs = toFiniteNumber(source.occurred_at_ms ?? source.occurredAtMs);
+            const lastOccurred = lastVmIncrementOccurredAtByWorker.get(workerIdx) ?? -1;
+            if (occurredAtMs != null && occurredAtMs > lastOccurred && side) {
+                const dedupeKey = `${occurredAtMs}:${side}:${incMs}`;
+                lastVmIncrementOccurredAtByWorker.set(workerIdx, occurredAtMs);
+                if (lastVmFlashKeyByWorker.get(workerIdx) !== dedupeKey) {
+                    lastVmFlashKeyByWorker.set(workerIdx, dedupeKey);
+                    applyByoyomiFreezeCache(workerIdx, source);
+                    if (isDocumentVisible() && incMs > 0) {
+                        flashIncrement(workerIdx, side, incMs);
+                    }
+                }
+            }
         }
 
         if (typeof vm.currentPly === 'number' && Number.isFinite(vm.currentPly)) {
@@ -647,7 +816,6 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
 
         const cards = getCards();
         const target = `worker-latest:${workerIdx}`;
-        let gidChanged = false;
         const snapshotSummary = getWorkerSnapshot(workerIdx);
         const now = getNow();
         const vmDelayMs = Math.max(0, now - entry.receivedAt);
@@ -678,51 +846,22 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
                 card.lastGameId = gidAfter;
             }
         }
-        if (gidAfter) {
-            const ws = getWorkerState(state, workerIdx);
-            if (ws.currentGameId && ws.currentGameId !== gidAfter) {
-                ws.prevGameId = ws.currentGameId;
-                gidChanged = true;
-            } else if (!ws.currentGameId) {
-                gidChanged = true;
-            }
-            if (gidChanged) {
-                ws.lastSeenPly = undefined;
-                ws.lastSideToMove = undefined;
-                ws.pendingClockBySide = undefined;
-                ws.clockActive = null;
-                ws.startedAtMs = undefined;
-                ws.blackFrozenByoText = null;
-                ws.whiteFrozenByoText = null;
-                ws.tcBlackHasTimePool = undefined;
-                ws.tcWhiteHasTimePool = undefined;
-                ws.tcBlackHasSearchLimit = undefined;
-                ws.tcWhiteHasSearchLimit = undefined;
-                ws.clockDisplayMode = undefined;
-            }
-            ws.currentGameId = gidAfter;
-            ws.lastGameId = gidAfter;
-            setWorkerState(state, workerIdx, ws);
-        }
         if ((gidChanged || (gidBefore !== gidAfter && gidAfter != null)) && isDocumentVisible()) {
             updateWorkerOptionLabels?.(workerIdx);
         }
 
-        if (vm.clock && isDocumentVisible()) {
+        if ((vm.clock || snapshotClockPayload) && isDocumentVisible()) {
             const clockStart = getNow();
-            // Sync tempo determines clock update strategy:
-            // - 'off': stop clock timer, no updates (live updates stopped)
-            // - 'unlimited' or 'auto': use 100ms interval for smooth ticking
-            // - 2/4/8 (fixed tempo): update only on refresh for perfect sync with moves/eval/nodes
+            // Clock ticking is independent from sync tempo (except OFF).
             const syncTempo = getSyncTempo();
             if (syncTempo === 'off') {
-                // OFF mode: stop clock timer, no updates.
                 stopWorkerClockTimer(workerIdx);
-            } else if (syncTempo === 'unlimited' || syncTempo === 'auto') {
-                startWorkerClockTimer(workerIdx);
             } else {
-                // Fixed tempo: stop interval and let refresh handle clock updates.
-                stopWorkerClockTimer(workerIdx);
+                if (canRunWorkerClock(workerIdx)) {
+                    startWorkerClockTimer(workerIdx);
+                } else {
+                    stopWorkerClockTimer(workerIdx);
+                }
             }
             clockMs = Math.max(0, getNow() - clockStart);
         }
@@ -868,18 +1007,19 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
         },
         startWorkerClockTimer: (workerIdx) => {
             if (!isDocumentVisible()) return;
-            // Sync tempo determines clock strategy:
-            // - 'off': do not start timer (live updates stopped)
-            // - 'unlimited' or 'auto': use interval
-            // - 2/4/8 (fixed tempo): skip interval, rely on refresh sync
             const syncTempo = getSyncTempo();
             if (syncTempo === 'off') {
-                // OFF mode: do not start clock timer.
                 return;
             }
-            if (syncTempo === 'unlimited' || syncTempo === 'auto') {
+            if (canRunWorkerClock(workerIdx)) {
                 startWorkerClockTimer(workerIdx);
+            } else {
+                stopWorkerClockTimer(workerIdx);
             }
+        },
+        stopWorkerClockTimer: (workerIdx) => {
+            if (!isDocumentVisible()) return;
+            stopWorkerClockTimer(workerIdx);
         },
         updateWorkerClockDisplay: (workerIdx) => {
             if (!isDocumentVisible()) return;
@@ -893,6 +1033,10 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
         onVm: (vm, receivedAt) => enqueueVm(vm, receivedAt),
         setMergeWorkerActive: (active) => {
             (state as unknown as { mergeWorkerActive?: boolean }).mergeWorkerActive = active;
+        },
+        handleEngineLogEvent: (payload) => {
+            if (!isDocumentVisible()) return;
+            handleEngineLogEvent?.(payload);
         },
     });
 
@@ -983,15 +1127,13 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
                 visibleWorkers.add(idx);
             }
         }
-        // Sync tempo determines clock behavior on resume:
-        // - 'off': do nothing (live updates stopped)
-        // - 'unlimited' or 'auto': restart interval for smooth ticking
-        // - 2/4/8 (fixed tempo): just update display once; refresh will handle further updates
         const syncTempo = getSyncTempo();
         if (syncTempo !== 'off') {
             for (const idx of Array.from(visibleWorkers)) {
-                if (syncTempo === 'unlimited' || syncTempo === 'auto') {
+                if (canRunWorkerClock(idx)) {
                     startWorkerClockTimer(idx);
+                } else {
+                    stopWorkerClockTimer(idx);
                 }
                 updateWorkerClockDisplay(idx);
             }
@@ -1113,6 +1255,8 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
         }
         pendingWorkerRefresh.clear();
         pendingVmByWorker.clear();
+        lastVmFlashKeyByWorker.clear();
+        lastVmIncrementOccurredAtByWorker.clear();
         lastLagLogAtByWorker.clear();
         inFlightUpdateByCardId.clear();
         inFlightStartedAtByCardId.clear();
@@ -1180,6 +1324,8 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
         // Clear all pending queues.
         pendingWorkerRefresh.clear();
         pendingVmByWorker.clear();
+        lastVmFlashKeyByWorker.clear();
+        lastVmIncrementOccurredAtByWorker.clear();
         // Reset timing state.
         lastFlushAtMs = 0;
         hiddenCoalesceStartMs = null;

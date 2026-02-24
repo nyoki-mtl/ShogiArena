@@ -1,11 +1,11 @@
-# 完全な ArenaConfig テンプレート
+# 完全な TournamentRunConfig テンプレート
 # ------------------------------------------------------------
 # - コメント部を読みながら不要なセクションを削除してください。
 # - サポートされているプレースホルダ: {output_dir}, {engine_dir}
 # - 相対パスは設定ファイルからの相対パスとして解釈されます
-# - artifact を使うエンジンと engine_config を使うエンジンの両方を例示しています。
+# - artifact を使うエンジンと engine_path を使うエンジンの両方を例示しています。
 
-# 実験名（run_dir の既定フォルダ名にも使用される）
+# 実験名
 experiment_name: sample_gauntlet
 
 # ログ出力レベル。DEBUG にすると詳細ログ。
@@ -13,10 +13,6 @@ log_level: INFO
 
 # 実行時の作業ディレクトリ。省略時は `shogiarena.utils.common.project_dirs.output_dir`（settings.yaml が無ければ `./shogiarena_output`）。
 # work_dir: "{output_dir}"
-
-# 実行結果を保存するディレクトリ。省略時は `{output_dir}/tournament_runs/{experiment_name}/{config名}`。
-# 既定ルールに従う場合はコメントアウト可能。
-# run_dir: null
 
 # レーティング更新設定
 rating:
@@ -70,14 +66,13 @@ rules:
     source: null             # type=file の場合に SFEN リストを置くパス
   # 投了判定や最大手数
   adjudication:
-    enable_resign: true
-    resign_score_cp: 800
+    resign_threshold_cp: 800
     resign_move_count: 8
     resign_two_sided: true   # 先後どちらか一方だけに適用するなら false
     enable_max_plies: true
     max_plies: 320
     sync_max_plies_with_engine: true
-    engine_max_ply_option_names: [MaxMovesToDraw, MaxPly]
+    engine_max_ply_option_names: [MaxMovesToDraw, Draw_Ply]
   # 千日手判定回数。2, 3, 4 のいずれか
   repetition_occurrences_to_draw: 2
   # SPRT 設定はトップレベルの sprt を参照
@@ -105,6 +100,9 @@ engines:
     options:                         # USI オプションを上書き
       Threads: 4
       USI_Hash: 2048
+    # isready_lock_template: "{DNN_Model}.{DNN_Batch_Size}.serialized"  # 任意。初回 isready を直列化するロックキー
+    # isready_lock_check_templates: ["{DNN_Model}.*.{DNN_Batch_Size}*.serialized"]  # 任意。既存ビルド検知 (glob 可)
+    # isready_lock_skip_if_exists: true  # 任意。検知できたらロックを省略
     time_control:
       fixed_time_ms: null            # 個別に固定時間を設定したい場合に使用
       node_limit: 2000000
@@ -112,9 +110,7 @@ engines:
 
   # 2. ローカルエンジン YAML を使う例
   - name: "Dev Build"
-    engine_config: "./resources/engines/local_example.yaml"  # ローカル USI エンジンの設定ファイル
-    # build_options は engine_config 利用時には空にする
-    build_options: {}
+    engine_path: "./resources/engines/local_example.yaml"  # ローカル USI エンジンの設定ファイル
     options_overlays:
       - "./resources/engines/overlays/example.yaml"
     options:
@@ -135,4 +131,4 @@ engines:
     instance_id: "remote-linux-01"
     # SSH 側に taskset がない場合は警告が出るが実行は続行される
 
-# ここまでが ArenaConfig のサンプルです。不要なエンジンや設定は取り除いてご利用ください。
+# ここまでが TournamentRunConfig のサンプルです。不要なエンジンや設定は取り除いてご利用ください。

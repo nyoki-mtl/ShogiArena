@@ -1,13 +1,6 @@
 import type { LiveCardState } from '@/modules/live/types';
 import type { WorkerSnapshotRecord } from './types';
 
-export function shouldBlockUpdateForManualView(cardState: LiveCardState, stableGameKey: string | null): boolean {
-    if (cardState.autoSync) return false;
-    const previousGameKey = cardState.lastGameId ? String(cardState.lastGameId) : null;
-    if (!previousGameKey) return false;
-    return previousGameKey !== (stableGameKey ?? 'startpos');
-}
-
 export function detectNewGame(
     cardState: LiveCardState,
     snapshot: WorkerSnapshotRecord,

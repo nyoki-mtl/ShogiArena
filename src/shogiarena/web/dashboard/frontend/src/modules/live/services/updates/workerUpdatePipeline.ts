@@ -8,6 +8,7 @@ import {
     updateMoveCollections,
     updateSearchStatistics,
 } from './snapshots';
+import type { EngineStatusSnapshot } from '@/modules/live/utils/engineStatus';
 import type { LiveUpdatesContext, WorkerSnapshotUpdate } from '@/modules/live/types/updates';
 import {
     getWorkerSnapshotRecord,
@@ -15,7 +16,11 @@ import {
     setWorkerSnapshotRecord,
     setWorkerState,
 } from '@/modules/live/state/updates';
-import { syncClockToTurnBoundary, updateTimeControlState } from '@/modules/live/utils/clockSync';
+import {
+    resetWorkerRuntimeClockStateForNewGame,
+    syncClockToTurnBoundary,
+    updateTimeControlState,
+} from '@/modules/live/utils/clockSync';
 
 interface PipelineDeps {
     ctx: LiveUpdatesContext;
@@ -61,18 +66,8 @@ export function createWorkerUpdatePipeline(deps: PipelineDeps) {
                 throw new Error(`${scope}: Worker update missing initial_sfen for new game`);
             }
             workerState.prevGameId = existingGameId;
-            workerState.lastSeenPly = undefined;
-            workerState.lastSideToMove = undefined;
-            workerState.pendingClockBySide = undefined;
-            workerState.clockActive = null;
-            workerState.startedAtMs = undefined;
-            workerState.blackFrozenByoText = null;
-            workerState.whiteFrozenByoText = null;
-            workerState.tcBlackHasTimePool = undefined;
-            workerState.tcWhiteHasTimePool = undefined;
-            workerState.tcBlackHasSearchLimit = undefined;
-            workerState.tcWhiteHasSearchLimit = undefined;
-            workerState.clockDisplayMode = undefined;
+            resetWorkerRuntimeClockStateForNewGame(workerState);
+            workerState.engineStatus = undefined;
             snapshot = createEmptySnapshotForGame(update, snapshot);
         }
 
@@ -146,23 +141,25 @@ export function createWorkerUpdatePipeline(deps: PipelineDeps) {
         }
     }
 
-    function dispatchClockEvents(workerIdx: number, update: WorkerSnapshotUpdate) {
+    function applyClockUpdate(workerIdx: number, update: WorkerSnapshotUpdate): boolean {
         if (update.type === 'clock_start') {
             applyClockSnapshot(workerIdx, update);
-            emitEvent('worker:clock', {
-                workerIdx,
-                kind: 'clock_start',
-                clock: safeClone(update),
-            });
+            return true;
         }
         if (update.type === 'clock_increment') {
             applyClockIncrement(workerIdx, update);
-            emitEvent('worker:clock', {
-                workerIdx,
-                kind: 'clock_increment',
-                clock: safeClone(update),
-            });
+            return true;
         }
+        return false;
+    }
+
+    function emitClockEvent(workerIdx: number, update: WorkerSnapshotUpdate): void {
+        if (update.type !== 'clock_start' && update.type !== 'clock_increment') return;
+        emitEvent('worker:clock', {
+            workerIdx,
+            kind: update.type,
+            clock: safeClone(update),
+        });
     }
 
     function emitSnapshot(workerIdx: number, snapshot: ReturnType<typeof getWorkerSnapshotRecord>) {
@@ -201,6 +198,9 @@ export function createWorkerUpdatePipeline(deps: PipelineDeps) {
         if (typeof tcBlackRaw === 'string' && tcBlackRaw.trim()) workerState.timeControlBlack = tcBlackRaw.trim();
         if (typeof tcWhiteRaw === 'string' && tcWhiteRaw.trim()) workerState.timeControlWhite = tcWhiteRaw.trim();
         applyCollections(snapshot, update);
+        if (update.engine_status && typeof update.engine_status === 'object') {
+            snapshot.engine_status = update.engine_status as EngineStatusSnapshot;
+        }
 
         setWorkerState(state, workerIdx, workerState);
         ctx.cards.updateWorkerOptionLabels(workerIdx ?? null);
@@ -208,10 +208,7 @@ export function createWorkerUpdatePipeline(deps: PipelineDeps) {
         const incomingPly = typeof update.currentPly === 'number' ? update.currentPly : null;
         handleCatchupIfNeeded(workerIdx, incomingPly, previousAppliedPly);
 
-        // Schedule card update using requestAnimationFrame to avoid burst rendering
-        cardSync.scheduleCardUpdate(workerIdx);
-
-        dispatchClockEvents(workerIdx, update);
+        const hasClockUpdate = applyClockUpdate(workerIdx, update);
 
         const nowWall = Date.now();
         updateWallClockMaps(workerIdx, nowWall, update);
@@ -228,7 +225,20 @@ export function createWorkerUpdatePipeline(deps: PipelineDeps) {
             normalizeSFEN,
             nowMs: nowWall,
         });
+        const engineStatusCandidate = (update.engine_status ?? latestSnapshot.engine_status) as
+            | EngineStatusSnapshot
+            | undefined;
+        if (engineStatusCandidate && typeof engineStatusCandidate === 'object') {
+            workerStateLatest.engineStatus = engineStatusCandidate;
+        }
         setWorkerState(state, workerIdx, workerStateLatest);
+
+        if (hasClockUpdate) {
+            emitClockEvent(workerIdx, update);
+        }
+
+        // Schedule card update using requestAnimationFrame to avoid burst rendering
+        cardSync.scheduleCardUpdate(workerIdx);
 
         emitSnapshot(workerIdx, latestSnapshot);
     }

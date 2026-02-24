@@ -4,6 +4,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from rshogi.core import Move
 
 from shogiarena.arena.engines.usi_bridge_spawner import SpawnerBackedUSIBridge
 from shogiarena.arena.engines.usi_config import UsiEngineConfig
@@ -128,7 +129,7 @@ async def test_async_usi_engine_state_machine_with_subprocess(tmp_path: Path) ->
         await asyncio.sleep(0.01)
         assert engine.state == UsiEngineState.WAITING_FOR_BESTMOVE
         result = await think_task
-        assert result.bestmove == "7g7f"
+        assert result.bestmove == Move.from_usi("7g7f")
         await _wait_for_state(engine, UsiEngineState.READY)
 
         ponder_task = asyncio.create_task(
@@ -137,7 +138,7 @@ async def test_async_usi_engine_state_machine_with_subprocess(tmp_path: Path) ->
         await asyncio.sleep(0.01)
         assert engine.state == UsiEngineState.PONDER
         ponder_result = await ponder_task
-        assert ponder_result.bestmove == "2g2f"
+        assert ponder_result.bestmove == Move.from_usi("2g2f")
         await _wait_for_state(engine, UsiEngineState.READY)
 
         stop_task = asyncio.create_task(engine.think(sfen="startpos", request=UsiThinkRequest(movetime=200)))
@@ -145,9 +146,9 @@ async def test_async_usi_engine_state_machine_with_subprocess(tmp_path: Path) ->
         assert engine.state == UsiEngineState.WAITING_FOR_BESTMOVE
         stop_result = await engine.stop(timeout=1.0)
         assert stop_result is not None
-        assert stop_result.bestmove == "7g7f"
+        assert stop_result.bestmove == Move.from_usi("7g7f")
         final_result = await stop_task
-        assert final_result.bestmove == "7g7f"
+        assert final_result.bestmove == Move.from_usi("7g7f")
         await _wait_for_state(engine, UsiEngineState.READY)
 
         mate_result = await engine.think_mate(sfen="startpos")

@@ -103,6 +103,20 @@ function toNullableNumber(value: unknown, context = 'value'): number | null {
     return optionalFiniteNumber(value, context);
 }
 
+const BLACK_WIN_CODES = new Set([0, 4, 8, 12, 16]);
+const WHITE_WIN_CODES = new Set([1, 5, 9, 13, 17]);
+const DRAW_CODES = new Set([2, 6, 10]);
+const ERROR_CODES = new Set([3, 7, 15, 18, 19]);
+
+function categorizeResultCode(resultCode: number | null): 0 | 1 | 2 | 3 | null {
+    if (resultCode === null) return null;
+    if (BLACK_WIN_CODES.has(resultCode)) return 0;
+    if (WHITE_WIN_CODES.has(resultCode)) return 1;
+    if (DRAW_CODES.has(resultCode)) return 2;
+    if (ERROR_CODES.has(resultCode)) return 3;
+    return null;
+}
+
 function normalizeBtdSummary(value: unknown): NormalizedBTDSummary | null {
     if (value === null || value === undefined) {
         return null;
@@ -568,7 +582,7 @@ export function normalizeTournamentGame(value: unknown): NormalizedTournamentGam
         typeof resultCodeRaw === 'number' && Number.isFinite(resultCodeRaw) && resultCodeRaw >= 0
             ? Math.trunc(resultCodeRaw)
             : null;
-    const category = normalizedResultCode !== null ? ((normalizedResultCode & 3) as 0 | 1 | 2 | 3) : null;
+    const category = categorizeResultCode(normalizedResultCode);
 
     return {
         raw,

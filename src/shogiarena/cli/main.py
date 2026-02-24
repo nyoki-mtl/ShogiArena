@@ -8,7 +8,6 @@ import logging
 import sys
 from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any
 
 from dotenv import load_dotenv
 
@@ -18,8 +17,8 @@ from shogiarena.cli.errors import CliError
 from shogiarena.utils.common import settings as settings_mod
 from shogiarena.utils.common.logging import setup_logging
 
-CommandHandler = Callable[[argparse.Namespace], Any]
-AsyncCommandHandler = Callable[[argparse.Namespace], Coroutine[Any, Any, Any]]
+CommandHandler = Callable[[argparse.Namespace], int | None]
+AsyncCommandHandler = Callable[[argparse.Namespace], Coroutine[object, object, int | None]]
 
 LOGGER = logging.getLogger("shogiarena.cli")
 
@@ -27,6 +26,7 @@ _DOTTED_OVERRIDE_FLAGS = {
     "--dashboard",
     "--rating",
     "--rules",
+    "--openbench",
     "--spsa",
     "--sprt",
     "--system",
@@ -58,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Logger name to force DEBUG level (repeatable)",
     )
     parser.add_argument(
-        "--root-dir",
+        "--output-dir",
         type=Path,
         help="Override the output directory for this invocation",
     )
@@ -111,21 +111,52 @@ def _expand_dotted_overrides(argv: list[str]) -> list[str]:
     return expanded
 
 
+def _reject_global_output_dir(argv: list[str]) -> None:
+    """Reject global --output-dir for init/config fast path."""
+    if not argv:
+        return
+
+    command_idx: int | None = None
+    for idx, arg in enumerate(argv):
+        if not arg.startswith("-"):
+            command_idx = idx
+            break
+    if command_idx is None:
+        return
+
+    idx = 0
+    while idx < command_idx:
+        arg = argv[idx]
+        if arg == "--output-dir":
+            raise SystemExit(
+                "--output-dir is not supported before the command for init/config. "
+                "Use `shogiarena config init --output-dir ...` instead."
+            )
+        if arg.startswith("--output-dir="):
+            raise SystemExit(
+                "--output-dir is not supported before the command for init/config. "
+                "Use `shogiarena config init --output-dir ...` instead."
+            )
+        idx += 1
+
+
 def main(argv: list[str] | None = None) -> None:
     raw_argv = argv if argv is not None else sys.argv[1:]
     expanded_argv = _expand_dotted_overrides(raw_argv)
 
     # Fast path for init/config commands: build minimal parser first
     # This avoids importing heavy modules (run, dashboard) when not needed
-    command = expanded_argv[0] if expanded_argv and not expanded_argv[0].startswith("-") else None
+    command = next((arg for arg in expanded_argv if not arg.startswith("-")), None)
     if command in {"init", "config"}:
+        _reject_global_output_dir(expanded_argv)
         # Build minimal parser with only init/config commands for faster startup
         parser = argparse.ArgumentParser(
             prog="shogiarena", description="Unified command-line interface for Shogi Arena tooling."
         )
         parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO")
         parser.add_argument("--debug-logger", action="append", dest="debug_loggers", metavar="LOGGER")
-        parser.add_argument("--root-dir", type=Path, help="Override the output directory for this invocation")
+        # NOTE: no global output-dir override here to avoid
+        # clashing with `config init --output-dir` in the fast path.
         subparsers = parser.add_subparsers(dest="command")
         subparsers.required = True
 
@@ -176,7 +207,9 @@ def main(argv: list[str] | None = None) -> None:
     suppress_warning = command in {"init", "config"}
     try:
         settings_mod.configure_settings(
-            root=args.root_dir, require_settings=require_settings, suppress_warning=suppress_warning
+            root=getattr(args, "output_dir", None),
+            require_settings=require_settings,
+            suppress_warning=suppress_warning,
         )
     except FileNotFoundError as exc:
         raise SystemExit(str(exc)) from exc

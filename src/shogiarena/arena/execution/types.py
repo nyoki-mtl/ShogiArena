@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol, runtime_checkable
 
+from rshogi.core import Move
+
 from shogiarena.arena.engines.usi_engine import AnalysisHandle, PonderHitTimings, UsiMateResult
 from shogiarena.arena.engines.usi_think import UsiThinkRequest
 from shogiarena.arena.engines.usi_types import UsiThinkPV, UsiThinkResult
@@ -38,6 +40,10 @@ class GameEngineProtocol(Protocol):
         sfen: str,
         moves: Sequence[str],
         ply_limit: int | None = None,
+        node_limit: int | None = None,
+        infinite: bool = False,
+        info_handler: InfoHandler | None = None,
+        wait_for_bestmove: bool | None = None,
         timeout: float | None = None,
     ) -> UsiMateResult: ...
 
@@ -66,7 +72,7 @@ class GameEngineProtocol(Protocol):
         sfen: str,
         moves: Sequence[str],
         request: UsiThinkRequest,
-        predicted_move: str | None,
+        predicted_move: Move | None,
         info_handler: InfoHandler | None = None,
         enable_early_ponder: bool | None = None,
     ) -> None: ...
@@ -82,4 +88,4 @@ class GameEngineProtocol(Protocol):
 
     def has_active_ponder(self) -> bool: ...
 
-    def active_ponder_predicted_move(self) -> str | None: ...
+    def active_ponder_predicted_move(self) -> Move | None: ...

@@ -11,7 +11,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from shogiarena.utils.types.coerce import is_strict_numeric
 from shogiarena.web.dashboard.backend.live.schema import build_live_view_snapshot
+from shogiarena.web.dashboard.backend.live.types import LiveViewSnapshot
+from shogiarena.web.dashboard.backend.types import GamesSnapshotPayload, SnapshotMeta
 
 if TYPE_CHECKING:
     from shogiarena.web.dashboard.backend.state_container import DashboardState
@@ -43,7 +46,7 @@ class SnapshotStorage:
         *,
         summary_snapshot: Mapping[str, Any] | None = None,
         source: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> LiveViewSnapshot:
         """Construct the Live View envelope.
 
         Args:
@@ -64,7 +67,12 @@ class SnapshotStorage:
 
         return build_live_view_snapshot(summary_source)
 
-    def store_summary(self, payload: Mapping[str, Any], *, source: str) -> dict[str, Any] | None:
+    def store_summary(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        source: str,  # I/O boundary: 外部ペイロード受信
+    ) -> dict[str, Any] | None:
         """Store a summary snapshot with validation and sanitization.
 
         Args:
@@ -85,8 +93,7 @@ class SnapshotStorage:
             return None
         snapshot = cast(dict[str, Any], raw_snapshot)
 
-        def _is_number(value: Any) -> bool:
-            return isinstance(value, int | float) and not isinstance(value, bool)
+        _is_number = is_strict_numeric
 
         # Unified validation: all modes must provide a valid 'games' object.
         games = snapshot.get("games")
@@ -161,7 +168,7 @@ class SnapshotStorage:
                 diff[key] = value
         return diff
 
-    def store_games(self, payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    def store_games(self, payload: Mapping[str, Any]) -> GamesSnapshotPayload | None:
         """Store a games list snapshot.
 
         Args:
@@ -178,7 +185,7 @@ class SnapshotStorage:
         if not isinstance(raw_snapshot, dict):
             logger.warning("Games snapshot payload must be a JSON object")
             return None
-        snapshot = cast(dict[str, Any], raw_snapshot)
+        snapshot = cast(GamesSnapshotPayload, raw_snapshot)
         self._state.games_snapshot = snapshot
         return snapshot
 
@@ -187,7 +194,7 @@ class SnapshotStorage:
         previous: Mapping[str, Any] | None,
         rows: list[Mapping[str, Any]],
         snapshot_meta: Mapping[str, Any],
-    ) -> dict[str, Any]:
+    ) -> GamesSnapshotPayload:
         """Compute differential update for games list.
 
         Args:
@@ -228,7 +235,7 @@ class SnapshotStorage:
         return {
             "type": "delta",
             "rows": updates + removed,
-            "snapshotMeta": dict(snapshot_meta),
+            "snapshotMeta": cast(SnapshotMeta, dict(snapshot_meta)),
         }
 
     @staticmethod

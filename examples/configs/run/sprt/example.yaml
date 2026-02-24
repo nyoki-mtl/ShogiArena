@@ -3,11 +3,10 @@
 # - SPRT は 2 つのエンジンバージョン間の統計的有意差を早期停止機能付きで検証します。
 # - `sprt` ブロックで仮説検定のパラメータ（elo0, elo1, alpha, beta）を指定します。
 # - 有意差が検出されるか、max_games に到達すると自動的に停止します。
-# - コメント内の「必須/任意」「既定: ...」は ArenaConfig の初期値を基準にしています。
+# - コメント内の「必須/任意」「既定: ...」は TournamentRunConfig の初期値を基準にしています。
 
 experiment_name: "sprt-test-example"      # 任意 (既定: YAML から推測)
 # work_dir: "{output_dir}"                # 任意 (既定: project_dirs.output_dir)
-# run_dir: null                           # 任意 (既定: {output_dir}/tournament_runs/{experiment}/{config})
 log_level: INFO                            # 任意 (既定: INFO)
 instances:                                 # 任意 (既定: CLI --instances または local.yaml)
   - "../../resources/instances/local_example.yaml"  # 相対パスは設定ファイルからの相対
@@ -41,15 +40,14 @@ rules:
     type: startpos                         # または file で開始局面ファイルを指定
     flip_policy: pair_both                 # 先後を入れ替えて対局
     source: null                           # type=file の場合は必須
-  adjudication:                            # 任意 (既定: enable_resign=false, enable_max_plies=true など)
-    enable_resign: true                    # 投了判定を有効化
-    resign_score_cp: 800                   # 800cp 差で投了
+  adjudication:                            # 任意
+    resign_threshold_cp: 800               # 800cp 差で投了（null で無効）
     resign_move_count: 8                   # 8 手連続で差がある場合
     resign_two_sided: true                 # 両方向の評価値差をチェック
     enable_max_plies: true                 # 最大手数制限を有効化
     max_plies: 320                         # 320 手で引き分け
     sync_max_plies_with_engine: true       # エンジンにも max_plies を送信
-    engine_max_ply_option_names: ["MaxMovesToDraw", "MaxPly"]
+    engine_max_ply_option_names: ["MaxMovesToDraw", "Draw_Ply"]
   repetition_occurrences_to_draw: 2        # 任意 (既定: 2)。千日手判定
 
 sprt:                                      # 必須。SPRT パラメータ
@@ -63,7 +61,7 @@ sprt:                                      # 必須。SPRT パラメータ
 engines:                                   # 必須。SPRT では通常 2 エンジン
   # 1. ベースラインエンジン（旧バージョン）
   - name: "Baseline"
-    artifact: "YaneuraOu/a5ee2786"         # artifact or engine_config の一方を必ず指定
+    artifact: "YaneuraOu/a5ee2786"         # artifact or engine_path の一方を必ず指定
     build_options:
       target_cpu: ZEN3                     # artifact 利用時は必須
       edition: YANEURAOU_ENGINE_NNUE_HALFKP_512X2_8_64  # 任意

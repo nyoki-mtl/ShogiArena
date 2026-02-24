@@ -1,4 +1,5 @@
 import pytest
+from rshogi.core import Move
 
 from shogiarena.arena.engines.usi_types import UsiBound, UsiEvalValue, UsiThinkPV, UsiThinkResult
 
@@ -46,9 +47,9 @@ def test_bestmove_to_usi_string_requires_bestmove() -> None:
     r = UsiThinkResult()
     with pytest.raises(ValueError):
         _ = r.to_usi_string()
-    r.bestmove = "7g7f"
+    r.bestmove = Move.from_usi("7g7f")
     assert r.to_usi_string() == "bestmove 7g7f"
-    r.ponder = "3c3d"
+    r.ponder = Move.from_usi("3c3d")
     assert r.to_usi_string() == "bestmove 7g7f ponder 3c3d"
 
 

@@ -13,9 +13,12 @@ from aiohttp import web
 
 from shogiarena.arena.services.persistence.db_service import ArenaDBService
 from shogiarena.arena.services.statistics.sprt import Sprt
+from shogiarena.db.factory import SQLiteShogiDBFactory
+from shogiarena.utils.types.coerce import coerce_game_result
 from shogiarena.utils.types.types import GameResult
 from shogiarena.web.dashboard.backend.http_helpers import json_error_response
 from shogiarena.web.dashboard.backend.live.schema import build_live_view_snapshot
+from shogiarena.web.dashboard.backend.sprt.types import SprtTimelineEntry
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +81,7 @@ class SprtAPI:
             if len(ordered) >= 2:
                 return ordered
 
-        db_service = ArenaDBService(self._db_path)
+        db_service = ArenaDBService(SQLiteShogiDBFactory(self._db_path))
         games = db_service.get_all_games()
         names: list[str] = []
         for game in games:
@@ -110,13 +113,7 @@ class SprtAPI:
 
     @staticmethod
     def _coerce_result(raw: Any) -> GameResult:
-        if isinstance(raw, GameResult):
-            return raw
-        if isinstance(raw, int):
-            return GameResult(raw)
-        if isinstance(raw, str) and raw.strip():
-            return GameResult(int(raw))
-        return GameResult.DRAW_BY_REPETITION
+        return coerce_game_result(raw) or GameResult.DRAW_BY_REPETITION
 
     def _resolve_sprt_config(self) -> dict[str, Any]:
         run_state = self._load_run_state()
@@ -135,7 +132,7 @@ class SprtAPI:
         return {}
 
     def _build_sprt_payload(self) -> dict[str, Any]:
-        db_service = ArenaDBService(self._db_path)
+        db_service = ArenaDBService(SQLiteShogiDBFactory(self._db_path))
         games = db_service.get_all_games()
         engines = self._resolve_engine_order()
         tested = engines[0] if len(engines) >= 1 else ""
@@ -156,7 +153,7 @@ class SprtAPI:
 
         sprt = Sprt(elo0=elo0, elo1=elo1, alpha=alpha, beta=beta)
 
-        timeline: list[dict[str, Any]] = []
+        timeline: list[SprtTimelineEntry] = []
         for index, game in enumerate(games, start=1):
             black_engine = game.get("black_engine")
             white_engine = game.get("white_engine")

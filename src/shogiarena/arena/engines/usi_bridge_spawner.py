@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 from shogiarena.arena.engines.usi_bridge import AsyncUSIProcessBridgeProtocol
@@ -51,6 +51,7 @@ class SpawnerBackedUSIBridge(AsyncUSIProcessBridgeProtocol):
 
         self.process: EngineProcess | None = None
         self._stderr_task: asyncio.Task[None] | None = None
+        self._stderr_handler: Callable[[str], None] | None = None
         self._stopping = False
 
     @property
@@ -138,9 +139,19 @@ class SpawnerBackedUSIBridge(AsyncUSIProcessBridgeProtocol):
                 stderr_line = line.decode("utf-8", errors="replace").rstrip("\r\n")
                 if stderr_line:
                     logger.debug("[ERR %s] %s", self.name, stderr_line)
+                    handler = self._stderr_handler
+                    if handler is not None:
+                        try:
+                            handler(stderr_line)
+                        except Exception:
+                            logger.debug("Stderr handler failed for %s", self.name, exc_info=True)
         except asyncio.CancelledError:
             logger.debug("Stderr monitor cancelled for %s", self.name)
             raise
+
+    def set_stderr_handler(self, handler: Callable[[str], None] | None) -> None:
+        """Register a callback invoked for each stderr line."""
+        self._stderr_handler = handler
 
     # Protocol method name (async generator)
     async def receive_lines(self) -> AsyncIterator[str]:

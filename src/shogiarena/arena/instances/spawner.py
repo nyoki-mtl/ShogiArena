@@ -11,7 +11,7 @@ import shlex
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 import asyncssh
 import psutil
@@ -117,7 +117,7 @@ class EngineProcess(ABC):
 class LocalEngineProcess(EngineProcess):
     """Wrapper for local asyncio subprocess."""
 
-    def __init__(self, process: asyncio.subprocess.Process):
+    def __init__(self, process: asyncio.subprocess.Process) -> None:
         """Initialize with asyncio subprocess."""
         self.process = process
 
@@ -162,7 +162,14 @@ class LocalEngineProcess(EngineProcess):
 class SSHEngineProcess(EngineProcess):
     """Wrapper for asyncssh client process that tunnels engine communication."""
 
-    def __init__(self, instance: Instance, conn: Any, proc: Any, *, probe_interval: float = 1.0):
+    def __init__(
+        self,
+        instance: Instance,
+        conn: asyncssh.SSHClientConnection,
+        proc: asyncssh.SSHClientProcess[bytes],
+        *,
+        probe_interval: float = 1.0,
+    ) -> None:
         """Initialize with asyncssh connection and process."""
         self._instance = instance
         self._conn = conn
@@ -179,24 +186,25 @@ class SSHEngineProcess(EngineProcess):
 
     @property
     def stdin(self) -> asyncio.StreamWriter | None:
-        from typing import cast
-
         return cast(asyncio.StreamWriter, self._proc.stdin)
 
     @property
     def stdout(self) -> asyncio.StreamReader | None:
-        from typing import cast
-
         return cast(asyncio.StreamReader, self._proc.stdout)
 
     @property
     def stderr(self) -> asyncio.StreamReader | None:
-        from typing import cast
-
         return cast(asyncio.StreamReader, self._proc.stderr)
 
     async def wait(self) -> int:
-        code: int = int(await self._proc.wait())
+        wait_result = await self._proc.wait()
+        if isinstance(wait_result, asyncssh.SSHCompletedProcess):
+            exit_status = wait_result.exit_status
+            if not isinstance(exit_status, int):
+                raise RuntimeError("SSH process completed without an integer exit status")
+            code = exit_status
+        else:
+            code = int(wait_result)
         if not self._closed:
             try:
                 self._conn.close()
@@ -228,7 +236,10 @@ class SSHEngineProcess(EngineProcess):
     @property
     def returncode(self) -> int | None:
         try:
-            return int(self._proc.exit_status)
+            value = self._proc.exit_status
+            if isinstance(value, int):
+                return value
+            return None
         except (AttributeError, TypeError, ValueError):
             return None
 
@@ -415,9 +426,9 @@ class EngineProcessSpawner:
                 command: str,
                 *,
                 legacy_command: Sequence[str] | None = None,
-            ) -> asyncssh.SSHClientProcess[Any]:
+            ) -> asyncssh.SSHClientProcess[bytes]:
                 try:
-                    return await conn.create_process(command, encoding=None)
+                    return cast(asyncssh.SSHClientProcess[bytes], await conn.create_process(command, encoding=None))
                 except TypeError:
                     if legacy_command is not None:
                         proc_tmp = await conn.create_process(list(legacy_command))
@@ -427,7 +438,7 @@ class EngineProcessSpawner:
                         stream = getattr(proc_tmp, attr, None)
                         if stream is not None and hasattr(stream, "set_encoding"):
                             stream.set_encoding(None)
-                    return proc_tmp
+                    return cast(asyncssh.SSHClientProcess[bytes], proc_tmp)
 
             try:
                 uname_proc = await _create_binary_process("uname -s", legacy_command=("uname", "-s"))

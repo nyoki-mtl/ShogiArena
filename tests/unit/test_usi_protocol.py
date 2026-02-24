@@ -1,4 +1,5 @@
 import pytest
+from rshogi.core import Move
 
 from shogiarena.arena.engines.usi_protocol import (
     UsiIdField,
@@ -66,8 +67,8 @@ def test_parse_bestmove_with_pv() -> None:
     pv = UsiProtocolParser.parse_info("info depth 12 score cp 45 pv 7g7f")
     result = UsiProtocolParser.parse_bestmove("bestmove 7g7f ponder 3c3d", pvs=[pv] if pv else None)
     assert result is not None
-    assert result.bestmove == "7g7f"
-    assert result.ponder == "3c3d"
+    assert result.bestmove == Move.from_usi("7g7f")
+    assert result.ponder == Move.from_usi("3c3d")
     assert result.pvs and result.pvs[0].depth == 12
 
 

@@ -6,8 +6,9 @@ import argparse
 import logging
 from typing import Any
 
-from shogiarena.arena.configs.tournament import ArenaConfig
+from shogiarena.arena.configs.tournament import TournamentRunConfig
 from shogiarena.arena.runners.sprt_runner import SprtRunner
+from shogiarena.arena.storage import FilesystemRunStorage
 from shogiarena.cli.errors import CliArgumentError, CliError
 from shogiarena.utils.common import project_dirs
 from shogiarena.utils.common.settings import SETTINGS, validate_overlays
@@ -16,7 +17,6 @@ from .base_run import BaseRunCommand
 from .config_builder import (
     materialize_engine_configs,
     parse_engine_tokens,
-    prepare_positions_file,
     resolve_run_dir,
     write_temp_config,
 )
@@ -76,24 +76,17 @@ def register_sprt_args(parser: argparse.ArgumentParser) -> None:
         help="Override sprt.* using YAML-style KEY=VALUE tokens",
     )
     parser.add_argument(
+        "--openbench",
+        action="append",
+        nargs="+",
+        metavar="KEY=VALUE",
+        help="Override openbench.* using YAML-style KEY=VALUE tokens",
+    )
+    parser.add_argument(
         "--games",
         type=int,
         default=400,
         help="Maximum number of games to play (default: 400)",
-    )
-    parser.add_argument(
-        "--no-swap",
-        action="store_true",
-        help="Do not swap colors (engine 1 stays black)",
-    )
-    parser.add_argument(
-        "--position",
-        default="startpos",
-        help="Starting position in SFEN/USI format (default: startpos)",
-    )
-    parser.add_argument(
-        "--positions-file",
-        help="Path to a text file with one SFEN/USI position per line",
     )
 
 
@@ -118,31 +111,15 @@ def run_sprt_sync(args: argparse.Namespace, *, base_cmd: BaseRunCommand | None =
     _resolve_tested_engine(engines)
     materialize_engine_configs(engines, label="sprt")
 
-    experiment_name = getattr(args, "run_name", None) or "sprt"
+    experiment_name = getattr(args, "experiment_name", None) or "sprt"
     output_dir = project_dirs.output_dir
     run_dir = resolve_run_dir(experiment_name, output_dir, getattr(args, "run_dir", None))
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    positions_path = prepare_positions_file(
-        run_dir=run_dir,
-        position=args.position,
-        positions_file=args.positions_file,
-        filename="sprt_positions.txt",
-    )
-    flip_policy = "none" if args.no_swap else "alternate"
-    initial_positions: dict[str, Any] = {"type": "startpos", "flip_policy": flip_policy}
-    if positions_path is not None:
-        initial_positions["type"] = "file"
-        initial_positions["source"] = str(positions_path)
-
     payload: dict[str, Any] = {
         "experiment_name": experiment_name,
         "output_dir": str(output_dir),
-        "run_dir": str(run_dir),
         "engines": engines,
-        "rules": {
-            "initial_positions": initial_positions,
-        },
         "sprt": {
             "elo0": 0.0,
             "elo1": 5.0,
@@ -161,6 +138,7 @@ def run_sprt_sync(args: argparse.Namespace, *, base_cmd: BaseRunCommand | None =
     apply_section_overrides(payload, "dashboard", _flatten_block_tokens(args.dashboard))
     apply_section_overrides(payload, "system", _flatten_block_tokens(args.system))
     apply_section_overrides(payload, "sprt", _flatten_block_tokens(args.sprt))
+    apply_section_overrides(payload, "openbench", _flatten_block_tokens(args.openbench))
 
     if not _has_time_control(payload):
         raise CliError("time control (rules or engine-specific) is required")
@@ -168,7 +146,11 @@ def run_sprt_sync(args: argparse.Namespace, *, base_cmd: BaseRunCommand | None =
     instance_pool = None
     validate_overlays(SETTINGS)
     config_path = write_temp_config(payload, label="sprt")
-    config = ArenaConfig.from_yaml(config_path)
+    config = TournamentRunConfig.from_yaml(config_path)
+
+    if getattr(args, "validate_only", False):
+        LOGGER.info("Validated SPRT config")
+        return
 
     cmd.apply_git_worktree(config.engines, getattr(args, "git_worktree", "strict"))
 
@@ -179,9 +161,11 @@ def run_sprt_sync(args: argparse.Namespace, *, base_cmd: BaseRunCommand | None =
         LOGGER.info("DRY RUN: Validated SPRT config")
         return
 
+    storage = FilesystemRunStorage(run_dir)
     runner = SprtRunner(
         config,
-        overwrite=False,
+        storage=storage,
+        no_resume=False,
         instance_pool=instance_pool,
     )
     runner.run_sync()

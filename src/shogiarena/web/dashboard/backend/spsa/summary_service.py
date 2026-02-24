@@ -11,9 +11,12 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from shogiarena.utils.types.coerce import coerce_bool, coerce_float, coerce_int
 from shogiarena.utils.types.types import GameResult
 
+from .models import SpsaMetaData, SummaryCachePayload
 from .store import SpsaStore
+from .types import SpsaSummaryGames, SpsaSummaryPayload
 
 _STORE_LOG_THRESHOLD_MS = 50.0
 _STEP_HISTORY_CAPACITY = 256
@@ -22,52 +25,15 @@ _CACHE_VERSION = 1
 _CACHE_FILENAME = ".cache/summary_cache_v1.json"
 
 
-def _coerce_int(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return 1 if value else 0
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return None
-        try:
-            return int(stripped)
-        except ValueError:
-            return None
-    return None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return 1.0 if value else 0.0
-    if isinstance(value, int | float):
-        return float(value)
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return None
-        try:
-            return float(stripped)
-        except ValueError:
-            return None
-    return None
-
-
-def _coerce_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int | float):
-        return bool(value)
+def _coerce_bool_with_color(value: Any) -> bool:
+    """``coerce_bool`` に ``"black"``/``"white"`` 解釈を追加したドメイン特化版。"""
     if isinstance(value, str):
         lowered = value.strip().lower()
-        if lowered in {"1", "true", "t", "yes", "y", "on", "black"}:
+        if lowered == "black":
             return True
-        if lowered in {"0", "false", "f", "no", "n", "off", "white"}:
+        if lowered == "white":
             return False
-    return False
+    return coerce_bool(value)
 
 
 class _SummaryAccumulator:
@@ -128,26 +94,26 @@ class _SummaryAccumulator:
         acc.tuned_black_losses = int(payload.get("tuned_black_losses", 0) or 0)
         acc.tuned_white_wins = int(payload.get("tuned_white_wins", 0) or 0)
         acc.tuned_white_losses = int(payload.get("tuned_white_losses", 0) or 0)
-        acc.last_update_idx = _coerce_int(payload.get("last_update_idx"))
-        acc.last_delta_norm = _coerce_float(payload.get("last_delta_norm"))
+        acc.last_update_idx = coerce_int(payload.get("last_update_idx"))
+        acc.last_delta_norm = coerce_float(payload.get("last_delta_norm"))
         updates_seen = payload.get("updates_seen", [])
         if isinstance(updates_seen, list):
             rebuilt: set[int] = set()
             for item in updates_seen:
-                coerced = _coerce_int(item)
+                coerced = coerce_int(item)
                 if coerced is not None:
                     rebuilt.add(coerced)
             acc.updates_seen = rebuilt
         steps = payload.get("step_history", [])
         if isinstance(steps, list):
             for item in steps:
-                value = _coerce_float(item)
+                value = coerce_float(item)
                 if value is not None:
                     acc.step_history.append(value)
         timestamps = payload.get("update_timestamps", [])
         if isinstance(timestamps, list):
             for item in timestamps:
-                value = _coerce_int(item)
+                value = coerce_int(item)
                 if value is not None:
                     acc.update_timestamps.append(value)
         return acc
@@ -161,11 +127,11 @@ class _SummaryAccumulator:
         return False
 
     def _consume_game_result(self, event: Mapping[str, Any]) -> bool:
-        tuned_as_black = _coerce_bool(event.get("tuned_as_black"))
-        winner_flag = _coerce_int(event.get("winner"))
+        tuned_as_black = _coerce_bool_with_color(event.get("tuned_as_black"))
+        winner_flag = coerce_int(event.get("winner"))
 
         if winner_flag not in {0, 1}:
-            result_code = _coerce_int(event.get("result_code"))
+            result_code = coerce_int(event.get("result_code"))
             if result_code is not None:
                 try:
                     result = GameResult(result_code)
@@ -196,23 +162,23 @@ class _SummaryAccumulator:
 
     def _consume_update(self, event: Mapping[str, Any]) -> bool:
         changed = False
-        idx = _coerce_int(event.get("update_idx"))
+        idx = coerce_int(event.get("update_idx"))
         if idx is not None:
             if idx not in self.updates_seen:
                 changed = True
             self.updates_seen.add(idx)
             if self.last_update_idx is None or idx > self.last_update_idx:
                 self.last_update_idx = idx
-        step_val = _coerce_float(event.get("step"))
+        step_val = coerce_float(event.get("step"))
         if step_val is not None:
             self.step_history.append(step_val)
             changed = True
         timestamp = event.get("ts") if "ts" in event else event.get("timestamp")
-        ts_val = _coerce_int(timestamp)
+        ts_val = coerce_int(timestamp)
         if ts_val is not None:
             self.update_timestamps.append(ts_val)
             changed = True
-        delta_norm = _coerce_float(event.get("delta_norm"))
+        delta_norm = coerce_float(event.get("delta_norm"))
         if delta_norm is not None:
             self.last_delta_norm = delta_norm
             changed = True
@@ -234,21 +200,15 @@ class SpsaSummaryService:
         self._cache_path = cache_path if isinstance(cache_path, Path) else None
         self._load_cache()
 
-    def compute_summary(self) -> dict[str, Any]:
+    def compute_summary(self) -> SpsaSummaryPayload:
         """Compute summary statistics from cached aggregates and new events."""
 
         start_meta = time.perf_counter()
         meta_data = self._store.load_meta_data()
         meta_elapsed = (time.perf_counter() - start_meta) * 1000.0
 
-        session_uuid = None
-        if isinstance(meta_data, dict):
-            raw_uuid = meta_data.get("session_uuid")
-            if isinstance(raw_uuid, str):
-                session_uuid = raw_uuid.strip() or None
-
         with self._lock:
-            self._refresh_from_events(session_uuid)
+            self._refresh_from_events(meta_data.session_uuid)
             summary = self._build_summary(meta_data)
 
         if meta_elapsed >= _STORE_LOG_THRESHOLD_MS:
@@ -256,15 +216,10 @@ class SpsaSummaryService:
 
         return summary
 
-    def _build_summary(self, meta_data: Mapping[str, Any] | None) -> dict[str, Any]:
+    def _build_summary(self, meta_data: SpsaMetaData) -> SpsaSummaryPayload:
         agg = self._aggregates
-        raw_total = None
-        if isinstance(meta_data, Mapping):
-            raw_total = _coerce_int(meta_data.get("total"))
-            if raw_total is None:
-                raw_total = _coerce_int(meta_data.get("num_updates"))
-        num_updates_total = raw_total if raw_total is not None else 0
-        experiment_name = meta_data.get("experiment_name") if isinstance(meta_data, Mapping) else "Unknown"
+        num_updates_total = meta_data.effective_num_updates or 0
+        experiment_name = meta_data.experiment_name
 
         wins = agg.wins
         losses = agg.losses
@@ -282,51 +237,15 @@ class SpsaSummaryService:
         recent_step = recent_steps[-1] if recent_steps else 0.0
         recent_delta_norm = agg.last_delta_norm if agg.last_delta_norm is not None else 0.0
 
-        engine_time_controls: dict[str, str] = {}
-        default_time_control: str | None = None
-        engines: list[str] = []
-        engine_instances: dict[str, str | None] = {}
-        engine_stats: dict[str, dict[str, int | float]] = {}
-        engines_meta: list[dict[str, Any]] = []
-        if isinstance(meta_data, Mapping):
-            raw_time_controls = meta_data.get("engine_time_controls") or meta_data.get("engineTimeControls")
-            if isinstance(raw_time_controls, Mapping):
-                for name, spec in raw_time_controls.items():
-                    key = str(name or "").strip()
-                    if not key:
-                        continue
-                    if spec is None:
-                        engine_time_controls[key] = "-"
-                    else:
-                        engine_time_controls[key] = str(spec)
-            raw_default_tc = meta_data.get("default_time_control") or meta_data.get("defaultTimeControl")
-            if raw_default_tc is not None:
-                default_time_control = str(raw_default_tc)
-            raw_engines = meta_data.get("engines")
-            if isinstance(raw_engines, list):
-                engines = [str(name).strip() for name in raw_engines if str(name or "").strip()]
-            raw_instances = meta_data.get("engine_instances") or meta_data.get("engineInstances")
-            if isinstance(raw_instances, Mapping):
-                for name, inst in raw_instances.items():
-                    key = str(name or "").strip()
-                    if not key:
-                        continue
-                    engine_instances[key] = None if inst is None else str(inst)
-            raw_stats = meta_data.get("engine_stats") or meta_data.get("engineStats")
-            if isinstance(raw_stats, Mapping):
-                for name, stat in raw_stats.items():
-                    key = str(name or "").strip()
-                    if not key or not isinstance(stat, Mapping):
-                        continue
-                    engine_stats[key] = {
-                        "wins": int(stat.get("wins") or 0),
-                        "losses": int(stat.get("losses") or 0),
-                        "draws": int(stat.get("draws") or 0),
-                        "games": int(stat.get("games") or 0),
-                    }
-            raw_meta = meta_data.get("enginesMeta") or meta_data.get("engines_meta")
-            if isinstance(raw_meta, list):
-                engines_meta = [dict(entry) for entry in raw_meta if isinstance(entry, Mapping)]
+        engine_time_controls = dict(meta_data.engine_time_controls)
+        default_time_control = meta_data.default_time_control
+        engines = list(meta_data.engines)
+        engine_instances = dict(meta_data.engine_instances)
+        engine_stats: dict[str, dict[str, int | float]] = {
+            name: {"wins": stat.wins, "losses": stat.losses, "draws": stat.draws, "games": stat.games}
+            for name, stat in meta_data.engine_stats.items()
+        }
+        engines_meta = list(meta_data.engines_meta)
 
         # Prefer live aggregates over stale meta.json values
         if engines:
@@ -346,74 +265,46 @@ class SpsaSummaryService:
                 "games": games_total,
             }
 
-        # Build spsaConfig from meta_data for Rules tab display
-        spsa_config: dict[str, Any] | None = None
-        if isinstance(meta_data, dict):
-            _SPSA_CONFIG_KEYS = (
-                "num_updates",
-                "mobility",
-                "scale",
-                "a0",
-                "A",
-                "alpha",
-                "gamma",
-                "crn_enabled",
-                "int_rounding",
-                "int_ck_floor",
-                "update_mode",
-                "snap_float_to_step",
-                "early_stop",
-                "update_batch_size",
-                "inflight_factor",
-            )
-            spsa_config = {}
-            for key in _SPSA_CONFIG_KEYS:
-                if key in meta_data:
-                    spsa_config[key] = meta_data[key]
-            ltc_raw = meta_data.get("ltc_regression")
-            if isinstance(ltc_raw, dict):
-                spsa_config["ltc_regression"] = ltc_raw
-            if not spsa_config:
-                spsa_config = None
+        spsa_config = meta_data.resolve_spsa_config()
 
-        return {
-            "mode": "spsa",
-            "experiment_name": experiment_name,
-            "wins": wins,
-            "losses": losses,
-            "draws": draws,
-            "elo": None,
-            "btd_elo": None,
-            "btd_se": None,
-            "btd_los": None,
-            "games_total": games_total,
-            "draw_rate": (draws / games_total) if games_total > 0 else None,
-            "tuned_black_wins": agg.tuned_black_wins,
-            "tuned_black_losses": agg.tuned_black_losses,
-            "tuned_white_wins": agg.tuned_white_wins,
-            "tuned_white_losses": agg.tuned_white_losses,
-            "games": {
-                "completed": updates_completed,
-                "total": num_updates_total,
-            },
-            "last_update_idx": agg.last_update_idx,
-            "step_mean_20": step_mean_20,
-            "step_std_20": step_std_20,
-            "recent_steps": recent_steps,
-            "delta_norm_last": agg.last_delta_norm,
-            "eta_seconds": eta_seconds,
-            "winrate": winrate,
-            "progress": progress,
-            "recent_step": recent_step,
-            "recent_delta_norm": recent_delta_norm,
-            "engineTimeControls": engine_time_controls,
-            "defaultTimeControl": default_time_control,
-            "engines": engines,
-            "enginesMeta": engines_meta,
-            "engineInstances": engine_instances,
-            "engineStats": engine_stats,
-            "spsaConfig": spsa_config,
-        }
+        return SpsaSummaryPayload(
+            mode="spsa",
+            experiment_name=experiment_name,
+            wins=wins,
+            losses=losses,
+            draws=draws,
+            elo=None,
+            btd_elo=None,
+            btd_se=None,
+            btd_los=None,
+            games_total=games_total,
+            draw_rate=(draws / games_total) if games_total > 0 else None,
+            tuned_black_wins=agg.tuned_black_wins,
+            tuned_black_losses=agg.tuned_black_losses,
+            tuned_white_wins=agg.tuned_white_wins,
+            tuned_white_losses=agg.tuned_white_losses,
+            games=SpsaSummaryGames(
+                completed=updates_completed,
+                total=num_updates_total,
+            ),
+            last_update_idx=agg.last_update_idx,
+            step_mean_20=step_mean_20,
+            step_std_20=step_std_20,
+            recent_steps=recent_steps,
+            delta_norm_last=agg.last_delta_norm,
+            eta_seconds=eta_seconds,
+            winrate=winrate,
+            progress=progress,
+            recent_step=recent_step,
+            recent_delta_norm=recent_delta_norm,
+            engineTimeControls=engine_time_controls,
+            defaultTimeControl=default_time_control,
+            engines=engines,
+            enginesMeta=engines_meta,
+            engineInstances=engine_instances,
+            engineStats=engine_stats,
+            spsaConfig=spsa_config,
+        )
 
     @staticmethod
     def _compute_window_stats(values: list[float]) -> tuple[float | None, float | None]:
@@ -509,20 +400,18 @@ class SpsaSummaryService:
         if not self._cache_path or not self._cache_path.exists():
             return
         try:
-            payload = json.loads(self._cache_path.read_text(encoding="utf-8"))
+            raw = json.loads(self._cache_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return
-        if not isinstance(payload, Mapping) or payload.get("version") != _CACHE_VERSION:
+        if not isinstance(raw, dict) or raw.get("version") != _CACHE_VERSION:
             return
-        aggregates = payload.get("aggregates")
-        if isinstance(aggregates, Mapping):
-            self._aggregates = _SummaryAccumulator.from_dict(aggregates)
-        session_uuid = payload.get("session_uuid")
-        if isinstance(session_uuid, str):
-            self._session_uuid = session_uuid or None
-        self._events_offset = int(payload.get("events_offset", 0) or 0)
-        self._events_size = int(payload.get("events_size", 0) or 0)
-        self._events_mtime_ns = int(payload.get("events_mtime_ns", 0) or 0)
+        cache = SummaryCachePayload.model_validate(raw)
+        if cache.aggregates:
+            self._aggregates = _SummaryAccumulator.from_dict(cache.aggregates)
+        self._session_uuid = cache.session_uuid
+        self._events_offset = cache.events_offset
+        self._events_size = cache.events_size
+        self._events_mtime_ns = cache.events_mtime_ns
 
     def _persist_cache(self) -> None:
         if not self._cache_path:

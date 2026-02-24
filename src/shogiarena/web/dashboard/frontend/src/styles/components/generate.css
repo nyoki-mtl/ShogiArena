@@ -1,0 +1,84 @@
+@layer components {
+    .generate-hero {
+        display: grid;
+        gap: 1rem;
+    }
+
+    .generate-card {
+        border-radius: var(--radius-xl, 1.125rem);
+        border: 1px solid rgb(var(--color-dashboard-border) / 0.5);
+        background: rgb(var(--color-dashboard-surface));
+        padding: 1.25rem;
+        box-shadow: var(--shadow-dashboard-card);
+        transition: all 0.25s var(--ease-smooth, ease);
+        animation: fadeInUp 0.4s var(--ease-out-expo, ease-out) backwards;
+    }
+
+    .generate-card:hover {
+        box-shadow: var(--shadow-dashboard-card-hover);
+        transform: translateY(-2px);
+    }
+
+    .generate-card__header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+    }
+
+    .generate-card__header h2 {
+        @apply text-lg font-semibold text-dashboard-heading;
+        margin: 0;
+    }
+
+    .generate-card__eyebrow {
+        @apply text-xs uppercase tracking-[0.3em] text-dashboard-muted;
+        margin: 0 0 0.35rem 0;
+    }
+
+    .generate-kpis {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 1rem;
+    }
+
+    .generate-kpi {
+        @apply rounded-xl bg-dashboard-surfaceMuted/50 p-4;
+        border: 1px solid rgb(var(--color-dashboard-border) / 0.4);
+        border-left: 4px solid rgb(var(--color-dashboard-accent));
+        box-shadow: var(--shadow-dashboard-card);
+        transition: all 0.25s var(--ease-smooth, ease);
+        animation: fadeInUp 0.35s var(--ease-out-expo, ease-out) backwards;
+    }
+
+    .generate-kpi:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-dashboard-card-hover);
+    }
+
+    .generate-kpis .generate-kpi:nth-child(1) {
+        animation-delay: 0ms;
+    }
+    .generate-kpis .generate-kpi:nth-child(2) {
+        animation-delay: 60ms;
+    }
+    .generate-kpis .generate-kpi:nth-child(3) {
+        animation-delay: 120ms;
+    }
+    .generate-kpis .generate-kpi:nth-child(4) {
+        animation-delay: 180ms;
+    }
+
+    .generate-kpi__label {
+        @apply text-xs uppercase tracking-wide text-dashboard-muted;
+        margin: 0;
+    }
+
+    .generate-kpi__value {
+        @apply mt-2 text-2xl font-semibold text-dashboard-heading;
+        font-variant-numeric: tabular-nums;
+        margin: 0;
+    }
+}

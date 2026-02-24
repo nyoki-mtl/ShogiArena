@@ -5,14 +5,13 @@ import json
 import logging
 import os
 import shlex
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import yaml
-from omegaconf import OmegaConf
 
 from shogiarena.arena.instances.models import Instance, InstanceType
 from shogiarena.arena.instances.provision import Provisioner
@@ -304,10 +303,10 @@ class RemoteStreamConsumer:
         command: str,
         *,
         timeout: float | None,
-        on_event: Callable[[dict[str, Any]], None] | None,
-    ) -> list[dict[str, Any]]:
+        on_event: Callable[[dict[str, object]], None] | None,
+    ) -> list[dict[str, object]]:
         line_iter = self._transport.run_stream_lines(command)
-        events: list[dict[str, Any]] = []
+        events: list[dict[str, object]] = []
         exit_code: int | None = None
         last_error: str | None = None
         last_text: str | None = None
@@ -499,12 +498,12 @@ class RemoteExecutor:
         self._logger.debug("[%s] engine ready: %s", self.instance.name, remote_bin)
         return remote_bin
 
-    async def resolve_local_binary(self, engine_config_path: Path) -> Path:
+    async def resolve_local_binary(self, config_path: Path) -> Path:
         """Resolve a local engine binary path from configuration or artifacts."""
-        config = yaml.safe_load(engine_config_path.read_text(encoding="utf-8")) or {}
-        engine_path = config.get("engine_path")
-        if isinstance(engine_path, str) and engine_path.strip():
-            return Path(engine_path)
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        binary_path = config.get("engine_path")
+        if isinstance(binary_path, str) and binary_path.strip():
+            return Path(binary_path)
         artifact = config.get("artifact")
         if not isinstance(artifact, str) or not artifact.strip():
             raise ValueError("engine config must specify engine_path or artifact")
@@ -515,24 +514,21 @@ class RemoteExecutor:
         resolver = ArtifactResolver(overwrite=False)
         return resolver.resolve(artifact, overrides=overrides)
 
-    def _normalize_build_overrides(self, raw: Any) -> dict[str, Any]:
+    def _normalize_build_overrides(self, raw: Mapping[str, object] | None) -> dict[str, object]:
         if raw is None:
             return {}
-        if isinstance(raw, dict):
+        if isinstance(raw, Mapping):
             return {str(k): v for k, v in raw.items()}
-        container = OmegaConf.to_container(raw, resolve=True)
-        if isinstance(container, dict):
-            return {str(k): v for k, v in container.items()}
         raise TypeError("build_options must be a mapping")
 
     async def run_remote_pair(
         self,
         *,
         remote_root: str,
-        spec: dict[str, Any],
+        spec: dict[str, object],
         timeout: float | None = None,
-        on_event: Callable[[dict[str, Any]], None] | None = None,
-    ) -> list[dict[str, Any]]:
+        on_event: Callable[[dict[str, object]], None] | None = None,
+    ) -> list[dict[str, object]]:
         """Execute a remote pair run and return the collected JSON events."""
         await self._ensure_connected()
         base_abs = await self.path_resolver.expand(remote_root)

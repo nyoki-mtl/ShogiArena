@@ -12,16 +12,20 @@ import json
 import logging
 import os
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from aiohttp import web
 
 from shogiarena.arena.instances.pool import InstancePool
-from shogiarena.db import ShogiDB, SQLiteShogiDBFactory
+from shogiarena.arena.orchestrators.base_orchestrator_utils import sanitize_engine_io_line
+from shogiarena.db import ShogiRepository, SQLiteShogiDBFactory
+from shogiarena.utils.types.snapshots import EngineIoTailEntry, GameSnapshot, WorkerSnapshot
+from shogiarena.utils.types.types import EngineOptionsSnapshots, JsonValue
 from shogiarena.web.dashboard.backend import (
     BroadcastHandler,
     DashboardState,
@@ -30,6 +34,7 @@ from shogiarena.web.dashboard.backend import (
     SnapshotStorage,
     StaticAssetsHandler,
 )
+from shogiarena.web.dashboard.backend.generate import GenerateAPI
 from shogiarena.web.dashboard.backend.instances import InstancesAPIHandler
 from shogiarena.web.dashboard.backend.live import (
     build_live_view_snapshot,
@@ -40,12 +45,15 @@ from shogiarena.web.dashboard.backend.scheduler import SchedulerAPIHandler
 from shogiarena.web.dashboard.backend.sprt import SprtAPI
 from shogiarena.web.dashboard.backend.spsa import SPSAAPI
 from shogiarena.web.dashboard.backend.tournament import TournamentAPI
+from shogiarena.web.dashboard.backend.types import GamesSnapshotPayload
 from shogiarena.web.dashboard.backend.ws_server import LiveWebSocketHub
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only
     from shogiarena.arena.runners.base_runner import BaseSessionRunner
 
 logger = logging.getLogger(__name__)
+
+ENGINE_IO_LOG_LIMIT = 1000
 
 
 class ArenaAPIServer:
@@ -79,6 +87,10 @@ class ArenaAPIServer:
         default_summary["runDir"] = str(self.run_dir)
         self._state.summary_snapshots["tournament"] = default_summary
 
+        generate_summary = self._default_summary_snapshot(source="generate")
+        generate_summary["runDir"] = str(self.run_dir)
+        self._state.summary_snapshots["generate"] = generate_summary
+
         # Initialize backend components
         self._game_cache = GameSnapshotCache(self._state)
         self._game_state = GameStateUpdater(self._game_cache)
@@ -89,8 +101,8 @@ class ArenaAPIServer:
         self._diagnostics_retention_minutes = self._load_snapshot_retention_minutes()
         self._debug_last_get_worker: dict[int, float] = {}
 
-        # ShogiDB
-        self.shogidb: ShogiDB | None = None
+        # ShogiRepository
+        self.shogidb: ShogiRepository | None = None
         self._init_shogidb()
 
         # Instance management API
@@ -121,6 +133,10 @@ class ArenaAPIServer:
             db_path=self.db_path,
             run_dir=self.run_dir,
             summary_supplier=lambda: self._copy_summary_snapshot(source="sprt"),
+        )
+        self.generate_api = GenerateAPI(
+            db_path=self.db_path,
+            run_dir=self.run_dir,
         )
 
         # Scheduler API
@@ -327,6 +343,7 @@ class ArenaAPIServer:
         self.spsa_api.register_routes(self.app)
         self.match_api.register_routes(self.app)
         self.sprt_api.register_routes(self.app)
+        self.generate_api.register_routes(self.app)
         self.app.router.add_get("/ws", self.ws_hub.handler)
         self.app.router.add_post("/api/diagnostics/snapshots", self.post_diagnostics_snapshot)
 
@@ -338,13 +355,13 @@ class ArenaAPIServer:
         self._static_handler.setup_routes(self.app)
 
     # ------------------------------------------------------------------
-    # ShogiDB
+    # ShogiRepository
     # ------------------------------------------------------------------
     def _init_shogidb(self) -> None:
         game_db_path = (self.run_dir / "game.db") if self.run_dir else None
         if game_db_path and game_db_path.exists():
             factory = SQLiteShogiDBFactory(game_db_path)
-            self.shogidb = ShogiDB(factory.engine, factory.session_factory)
+            self.shogidb = ShogiRepository(factory.engine, factory.session_factory)
             logger.debug("Arena API will use ORM DB: %s", game_db_path)
         else:
             logger.warning("Arena API will use arena SQLite DB (no game.db detected)")
@@ -402,7 +419,7 @@ class ArenaAPIServer:
                     if snap is None:
                         continue
                     ws_snapshot = self._game_state.build_ws_snapshot(
-                        gid, snap, assignment_rev=self._state.assignment_rev
+                        gid, cast(GameSnapshot, snap), assignment_rev=self._state.assignment_rev
                     )
                     if ws_snapshot is None:
                         continue
@@ -419,6 +436,13 @@ class ArenaAPIServer:
         if topic in {"live.assignment.snapshot", "live.assignment.diff"}:
             snapshot = self._build_assignment_snapshot(worker_filter=None)
             return [("live.assignment.snapshot", snapshot)]
+        if topic.startswith("live.engine."):
+            parsed = self._parse_engine_log_topic(topic)
+            if not parsed:
+                return []
+            gid, role = parsed
+            payload = self._build_engine_io_snapshot_payload(gid, role)
+            return [(f"live.engine.{gid}.{role}.io.snapshot", payload)]
         if topic.startswith("live.game."):
             gid = self._extract_gid_from_topic(topic)
             if not gid:
@@ -426,7 +450,9 @@ class ArenaAPIServer:
             snap = self._game_cache.get(gid)
             if snap is None:
                 return []
-            ws_snapshot = self._game_state.build_ws_snapshot(gid, snap, assignment_rev=self._state.assignment_rev)
+            ws_snapshot = self._game_state.build_ws_snapshot(
+                gid, cast(GameSnapshot, snap), assignment_rev=self._state.assignment_rev
+            )
             if ws_snapshot is None:
                 return []
             return [(f"live.game.{gid}.snapshot", {"gid": gid, "snapshot": ws_snapshot})]
@@ -473,10 +499,71 @@ class ArenaAPIServer:
             "assignment_rev": self._state.assignment_rev,
         }
 
+    def _ensure_engine_io_buffers(self, gid: str) -> dict[str, deque[EngineIoTailEntry]]:
+        logs = self._state.engine_io_logs.get(gid)
+        if not isinstance(logs, dict):
+            logs = {}
+            self._state.engine_io_logs[gid] = logs
+        for role in ("black", "white"):
+            entry = logs.get(role)
+            if not isinstance(entry, deque):
+                logs[role] = deque(maxlen=ENGINE_IO_LOG_LIMIT)
+            elif entry.maxlen != ENGINE_IO_LOG_LIMIT:
+                logs[role] = deque(entry, maxlen=ENGINE_IO_LOG_LIMIT)
+        return logs
+
+    def _store_engine_io_entry(
+        self,
+        *,
+        gid: str,
+        role: str,
+        direction: str,
+        line: str,
+        ts: int,
+        state: str | None = None,
+    ) -> EngineIoTailEntry:
+        logs = self._ensure_engine_io_buffers(gid)
+        sanitized = sanitize_engine_io_line(line)
+        entry: EngineIoTailEntry = {"dir": direction, "line": sanitized, "ts": ts}
+        if state:
+            entry["state"] = state
+        logs[role].append(entry)
+        return entry
+
+    def _build_engine_io_snapshot_payload(self, gid: str, role: str) -> dict[str, Any]:
+        logs = self._state.engine_io_logs.get(gid, {})
+        entries = [dict(entry) for entry in logs.get(role, [])] if isinstance(logs, dict) else []
+        return {
+            "gid": gid,
+            "role": role,
+            "entries": entries,
+            "limit": ENGINE_IO_LOG_LIMIT,
+        }
+
+    @staticmethod
+    def _parse_engine_log_topic(topic: str) -> tuple[str, str] | None:
+        prefix = "live.engine."
+        if not topic.startswith(prefix):
+            return None
+        rest = topic[len(prefix) :]
+        if ".io." not in rest:
+            return None
+        left, _suffix = rest.rsplit(".io.", 1)
+        parts = left.split(".")
+        if len(parts) < 2:
+            return None
+        role = parts[-1]
+        gid = ".".join(parts[:-1])
+        if role not in {"black", "white"}:
+            return None
+        if not gid:
+            return None
+        return gid, role
+
     # ------------------------------------------------------------------
     # Snapshot copy helpers (read from state)
     # ------------------------------------------------------------------
-    def _copy_engine_options_snapshot(self) -> dict[str, dict[str, Any]]:
+    def _copy_engine_options_snapshot(self) -> EngineOptionsSnapshots:
         return copy.deepcopy(self._state.engine_options_snapshot)
 
     def _copy_engine_info_snapshot(self) -> dict[str, dict[str, str]]:
@@ -486,7 +573,7 @@ class ArenaAPIServer:
         snapshot = self._state.summary_snapshots.get(source)
         return copy.deepcopy(snapshot) if snapshot else {}
 
-    def _copy_games_snapshot(self) -> dict[str, Any] | None:
+    def _copy_games_snapshot(self) -> GamesSnapshotPayload | None:
         return copy.deepcopy(self._state.games_snapshot) if self._state.games_snapshot else None
 
     # ------------------------------------------------------------------
@@ -504,7 +591,7 @@ class ArenaAPIServer:
         except (TypeError, ValueError):
             logger.debug("Failed to serialise engine options for %s", engine_name, exc_info=True)
             return
-        self._state.engine_options_snapshot[str(engine_name)] = opts_serialized
+        self._state.engine_options_snapshot[str(engine_name)] = cast(dict[str, JsonValue], opts_serialized)
         if info:
             self._state.engine_info_snapshot[str(engine_name)] = {str(k): str(v) for k, v in info.items()}
 
@@ -602,6 +689,47 @@ class ArenaAPIServer:
         """Broadcast a worker update to WebSocket clients."""
         self._broadcast.worker_update(worker_idx, payload)
 
+    def broadcast_engine_io(self, worker_idx: int, payload: dict[str, Any]) -> None:
+        """Record and broadcast engine I/O log updates."""
+        gid_raw = payload.get("game_id") or payload.get("gid")
+        if not gid_raw:
+            return
+        gid = str(gid_raw).strip()
+        if not gid:
+            return
+        role = payload.get("role")
+        if role not in {"black", "white"}:
+            return
+        direction = payload.get("direction")
+        if direction not in {"in", "out"}:
+            return
+        line = payload.get("line")
+        if not isinstance(line, str) or not line.strip():
+            return
+        ts_raw = payload.get("ts")
+        ts = int(ts_raw) if isinstance(ts_raw, int | float) else int(time.time() * 1000)
+        state_raw = payload.get("state")
+        state = state_raw.strip() if isinstance(state_raw, str) and state_raw.strip() else None
+        entry = self._store_engine_io_entry(
+            gid=gid,
+            role=role,
+            direction=direction,
+            line=line,
+            ts=ts,
+            state=state,
+        )
+        topic = f"live.engine.{gid}.{role}.io.diff"
+        if hasattr(self, "ws_hub") and self.ws_hub is not None:
+            if self.ws_hub.has_subscribers(topic):
+                self.ws_hub.publish(topic, {"gid": gid, "role": role, "entries": [entry]}, worker_idx=worker_idx)
+
+    def clear_engine_logs(self, game_id: str | int) -> None:
+        """Clear engine I/O logs for a finished game."""
+        gid = str(game_id).strip()
+        if not gid:
+            return
+        self._state.engine_io_logs.pop(gid, None)
+
     def broadcast_summary_update(self, payload: dict[str, Any], *, source: str = "tournament") -> None:
         """Broadcast a summary update to WebSocket clients."""
         self._broadcast.summary_update(payload, source=source)
@@ -612,23 +740,27 @@ class ArenaAPIServer:
 
     def set_worker_snapshot(self, worker_idx: int, snapshot: dict[str, Any], *, broadcast: bool = True) -> None:
         """Set a worker snapshot."""
-        self._broadcast.set_worker(worker_idx, snapshot, broadcast=broadcast)
+        self._broadcast.set_worker(worker_idx, cast(WorkerSnapshot, snapshot), broadcast=broadcast)
+
+    def assign_worker_snapshot(self, worker_idx: int, snapshot: dict[str, Any]) -> None:
+        """Assign a worker to a game and publish assignment + game snapshot."""
+        self._broadcast.assign_worker_snapshot(worker_idx, cast(WorkerSnapshot, snapshot))
 
     # ------------------------------------------------------------------
     # Legacy property access (backward compatibility)
     # ------------------------------------------------------------------
     @property
-    def worker_snapshots(self) -> dict[int, dict[str, Any]]:
+    def worker_snapshots(self) -> dict[int, WorkerSnapshot]:
         """Access worker snapshots (for backward compatibility)."""
         return self._state.worker_snapshots
 
     @property
-    def engine_options_snapshot(self) -> dict[str, dict[str, Any]]:
+    def engine_options_snapshot(self) -> EngineOptionsSnapshots:
         """Access engine options snapshot (for backward compatibility)."""
         return self._state.engine_options_snapshot
 
     @engine_options_snapshot.setter
-    def engine_options_snapshot(self, value: dict[str, dict[str, Any]]) -> None:
+    def engine_options_snapshot(self, value: EngineOptionsSnapshots) -> None:
         self._state.engine_options_snapshot = value
 
     @property
@@ -650,12 +782,12 @@ class ArenaAPIServer:
         self._state.summary_snapshots["tournament"] = value
 
     @property
-    def games_snapshot(self) -> dict[str, Any] | None:
+    def games_snapshot(self) -> GamesSnapshotPayload | None:
         """Access games snapshot (for backward compatibility)."""
         return self._state.games_snapshot
 
     @games_snapshot.setter
-    def games_snapshot(self, value: dict[str, Any] | None) -> None:
+    def games_snapshot(self, value: GamesSnapshotPayload | None) -> None:
         self._state.games_snapshot = value
 
     # ------------------------------------------------------------------

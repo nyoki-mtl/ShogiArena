@@ -1,4 +1,4 @@
-"""Helpers for applying CLI config overrides to ArenaConfig-like mappings."""
+"""Helpers for applying CLI config overrides to TournamentRunConfig-like mappings."""
 
 from __future__ import annotations
 

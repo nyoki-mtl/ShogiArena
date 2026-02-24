@@ -11,6 +11,7 @@ export interface CardElementDeps {
     changeCardSource: (cardId: number | string, newSource: string) => Promise<void> | void;
     goToMoveCard: (cardId: number | string, target: MoveTarget) => Promise<void> | void;
     toggleKifuCard: (cardId: number | string) => Promise<void> | void;
+    toggleEngineLog: (cardId: number | string, role: 'black' | 'white') => void;
     isInteractiveElement: (node: Element | null | undefined) => boolean;
     populateSourceDropdown: (cardId: number | string) => void;
     mountBoardAdapter?: (cardId: number | string, card: HTMLElement) => void;
@@ -29,6 +30,7 @@ export function createCardElement(
         changeCardSource,
         goToMoveCard,
         toggleKifuCard,
+        toggleEngineLog,
         isInteractiveElement,
         populateSourceDropdown,
         mountBoardAdapter,
@@ -72,14 +74,48 @@ export function createCardElement(
             </div>
         </div>
         <div class="clock-row top" id="row-white-${cardState.id}">
-            <span class="side-header"><span class="side-label">White:</span><span class="side-name" id="white-name-${cardState.id}">-</span></span>
+            <span class="side-header">
+                <span class="side-label">White:</span>
+                <span class="side-name" id="white-name-${cardState.id}">-</span>
+                <button
+                    type="button"
+                    class="engine-log-btn"
+                    data-ui-action="engine-log-open"
+                    data-engine-role="white"
+                    aria-label="White エンジンログを開く"
+                    title="White エンジンログ"
+                >I/O</button>
+            </span>
             <span class="side-tc" id="white-tc-${cardState.id}"></span>
             <span class="side-inc" id="white-inc-${cardState.id}">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
             <span class="side-remaining" id="white-remaining-${cardState.id}">-</span>
         </div>
-        <div class="board-container" id="board-${cardState.id}"></div>
+        <div class="board-container" id="board-${cardState.id}">
+            <div
+                class="worker-card__engine-log"
+                id="engine-log-${cardState.id}"
+                aria-hidden="true"
+                data-skip-card-select="true"
+            >
+                <div class="worker-card__engine-log-inner">
+                    <div class="worker-card__engine-log-header"></div>
+                    <div class="worker-card__engine-log-body" id="engine-log-body-${cardState.id}"></div>
+                </div>
+            </div>
+        </div>
         <div class="clock-row bottom" id="row-black-${cardState.id}">
-            <span class="side-header"><span class="side-label">Black:</span><span class="side-name" id="black-name-${cardState.id}">-</span></span>
+            <span class="side-header">
+                <span class="side-label">Black:</span>
+                <span class="side-name" id="black-name-${cardState.id}">-</span>
+                <button
+                    type="button"
+                    class="engine-log-btn"
+                    data-ui-action="engine-log-open"
+                    data-engine-role="black"
+                    aria-label="Black エンジンログを開く"
+                    title="Black エンジンログ"
+                >I/O</button>
+            </span>
             <span class="side-tc" id="black-tc-${cardState.id}"></span>
             <span class="side-inc" id="black-inc-${cardState.id}">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
             <span class="side-remaining" id="black-remaining-${cardState.id}">-</span>
@@ -115,6 +151,22 @@ export function createCardElement(
     sourceSelect?.addEventListener('change', (event) => {
         const selectEl = event.currentTarget as HTMLSelectElement;
         void changeCardSource(cardState.id, selectEl.value);
+    });
+
+    const logOpenButtons = card.querySelectorAll<HTMLButtonElement>('[data-ui-action="engine-log-open"]');
+    logOpenButtons.forEach((button) => {
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const role =
+                button.dataset.engineRole === 'black'
+                    ? 'black'
+                    : button.dataset.engineRole === 'white'
+                      ? 'white'
+                      : null;
+            if (role) {
+                toggleEngineLog(cardState.id, role);
+            }
+        });
     });
 
     card.addEventListener('click', (event) => {

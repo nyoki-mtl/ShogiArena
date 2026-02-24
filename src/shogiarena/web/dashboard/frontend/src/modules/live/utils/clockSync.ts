@@ -16,6 +16,8 @@ export interface ClockCorrectionPayload {
     byoyomi_ms_white?: unknown;
     time_control_black?: unknown;
     time_control_white?: unknown;
+    started_at_ms?: unknown;
+    occurred_at_ms?: unknown;
 }
 
 function normalizeClockSide(value: unknown): ClockSide | null {
@@ -33,6 +35,13 @@ function coerceNumber(value: unknown): number | undefined {
 function coerceString(value: unknown): string | null | undefined {
     if (typeof value === 'string') return value;
     return undefined;
+}
+
+function readField(payload: ClockCorrectionPayload, snake: string, camel: string): unknown {
+    if (Object.hasOwn(payload, snake)) {
+        return (payload as Record<string, unknown>)[snake];
+    }
+    return (payload as Record<string, unknown>)[camel];
 }
 
 function computeSideToMove(
@@ -57,12 +66,15 @@ export function queueClockCorrections(
         ws.pendingClockBySide = {};
     }
 
-    const blackRemain = coerceNumber(payload.black_remain_ms);
-    const whiteRemain = coerceNumber(payload.white_remain_ms);
-    const blackByoyomi = coerceNumber(payload.byoyomi_ms_black);
-    const whiteByoyomi = coerceNumber(payload.byoyomi_ms_white);
-    const blackTc = coerceString(payload.time_control_black);
-    const whiteTc = coerceString(payload.time_control_white);
+    const blackRemain = coerceNumber(readField(payload, 'black_remain_ms', 'blackRemainMs'));
+    const whiteRemain = coerceNumber(readField(payload, 'white_remain_ms', 'whiteRemainMs'));
+    const blackByoyomi = coerceNumber(readField(payload, 'byoyomi_ms_black', 'byoyomiMsBlack'));
+    const whiteByoyomi = coerceNumber(readField(payload, 'byoyomi_ms_white', 'byoyomiMsWhite'));
+    const blackTc = coerceString(readField(payload, 'time_control_black', 'timeControlBlack'));
+    const whiteTc = coerceString(readField(payload, 'time_control_white', 'timeControlWhite'));
+    const startedAtMs = coerceNumber(readField(payload, 'started_at_ms', 'startedAtMs'));
+    const occurredAtMs = coerceNumber(readField(payload, 'occurred_at_ms', 'occurredAtMs'));
+    const clockAtMs = source === 'clock_start' ? startedAtMs : occurredAtMs;
 
     if (blackRemain !== undefined || blackByoyomi !== undefined || blackTc !== undefined) {
         const existing = ws.pendingClockBySide.black;
@@ -70,6 +82,7 @@ export function queueClockCorrections(
             remainMs: blackRemain ?? existing?.remainMs,
             byoyomiMs: blackByoyomi ?? existing?.byoyomiMs,
             timeControl: blackTc ?? existing?.timeControl,
+            clockAtMs: clockAtMs ?? existing?.clockAtMs,
             receivedAtMs,
             source,
         };
@@ -81,6 +94,7 @@ export function queueClockCorrections(
             remainMs: whiteRemain ?? existing?.remainMs,
             byoyomiMs: whiteByoyomi ?? existing?.byoyomiMs,
             timeControl: whiteTc ?? existing?.timeControl,
+            clockAtMs: clockAtMs ?? existing?.clockAtMs,
             receivedAtMs,
             source,
         };
@@ -99,6 +113,33 @@ function applyParsedTimeControl(ws: WorkerRuntimeState, side: ClockSide, parsed:
     }
 }
 
+function seedClockFromTimeControlIfMissing(
+    ws: WorkerRuntimeState,
+    side: ClockSide,
+    parsed: ParsedTimeControlSpec,
+): void {
+    const initialMs =
+        parsed.mode === 'fixed'
+            ? Math.max(0, Math.trunc(parsed.fixedMs || 0))
+            : Math.max(0, Math.trunc((parsed.initial || 0) * 1000));
+    const byoyomiMs = Math.max(0, Math.trunc((parsed.byoyomi || 0) * 1000));
+    if (side === 'black') {
+        if (ws.blackRemainMs == null && initialMs > 0) {
+            ws.blackRemainMs = initialMs;
+        }
+        if (ws.byoyomiMsBlack == null && byoyomiMs > 0) {
+            ws.byoyomiMsBlack = byoyomiMs;
+        }
+    } else {
+        if (ws.whiteRemainMs == null && initialMs > 0) {
+            ws.whiteRemainMs = initialMs;
+        }
+        if (ws.byoyomiMsWhite == null && byoyomiMs > 0) {
+            ws.byoyomiMsWhite = byoyomiMs;
+        }
+    }
+}
+
 export function updateTimeControlState(
     ws: WorkerRuntimeState,
     timeControlBlack: unknown,
@@ -113,12 +154,14 @@ export function updateTimeControlState(
     if (tcBlackRaw) {
         const parsed = parseTimeControlSpec(tcBlackRaw) as ParsedTimeControlSpec;
         applyParsedTimeControl(ws, 'black', parsed);
+        seedClockFromTimeControlIfMissing(ws, 'black', parsed);
         blackMode = parsed.mode;
         touched = true;
     }
     if (tcWhiteRaw) {
         const parsed = parseTimeControlSpec(tcWhiteRaw) as ParsedTimeControlSpec;
         applyParsedTimeControl(ws, 'white', parsed);
+        seedClockFromTimeControlIfMissing(ws, 'white', parsed);
         whiteMode = parsed.mode;
         touched = true;
     }
@@ -139,15 +182,53 @@ export function updateTimeControlState(
     }
 }
 
-function applyPendingClockForSide(ws: WorkerRuntimeState, side: ClockSide, nowMs: number): void {
+export function resetWorkerRuntimeClockStateForNewGame(ws: WorkerRuntimeState): void {
+    ws.lastSeenPly = undefined;
+    ws.lastSideToMove = undefined;
+    ws.pendingClockBySide = undefined;
+    ws.clockActive = null;
+    ws.startedAtMs = undefined;
+    ws.blackRemainMs = undefined;
+    ws.whiteRemainMs = undefined;
+    ws.timeControlBlack = undefined;
+    ws.timeControlWhite = undefined;
+    ws.byoyomiMsBlack = undefined;
+    ws.byoyomiMsWhite = undefined;
+    ws.blackFrozenByoText = null;
+    ws.whiteFrozenByoText = null;
+    ws.tcBlackHasTimePool = undefined;
+    ws.tcWhiteHasTimePool = undefined;
+    ws.tcBlackHasSearchLimit = undefined;
+    ws.tcWhiteHasSearchLimit = undefined;
+    ws.clockDisplayMode = undefined;
+}
+
+function applyPendingClockForSide(
+    ws: WorkerRuntimeState,
+    side: ClockSide,
+    nowMs: number,
+    options?: { activate?: boolean },
+): void {
     const pending = ws.pendingClockBySide?.[side];
+    const activate = options?.activate !== false;
+    const clockAtMs = Number(pending?.clockAtMs ?? 0);
+    const hasClockAnchor = clockAtMs > 0;
+    const currentStartedAt = Number(ws.startedAtMs ?? 0);
+    const hasRunningAnchor = currentStartedAt > 0;
+    if (pending && hasClockAnchor && hasRunningAnchor && clockAtMs < currentStartedAt) {
+        if (ws.pendingClockBySide) {
+            delete ws.pendingClockBySide[side];
+        }
+        return;
+    }
     if (pending) {
+        const allowRemainOverwrite = hasClockAnchor || !hasRunningAnchor;
         if (side === 'black') {
-            if (pending.remainMs !== undefined) ws.blackRemainMs = pending.remainMs;
+            if (allowRemainOverwrite && pending.remainMs !== undefined) ws.blackRemainMs = pending.remainMs;
             if (pending.byoyomiMs !== undefined) ws.byoyomiMsBlack = pending.byoyomiMs;
             if (pending.timeControl !== undefined) ws.timeControlBlack = pending.timeControl;
         } else {
-            if (pending.remainMs !== undefined) ws.whiteRemainMs = pending.remainMs;
+            if (allowRemainOverwrite && pending.remainMs !== undefined) ws.whiteRemainMs = pending.remainMs;
             if (pending.byoyomiMs !== undefined) ws.byoyomiMsWhite = pending.byoyomiMs;
             if (pending.timeControl !== undefined) ws.timeControlWhite = pending.timeControl;
         }
@@ -155,8 +236,14 @@ function applyPendingClockForSide(ws: WorkerRuntimeState, side: ClockSide, nowMs
             delete ws.pendingClockBySide[side];
         }
     }
-    ws.clockActive = side;
-    ws.startedAtMs = nowMs;
+    if (activate) {
+        ws.clockActive = side;
+        if (hasClockAnchor) {
+            ws.startedAtMs = clockAtMs;
+        } else if (!hasRunningAnchor) {
+            ws.startedAtMs = nowMs;
+        }
+    }
 }
 
 export function syncClockToTurnBoundary(params: {
@@ -181,7 +268,10 @@ export function syncClockToTurnBoundary(params: {
 
     ws.lastSeenPly = currentPly;
     ws.lastSideToMove = sideToMove;
-    applyPendingClockForSide(ws, sideToMove, nowMs);
+    const otherSide: ClockSide = sideToMove === 'black' ? 'white' : 'black';
+    // Keep both clocks in sync at move boundaries (ShogiHome-style).
+    applyPendingClockForSide(ws, otherSide, nowMs, { activate: false });
+    applyPendingClockForSide(ws, sideToMove, nowMs, { activate: true });
 }
 
 export function maybeApplyImmediateClockStart(

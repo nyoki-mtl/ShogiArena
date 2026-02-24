@@ -11,10 +11,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
-import yaml
-
 from shogiarena.arena.configs.spsa import load_config_yaml
-from shogiarena.arena.configs.tournament import ArenaConfig
+from shogiarena.arena.configs.tournament import TournamentRunConfig
 from shogiarena.cli.errors import CliError
 from shogiarena.utils.common import project_dirs
 from shogiarena.utils.common.paths import resolve_path_like
@@ -117,13 +115,17 @@ def _detect_run_state_profile(run_dir: Path) -> DashboardProfile | None:
     if isinstance(sprt_conf, Mapping):
         return "sprt"
     exp_name = config.get("experiment_name")
-    if isinstance(exp_name, str) and exp_name.strip().lower() == "match":
-        return "match"
+    if isinstance(exp_name, str):
+        normalized = exp_name.strip().lower()
+        if normalized == "match":
+            return "match"
+        if normalized == "generate":
+            return "generate"
     return None
 
 
 def _infer_dashboard_profiles(run_dir: Path, config_mode: str | None) -> tuple[DashboardProfile, ...]:
-    if config_mode in {"tournament", "spsa", "match", "sprt"}:
+    if config_mode in {"tournament", "spsa", "match", "sprt", "generate"}:
         return (cast(DashboardProfile, config_mode),)
 
     metadata_profiles = read_dashboard_profiles_metadata(run_dir)
@@ -204,30 +206,32 @@ async def _serve_dashboard(args: argparse.Namespace) -> None:
         await server.stop()
 
 
-def _infer_profile_from_tournament_config(arena_cfg: ArenaConfig) -> DashboardProfile:
+def _infer_profile_from_tournament_config(arena_cfg: TournamentRunConfig) -> DashboardProfile:
     if getattr(arena_cfg, "sprt", None) is not None:
         return "sprt"
+    if getattr(arena_cfg, "generate", None) is not None:
+        return "generate"
     exp_name = str(arena_cfg.experiment_name or "").strip().lower()
     if exp_name == "match":
         return "match"
+    if exp_name == "generate":
+        return "generate"
     return "tournament"
 
 
 def _load_tournament_config(config_path: Path) -> tuple[Path, int, DashboardProfile]:
     try:
-        arena_cfg = ArenaConfig.from_yaml(config_path)
+        arena_cfg = TournamentRunConfig.from_yaml(config_path)
     except Exception as exc:  # pragma: no cover - arena parsing raises richly
         raise CliError(f"failed to load tournament config: {config_path}") from exc
-
-    cfg_run_dir = arena_cfg.run_dir
-    if cfg_run_dir is None:
-        raise CliError("run directory is not defined in tournament config")
 
     num_parallel = arena_cfg.tournament.num_parallel
     if num_parallel is None or num_parallel <= 0:
         raise CliError("tournament config must define a positive tournament.num_parallel value")
 
-    resolved = _resolve_run_dir(config_path, Path(cfg_run_dir), arena_cfg.output_dir / "tournament")
+    resolved = latest_run_dir(config_path, arena_cfg.output_dir / "tournament")
+    if resolved is None:
+        raise CliError("run directory not found; specify --run-dir")
     return resolved, int(num_parallel), _infer_profile_from_tournament_config(arena_cfg)
 
 
@@ -237,32 +241,11 @@ def _load_spsa_config(config_path: Path, original_error: CliError) -> tuple[Path
     except Exception as spsa_error:  # pragma: no cover - spsa loader raises dynamically
         raise CliError(f"failed to load config: {config_path}") from spsa_error
 
-    if spsa_cfg.run_dir is None:
-        raise CliError("run directory is not defined in SPSA config") from original_error
-
     num_workers = getattr(spsa_cfg, "num_workers", None)
     if num_workers is None:
         raise CliError("SPSA config must define num_workers")
 
-    resolved = _resolve_run_dir(config_path, Path(spsa_cfg.run_dir), project_dirs.output_dir / "spsa")
+    resolved = latest_run_dir(config_path, project_dirs.output_dir / "spsa")
+    if resolved is None:
+        raise CliError("run directory not found; specify --run-dir") from original_error
     return resolved, int(num_workers)
-
-
-def _resolve_run_dir(config_path: Path, run_dir: Path, output_dir: Path | None) -> Path:
-    if run_dir.exists():
-        return run_dir
-    if _config_declares_run_dir(config_path):
-        return run_dir
-    latest = latest_run_dir(config_path, output_dir or project_dirs.output_dir)
-    if latest is not None:
-        logger.info("Resolved latest run directory for %s -> %s", config_path, latest)
-        return latest
-    return run_dir
-
-
-def _config_declares_run_dir(config_path: Path) -> bool:
-    try:
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, yaml.YAMLError):
-        return False
-    return isinstance(raw, Mapping) and "run_dir" in raw

@@ -51,6 +51,22 @@ describe('tournament game normalizers', () => {
         expect(normalized?.scores).toEqual({ black: null, white: null });
     });
 
+    it('treats paused code 11 as non-scoring outcome', () => {
+        const normalized = normalizeTournamentGame({
+            game_id: 'paused-001',
+            initial_sfen: 'startpos',
+            black_player: 'Engine A',
+            white_player: 'Engine B',
+            result_code: 11,
+        });
+
+        expect(normalized).not.toBeNull();
+        expect(normalized?.resultCode).toBe(11);
+        expect(normalized?.resultCategory).toBeNull();
+        expect(normalized?.winner).toBe('unknown');
+        expect(normalized?.scores).toEqual({ black: null, white: null });
+    });
+
     it('produces normalized game list compatible with pentanomial scoring', () => {
         const rawGames = [
             {

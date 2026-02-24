@@ -34,3 +34,21 @@ sprt:
 
 dashboard:
   enabled: false
+
+# Optional: submit SPRT progress to ShogiBench/OpenBench
+# openbench:
+#   enabled: true
+#   mode: existing_test   # or: create_test
+#   server: "https://your-openbench.example.com"
+#   username: "your-user"
+#   password_env: "OPENBENCH_PASSWORD"
+#   target_test_id: 1234
+#   submit_interval_games: 2
+#   strict: true
+#   # create:             # required when mode=create_test
+#   #   discovery_timeout_sec: 180
+#   #   payload:
+#   #     dev_engine: "YaneuraOu"
+#   #     base_engine: "YaneuraOu"
+#   #     dev_repo: "https://github.com/yaneurao/YaneuraOu"
+#   #     base_repo: "https://github.com/yaneurao/YaneuraOu"

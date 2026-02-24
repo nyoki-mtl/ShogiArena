@@ -24,9 +24,9 @@ export const RESULT_LABELS = Object.freeze({
 
 const BLACK_WIN_CODES = new Set([0, 4, 8, 12, 16]);
 const WHITE_WIN_CODES = new Set([1, 5, 9, 13, 17]);
-const DRAW_CODES = new Set([2, 6]);
-const PAUSED_CODES = new Set([10]);
-const ERROR_CODES = new Set([3, 7, 11, 14, 15, 18, 19]);
+const DRAW_CODES = new Set([2, 6, 10]);
+const PAUSED_CODES = new Set([11]);
+const ERROR_CODES = new Set([3, 7, 15, 18, 19]);
 
 export function apiBase(): string {
     const getApiBase = assertDashboardCoreGetApiBase();

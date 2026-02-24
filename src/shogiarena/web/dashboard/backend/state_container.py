@@ -5,9 +5,13 @@ Provides a centralized container for mutable state shared across API handlers.
 
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from typing import Any
+
+from shogiarena.utils.types.snapshots import EngineIoTailEntry, GameSnapshot, WorkerSnapshot
+from shogiarena.utils.types.types import EngineOptionsSnapshots
+from shogiarena.web.dashboard.backend.types import GamesSnapshotPayload
 
 
 @dataclass
@@ -27,13 +31,16 @@ class DashboardState:
         engine_info_snapshot: Engine metadata (id_name, id_author) per engine name.
         summary_snapshots: Per-source summary state (e.g. tournament/spsa/sprt/match).
         games_snapshot: Current games list snapshot.
+        engine_io_logs: Per-game engine I/O log buffers (gid -> role -> deque).
     """
 
-    worker_snapshots: dict[int, dict[str, Any]] = field(default_factory=dict)
+    worker_snapshots: dict[int, WorkerSnapshot] = field(default_factory=dict)
     worker_assignment: dict[int, str | None] = field(default_factory=dict)
     assignment_rev: int = 0
-    game_snapshots: OrderedDict[str, dict[str, Any]] = field(default_factory=OrderedDict)
-    engine_options_snapshot: dict[str, dict[str, Any]] = field(default_factory=dict)
+    game_snapshots: OrderedDict[str, GameSnapshot] = field(default_factory=OrderedDict)
+    engine_options_snapshot: EngineOptionsSnapshots = field(default_factory=dict)
     engine_info_snapshot: dict[str, dict[str, str]] = field(default_factory=dict)
+    # I/O boundary: 各モードのサマリが動的に構築される。型は SummarySnapshot を参照。
     summary_snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
-    games_snapshot: dict[str, Any] | None = None
+    games_snapshot: GamesSnapshotPayload | None = None
+    engine_io_logs: dict[str, dict[str, deque[EngineIoTailEntry]]] = field(default_factory=dict)

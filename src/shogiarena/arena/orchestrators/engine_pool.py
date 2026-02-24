@@ -6,13 +6,20 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Protocol
 
 from shogiarena.arena.engines.engine_factory import EngineFactory
 from shogiarena.arena.engines.usi_engine import AsyncUsiEngine
+from shogiarena.arena.instances.models import Instance
 from shogiarena.arena.instances.pool import InstancePool
 
 logger = logging.getLogger(__name__)
+
+
+class _EngineSpec(Protocol):
+    instance_id: str | None
+    cpu_affinity: tuple[int, ...] | None
+    handshake_timeout: float | None
 
 
 class EnginePool:
@@ -22,36 +29,118 @@ class EnginePool:
         self,
         max_instances_per_engine: int = 2,
         *,
-        engine_configs: Mapping[str, Any] | None = None,
+        engine_configs: Mapping[str, _EngineSpec] | None = None,
         instance_pool: InstancePool | None = None,
+        default_handshake_timeout: float | None = None,
     ) -> None:
         self.max_instances = max_instances_per_engine
         self.pools: dict[str, list[AsyncUsiEngine]] = {}
         self.in_use: dict[str, set[AsyncUsiEngine]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
-        self._wait_queues: dict[str, asyncio.Queue[asyncio.Event]] = {}
-        self._engine_configs: Mapping[str, Any] = engine_configs or {}
+        self._waiters: set[asyncio.Event] = set()
+        self._engine_configs: Mapping[str, _EngineSpec] = engine_configs or {}
         self._instance_pool = instance_pool
         self._engine_instance_ids: dict[AsyncUsiEngine, str] = {}
+        self._default_handshake_timeout = default_handshake_timeout
+
+    def _resolve_handshake_timeout(self, spec: _EngineSpec | None) -> float:
+        candidates = []
+        if spec is not None:
+            candidates.append(spec.handshake_timeout)
+        candidates.append(self._default_handshake_timeout)
+        for value in candidates:
+            if value is None:
+                continue
+            try:
+                resolved = float(value)
+            except (TypeError, ValueError) as exc:
+                raise TypeError(f"handshake_timeout must be a number; got {value!r}") from exc
+            if resolved <= 0:
+                raise ValueError("handshake_timeout must be positive")
+            return resolved
+        return AsyncUsiEngine.DEFAULT_HANDSHAKE_TIMEOUT
 
     def _resolve_instance_id(self, engine_name: str, instance_override: str | None) -> str | None:
         if instance_override is not None:
             return instance_override
         base_name = engine_name.split("#", 1)[0]
         spec = self._engine_configs.get(base_name)
-        instance_id = getattr(spec, "instance_id", None) if spec is not None else None
-        return instance_id
+        return spec.instance_id if spec is not None else None
 
-    def _resolve_instance(self, engine_name: str, instance_override: str | None) -> Any | None:
+    def _resolve_instance_by_id(self, instance_id: str) -> Instance | None:
+        if self._instance_pool is None:
+            return None
+        instance = self._instance_pool.get_instance(instance_id)
+        if instance is None and instance_id == "local":
+            instance = self._instance_pool.ensure_local_instance()
+        return instance
+
+    def _resolve_instance(self, engine_name: str, instance_override: str | None) -> Instance | None:
         if self._instance_pool is None:
             return None
         instance_id = self._resolve_instance_id(engine_name, instance_override)
         if instance_id:
-            instance = self._instance_pool.get_instance(instance_id)
-            if instance is None and instance_id == "local":
-                instance = self._instance_pool.ensure_local_instance()
-            return instance
+            return self._resolve_instance_by_id(instance_id)
         return self._instance_pool.ensure_local_instance()
+
+    def _detach_engine_instance(self, engine: AsyncUsiEngine) -> None:
+        instance_id = self._engine_instance_ids.pop(engine, None)
+        if not instance_id:
+            return
+        instance = self._resolve_instance_by_id(instance_id)
+        if instance is not None:
+            instance.remove_engine_processes(1)
+
+    def _notify_waiters(self) -> None:
+        for wait_event in tuple(self._waiters):
+            wait_event.set()
+
+    async def _evict_idle_engine_for_instance(
+        self,
+        instance_id: str,
+        *,
+        exclude_slot_key: str | None = None,
+    ) -> bool:
+        for candidate_slot_key in tuple(self.pools.keys()):
+            if exclude_slot_key is not None and candidate_slot_key == exclude_slot_key:
+                continue
+            lock = self._locks.get(candidate_slot_key)
+            if lock is None:
+                continue
+
+            engine_to_close: AsyncUsiEngine | None = None
+            async with lock:
+                pool = self.pools.get(candidate_slot_key)
+                if not pool:
+                    continue
+                for index in range(len(pool) - 1, -1, -1):
+                    candidate = pool[index]
+                    if self._engine_instance_ids.get(candidate) != instance_id:
+                        continue
+                    engine_to_close = pool.pop(index)
+                    break
+
+            if engine_to_close is None:
+                continue
+
+            try:
+                await engine_to_close.close()
+            except (OSError, RuntimeError, asyncio.TimeoutError) as exc:
+                logger.debug(
+                    "Error closing evicted engine from %s: %s",
+                    candidate_slot_key,
+                    exc,
+                    exc_info=True,
+                )
+            self._detach_engine_instance(engine_to_close)
+            logger.debug(
+                "Evicted idle engine from %s on instance %s to free capacity",
+                candidate_slot_key,
+                instance_id,
+            )
+            return True
+
+        return False
 
     @staticmethod
     def slot_key(engine_key: str, instance_override: str | None) -> str:
@@ -67,15 +156,15 @@ class EnginePool:
         self,
         engine_name: str,
         config_path: Path,
-        extra_options: dict[str, Any] | None = None,
+        extra_options: dict[str, object] | None = None,
         instance_override: str | None = None,
     ) -> AsyncUsiEngine:
         slot_key = self._slot_key(engine_name, instance_override)
         if slot_key not in self._locks:
             self._locks[slot_key] = asyncio.Lock()
-            self._wait_queues[slot_key] = asyncio.Queue()
 
         while True:
+            capacity_blocked_instance: str | None = None
             async with self._locks[slot_key]:
                 pool = self.pools.setdefault(slot_key, [])
                 in_use = self.in_use.setdefault(slot_key, set())
@@ -95,21 +184,15 @@ class EnginePool:
                             exc,
                             exc_info=True,
                         )
-                    instance_id = self._engine_instance_ids.pop(engine, None)
-                    if instance_id and self._instance_pool:
-                        instance = self._instance_pool.get_instance(instance_id)
-                        if instance is None and instance_id == "local":
-                            instance = self._instance_pool.ensure_local_instance()
-                        if instance is not None:
-                            instance.remove_engine_processes(1)
+                    self._detach_engine_instance(engine)
 
                 total_instances = len(pool) + len(in_use)
                 if total_instances < self.max_instances:
                     logger.debug("Creating new engine instance for %s", slot_key)
                     base_name = engine_name.split("#", 1)[0]
                     spec = self._engine_configs.get(base_name)
-                    instance_id = getattr(spec, "instance_id", None) if spec is not None else None
-                    affinity = getattr(spec, "cpu_affinity", None) if spec is not None else None
+                    instance_id = spec.instance_id if spec is not None else None
+                    affinity = spec.cpu_affinity if spec is not None else None
                     if instance_override is not None:
                         instance_id = instance_override
                     instance = self._resolve_instance(engine_name, instance_override)
@@ -123,11 +206,13 @@ class EnginePool:
                                 capacity,
                             )
                             capacity_blocked = True
+                            capacity_blocked_instance = instance.name
 
                     if not capacity_blocked:
+                        handshake_timeout = self._resolve_handshake_timeout(spec)
                         engine = await EngineFactory.create_engine(
                             config_path,
-                            timeout=30.0,
+                            timeout=handshake_timeout,
                             extra_options=extra_options,
                             engine_name=engine_name,
                             instance_id=instance_id,
@@ -140,10 +225,25 @@ class EnginePool:
                         in_use.add(engine)
                         return engine
 
+            if capacity_blocked_instance is not None:
+                reclaimed = await self._evict_idle_engine_for_instance(
+                    capacity_blocked_instance,
+                    exclude_slot_key=slot_key,
+                )
+                if reclaimed:
+                    self._notify_waiters()
+                    continue
+
             logger.debug("Pool for %s at capacity (%s), waiting...", slot_key, self.max_instances)
             wait_event = asyncio.Event()
-            await self._wait_queues[slot_key].put(wait_event)
-            await wait_event.wait()
+            self._waiters.add(wait_event)
+            try:
+                try:
+                    await asyncio.wait_for(wait_event.wait(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    logger.debug("Timed out waiting for pool signal for %s; retrying", slot_key)
+            finally:
+                self._waiters.discard(wait_event)
 
     async def release(self, engine_name: str, engine: AsyncUsiEngine, instance_override: str | None = None) -> None:
         slot_key = self._slot_key(engine_name, instance_override)
@@ -167,19 +267,9 @@ class EnginePool:
                 except (OSError, RuntimeError, asyncio.TimeoutError) as exc:
                     logger.debug("Error closing engine %s during release: %s", slot_key, exc, exc_info=True)
                 logger.debug("Terminated excess engine instance for %s", slot_key)
-                instance_id = self._engine_instance_ids.pop(engine, None)
-                if instance_id and self._instance_pool:
-                    instance = self._instance_pool.get_instance(instance_id)
-                    if instance is None and instance_id == "local":
-                        instance = self._instance_pool.ensure_local_instance()
-                    if instance is not None:
-                        instance.remove_engine_processes(1)
+                self._detach_engine_instance(engine)
 
-            queue = self._wait_queues.get(slot_key)
-            if queue and not queue.empty():
-                wait_event = await queue.get()
-                wait_event.set()
-                logger.debug("Signaled waiting request for %s", slot_key)
+            self._notify_waiters()
 
     async def shutdown_all(self) -> None:
         logger.debug("Shutting down all engines")
@@ -190,32 +280,22 @@ class EnginePool:
                     await engine.close()
                 except (OSError, RuntimeError, asyncio.TimeoutError) as exc:
                     logger.debug("Error closing pooled engine %s: %s", engine_name, exc, exc_info=True)
-                instance_id = self._engine_instance_ids.pop(engine, None)
-                if instance_id and self._instance_pool:
-                    instance = self._instance_pool.get_instance(instance_id)
-                    if instance is None and instance_id == "local":
-                        instance = self._instance_pool.ensure_local_instance()
-                    if instance is not None:
-                        instance.remove_engine_processes(1)
+                self._detach_engine_instance(engine)
             for engine in list(self.in_use.get(engine_name, set())):
                 try:
                     await engine.close()
                 except (OSError, RuntimeError, asyncio.TimeoutError) as exc:
                     logger.debug("Error closing in-use engine %s: %s", engine_name, exc, exc_info=True)
-                instance_id = self._engine_instance_ids.pop(engine, None)
-                if instance_id and self._instance_pool:
-                    instance = self._instance_pool.get_instance(instance_id)
-                    if instance is None and instance_id == "local":
-                        instance = self._instance_pool.ensure_local_instance()
-                    if instance is not None:
-                        instance.remove_engine_processes(1)
+                self._detach_engine_instance(engine)
         self.pools.clear()
         self.in_use.clear()
+        self._notify_waiters()
+        self._waiters.clear()
 
     async def acquire_pair_sorted(
         self,
-        a: tuple[str, Path, dict[str, Any] | None, str | None],
-        b: tuple[str, Path, dict[str, Any] | None, str | None],
+        a: tuple[str, Path, dict[str, object] | None, str | None],
+        b: tuple[str, Path, dict[str, object] | None, str | None],
         second_timeout: float | None = None,
     ) -> tuple[AsyncUsiEngine, AsyncUsiEngine]:
         """Acquire two engines with deadlock-safe ordering."""

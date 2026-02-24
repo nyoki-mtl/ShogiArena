@@ -16,6 +16,7 @@ export type DashboardTabId =
     | 'match'
     | 'sprt'
     | 'tournament'
+    | 'generate'
     | 'openings'
     | 'rules'
     | 'spsa'
@@ -69,6 +70,11 @@ export interface DashboardNavigationApi {
     openSpsa: (options?: SpsaNavigationOptions) => void;
 }
 
+export interface DashboardGenerateApi {
+    refresh?: () => void;
+    setActive?: (active: boolean) => void;
+}
+
 export type ArenaDashboardWindow = Window &
     typeof globalThis & {
         DashboardShared?: DashboardShared;
@@ -85,6 +91,7 @@ export type ArenaDashboardWindow = Window &
         DashboardTournament?: TournamentDashboardAPI;
         DashboardTabs?: DashboardTabsApi;
         DashboardNavigation?: DashboardNavigationApi;
+        DashboardGenerate?: DashboardGenerateApi;
         ShogiBoardAdapter?: new () => ShogiBoardAdapter;
         DashboardShowNotice?: (message: string, variant?: string, options?: JsonObject) => void;
         notifyDashboardServerStopped?: () => void;
@@ -114,6 +121,7 @@ declare global {
         DashboardTournament?: TournamentDashboardAPI;
         DashboardTabs?: DashboardTabsApi;
         DashboardNavigation?: DashboardNavigationApi;
+        DashboardGenerate?: DashboardGenerateApi;
         ShogiBoardAdapter?: new () => ShogiBoardAdapter;
         DashboardShowNotice?: (message: string, variant?: string, options?: JsonObject) => void;
         notifyDashboardServerStopped?: () => void;

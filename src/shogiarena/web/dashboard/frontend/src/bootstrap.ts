@@ -1,7 +1,9 @@
 import { installEnginesModule } from '@/modules/engines';
+import type { DashboardEnginesApi } from '@/modules/engines/types';
 import { installGamesModule } from '@/modules/games';
 import { installGamesRender } from '@/modules/games/components/render';
 import { installGamesUtils } from '@/modules/games/utils';
+import { installGenerateModule } from '@/modules/generate';
 import { installInstancesModule } from '@/modules/instances';
 import {
     initializeLiveMain,
@@ -10,8 +12,11 @@ import {
     installLiveTimeModule,
     installLiveUpdatesModule,
 } from '@/modules/live';
+import { installMatchModule } from '@/modules/match';
 import { installRulesModule } from '@/modules/rules';
 import {
+    applyTabConfiguration,
+    getModeConfig,
     installDashboardApi,
     installDashboardCore,
     installDashboardDom,
@@ -21,14 +26,12 @@ import {
     installDashboardTheme,
     installHeaderProgress,
     installShogiBoardGlobals,
-    applyTabConfiguration,
-    getModeConfig,
     resolveRuntimeModeFromSummary,
     setDashboardMode,
 } from '@/modules/shared';
-import { installSpsaModule } from '@/modules/spsa';
-import { installMatchModule } from '@/modules/match';
 import { installSprtModule } from '@/modules/sprt';
+import { installSpsaModule } from '@/modules/spsa';
+import type { DashboardSpsaPublicApi } from '@/modules/spsa/types';
 import {
     installTournamentBootstrap,
     installTournamentData,
@@ -39,8 +42,6 @@ import {
     type TournamentDashboardAPI,
     type TournamentSummary,
 } from '@/modules/tournament';
-import type { DashboardEnginesApi } from '@/modules/engines/types';
-import type { DashboardSpsaPublicApi } from '@/modules/spsa/types';
 import type { DashboardCore, DashboardRuntimeMode } from '@/types/dashboard';
 import type { ArenaDashboardWindow, DashboardTabsApi } from '@/types/globals';
 
@@ -63,6 +64,7 @@ interface DashboardFeatureFlags {
     spsa: boolean;
     match: boolean;
     sprt: boolean;
+    generate: boolean;
     tournament: TournamentFeatureFlags;
 }
 
@@ -78,6 +80,7 @@ export interface DashboardFeatureOverrides {
     spsa?: boolean;
     match?: boolean;
     sprt?: boolean;
+    generate?: boolean;
     tournament?: TournamentFeatureOverrides;
 }
 
@@ -101,6 +104,7 @@ export interface DashboardInitializationResult {
     spsa?: DashboardSpsaPublicApi;
     match?: ReturnType<typeof installMatchModule>;
     sprt?: ReturnType<typeof installSprtModule>;
+    generate?: ReturnType<typeof installGenerateModule>;
 }
 
 const DEFAULT_FEATURES: DashboardFeatureFlags = {
@@ -113,6 +117,7 @@ const DEFAULT_FEATURES: DashboardFeatureFlags = {
     spsa: true,
     match: true,
     sprt: true,
+    generate: false,
     tournament: {
         state: true,
         data: true,
@@ -134,6 +139,7 @@ function resolveFeatures(overrides?: DashboardFeatureOverrides): DashboardFeatur
         spsa: DEFAULT_FEATURES.spsa,
         match: DEFAULT_FEATURES.match,
         sprt: DEFAULT_FEATURES.sprt,
+        generate: DEFAULT_FEATURES.generate,
         tournament: { ...DEFAULT_FEATURES.tournament },
     };
 
@@ -150,6 +156,7 @@ function resolveFeatures(overrides?: DashboardFeatureOverrides): DashboardFeatur
     if (typeof overrides.spsa === 'boolean') flags.spsa = overrides.spsa;
     if (typeof overrides.match === 'boolean') flags.match = overrides.match;
     if (typeof overrides.sprt === 'boolean') flags.sprt = overrides.sprt;
+    if (typeof overrides.generate === 'boolean') flags.generate = overrides.generate;
     if (overrides.tournament) {
         const tournamentOverrides = overrides.tournament;
         if (typeof tournamentOverrides.state === 'boolean') flags.tournament.state = tournamentOverrides.state;
@@ -213,6 +220,10 @@ export function initializeDashboard(options: DashboardBootstrapOptions = {}): Da
     } else if (modeConfig.mode === 'sprt') {
         features.match = false;
         features.sprt = true;
+    } else if (modeConfig.mode === 'generate') {
+        features.match = false;
+        features.sprt = false;
+        features.generate = true;
     }
 
     owner.ARENA_DISABLE_SPSA = !features.spsa;
@@ -319,6 +330,11 @@ export function initializeDashboard(options: DashboardBootstrapOptions = {}): Da
         sprtApi = installSprtModule(owner);
     }
 
+    let generateApi: ReturnType<typeof installGenerateModule> | undefined;
+    if (features.generate) {
+        generateApi = installGenerateModule(owner);
+    }
+
     return {
         owner,
         features,
@@ -327,5 +343,6 @@ export function initializeDashboard(options: DashboardBootstrapOptions = {}): Da
         spsa: spsaApi,
         match: matchApi,
         sprt: sprtApi,
+        generate: generateApi,
     };
 }

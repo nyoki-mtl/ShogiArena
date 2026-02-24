@@ -5,7 +5,7 @@ Re-exports are provided lazily to avoid circular imports during package initiali
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Literal, overload
 
 from . import base_orchestrator_utils
 
@@ -24,7 +24,23 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str) -> Any:
+@overload
+def __getattr__(name: Literal["BaseOrchestrator"]) -> type[BaseOrchestrator]: ...
+
+
+@overload
+def __getattr__(name: Literal["EnginePool"]) -> type[EnginePool]: ...
+
+
+@overload
+def __getattr__(name: Literal["SpsaOrchestrator"]) -> type[SpsaOrchestrator]: ...
+
+
+@overload
+def __getattr__(name: Literal["TournamentOrchestrator"]) -> type[TournamentOrchestrator]: ...
+
+
+def __getattr__(name: str) -> object:
     if name == "BaseOrchestrator" or name == "EnginePool":
         from .base_orchestrator import BaseOrchestrator
         from .engine_pool import EnginePool

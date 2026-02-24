@@ -2,12 +2,12 @@
 # ------------------------------------------------------------------
 # - `name` は任意 (省略時はファイル名の stem)。CLI `--engine instance_id=...` やダッシュボードで利用します。
 # - `type` は必須で `local` を指定します。engine_dir / project_root は自動計算かつ指定不可。
-# - `slots` / `max_engines` / `tags` は任意。未指定時は 0 (無制限) や空配列として扱われます。
+# - `slots` / `max_engines` / `tags` は任意。`slots` は null で自動判定。
 # - `strict_host_key_checking` は SSH 用の設定ですが、local でも bool 値として保持されます (既定 true)。
 
 name: local-dev                      # 任意。既定: ファイル名の stem (ここでは "local_example")
 type: local                          # 必須。ローカル実行を意味する固定値
-slots: 8                             # 任意。既定: 0 (無制限)。同時実行スロットの上限目安
+slots: 8                             # 任意。null で自動判定。同時実行スロットの上限目安
 max_engines: 4                       # 任意。既定: null -> slots と同じ値に解釈
 tags: ["local", "zen4"]              # 任意。既定: []。ダッシュボードなどでのフィルタリング用途
 strict_host_key_checking: true       # 任意。既定: true。local では動作への影響は最小

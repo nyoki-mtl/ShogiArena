@@ -1,0 +1,370 @@
+"""SPSA ダッシュボードバックエンドで使用される TypedDict 定義。
+
+各サービスが返す dict を型付けし、API 契約を明示化する。
+``total=False`` で定義されたフィールドはオプションであり、
+イベントソースや集計段階によって存在しない場合がある。
+"""
+
+from __future__ import annotations
+
+from typing import Any, Literal, TypedDict
+
+from shogiarena.web.dashboard.backend.live.types import LiveViewSnapshot
+
+# ---------------------------------------------------------------------------
+# Foundation types
+# ---------------------------------------------------------------------------
+
+
+class WdlCounts(TypedDict):
+    """勝敗引分カウント。"""
+
+    wins: int
+    losses: int
+    draws: int
+
+
+# ---------------------------------------------------------------------------
+# Game-related types
+# ---------------------------------------------------------------------------
+
+
+class _GameBriefEntryRequired(TypedDict):
+    """対局概要エントリの必須フィールド。"""
+
+    game_id: str
+
+
+class GameBriefEntry(_GameBriefEntryRequired, total=False):
+    """対局一覧に表示される対局概要。"""
+
+    black_player: str | None
+    white_player: str | None
+    result_code: int | None
+    num_moves: int | None
+    variant_id: str | None
+    phase: str | None
+    status: str | None
+    assigned_instance: str | None
+    round: int | None
+    start_time: str | None
+    end_time: str | None
+
+
+class GameListEntry(TypedDict, total=False):
+    """``list_games`` が返す対局リストエントリ。"""
+
+    game_id: str
+    black_player: str | None
+    white_player: str | None
+    result_code: int | None
+    total_plies: int | None
+    end_time: str | None
+    initial_sfen: str | None
+    time_control_black: str | None
+    time_control_white: str | None
+    variant_id: str | None
+    phase: str | None
+    timestamp: int
+
+
+# ---------------------------------------------------------------------------
+# LTC types
+# ---------------------------------------------------------------------------
+
+
+class LtcRegressionDetail(TypedDict, total=False):
+    """LTC (Long Time Control) 回帰テストの詳細情報。"""
+
+    status: str
+    tuned_wins: int
+    baseline_wins: int
+    draws: int
+    total_games: int
+    total_pairs: int | None
+    winrate: float | None
+    elo: float | None
+    pairs_played: int | None
+    accepted: bool | None
+    baseline_update_idx: int | None
+    baseline_variant_token: str | None
+    tuned_variant_token: str | None
+    started_at: int | str | None
+    completed_at: int | str | None
+    fail_reasons: list[str]
+    sprt: dict[str, object] | None
+    sprt_decision: str | None
+
+
+# ---------------------------------------------------------------------------
+# Update types
+# ---------------------------------------------------------------------------
+
+
+class UpdateEntry(TypedDict, total=False):
+    """SPSA パラメータ更新エントリ。
+
+    ``collect_updates_from_events`` および ``load_index_updates`` が返す構造。
+    """
+
+    update_idx: int
+    variant_id: str
+    timestamp: int
+    started_at: str | None
+    ended_at: str | None
+    params: dict[str, float]
+    gradients: dict[str, float]
+    deltas: dict[str, float]
+    perturbations: dict[str, dict[str, float]]
+    s_plus: float | None
+    s_minus: float | None
+    step: float | None
+    delta_norm: float | None
+    c_k: float | None
+    a_k: float | None
+    pending: bool
+    wins: int
+    losses: int
+    draws: int
+    phase_wdl: dict[str, WdlCounts]
+    games: list[GameBriefEntry]
+    games_count: int
+    ltc_regression: LtcRegressionDetail | None
+    has_ltc_regression: bool
+    ltc_rejected: bool
+    ltc_reverted_to: int
+    btd_elo: float | None
+
+
+class UpdateDetailResponse(TypedDict, total=False):
+    """``build_update_detail`` が返す更新詳細レスポンス。"""
+
+    update_idx: int
+    engines: dict[str, str | None]
+    wdl: WdlCounts
+    variant_id: str | None
+    params: dict[str, float] | None
+    gradients: dict[str, float] | None
+    deltas: dict[str, float] | None
+    s_plus: float | None
+    s_minus: float | None
+    step: float | None
+    perturbations: dict[str, object] | None
+    c_k: float | None
+    a_k: float | None
+    is_pending: bool
+    games: list[GameBriefEntry]
+    games_count: int
+    ltc_games: list[GameBriefEntry]
+    ltc_games_count: int
+    phase_wdl: dict[str, WdlCounts]
+    ltc_regression: LtcRegressionDetail | None
+    has_ltc_regression: bool
+    payload: dict[str, object]
+
+
+# ---------------------------------------------------------------------------
+# Progress / Timeline types
+# ---------------------------------------------------------------------------
+
+
+class ProgressSnapshot(TypedDict):
+    """``compute_progress_snapshot`` が返す進捗スナップショット。"""
+
+    completed: int
+    total: int | None
+    percent: float | None
+
+
+class ParameterTimelineEntry(TypedDict):
+    """パラメータタイムラインの1エントリ（相関分析で使用）。"""
+
+    update_idx: int
+    actual: float
+    baseline: float
+    pending: bool
+    ltc_invalidated: bool
+    ltc_decision: str | None
+
+
+class MobilitySeriesPayload(TypedDict):
+    """収束解析のモビリティ系列。"""
+
+    gain_ak: list[float]
+    variant_indices: list[int]
+
+
+class CorrelationAnalysis(TypedDict, total=False):
+    """``compute_correlation_analysis`` が返す相関分析結果。"""
+
+    correlations: dict[str, float]
+    parameter_evolution: dict[str, list[float]]
+    gradient_evolution: dict[str, list[float]]
+    step_evolution: list[float]
+    parameter_names: list[str]
+    num_updates: int
+    parameter_timeline: dict[str, list[ParameterTimelineEntry]]
+    message: str
+
+
+class ConvergenceMetrics(TypedDict, total=False):
+    """収束メトリクス。"""
+
+    recent_avg_delta_norm: float
+    overall_avg_delta_norm: float
+    recent_std_delta_norm: float
+    trend_slope: float
+    is_converging: bool
+    convergence_confidence: float
+    recent_mean_vector_delta_norm: float
+    recent_avg_mean_vector_delta_norm: float
+
+
+class ConvergencePrediction(TypedDict, total=False):
+    """収束予測。"""
+
+    remaining_updates_estimate: float
+    convergence_probability: float
+
+
+class ConvergenceAnalysis(TypedDict, total=False):
+    """``compute_convergence_analysis`` が返す収束分析結果。"""
+
+    convergence_metrics: ConvergenceMetrics
+    prediction: ConvergencePrediction
+    delta_norm_history: list[float]
+    delta_mean_vector_norm_history: list[float | None]
+    delta_mean_vector_window: int
+    recent_delta_norms: list[float]
+    recent_step_sizes: list[float]
+    required_delta_norms: int
+    available_delta_norms: int
+    available_updates: int
+    pending_updates: int
+    total_updates_observed: int
+    num_updates_analyzed: int
+    mobility_series: MobilitySeriesPayload
+    convergence_probability_history: list[float]
+    convergence_confidence_history: list[float]
+    convergence_history_indices: list[int]
+    message: str
+    ltc_results: dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
+# Summary types
+# ---------------------------------------------------------------------------
+
+
+class SpsaSummaryGames(TypedDict):
+    """サマリ内の対局進捗。"""
+
+    completed: int
+    total: int
+
+
+class SpsaSummaryPayload(TypedDict, total=False):
+    """``compute_summary`` が返す SPSA サマリペイロード。"""
+
+    mode: Literal["spsa"]
+    experiment_name: str | None
+    wins: int
+    losses: int
+    draws: int
+    elo: float | None
+    btd_elo: float | None
+    btd_se: float | None
+    btd_los: float | None
+    games_total: int
+    draw_rate: float | None
+    tuned_black_wins: int
+    tuned_black_losses: int
+    tuned_white_wins: int
+    tuned_white_losses: int
+    games: SpsaSummaryGames
+    last_update_idx: int | None
+    step_mean_20: float | None
+    step_std_20: float | None
+    recent_steps: list[float]
+    delta_norm_last: float | None
+    eta_seconds: int | None
+    winrate: float
+    progress: float
+    recent_step: float
+    recent_delta_norm: float
+    engineTimeControls: dict[str, str]
+    defaultTimeControl: str | None
+    engines: list[str]
+    enginesMeta: list[dict[str, object]]
+    engineInstances: dict[str, str | None]
+    engineStats: dict[str, dict[str, int | float]]
+    spsaConfig: dict[str, object] | None
+    liveView: LiveViewSnapshot
+
+
+# ---------------------------------------------------------------------------
+# Params types
+# ---------------------------------------------------------------------------
+
+
+class ParamEntry(TypedDict):
+    """パラメータ定義エントリ。"""
+
+    name: str
+    type: str
+    v: float
+    min: float
+    max: float
+    step: float
+    delta: float
+    comment: str
+    not_used: bool
+
+
+class ParamsPayload(TypedDict, total=False):
+    """``build_params_payload`` が返すパラメータペイロード。"""
+
+    params: list[ParamEntry]
+    variant_id: str | None
+    num_params: int
+    num_used: int
+    num_clamped: int
+    clamped_ratio: float | None
+    initial_params: dict[str, float] | None
+    diffs: dict[str, float] | None
+    initial_variant_id: str | None
+
+
+# ---------------------------------------------------------------------------
+# LTC summary types
+# ---------------------------------------------------------------------------
+
+
+class LtcBestEstimate(TypedDict, total=False):
+    """LTC 最良推定値。"""
+
+    mean: float | None
+    variance: float | None
+    sigma: float | None
+    lower: float | None
+    upper: float | None
+    source: str | None
+    composition_depth: int | None
+    prob_positive: float | None
+
+
+class LtcSummary(TypedDict, total=False):
+    """``compute_ltc_summary`` が返す LTC サマリ。"""
+
+    enabled: bool
+    status: str
+    config: dict[str, object] | None
+    last_update_idx: int | None
+    winrate: float | None
+    elo: float | None
+    pairs_played: int | None
+    sprt: dict[str, object] | None
+    sprt_decision: str | None
+    latest: dict[str, object] | None
+    history_size: int
+    best_estimate: LtcBestEstimate | None

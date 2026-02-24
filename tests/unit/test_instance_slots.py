@@ -119,7 +119,7 @@ def test_acquire_resources_respects_drain() -> None:
 
 
 def test_auto_slots_and_engines() -> None:
-    cfg = InstanceConfig(name="auto", type=InstanceType.LOCAL, engine_dir="", slots=0, max_engines=0)
+    cfg = InstanceConfig(name="auto", type=InstanceType.LOCAL, engine_dir="", slots=None, max_engines=0)
     instance = Instance(config=cfg)
     instance.metrics.cpu_count = 8
     assert instance.available_slots == 8

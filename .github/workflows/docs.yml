@@ -22,29 +22,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install mdbook
+        uses: peaceiris/actions-mdbook@v2
         with:
-          python-version: "3.10.15"
-          cache: pip
-          check-latest: true
+          mdbook-version: "0.4.44"
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v1
-
-      - name: Sync documentation dependencies
-        run: uv sync --all-extras
-
-      - name: Ensure MkDocs toolchain
-        run: uv pip install mkdocs mkdocs-material mkdocs-minify-plugin
-
-      - name: Build MkDocs site
-        run: uv run mkdocs build --strict
+      - name: Build mdbook site
+        run: mdbook build docs/book
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: docs/book/build
 
   deploy:
     # Only deploy to GitHub Pages on public repository (nyoki-mtl/ShogiArena)

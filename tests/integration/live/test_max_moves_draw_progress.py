@@ -3,11 +3,12 @@ import json
 from collections import deque
 
 import pytest
+from rshogi.core import Move
 
-from shogiarena.arena.engines.time_control import TimeControlLimits
+from shogiarena.arena.engines.time_control import TimeControl, TimeControlLimits
 from shogiarena.arena.engines.usi_engine import PonderHitTimings
 from shogiarena.arena.engines.usi_think import UsiThinkRequest
-from shogiarena.arena.engines.usi_types import UsiThinkPV, UsiThinkResult
+from shogiarena.arena.engines.usi_types import UsiThinkPV, UsiThinkResult, move_from_usi
 from shogiarena.arena.execution.game_runner import GameRunner
 from shogiarena.arena.execution.types import GameEngineProtocol, InfoHandler
 from shogiarena.arena.services.game_control.adjudication import AdjudicationConfig
@@ -40,11 +41,12 @@ class ScriptedEngine(GameEngineProtocol):
         await asyncio.sleep(0)
         if not self._moves:
             raise AssertionError(f"{self._name} was asked to move beyond scripted sequence")
-        move = self._moves.popleft()
+        move_usi = self._moves.popleft()
+        mv = move_from_usi(move_usi)
         result = UsiThinkResult()
-        result.bestmove = move
+        result.bestmove = mv
         pv = UsiThinkPV()
-        pv.pv = [move]
+        pv.pv = [mv]
         pv.eval = 0
         result.pvs.append(pv)
         return result
@@ -84,7 +86,7 @@ class ScriptedEngine(GameEngineProtocol):
         sfen: str,
         moves: tuple[str, ...] | list[str],
         request: UsiThinkRequest,
-        predicted_move: str | None,
+        predicted_move: Move | None,
         info_handler: InfoHandler | None = None,
         enable_early_ponder: bool | None = None,
     ) -> None:
@@ -104,7 +106,151 @@ class ScriptedEngine(GameEngineProtocol):
     def has_active_ponder(self) -> bool:
         return False
 
-    def active_ponder_predicted_move(self) -> str | None:
+    def active_ponder_predicted_move(self) -> Move | None:
+        return None
+
+
+class TrackingScriptedEngine(ScriptedEngine):
+    def __init__(self, name: str, moves: list[str]) -> None:
+        super().__init__(name, moves)
+        self.gameover_results: list[GameResult] = []
+
+    async def notify_gameover(self, result: GameResult) -> None:
+        self.gameover_results.append(result)
+
+
+def _new_result(bestmove: str, ponder: str | None = None) -> UsiThinkResult:
+    result = UsiThinkResult()
+    result.bestmove = move_from_usi(bestmove)
+    result.ponder = move_from_usi(ponder) if ponder is not None else None
+    pv = UsiThinkPV()
+    pv.pv = [result.bestmove]
+    pv.eval = 0
+    result.pvs.append(pv)
+    return result
+
+
+class PonderAwareScriptedEngine(GameEngineProtocol):
+    def __init__(
+        self,
+        name: str,
+        think_results: list[UsiThinkResult],
+        *,
+        ponder_hit_results: list[UsiThinkResult] | None = None,
+    ) -> None:
+        self._name = name
+        self._think_results = deque(think_results)
+        self._ponder_hit_results = deque(ponder_hit_results or [])
+        self._active_predicted: Move | None = None
+        self.think_calls = 0
+        self.start_ponder_calls = 0
+        self.ponder_hit_calls = 0
+        self.cancel_ponder_calls = 0
+
+    @property
+    def name(self) -> str:  # type: ignore[override]
+        return self._name
+
+    async def prepare(self, *, initial_sfen: str) -> None:
+        return None
+
+    async def think(
+        self,
+        *,
+        sfen: str,
+        moves: tuple[str, ...] | list[str],
+        request: UsiThinkRequest,
+        info_handler: InfoHandler | None = None,
+        timeout: float | None = None,
+    ) -> UsiThinkResult:
+        self.think_calls += 1
+        await asyncio.sleep(0)
+        if not self._think_results:
+            raise AssertionError(f"{self._name}: no scripted think result")
+        return self._think_results.popleft()
+
+    async def think_mate(
+        self,
+        *,
+        sfen: str,
+        moves: tuple[str, ...] | list[str],
+        ply_limit: int | None = None,
+        timeout: float | None = None,
+    ) -> UsiThinkResult:
+        raise NotImplementedError
+
+    async def analyze(
+        self,
+        *,
+        sfen: str,
+        moves: tuple[str, ...] | list[str],
+        request: UsiThinkRequest,
+        info_handler: InfoHandler | None = None,
+    ) -> UsiThinkResult:
+        raise NotImplementedError
+
+    async def notify_gameover(self, result: GameResult) -> None:
+        return None
+
+    async def stop(self) -> UsiThinkResult | None:
+        return None
+
+    async def shutdown(self) -> None:
+        return None
+
+    async def start_ponder(
+        self,
+        *,
+        sfen: str,
+        moves: tuple[str, ...] | list[str],
+        request: UsiThinkRequest,
+        predicted_move: Move | None,
+        info_handler: InfoHandler | None = None,
+        enable_early_ponder: bool | None = None,
+    ) -> None:
+        self.start_ponder_calls += 1
+        self._active_predicted = predicted_move
+
+    async def ponder_hit(
+        self,
+        *,
+        timings: PonderHitTimings | None,
+        timeout: float | None = None,
+    ) -> UsiThinkResult | None:
+        self.ponder_hit_calls += 1
+        self._active_predicted = None
+        if not self._ponder_hit_results:
+            raise AssertionError(f"{self._name}: no scripted ponder-hit result")
+        return self._ponder_hit_results.popleft()
+
+    async def cancel_ponder(self, *, timeout: float | None = None) -> UsiThinkResult | None:
+        self.cancel_ponder_calls += 1
+        self._active_predicted = None
+        return None
+
+    def has_active_ponder(self) -> bool:
+        return self._active_predicted is not None
+
+    def active_ponder_predicted_move(self) -> Move | None:
+        return self._active_predicted
+
+
+class DelayedCancelPonderEngine(PonderAwareScriptedEngine):
+    def __init__(
+        self,
+        name: str,
+        think_results: list[UsiThinkResult],
+        *,
+        cancel_delay_s: float,
+        ponder_hit_results: list[UsiThinkResult] | None = None,
+    ) -> None:
+        super().__init__(name, think_results, ponder_hit_results=ponder_hit_results)
+        self._cancel_delay_s = cancel_delay_s
+
+    async def cancel_ponder(self, *, timeout: float | None = None) -> UsiThinkResult | None:
+        self.cancel_ponder_calls += 1
+        self._active_predicted = None
+        await asyncio.sleep(self._cancel_delay_s)
         return None
 
 
@@ -136,7 +282,7 @@ async def test_max_moves_draw_includes_terminal_move_progress() -> None:
         white_time_control_limits=limits,
     )
 
-    assert game_info.game_result == GameResult.DRAW_BY_MAX_PLIES
+    assert game_info.result == GameResult.DRAW_BY_MAX_PLIES
 
     events: list[tuple[int, int, str | None]] = []
     while True:
@@ -163,3 +309,178 @@ async def test_max_moves_draw_includes_terminal_move_progress() -> None:
     result_updates = [payload for _move_count, payload in move_events if payload.get("result_code") is not None]
     assert result_updates, "expected move_progress with result_code"
     assert result_updates[-1]["result_code"] == GameResult.DRAW_BY_MAX_PLIES.value
+
+
+@pytest.mark.asyncio
+async def test_max_moves_draw_notifies_both_engines_with_draw_gameover() -> None:
+    limits = TimeControlLimits(time_ms=1000, increment_ms=0)
+    adjudication_cfg = AdjudicationConfig(
+        resign_enabled=False,
+        max_plies_enabled=True,
+        max_plies=4,
+    )
+    runner = GameRunner(
+        progress_queue=None,
+        time_control_limits=limits,
+        adjudication_config=adjudication_cfg,
+        repetition_occurrences_to_draw=2,
+    )
+
+    black_engine = TrackingScriptedEngine("black", ["7g7f", "2g2f"])
+    white_engine = TrackingScriptedEngine("white", ["3c3d", "8c8d"])
+
+    game_info = await runner.run_game(
+        black_engine=black_engine,
+        white_engine=white_engine,
+        initial_sfen="startpos",
+        game_id="game_max_moves_notify",
+        black_time_control_limits=limits,
+        white_time_control_limits=limits,
+    )
+
+    assert game_info.result == GameResult.DRAW_BY_MAX_PLIES
+    assert black_engine.gameover_results == [GameResult.DRAW_BY_MAX_PLIES]
+    assert white_engine.gameover_results == [GameResult.DRAW_BY_MAX_PLIES]
+
+
+@pytest.mark.asyncio
+async def test_game_runner_uses_ponderhit_when_prediction_matches() -> None:
+    limits = TimeControlLimits(time_ms=1000, increment_ms=0)
+    runner = GameRunner(
+        progress_queue=None,
+        time_control_limits=limits,
+        adjudication_config=AdjudicationConfig(resign_enabled=False),
+        repetition_occurrences_to_draw=2,
+    )
+
+    black_engine = PonderAwareScriptedEngine(
+        "black",
+        [_new_result("7g7f", "3c3d")],
+        ponder_hit_results=[_new_result("resign")],
+    )
+    white_engine = PonderAwareScriptedEngine("white", [_new_result("3c3d")])
+
+    game_info = await runner.run_game(
+        black_engine=black_engine,
+        white_engine=white_engine,
+        initial_sfen="startpos",
+        game_id="ponder_match",
+        black_time_control_limits=limits,
+        white_time_control_limits=limits,
+    )
+
+    assert game_info.result == GameResult.WHITE_WIN
+    assert black_engine.start_ponder_calls >= 1
+    assert black_engine.ponder_hit_calls == 1
+    assert black_engine.cancel_ponder_calls == 0
+    assert black_engine.think_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_game_runner_cancels_ponder_when_prediction_mismatches() -> None:
+    limits = TimeControlLimits(time_ms=1000, increment_ms=0)
+    runner = GameRunner(
+        progress_queue=None,
+        time_control_limits=limits,
+        adjudication_config=AdjudicationConfig(resign_enabled=False),
+        repetition_occurrences_to_draw=2,
+    )
+
+    black_engine = PonderAwareScriptedEngine(
+        "black",
+        [_new_result("7g7f", "8c8d"), _new_result("resign")],
+    )
+    white_engine = PonderAwareScriptedEngine("white", [_new_result("3c3d")])
+
+    game_info = await runner.run_game(
+        black_engine=black_engine,
+        white_engine=white_engine,
+        initial_sfen="startpos",
+        game_id="ponder_mismatch",
+        black_time_control_limits=limits,
+        white_time_control_limits=limits,
+    )
+
+    assert game_info.result == GameResult.WHITE_WIN
+    assert black_engine.start_ponder_calls >= 1
+    assert black_engine.ponder_hit_calls == 0
+    assert black_engine.cancel_ponder_calls >= 1
+    assert black_engine.think_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_game_runner_counts_cancel_ponder_latency_in_move_time() -> None:
+    limits = TimeControlLimits(time_ms=1000, increment_ms=0)
+    runner = GameRunner(
+        progress_queue=None,
+        time_control_limits=limits,
+        adjudication_config=AdjudicationConfig(resign_enabled=False),
+        repetition_occurrences_to_draw=2,
+    )
+
+    cancel_delay_s = 0.05
+    black_engine = DelayedCancelPonderEngine(
+        "black",
+        [_new_result("7g7f", "8c8d"), _new_result("2g2f")],
+        cancel_delay_s=cancel_delay_s,
+    )
+    white_engine = PonderAwareScriptedEngine("white", [_new_result("3c3d"), _new_result("resign")])
+
+    game_info = await runner.run_game(
+        black_engine=black_engine,
+        white_engine=white_engine,
+        initial_sfen="startpos",
+        game_id="ponder_mismatch_latency",
+        black_time_control_limits=limits,
+        white_time_control_limits=limits,
+    )
+
+    assert game_info.result == GameResult.BLACK_WIN
+    assert black_engine.cancel_ponder_calls >= 1
+    assert len(game_info.moves) >= 3
+    black_second_move = game_info.moves[2]
+    assert black_second_move.time_ms is not None
+    assert black_second_move.engine_info is not None
+    wall_time_ms_raw = black_second_move.engine_info.extras.get("wall_time_ms")
+    assert wall_time_ms_raw is not None
+    wall_time_ms = int(wall_time_ms_raw)
+    expected_floor_ms = int(cancel_delay_s * 1000) - 15
+    assert black_second_move.time_ms >= expected_floor_ms
+    assert wall_time_ms >= expected_floor_ms
+
+
+def test_ponderhit_timings_do_not_mix_byoyomi_and_increment() -> None:
+    runner = GameRunner(progress_queue=None, time_control_limits=TimeControlLimits(time_ms=1000, increment_ms=0))
+    current = TimeControl(TimeControlLimits(time_ms=10_000, byoyomi_ms=2000))
+    enemy = TimeControl(TimeControlLimits(time_ms=10_000, increment_ms=1000))
+
+    timings = runner._build_ponder_hit_timings(
+        current_time_control=current,
+        enemy_time_control=enemy,
+        is_black_turn=True,
+    )
+
+    suffix = timings.to_command_suffix()
+    assert "byoyomi 2000" in suffix
+    assert "binc" not in suffix
+    assert "winc" not in suffix
+
+
+def test_ponderhit_timings_match_go_time_adjustment_for_increment() -> None:
+    runner = GameRunner(progress_queue=None, time_control_limits=TimeControlLimits(time_ms=1000, increment_ms=0))
+    current = TimeControl(TimeControlLimits(time_ms=30_000, increment_ms=2_000))
+    enemy = TimeControl(TimeControlLimits(time_ms=28_103, increment_ms=5_000))
+
+    timings = runner._build_ponder_hit_timings(
+        current_time_control=current,
+        enemy_time_control=enemy,
+        is_black_turn=True,
+    )
+
+    # Match shogihome/request_from_time_controls behavior:
+    # advertise main time as remaining - increment, and provide increments separately.
+    assert timings.btime == 28_000
+    assert timings.wtime == 23_103
+    assert timings.binc == 2_000
+    assert timings.winc == 5_000
+    assert timings.byoyomi is None

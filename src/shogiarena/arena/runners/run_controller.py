@@ -49,30 +49,23 @@ class RunController:
                 return reasons_cache
             reasons: list[str] = []
 
-            running = getattr(orchestrator, "_running_tasks", None)
-            if isinstance(running, set):
-                active_running = sum(1 for t in running if not t.done())
-                if active_running:
-                    reasons.append(f"running_tasks={active_running}")
+            active_running = sum(1 for t in orchestrator._running_tasks if not t.done())
+            if active_running:
+                reasons.append(f"running_tasks={active_running}")
 
-            workers = getattr(orchestrator, "_worker_tasks", None)
-            if isinstance(workers, set):
-                active_workers = sum(1 for t in workers if not t.done())
-                if active_workers:
-                    reasons.append(f"worker_tasks={active_workers}")
+            active_workers = sum(1 for t in orchestrator._worker_tasks if not t.done())
+            if active_workers:
+                reasons.append(f"worker_tasks={active_workers}")
 
-            progress_hub = getattr(orchestrator, "_progress_hub", None)
-            progress_task = getattr(progress_hub, "_progress_task", None) if progress_hub is not None else None
-            if isinstance(progress_task, asyncio.Task) and not progress_task.done():
+            progress_task = orchestrator._progress_hub._progress_task
+            if progress_task is not None and not progress_task.done():
                 reasons.append("progress_hub=active")
 
-            engine_pool = getattr(orchestrator, "engine_pool", None)
+            engine_pool = orchestrator.engine_pool
             if engine_pool is not None:
-                in_use = getattr(engine_pool, "in_use", None)
-                if isinstance(in_use, dict):
-                    active_engines = sum(len(v) for v in in_use.values())
-                    if active_engines:
-                        reasons.append(f"engines_in_use={active_engines}")
+                active_engines = sum(len(v) for v in engine_pool.in_use.values())
+                if active_engines:
+                    reasons.append(f"engines_in_use={active_engines}")
 
             reasons_cache = reasons
             return reasons

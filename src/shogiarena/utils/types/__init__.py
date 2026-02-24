@@ -4,7 +4,6 @@
 
 推奨インポート:
 - `from shogiarena.utils.types.types import ...`
-- `from shogiarena.utils.types.sfen import ...`
 """
 
 # Avoid wildcard re-exports; import directly from submodules instead.

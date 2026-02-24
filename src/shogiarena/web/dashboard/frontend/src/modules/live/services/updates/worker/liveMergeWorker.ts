@@ -122,6 +122,46 @@ const assignmentSnapshotDebounceMs = 200;
 // With server-side move buffering, these should occur less frequently anyway.
 const lastFutureMoveSnapshotAtByGid = new Map<string, number>();
 const FUTURE_MOVE_SNAPSHOT_COOLDOWN_MS = 400;
+const debugEnabled = (() => {
+    try {
+        const params = new URLSearchParams(self?.location?.search ?? '');
+        const flag = params.get('liveDebug');
+        if (flag === '1') return true;
+    } catch {
+        // ignore
+    }
+    return false;
+})();
+function debugLog(message: string, details?: Record<string, unknown>): void {
+    if (!debugEnabled) return;
+    if (details) {
+        // eslint-disable-next-line no-console
+        console.debug(`[LiveMergeWorker] ${message}`, details);
+    } else {
+        // eslint-disable-next-line no-console
+        console.debug(`[LiveMergeWorker] ${message}`);
+    }
+}
+
+function summarizeEngineStatus(status: unknown): Record<string, unknown> | null {
+    if (!status || typeof status !== 'object') return null;
+    const raw = status as Record<string, unknown>;
+    const summarizeRole = (role: 'black' | 'white') => {
+        const entry = raw[role] as Record<string, unknown> | undefined;
+        if (!entry || typeof entry !== 'object') return { count: 0, last: null };
+        const tail = Array.isArray(entry.io_tail) ? entry.io_tail : [];
+        const last = tail.length ? tail[tail.length - 1] : null;
+        const lastLine =
+            last && typeof last === 'object' && 'line' in (last as Record<string, unknown>)
+                ? (last as Record<string, unknown>).line
+                : null;
+        return { count: tail.length, last: lastLine ?? null };
+    };
+    return {
+        black: summarizeRole('black'),
+        white: summarizeRole('white'),
+    };
+}
 
 const SNAPSHOT_REASON_WORKER_MOVE_HOLE = 101;
 const SNAPSHOT_REASON_WORKER_SEQ_GAP = 102;
@@ -355,6 +395,7 @@ function maybeRequestAssignmentSnapshot(): void {
         return;
     }
     lastAssignmentSnapshotRequestAt = now;
+    debugLog('request assignment snapshot');
     postAck({
         type: 'request_snapshot',
         topic: 'live.assignment.snapshot',
@@ -970,7 +1011,16 @@ function unwrapGameDiffPayload(payload: unknown, gidFromTopic: string, topic: st
         if (clock && typeof clock === 'object' && !Array.isArray(clock)) {
             patch.clock = clock as Record<string, unknown>;
         }
-        const fields = ['result_code', 'end_reason', 'meta', 'initial_sfen', 'sfen', 'black_name', 'white_name'];
+        const fields = [
+            'result_code',
+            'end_reason',
+            'meta',
+            'initial_sfen',
+            'sfen',
+            'black_name',
+            'white_name',
+            'engine_status',
+        ];
         for (const field of fields) {
             if (env[field] !== undefined) {
                 (patch as Record<string, unknown>)[field] = env[field];
@@ -1038,6 +1088,12 @@ function buildUpdateFromDiff(
             if (resultCode !== undefined) {
                 update.result_code = resultCode;
             }
+        }
+    }
+    if (Object.hasOwn(patch, 'engine_status')) {
+        const raw = (patch as Record<string, unknown>).engine_status;
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+            (update as Record<string, unknown>).engine_status = raw;
         }
     }
 
@@ -1110,11 +1166,13 @@ function handleGameSnapshot(topic: string, gid: string, payload: unknown): void 
     // After reset (e.g., visibility resume), ignore game snapshots until a fresh assignment snapshot
     // arrives. This prevents stale snapshot responses (requested before reset) from corrupting the view.
     if (awaitingAssignmentSnapshot) {
+        debugLog('drop game snapshot (awaiting assignment)', { gid, topic });
         clearPending(topic);
         return;
     }
     if (!hasAssignedWorkers(gid)) {
         // Ignore snapshots for unreferenced gids to avoid unbounded growth over long sessions.
+        debugLog('drop game snapshot (unassigned gid)', { gid, topic });
         clearPending(topic);
         return;
     }
@@ -1125,6 +1183,12 @@ function handleGameSnapshot(topic: string, gid: string, payload: unknown): void 
         const revRaw = (incoming as Record<string, unknown>).assignment_rev;
         const rev = typeof revRaw === 'number' && Number.isFinite(revRaw) ? Math.trunc(revRaw) : null;
         if (rev !== null && rev !== assignmentRev) {
+            debugLog('drop game snapshot (assignment rev mismatch)', {
+                gid,
+                incoming: rev,
+                current: assignmentRev,
+            });
+            maybeRequestAssignmentSnapshot();
             return;
         }
     }
@@ -1166,17 +1230,25 @@ function handleGameSnapshot(topic: string, gid: string, payload: unknown): void 
         const vm = buildViewModel(workerIdx, incoming, { includeSnapshot: true, snapshotDelta: null });
         postAck({ type: 'vm', payload: vm });
     }
+    const statusSummary = summarizeEngineStatus((incoming as { engine_status?: unknown }).engine_status);
+    debugLog('apply game snapshot', {
+        gid,
+        workers: Array.from(workers),
+        engine_status: statusSummary,
+    });
 }
 
 function handleGameDiff(topic: string, gid: string, payload: unknown): void {
     // After reset (e.g., visibility resume), ignore game diffs until a fresh assignment snapshot
     // arrives. This prevents stale diff responses from corrupting the view.
     if (awaitingAssignmentSnapshot) {
+        debugLog('drop game diff (awaiting assignment)', { gid, topic });
         clearPending(topic);
         return;
     }
     if (!hasAssignedWorkers(gid)) {
         // Ignore diffs for unreferenced gids to avoid retaining completed/rotated games indefinitely.
+        debugLog('drop game diff (unassigned gid)', { gid, topic });
         clearPending(topic);
         return;
     }
@@ -1184,6 +1256,12 @@ function handleGameDiff(topic: string, gid: string, payload: unknown): void {
     if (!diff) return;
     if (assignmentRev != null) {
         if (diff.assignmentRev == null || diff.assignmentRev !== assignmentRev) {
+            debugLog('drop game diff (assignment rev mismatch)', {
+                gid,
+                incoming: diff.assignmentRev ?? null,
+                current: assignmentRev,
+            });
+            maybeRequestAssignmentSnapshot();
             return;
         }
     }
@@ -1289,6 +1367,15 @@ function handleGameDiff(topic: string, gid: string, payload: unknown): void {
     }
     const patched = applyPatch(existing, genericPatch);
     let update = buildUpdateFromDiff(diff, patched);
+    if (update && Object.hasOwn(update, 'engine_status')) {
+        const statusSummary = summarizeEngineStatus((update as Record<string, unknown>).engine_status);
+        debugLog('apply engine_status diff', {
+            gid,
+            kind: diff.kind ?? null,
+            type: diff.type ?? null,
+            engine_status: statusSummary,
+        });
+    }
     if (!update) {
         applyWsSeqMeta(patched, topic, seqByTopic.get(topic));
         snapshotsByGid.set(gid, patched);
@@ -1384,21 +1471,33 @@ function handleAssignmentSnapshot(topic: string, payload: unknown): void {
     // After a reset, ignore assignment diffs until a snapshot arrives.
     // This prevents processing stale replayed diffs that would trigger snapshot requests for old gids.
     if (awaitingAssignmentSnapshot && !isSnapshot) {
+        debugLog('drop assignment diff while awaiting snapshot', { topic });
         clearPending(topic);
         return;
     }
     const revRaw = (inner as { assignment_rev?: unknown }).assignment_rev;
     const rev = typeof revRaw === 'number' && Number.isFinite(revRaw) ? Math.max(0, Math.trunc(revRaw)) : null;
     if (rev !== null && assignmentRev !== null && rev < assignmentRev) {
+        debugLog('drop assignment snapshot (rev regression)', {
+            topic,
+            incoming: rev,
+            current: assignmentRev,
+        });
         clearPending(topic);
         return;
     }
-    if (isSnapshot) {
+    if (isSnapshot && awaitingAssignmentSnapshot) {
         // Clear the awaiting flag since we're about to process the authoritative snapshot.
         awaitingAssignmentSnapshot = false;
         resetState();
         // resetState sets awaitingAssignmentSnapshot=true, but we're processing a snapshot now, so clear it.
         awaitingAssignmentSnapshot = false;
+    }
+    if (isSnapshot) {
+        debugLog('assignment snapshot', {
+            rev,
+            assignments: Object.keys(raw).length,
+        });
     }
     const nextMap = new Map<number, string | null>();
     for (const [k, v] of Object.entries(raw)) {
@@ -1428,6 +1527,7 @@ function handleAssignmentSnapshot(topic: string, payload: unknown): void {
     for (const [idx, nextGid] of nextMap.entries()) {
         const prevGid = assignmentsByWorker.get(idx) ?? null;
         if (prevGid === nextGid) continue;
+        debugLog('assignment update', { worker: idx, prev: prevGid, next: nextGid, rev });
         assignmentsByWorker.set(idx, nextGid);
 
         if (prevGid) {
@@ -1575,6 +1675,13 @@ function handleEnvelope(envelope: LiveEnvelope): void {
 type ControlMessage = { type: 'reset'; reason?: string } | { type: 'diagnostics' };
 
 function resetState(): void {
+    debugLog('resetState', {
+        assignmentsByWorker: assignmentsByWorker.size,
+        workersByGid: workersByGid.size,
+        snapshotsByGid: snapshotsByGid.size,
+        assignmentRev,
+        awaitingAssignmentSnapshot,
+    });
     snapshotsByGid.clear();
     assignmentsByWorker.clear();
     workersByGid.clear();

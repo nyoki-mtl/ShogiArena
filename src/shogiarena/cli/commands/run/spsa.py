@@ -8,9 +8,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from shogiarena.arena.configs.spsa import SpsaConfig, load_config_yaml
+from shogiarena.arena.configs.spsa import SpsaRunConfig, load_config_yaml
 from shogiarena.arena.runners.spsa_runner import SpsaRunner
 from shogiarena.arena.services.artifacts.builder import maybe_build_from_yaml
+from shogiarena.arena.storage import FilesystemRunStorage
 from shogiarena.cli.errors import CliArgumentError
 from shogiarena.utils.common import project_dirs
 from shogiarena.utils.common.settings import SETTINGS, validate_overlays
@@ -28,10 +29,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     parser.add_argument("config", help="Path to SPSA configuration YAML")
     parser.add_argument("--engine-trace", action="store_true", help="Enable verbose USI engine logging")
     parser.add_argument("--dry-run", action="store_true", help="Validate config without executing")
-    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing run directory")
+    parser.add_argument("--validate-only", action="store_true", help="Validate config and exit without scheduling")
+    parser.add_argument("--no-resume", action="store_true", help="Start a new run instead of resuming")
     parser.add_argument(
-        "--run-name",
-        help="Override the run group name (creates runs/<name>-<hash8>/timestamp)",
+        "--experiment-name",
+        help="Override the experiment name (creates runs/<name>-<hash8>/timestamp)",
     )
     parser.add_argument(
         "--run-dir",
@@ -57,17 +59,18 @@ class SpsaRunCommand(BaseRunCommand):
         args = self.args
         config_path = self.resolve_config_path(args.config)
 
-        if args.run_name and args.run_dir:
-            raise CliArgumentError("--run-name and --run-dir cannot be used together")
+        if args.experiment_name and args.run_dir:
+            raise CliArgumentError("--experiment-name and --run-dir cannot be used together")
 
         run_spsa_sync(
             config_file=config_path,
             engine_trace=args.engine_trace,
             dry_run=args.dry_run,
-            overwrite=args.overwrite,
+            validate_only=args.validate_only,
+            no_resume=args.no_resume,
             provision_mode=args.provision,
             git_worktree=args.git_worktree,
-            run_name=args.run_name,
+            experiment_name=args.experiment_name,
             run_dir_override=args.run_dir,
             base_cmd=self,
         )
@@ -78,38 +81,43 @@ def run_spsa_sync(
     config_file: Path,
     engine_trace: bool,
     dry_run: bool,
-    overwrite: bool,
+    validate_only: bool = False,
+    no_resume: bool,
     provision_mode: str,
     git_worktree: str,
-    run_name: str | None,
+    experiment_name: str | None,
     run_dir_override: str | None,
     base_cmd: BaseRunCommand | None = None,
 ) -> None:
     logger = LOGGER
     cmd = base_cmd or BaseRunCommand(argparse.Namespace())
 
-    cfg: SpsaConfig = load_config_yaml(config_file)
+    cfg: SpsaRunConfig = load_config_yaml(config_file)
     validate_overlays(SETTINGS)
 
-    cmd.apply_run_dir_override(
-        cfg,
+    if validate_only:
+        logger.info("Validated SPSA config: %s", config_file)
+        return
+
+    run_dir = cmd.resolve_run_dir_path(
         config_file,
         project_dirs.output_dir / "spsa",
-        run_name,
+        experiment_name,
         run_dir_override,
     )
 
-    cmd.prompt_resume(
-        config=cfg,
+    resume_dir = cmd.prompt_resume(
         config_file=config_file,
         output_dir=project_dirs.output_dir / "spsa",
-        run_name=run_name,
+        experiment_name=experiment_name,
         run_dir_override=run_dir_override,
-        overwrite=overwrite,
+        no_resume=no_resume,
         dry_run=dry_run,
         scan_candidates_fn=_scan_spsa_candidates,
         match_hash=None,  # SPSA config hashing not strictly enforced yet
     )
+    if resume_dir is not None:
+        run_dir = resume_dir
 
     instance_pool = cmd.resolve_instance_pool(cfg.instances)
 
@@ -138,14 +146,15 @@ def run_spsa_sync(
         base_names = [e.name for e in cfg.baseline]
         tuned_names = [e.name for e in cfg.tuned]
         logger.debug("Experiment: %s", cfg.experiment_name)
-        logger.debug("Run directory: %s", cfg.run_dir)
+        logger.debug("Run directory: %s", run_dir)
         logger.debug("Baseline: %s", base_names)
         logger.debug("Tuned: %s", tuned_names)
         logger.debug("Parameters path: %s", cfg.parameters_path)
         logger.debug("Start SFENs: %s", cfg.start_sfens_path)
         return
 
-    runner = SpsaRunner(cfg, overwrite=overwrite, instance_pool=instance_pool)
+    storage = FilesystemRunStorage(run_dir)
+    runner = SpsaRunner(cfg, storage=storage, no_resume=no_resume, instance_pool=instance_pool)
     runner.run_sync()
 
 

@@ -85,3 +85,41 @@ options:
     expected_eval = str((output_dir / "evals" / "sample").resolve())
     assert resolved.engine_path == expected_engine
     assert resolved.options["EvalDir"] == expected_eval
+
+
+def test_from_mapping_parses_mate_defaults_and_sync_strategy() -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "test",
+            "engine_path": "/tmp/dummy",
+            "mate_default_ply_limit": 20000,
+            "mate_wait_for_bestmove": True,
+            "isready_sync_strategy": "wait",
+        }
+    )
+    assert config.mate_default_ply_limit == 20000
+    assert config.mate_wait_for_bestmove is True
+    assert config.isready_sync_strategy == "wait"
+
+
+def test_from_mapping_rejects_conflicting_mate_defaults() -> None:
+    with pytest.raises(ValueError):
+        UsiEngineConfig.from_mapping(
+            {
+                "name": "test",
+                "engine_path": "/tmp/dummy",
+                "mate_default_infinite": True,
+                "mate_default_ply_limit": 30000,
+            }
+        )
+
+
+def test_from_mapping_rejects_invalid_isready_sync_strategy() -> None:
+    with pytest.raises(ValueError):
+        UsiEngineConfig.from_mapping(
+            {
+                "name": "test",
+                "engine_path": "/tmp/dummy",
+                "isready_sync_strategy": "invalid",
+            }
+        )

@@ -1,14 +1,20 @@
 """Rating calculation service for arena tournaments."""
 
 import logging
-from typing import Any
+import math
+from typing import TypedDict
 
-from shogiarena.utils.types.types import GameResult
+from shogiarena.utils.types.types import Color, GameRecordDict, GameResult, game_result_score
 
 logger = logging.getLogger(__name__)
 
 
-class RatingService:
+class RatingSeriesEntry(TypedDict):
+    engine: str
+    points: list[tuple[int, float]]
+
+
+class EloRatingService:
     """Service for calculating and managing Elo ratings in tournaments.
 
     Provides consistent rating calculations with configurable parameters
@@ -19,7 +25,7 @@ class RatingService:
         self,
         initial_rating: float = 1500.0,
         k_factor: float = 16.0,
-    ):
+    ) -> None:
         """Initialize rating service.
 
         Args:
@@ -31,7 +37,7 @@ class RatingService:
         # Add internal rating cache for incremental updates
         self._current_ratings: dict[str, float] = {}
 
-    def calculate_rating_series(self, games: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def calculate_rating_series(self, games: list[GameRecordDict]) -> list[RatingSeriesEntry]:
         """Calculate rating progression series from game results.
 
         Args:
@@ -78,8 +84,8 @@ class RatingService:
 
             # Determine actual scores from result
             # Convert to scores; skip paused/error/invalid
-            black_score = result.to_black_result()
-            if black_score == -1:
+            black_score = game_result_score(result, Color.BLACK)
+            if black_score is None:
                 history[black_player].append((game_idx, ratings[black_player]))
                 history[white_player].append((game_idx, ratings[white_player]))
                 continue
@@ -97,14 +103,67 @@ class RatingService:
             history[white_player].append((game_idx, updated_white_rating))
 
         # Convert to series format for dashboard/visualization
-        rating_series = [
-            {"engine": engine_name, "points": points}
-            for engine_name, points in sorted(history.items(), key=lambda x: x[0])
-        ]
+        rating_series: list[RatingSeriesEntry] = []
+        for engine_name, points in sorted(history.items(), key=lambda x: x[0]):
+            rating_series.append({"engine": engine_name, "points": points})
 
         return rating_series
 
-    def get_current_ratings(self, games: list[dict[str, Any]]) -> dict[str, float]:
+    def calculate_rating_confidence_intervals(
+        self,
+        games: list[GameRecordDict],
+        *,
+        confidence: float = 0.95,
+    ) -> dict[str, tuple[float, float]]:
+        """Calculate approximate Elo confidence intervals per engine.
+
+        Uses a normal approximation on the win-rate estimate and converts to Elo.
+        This is a lightweight estimate intended for dashboard visibility.
+        """
+        if not (0 < confidence < 1):
+            raise ValueError("confidence must be between 0 and 1")
+        z = _z_value(confidence)
+        ratings = self.get_current_ratings(games)
+        stats: dict[str, dict[str, int]] = {}
+        for game in games:
+            black = game["black_player"]
+            white = game["white_player"]
+            result: GameResult = game["result"]
+            stats.setdefault(black, {"wins": 0, "draws": 0, "losses": 0})
+            stats.setdefault(white, {"wins": 0, "draws": 0, "losses": 0})
+            if result.is_draw():
+                stats[black]["draws"] += 1
+                stats[white]["draws"] += 1
+            elif result.is_black_win():
+                stats[black]["wins"] += 1
+                stats[white]["losses"] += 1
+            elif result.is_white_win():
+                stats[white]["wins"] += 1
+                stats[black]["losses"] += 1
+
+        intervals: dict[str, tuple[float, float]] = {}
+        for engine, rating in ratings.items():
+            counts = stats.get(engine, {"wins": 0, "draws": 0, "losses": 0})
+            games_played = counts["wins"] + counts["draws"] + counts["losses"]
+            if games_played <= 0:
+                intervals[engine] = (rating, rating)
+                continue
+            p = (counts["wins"] + 0.5 * counts["draws"]) / games_played
+            p = min(0.999, max(0.001, p))
+            se = (400.0 / math.log(10.0)) * math.sqrt(1.0 / (games_played * p * (1.0 - p)))
+            margin = z * se
+            intervals[engine] = (rating - margin, rating + margin)
+        return intervals
+
+    def get_rating_series_for_engine(self, games: list[GameRecordDict], engine_name: str) -> list[tuple[int, float]]:
+        """Return rating history for a single engine."""
+        series = self.calculate_rating_series(games)
+        for entry in series:
+            if entry.get("engine") == engine_name:
+                return list(entry.get("points", []))
+        return []
+
+    def get_current_ratings(self, games: list[GameRecordDict]) -> dict[str, float]:
         """Get current ratings after processing all games.
 
         Args:
@@ -144,8 +203,8 @@ class RatingService:
             expected_black_score = 1.0 / (1.0 + 10 ** ((white_rating - black_rating) / 400.0))
             expected_white_score = 1.0 - expected_black_score
 
-            black_score = result.to_black_result()
-            if black_score == -1:
+            black_score = game_result_score(result, Color.BLACK)
+            if black_score is None:
                 continue
             white_score = 1.0 - black_score
 
@@ -154,7 +213,7 @@ class RatingService:
 
         return ratings
 
-    def calculate_rating_difference(self, engine_a: str, engine_b: str, games: list[dict[str, Any]]) -> float:
+    def calculate_rating_difference(self, engine_a: str, engine_b: str, games: list[GameRecordDict]) -> float:
         """Calculate rating difference between two specific engines.
 
         Args:
@@ -186,8 +245,8 @@ class RatingService:
         white_rating = self._current_ratings.get(white_player, self.initial_rating)
 
         # Convert result to score
-        black_score = game_result.to_black_result()
-        if black_score == -1:
+        black_score = game_result_score(game_result, Color.BLACK)
+        if black_score is None:
             return (
                 self._current_ratings.get(black_player, self.initial_rating),
                 self._current_ratings.get(white_player, self.initial_rating),
@@ -207,3 +266,15 @@ class RatingService:
         self._current_ratings[white_player] = new_white_rating
 
         return new_black_rating, new_white_rating
+
+
+def _z_value(confidence: float) -> float:
+    if confidence >= 0.99:
+        return 2.575
+    if confidence >= 0.98:
+        return 2.326
+    if confidence >= 0.95:
+        return 1.96
+    if confidence >= 0.90:
+        return 1.645
+    return 1.0

@@ -2,41 +2,88 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Literal, TypedDict, TypeVar, cast
 
 import yaml
 from omegaconf import DictConfig, OmegaConf
+from pydantic import BaseModel, Field, model_validator
+from typing_extensions import Self
 
 from shogiarena.arena.configs.base import SprtConfig
-from shogiarena.arena.configs.tournament import ArenaConfig, EngineSpec, RulesConfig
+from shogiarena.arena.configs.errors import ConfigError
+from shogiarena.arena.configs.tournament import (
+    DashboardConfig,
+    EngineConfig,
+    RulesConfig,
+    SystemConfig,
+    TournamentRunConfig,
+)
 from shogiarena.arena.engines.time_control import TimeControlLimits
 from shogiarena.utils.common import project_dirs
 from shogiarena.utils.common.paths import resolve_path_like
-from shogiarena.utils.common.run_paths import default_run_dir
+from shogiarena.utils.types.coerce import coerce_bool, coerce_int, coerce_str, coerce_str_list
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
-@dataclass
-class SpsaConfig:
+class _DashboardPayload(TypedDict, total=False):
+    enabled: bool
+    api_port: int
+
+
+class LtcPassCriteria(BaseModel):
+    """LTC test pass criteria."""
+
+    min_winrate: float | None = None
+    max_elo_drop: float | None = None
+    sprt: SprtConfig | None = None
+
+    @model_validator(mode="after")
+    def _validate_pass_criteria(self) -> Self:
+        if self.min_winrate is not None and not (0.0 <= self.min_winrate <= 1.0):
+            raise ValueError("ltc_pass_criteria.min_winrate must be between 0.0 and 1.0")
+        return self
+
+
+class LtcRegressionConfig(BaseModel):
+    """LTC regression test configuration."""
+
+    enabled: bool = False
+    every_n_updates: int = Field(default=0, ge=0)
+    total_pairs: int = Field(default=0, ge=0)
+    time_control: TimeControlLimits | None = None
+    pass_criteria: LtcPassCriteria | None = None
+
+    @model_validator(mode="after")
+    def _validate_ltc_regression(self) -> Self:
+        if self.enabled:
+            if self.every_n_updates <= 0:
+                raise ValueError("ltc_regression.every_n_updates must be positive when enabled")
+            if self.total_pairs <= 0:
+                raise ValueError("ltc_regression.total_pairs must be positive when enabled")
+        return self
+
+
+class SpsaRunConfig(BaseModel):
+    """SPSA run configuration."""
+
     # Required inputs
     start_sfens_path: str
     parameters_path: str
     # Engines: exactly one entry required; baseline=tunedに同一を使用
-    baseline: list[EngineSpec]
-    tuned: list[EngineSpec]
+    baseline: list[EngineConfig]
+    tuned: list[EngineConfig]
     # Tournament-like rules (time_control, adjudication, etc.)
-    rules: RulesConfig = field(default_factory=RulesConfig)
+    rules: RulesConfig = Field(default_factory=RulesConfig)
     # SPSA algorithm parameters
-    num_updates: int = 0
+    num_updates: int = Field(gt=0)
     mobility: float = 1.0
     scale: float = 1.0
     # Paths and runtime
     experiment_name: str | None = None
-    run_dir: str | None = None
     instances: tuple[Path, ...] | None = None
     # Async orchestration
     inflight_factor: int = 4
@@ -49,143 +96,31 @@ class SpsaConfig:
     snap_float_to_step: bool = False
     # OpenBench alignment options
     crn_enabled: bool = True
-    int_rounding: str = "none"
+    int_rounding: Literal["none", "stochastic"] = "none"
     int_ck_floor: float = 0.5
-    update_mode: str = "immediate"
-    early_stop: dict[str, Any] | None = None
+    update_mode: Literal["immediate", "barrier"] = "immediate"
+    early_stop: dict[str, object] | None = None
     # Dashboard / workers
-    dashboard_enabled: bool = True
-    dashboard_api_port: int = 8080
+    dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
+    system: SystemConfig = Field(default_factory=SystemConfig)
     num_workers: int = 1
     ltc_regression: LtcRegressionConfig | None = None
 
 
-@dataclass
-class LtcPassCriteria:
-    min_winrate: float | None = None
-    max_elo_drop: float | None = None
-    sprt: SprtConfig | None = None
-
-
-@dataclass
-class LtcRegressionConfig:
-    enabled: bool = False
-    every_n_updates: int = 0
-    total_pairs: int = 0
-    time_control: TimeControlLimits | None = None
-    pass_criteria: LtcPassCriteria | None = None
-
-
-def _get_spsa_value(node: Mapping[str, Any], name: str, default: Any) -> Any:
-    """Helper to fetch a value from the spsa node with a default.
-
-    Keeps semantics explicit and improves readability over terse helpers.
-    """
+def _get_spsa_value(node: Mapping[str, object], name: str, default: T) -> T:
+    """Helper to fetch a value from the spsa node with a default."""
     v = node.get(name)
-    return v if v is not None else default
+    return cast(T, v if v is not None else default)
 
 
-def _parse_ltc_pass_criteria(raw: Mapping[str, Any]) -> LtcPassCriteria:
-    if not isinstance(raw, Mapping):
-        raise TypeError("ltc_regression.pass_criteria must be a mapping")
-
-    min_winrate = raw.get("min_winrate")
-    if min_winrate is not None and not isinstance(min_winrate, int | float):
-        raise TypeError("ltc_regression.pass_criteria.min_winrate must be numeric")
-
-    max_elo_drop = raw.get("max_elo_drop")
-    if max_elo_drop is not None and not isinstance(max_elo_drop, int | float):
-        raise TypeError("ltc_regression.pass_criteria.max_elo_drop must be numeric")
-
-    sprt_raw = raw.get("sprt")
-    sprt: SprtConfig | None = None
-    if sprt_raw is not None:
-        if not isinstance(sprt_raw, Mapping):
-            raise TypeError("ltc_regression.pass_criteria.sprt must be a mapping")
-        sprt_dict = dict(sprt_raw)
-        for key in ("elo0", "elo1", "alpha", "beta"):
-            value = sprt_dict.get(key)
-            if value is not None:
-                if not isinstance(value, int | float):
-                    raise TypeError(f"ltc_regression.pass_criteria.sprt.{key} must be numeric")
-                sprt_dict[key] = float(value)
-        sprt = SprtConfig(**sprt_dict)
-
-    return LtcPassCriteria(
-        min_winrate=float(min_winrate) if min_winrate is not None else None,
-        max_elo_drop=float(max_elo_drop) if max_elo_drop is not None else None,
-        sprt=sprt,
-    )
-
-
-def _parse_ltc_regression(node: Mapping[str, Any]) -> LtcRegressionConfig:
-    if not isinstance(node, Mapping):
-        raise TypeError("ltc_regression must be a mapping")
-
-    enabled = bool(node.get("enabled", True))
-
-    every_n_updates_raw = node.get("every_n_updates", 0)
-    if every_n_updates_raw is None:
-        every_n_updates = 0
-    elif isinstance(every_n_updates_raw, int):
-        every_n_updates = every_n_updates_raw
-    else:
-        raise TypeError("ltc_regression.every_n_updates must be an integer")
-
-    total_pairs_raw = node.get("total_pairs", 0)
-    if total_pairs_raw is None:
-        total_pairs = 0
-    elif isinstance(total_pairs_raw, int):
-        total_pairs = total_pairs_raw
-    else:
-        raise TypeError("ltc_regression.total_pairs must be an integer")
-
-    if enabled:
-        if every_n_updates <= 0:
-            raise ValueError("ltc_regression.every_n_updates must be positive when enabled")
-        if total_pairs <= 0:
-            raise ValueError("ltc_regression.total_pairs must be positive when enabled")
-
-    tc_raw = node.get("time_control")
-    time_control: TimeControlLimits | None = None
-    if tc_raw is not None:
-        tc_container = OmegaConf.to_container(tc_raw, resolve=True)
-        if not isinstance(tc_container, Mapping):
-            raise TypeError("ltc_regression.time_control must be a mapping")
-        time_control = TimeControlLimits(**cast(dict[str, Any], tc_container))
-
-    pass_criteria_raw = node.get("pass_criteria")
-    pass_criteria = _parse_ltc_pass_criteria(pass_criteria_raw) if pass_criteria_raw is not None else None
-
-    if "fail_action" in node and node.get("fail_action") is not None:
-        raise ValueError("ltc_regression.fail_action is no longer supported; remove this field from the config")
-
-    return LtcRegressionConfig(
-        enabled=enabled,
-        every_n_updates=every_n_updates,
-        total_pairs=total_pairs,
-        time_control=time_control,
-        pass_criteria=pass_criteria,
-    )
-
-
-def _load_overlay_for_artifact(artifact: str) -> dict[str, Any]:
+def _load_overlay_for_artifact(artifact: str) -> dict[str, object]:
     return {}
 
 
-def _normalize_overlays(raw: Any) -> list[Path]:
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        items = [raw]
-    elif isinstance(raw, Sequence):
-        items = list(raw)
-    else:
-        raise TypeError("options_overlays must be a string or list of strings")
+def _normalize_overlays(raw: object) -> list[Path]:
+    items = coerce_str_list(raw, field="options_overlays")
     overlays: list[Path] = []
     for item in items:
-        if not isinstance(item, str) or not item.strip():
-            raise TypeError("options_overlays entries must be non-empty strings")
         candidate = Path(resolve_path_like(item))
         if not candidate.exists():
             raise FileNotFoundError(f"Options overlay file not found: {candidate}")
@@ -193,56 +128,103 @@ def _normalize_overlays(raw: Any) -> list[Path]:
     return overlays
 
 
-def _load_overlays(overlays: list[Path]) -> dict[str, Any]:
-    merged: dict[str, Any] = {}
+def _load_overlays(overlays: list[Path]) -> dict[str, object]:
+    merged: dict[str, object] = {}
     for overlay in overlays:
         raw = yaml.safe_load(overlay.read_text(encoding="utf-8")) or {}
-        if not isinstance(raw, dict):
+        if not isinstance(raw, Mapping):
             raise TypeError("options_overlays YAML must be a mapping")
         opts = raw.get("options") if "options" in raw else raw
-        if isinstance(opts, dict):
+        if isinstance(opts, Mapping):
             merged.update(opts)
     return merged
 
 
-def _map_engine(x: Mapping[str, Any]) -> EngineSpec:
+def _normalize_check_templates(raw: object) -> tuple[str, ...]:
+    """Normalize isready_lock_check_templates into a tuple of strings."""
+    return tuple(coerce_str_list(raw, field="isready_lock_check_templates"))
+
+
+def _parse_time_control_raw(raw: object) -> TimeControlLimits | None:
+    """OmegaConf/dict 形式の time_control を ``TimeControlLimits`` に変換する。"""
+    if raw is None or not isinstance(raw, Mapping):
+        return None
+    container = OmegaConf.to_container(raw, resolve=True)
+    if not isinstance(container, dict):
+        return None
+    return TimeControlLimits.model_validate(container)
+
+
+def _extract_engine_common_kwargs(x: Mapping[str, object], overlays: list[Path]) -> dict[str, object]:
+    """artifact / engine_path 両ブランチで共通する EngineConfig kwargs を抽出する。"""
+    instance_id_raw = x.get("instance_id")
+    return {
+        "mate_default_ply_limit": x.get("mate_default_ply_limit"),
+        "mate_default_node_limit": x.get("mate_default_node_limit"),
+        "mate_default_infinite": coerce_bool(x.get("mate_default_infinite", False)),
+        "mate_wait_for_bestmove": coerce_bool(x.get("mate_wait_for_bestmove", False)),
+        "isready_sync_strategy": x.get("isready_sync_strategy", "direct"),
+        "isready_lock_key": x.get("isready_lock_key"),
+        "isready_lock_template": x.get("isready_lock_template"),
+        "isready_lock_check_key": x.get("isready_lock_check_key"),
+        "isready_lock_check_template": x.get("isready_lock_check_template"),
+        "isready_lock_check_templates": _normalize_check_templates(x.get("isready_lock_check_templates")),
+        "isready_lock_skip_if_exists": coerce_bool(x.get("isready_lock_skip_if_exists", False)),
+        "time_control": _parse_time_control_raw(x.get("time_control")),
+        "options_overlays": overlays,
+        "instance_id": (str(instance_id_raw).strip() or None) if instance_id_raw is not None else None,
+    }
+
+
+def _map_engine(x: Mapping[str, object]) -> EngineConfig:
     _warn_unknown_keys(
         x,
         allowed={
             "artifact",
-            "engine_config",
+            "engine_path",
             "build_options",
             "name",
             "options",
             "options_overlays",
+            "mate_default_ply_limit",
+            "mate_default_node_limit",
+            "mate_default_infinite",
+            "mate_wait_for_bestmove",
+            "isready_sync_strategy",
+            "isready_lock_key",
+            "isready_lock_template",
+            "isready_lock_check_key",
+            "isready_lock_check_template",
+            "isready_lock_check_templates",
+            "isready_lock_skip_if_exists",
             "time_control",
             "instance_id",
         },
         label="engines[0]",
     )
-    # Exactly one of artifact or engine_config
-    has_art = isinstance(x.get("artifact"), str) and str(x["artifact"]).strip() != ""
-    has_cfg = isinstance(x.get("engine_config"), str) and str(x["engine_config"]).strip() != ""
+    # Exactly one of artifact or engine_path
+    has_art = coerce_str(x.get("artifact")) is not None
+    engine_path_key = x.get("engine_path")
+    has_cfg = coerce_str(engine_path_key) is not None
     if has_art == has_cfg:
-        raise ValueError("Engine must specify exactly one of 'artifact' or 'engine_config'")
+        raise ValueError("Engine must specify exactly one of 'artifact' or 'engine_path'")
 
     name = x.get("name")
     overlays = _normalize_overlays(x.get("options_overlays"))
+    common = _extract_engine_common_kwargs(x, overlays)
+
     if has_art:
         art = str(x["artifact"]).strip()
-        # Validate build_options.target_cpu
         bo_raw = x.get("build_options")
-        if not isinstance(bo_raw, Mapping) or not str(bo_raw.get("target_cpu", "")).strip():
-            raise ValueError("Artifact engines require build_options.target_cpu")
-        bo = cast(dict[str, Any], dict(bo_raw))
+        bo = dict(bo_raw) if isinstance(bo_raw, Mapping) else {}
 
         # Build merged options: overlay -> options_overlays -> inline options(dict)
-        merged: dict[str, Any] = {}
+        merged: dict[str, object] = {}
         merged.update(_load_overlay_for_artifact(art))
         merged.update(_load_overlays(overlays))
         inline_opts = x.get("options")
         if isinstance(inline_opts, Mapping):
-            merged.update(cast(dict[str, Any], inline_opts))
+            merged.update({str(k): v for k, v in inline_opts.items()})
 
         # Name default: <repo>_<commit>-<overlay>
         if not name:
@@ -257,35 +239,26 @@ def _map_engine(x: Mapping[str, Any]) -> EngineSpec:
             else:
                 name = f"artifact-{overlay_label}"
 
-        # Do not resolve artifact here; EngineFactory will handle it
-        return EngineSpec(
+        return EngineConfig(
             name=str(name),
             artifact=art,
             build_options=bo,
             options=merged if merged else {},
-            time_control=(
-                TimeControlLimits(**cast(dict[str, Any], OmegaConf.to_container(x.get("time_control"), resolve=True)))
-                if isinstance(x.get("time_control"), Mapping)
-                else None
-            ),
-            options_overlays=overlays,
-            instance_id=(str(x.get("instance_id")).strip() or None) if x.get("instance_id") is not None else None,
+            **common,  # type: ignore[arg-type]  # validators で型検証
         )
 
-    # engine_config-based
-    eng_cfg = Path(resolve_path_like(str(x["engine_config"])))
+    # engine_path-based (engine_config is deprecated alias)
+    eng_cfg = Path(resolve_path_like(str(engine_path_key)))
     if not eng_cfg.exists():
         raise FileNotFoundError(f"Engine config file not found: {eng_cfg}")
 
-    opts: dict[str, Any] = {}
+    opts: dict[str, object] = {}
     if overlays:
         opts.update(_load_overlays(overlays))
 
     inline_opts = x.get("options")
     if isinstance(inline_opts, Mapping):
-        if not isinstance(opts, dict):
-            opts = {}
-        opts.update(cast(dict[str, Any], inline_opts))
+        opts.update({str(k): v for k, v in inline_opts.items()})
 
     # Resolve placeholders in string values
     for k, v in list(opts.items()):
@@ -296,75 +269,59 @@ def _map_engine(x: Mapping[str, Any]) -> EngineSpec:
     if not name:
         name = eng_cfg.stem
 
-    return EngineSpec(
+    return EngineConfig(
         name=str(name),
-        engine_config=eng_cfg,
+        engine_path=eng_cfg,
         options=opts,
-        time_control=(
-            TimeControlLimits(**cast(dict[str, Any], OmegaConf.to_container(x.get("time_control"), resolve=True)))
-            if isinstance(x.get("time_control"), Mapping)
-            else None
-        ),
-        options_overlays=overlays,
-        instance_id=(str(x.get("instance_id")).strip() or None) if x.get("instance_id") is not None else None,
+        **common,  # type: ignore[arg-type]  # validators で型検証
     )
 
 
-def _build_rules_config(raw_rules: Any) -> RulesConfig:
-    """Normalize a rules mapping into a RulesConfig, resolving time_control into TimeControlLimits.
-
-    Accepts either an OmegaConf node or a plain dict; returns a RulesConfig. Raises TypeError on invalid inputs.
-    """
-    rules_obj = RulesConfig()
+def _build_rules_config(raw_rules: Mapping[str, object] | None) -> RulesConfig:
+    """Normalize a rules mapping into a RulesConfig."""
     if raw_rules is None:
-        return rules_obj
+        return RulesConfig()
     rr_any = OmegaConf.to_container(raw_rules, resolve=True)
     if not isinstance(rr_any, dict):
         raise TypeError("rules must be a mapping")
-    rr = cast(dict[str, Any], rr_any)
-    tc = rr.get("time_control")
+    tc = rr_any.get("time_control")
     if isinstance(tc, dict):
-        rr["time_control"] = TimeControlLimits(**cast(dict[str, Any], tc))
-    return RulesConfig(**rr)
+        rr_any["time_control"] = TimeControlLimits(**tc)
+    return RulesConfig.model_validate(rr_any)
 
 
-def _warn_unknown_keys(section: Mapping[str, Any], allowed: set[str], *, label: str) -> None:
+def _warn_unknown_keys(section: Mapping[str, object], allowed: set[str], *, label: str) -> None:
     """Emit a warning for unknown keys in a config section (non-fatal)."""
     extras = sorted(k for k in section.keys() if k not in allowed)
     if extras:
         logger.warning("Unknown keys in %s: %s", label, ", ".join(extras))
 
 
-def load_config_yaml(path: str | Path) -> SpsaConfig:
-    """Load an SPSA run configuration from YAML.
-
-    Performs strict validation for the SPSA block and engines, resolves placeholder paths,
-    and returns a normalized SpsaConfig with RulesConfig and TimeControlLimits objects.
-    """
+def _load_config_yaml_impl(path: str | Path) -> SpsaRunConfig:
+    """Load an SPSA run configuration from YAML."""
     config_data = cast(DictConfig, OmegaConf.load(str(path)))
     p = Path(path)
-    instances_entry = config_data.get("instances") if isinstance(config_data, Mapping) else None
+    instances_entry = config_data.get("instances")
     resolved_instances: tuple[Path, ...] | None = None
     if instances_entry is not None:
-        resolved_instances = ArenaConfig._resolve_instance_sources(instances_entry, base_dir=p.parent)
+        resolved_instances = TournamentRunConfig._resolve_instance_sources(instances_entry, base_dir=p.parent)
         if not resolved_instances:
             resolved_instances = None
     parent_name = p.parent.name
-    explicit_exp = config_data.get("experiment_name") if isinstance(config_data, Mapping) else None
+    explicit_exp = config_data.get("experiment_name")
     if explicit_exp:
         exp_name = str(explicit_exp)
     else:
         exp_name = p.stem if parent_name in {"spsa"} else parent_name
         config_data["experiment_name"] = exp_name
-    run_dir_path = Path(config_data.get("run_dir") or default_run_dir(p, project_dirs.output_dir / "spsa"))
-    config_data["run_dir"] = str(run_dir_path)
+    if config_data.get("run_dir"):
+        raise ValueError("SpsaConfig.run_dir is deprecated; supply a RunStorage instead")
 
     # Strict spsa block
     spsa_node = config_data.get("spsa")
     if not isinstance(spsa_node, Mapping):
         raise ValueError("Missing required 'spsa' block")
 
-    # Warn on unknown keys in spsa block (non-fatal)
     _warn_unknown_keys(
         spsa_node,
         allowed={
@@ -391,11 +348,11 @@ def load_config_yaml(path: str | Path) -> SpsaConfig:
     )
 
     # Required params
-    raw_params_path = spsa_node.get("parameters_path")
-    if not isinstance(raw_params_path, str) or not raw_params_path.strip():
+    raw_params_path = coerce_str(spsa_node.get("parameters_path"))
+    if raw_params_path is None:
         raise ValueError("spsa.parameters_path is required")
-    raw_num_updates = spsa_node.get("num_updates")
-    if not isinstance(raw_num_updates, int) or raw_num_updates <= 0:
+    num_updates_val = coerce_int(spsa_node.get("num_updates"))
+    if num_updates_val is None or num_updates_val <= 0:
         raise ValueError("spsa.num_updates must be a positive integer")
 
     # Initial positions (file only) under rules
@@ -408,12 +365,12 @@ def load_config_yaml(path: str | Path) -> SpsaConfig:
     ip_type = str(ip.get("type", "")).strip().lower()
     if ip_type != "file":
         raise ValueError("rules.initial_positions.type must be 'file'")
-    src = ip.get("source")
-    if not isinstance(src, str) or not src.strip():
+    src = coerce_str(ip.get("source"))
+    if src is None:
         raise ValueError("rules.initial_positions.source is required")
-    start_sfens_path = ArenaConfig._resolve_initial_source(str(src), base_dir=Path(path).parent)
+    start_sfens_path = TournamentRunConfig._resolve_initial_source(src, base_dir=Path(path).parent)
 
-    # SPSAはpair_both固定。その他が指定されていたらエラー。
+    # SPSAはpair_both固定
     fp = ip.get("flip_policy")
     if fp is not None and str(fp) != "pair_both":
         raise ValueError("SPSA requires rules.initial_positions.flip_policy to be 'pair_both'")
@@ -423,19 +380,18 @@ def load_config_yaml(path: str | Path) -> SpsaConfig:
     engines_py = OmegaConf.to_container(engines_node, resolve=True) if engines_node is not None else None
     if not isinstance(engines_py, list) or len(engines_py) != 1:
         raise ValueError("'engines' must be a list with exactly one engine entry for SPSA")
-    engine_spec = _map_engine(cast(Mapping[str, Any], engines_py[0]))
+    engine_entry = engines_py[0]
+    if not isinstance(engine_entry, Mapping):
+        raise TypeError("engines[0] must be a mapping")
+    engine_spec = _map_engine(engine_entry)
     baseline = [engine_spec]
     tuned = [engine_spec]
 
-    # Require tune_file only when using artifact-based engine. Propagate tune_tag into build_options.
+    # Require tune_file only when using artifact-based engine
     if baseline[0].artifact or tuned[0].artifact:
-        # Require engine-level build_options.tune_file (no top-level fallback)
-        tune_file: str | None = None
-        if isinstance(engines_py, list) and len(engines_py) > 0 and isinstance(engines_py[0], Mapping):
-            bo = cast(Mapping[str, Any] | None, engines_py[0].get("build_options"))
-            if isinstance(bo, Mapping) and isinstance(bo.get("tune_file"), str):
-                tune_file = cast(str, bo.get("tune_file"))
-        if not tune_file:
+        bo = engine_entry.get("build_options")
+        tune_file = coerce_str(bo.get("tune_file") if isinstance(bo, Mapping) else None)
+        if tune_file is None:
             raise ValueError("SPSA requires engines[0].build_options.tune_file when using artifacts")
         tune_tag = Path(resolve_path_like(tune_file)).stem
         baseline[0].build_options["tune_tag"] = tune_tag
@@ -443,30 +399,36 @@ def load_config_yaml(path: str | Path) -> SpsaConfig:
 
     # Dashboard and workers
     dash = config_data.get("dashboard")
-    dashboard_enabled = True
-    dashboard_api_port = 8080
+    dashboard_payload: _DashboardPayload = {}
     num_workers = 4
     if isinstance(dash, Mapping):
         _warn_unknown_keys(dash, allowed={"enabled", "api_port"}, label="dashboard")
-        if "enabled" in dash:
-            dashboard_enabled = bool(dash.get("enabled"))
-        if "api_port" in dash:
-            _ap = dash.get("api_port")
-            if _ap is not None and not isinstance(_ap, int):
-                raise TypeError("dashboard.api_port must be an integer")
-            if _ap is not None:
-                dashboard_api_port = int(_ap)
-    # Prefer spsa.num_parallel
-    np = spsa_node.get("num_parallel")
-    if np is not None:
-        if not isinstance(np, int):
-            raise TypeError("spsa.num_parallel must be an integer")
-        num_workers = int(np)
+        dashboard_payload["enabled"] = coerce_bool(dash.get("enabled", True))
+        port = coerce_int(dash.get("api_port"))
+        if port is not None:
+            dashboard_payload["api_port"] = port
+    parsed_np = coerce_int(spsa_node.get("num_parallel"))
+    if parsed_np is not None:
+        num_workers = parsed_np
 
-    # Rules (optional)
+    system = SystemConfig()
+    system_raw = config_data.get("system")
+    if isinstance(system_raw, Mapping):
+        allowed_keys = {
+            "resource_poll_interval",
+            "resource_poll_max_interval",
+            "engine_handshake_timeout",
+            "extras",
+        }
+        raw_system = dict(system_raw)
+        payload = {k: raw_system[k] for k in raw_system.keys() if k in allowed_keys}
+        extras = {k: raw_system[k] for k in raw_system.keys() if k not in allowed_keys}
+        if extras:
+            payload["extras"] = extras
+        system = SystemConfig(**payload)
+
     rules_obj = _build_rules_config(config_data.get("rules"))
 
-    # OpenBench/SPSA knobs (strictly from spsa block; defaults applied here)
     int_rounding = str(_get_spsa_value(spsa_node, "int_rounding", "none"))
     if int_rounding not in ("none", "stochastic"):
         raise ValueError("spsa.int_rounding must be 'none' or 'stochastic'")
@@ -474,7 +436,7 @@ def load_config_yaml(path: str | Path) -> SpsaConfig:
     if update_mode not in ("immediate", "barrier"):
         raise ValueError("spsa.update_mode must be 'immediate' or 'barrier'")
 
-    has_a_key = isinstance(spsa_node, Mapping) and "A" in spsa_node
+    has_a_key = "A" in spsa_node
     if has_a_key:
         raw_a = spsa_node.get("A")
         if raw_a is None:
@@ -491,9 +453,21 @@ def load_config_yaml(path: str | Path) -> SpsaConfig:
     if ltc_node is not None:
         if not isinstance(ltc_node, Mapping):
             raise TypeError("spsa.ltc_regression must be a mapping")
-        ltc_config = _parse_ltc_regression(ltc_node)
+        ltc_dict = dict(ltc_node)
+        # Parse time_control if present
+        tc_raw = ltc_dict.get("time_control")
+        if tc_raw is not None:
+            ltc_dict["time_control"] = _parse_time_control_raw(tc_raw)
+        # Parse pass_criteria if present
+        pc_raw = ltc_dict.get("pass_criteria")
+        if isinstance(pc_raw, Mapping):
+            ltc_dict["pass_criteria"] = {str(k): v for k, v in pc_raw.items()}
+        if "fail_action" in ltc_dict and ltc_dict.get("fail_action") is not None:
+            raise ValueError("ltc_regression.fail_action is no longer supported; remove this field from the config")
+        ltc_dict.pop("fail_action", None)
+        ltc_config = LtcRegressionConfig.model_validate(ltc_dict)
 
-    return SpsaConfig(
+    return SpsaRunConfig(
         start_sfens_path=start_sfens_path,
         parameters_path=resolve_path_like(
             str(raw_params_path),
@@ -503,11 +477,10 @@ def load_config_yaml(path: str | Path) -> SpsaConfig:
         baseline=baseline,
         tuned=tuned,
         rules=rules_obj,
-        num_updates=int(raw_num_updates),
+        num_updates=num_updates_val,
         mobility=float(_get_spsa_value(spsa_node, "mobility", 1.0)),
         scale=float(_get_spsa_value(spsa_node, "scale", 1.0)),
         experiment_name=exp_name,
-        run_dir=str(run_dir_path),
         inflight_factor=int(_get_spsa_value(spsa_node, "inflight_factor", 4)),
         update_batch_size=(
             int(_get_spsa_value(spsa_node, "update_batch_size", 0))
@@ -518,22 +491,30 @@ def load_config_yaml(path: str | Path) -> SpsaConfig:
         A=a_value,
         alpha=float(_get_spsa_value(spsa_node, "alpha", 0.0)),
         gamma=float(_get_spsa_value(spsa_node, "gamma", 0.0)),
-        snap_float_to_step=bool(_get_spsa_value(spsa_node, "snap_float_to_step", False)),
-        crn_enabled=bool(_get_spsa_value(spsa_node, "crn_enabled", True)),
-        int_rounding=int_rounding,
+        snap_float_to_step=coerce_bool(_get_spsa_value(spsa_node, "snap_float_to_step", False)),
+        crn_enabled=coerce_bool(_get_spsa_value(spsa_node, "crn_enabled", True)),
+        int_rounding=cast(Literal["none", "stochastic"], int_rounding),
         int_ck_floor=float(_get_spsa_value(spsa_node, "int_ck_floor", 0.5)),
-        update_mode=update_mode,
-        early_stop=cast(dict[str, Any] | None, _get_spsa_value(spsa_node, "early_stop", None)),
-        dashboard_enabled=dashboard_enabled,
-        dashboard_api_port=dashboard_api_port,
+        update_mode=cast(Literal["immediate", "barrier"], update_mode),
+        early_stop=_get_spsa_value(spsa_node, "early_stop", None),
+        dashboard=DashboardConfig(**dashboard_payload) if dashboard_payload else DashboardConfig(),
+        system=system,
         num_workers=num_workers,
         instances=resolved_instances,
         ltc_regression=ltc_config,
     )
 
 
+def load_config_yaml(path: str | Path) -> SpsaRunConfig:
+    """Load an SPSA run configuration from YAML with error normalization."""
+    try:
+        return _load_config_yaml_impl(path)
+    except (TypeError, ValueError, OSError) as exc:
+        raise ConfigError(f"Invalid SPSA config {path}: {exc}") from exc
+
+
 __all__ = [
-    "SpsaConfig",
+    "SpsaRunConfig",
     "LtcRegressionConfig",
     "LtcPassCriteria",
     "load_config_yaml",

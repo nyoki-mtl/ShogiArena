@@ -1,6 +1,7 @@
 // Live module internal types
 
 import type { WorkerSnapshot } from '@/types/live';
+import type { EngineStatusSnapshot } from '@/modules/live/utils/engineStatus';
 
 export type LiveCardId = string | number;
 
@@ -17,6 +18,14 @@ export interface LiveCardState {
     isSyncing?: boolean;
     /** Timestamp (ms) when syncing started; used for timeout warnings. */
     syncingStartedAt?: number;
+    /** Engine log visibility preference per role (true=on, false=off, null/undefined=auto). */
+    engineLogPreference?: { black?: boolean | null; white?: boolean | null };
+    /** Latches ready state per role so handshake overlay does not reopen on transient regressions. */
+    engineReadyLatch?: { black?: boolean; white?: boolean; gameKey?: string | null };
+    /** Track phase transitions for engine log auto open/close. */
+    engineLogPhase?: 'pre' | 'in' | 'post';
+    /** Currently subscribed game key for engine logs. */
+    engineLogGameKey?: string | null;
     [key: string]: unknown;
 }
 
@@ -45,6 +54,7 @@ export interface WorkerRuntimeState {
             remainMs?: number;
             byoyomiMs?: number;
             timeControl?: string | null;
+            clockAtMs?: number;
             receivedAtMs: number;
             source: 'clock_start' | 'clock_increment' | 'snapshot';
         };
@@ -52,6 +62,7 @@ export interface WorkerRuntimeState {
             remainMs?: number;
             byoyomiMs?: number;
             timeControl?: string | null;
+            clockAtMs?: number;
             receivedAtMs: number;
             source: 'clock_start' | 'clock_increment' | 'snapshot';
         };
@@ -61,6 +72,7 @@ export interface WorkerRuntimeState {
     lastAppliedPly?: number;
     lastAppliedAtMs?: number;
     lastCatchupRequestAt?: number;
+    engineStatus?: EngineStatusSnapshot;
 }
 
 export interface LiveBoardAdapter {

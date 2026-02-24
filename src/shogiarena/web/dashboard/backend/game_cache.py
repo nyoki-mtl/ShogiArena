@@ -9,7 +9,9 @@ import builtins
 import logging
 import os
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+
+from shogiarena.utils.types.snapshots import GameSnapshot
 
 if TYPE_CHECKING:
     from shogiarena.web.dashboard.backend.state_container import DashboardState
@@ -51,7 +53,7 @@ class GameSnapshotCache:
         return max(0, parsed)
 
     @property
-    def game_snapshots(self) -> OrderedDict[str, dict[str, Any]]:
+    def game_snapshots(self) -> OrderedDict[str, GameSnapshot]:
         """Access the underlying game snapshots OrderedDict."""
         return self._state.game_snapshots
 
@@ -63,7 +65,7 @@ class GameSnapshotCache:
                 gids.add(value)
         return gids
 
-    def get(self, gid: str) -> dict[str, Any] | None:
+    def get(self, gid: str) -> GameSnapshot | None:
         """Get a game snapshot, updating its position in the LRU cache.
 
         Args:
@@ -85,7 +87,7 @@ class GameSnapshotCache:
             gid: Game ID to store.
             snapshot: Snapshot data to store.
         """
-        self._state.game_snapshots[gid] = snapshot
+        self._state.game_snapshots[gid] = cast(GameSnapshot, snapshot)
         self._state.game_snapshots.move_to_end(gid)
         self.prune()
 

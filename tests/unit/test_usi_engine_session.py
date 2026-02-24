@@ -1,7 +1,10 @@
 import asyncio
+import gc
+import logging
 from collections.abc import Awaitable, Callable
 
 import pytest
+from rshogi.core import Move
 
 from shogiarena.arena.engines.sync_usi_engine import SyncUsiEngine
 from shogiarena.arena.engines.usi_bridge import AsyncUSIProcessBridgeProtocol
@@ -142,8 +145,8 @@ async def test_engine_think_returns_bestmove(tmp_path) -> None:
             info_handler=info_handler,
         )
 
-        assert result.bestmove == "7g7f"
-        assert result.ponder == "3c3d"
+        assert result.bestmove == Move.from_usi("7g7f")
+        assert result.ponder == Move.from_usi("3c3d")
         assert seen_infos == [10]
 
 
@@ -187,14 +190,118 @@ async def test_engine_think_mate(tmp_path) -> None:
     bridge = DummyBridge()
 
     async def handle_go_mate(command: str) -> None:
+        await bridge.enqueue("info depth 9 nodes 321 time 12")
         await bridge.enqueue("checkmate 7g7f 3c3d")
 
     async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
         bridge.set_handler("go mate", handle_go_mate)
 
-        result = await eng.think_mate(sfen="startpos")
+        seen_depths: list[int] = []
+
+        async def info_handler(pv) -> None:
+            if pv.depth is not None:
+                seen_depths.append(pv.depth)
+
+        result = await eng.think_mate(sfen="startpos", info_handler=info_handler)
         assert result.is_mate
-        assert result.moves == ("7g7f", "3c3d")
+        assert result.moves == (Move.from_usi("7g7f"), Move.from_usi("3c3d"))
+        assert seen_depths == [9]
+        last_pv = result.get_last_pv()
+        assert last_pv is not None
+        assert last_pv.nodes == 321
+
+
+@pytest.mark.asyncio
+async def test_engine_think_mate_resolves_nomate_on_bestmove(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go_mate(command: str) -> None:
+        await bridge.enqueue("info depth 6 nodes 120 time 8")
+        await bridge.enqueue("bestmove 0000")
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        bridge.set_handler("go mate", handle_go_mate)
+        result = await eng.think_mate(sfen="startpos", timeout=1.0)
+        assert not result.is_mate
+        last_pv = result.get_last_pv()
+        assert last_pv is not None
+        assert last_pv.depth == 6
+
+
+@pytest.mark.asyncio
+async def test_engine_think_mate_supports_infinite_and_node_limit(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go_mate(command: str) -> None:
+        await bridge.enqueue("checkmate 7g7f")
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        bridge.set_handler("go mate", handle_go_mate)
+        await eng.think_mate(sfen="startpos", infinite=True)
+        await eng.think_mate(sfen="startpos", node_limit=456)
+
+        go_mate_commands = [cmd for cmd in bridge.commands if cmd.startswith("go mate")]
+        assert "go mate infinite" in go_mate_commands
+        assert "go mate nodes 456" in go_mate_commands
+
+
+@pytest.mark.asyncio
+async def test_engine_think_mate_uses_config_default_limit(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+            "mate_default_ply_limit": 30000,
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go_mate(command: str) -> None:
+        await bridge.enqueue("checkmate 7g7f")
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        bridge.set_handler("go mate", handle_go_mate)
+        await eng.think_mate(sfen="startpos")
+        assert "go mate 30000" in bridge.commands
+
+
+@pytest.mark.asyncio
+async def test_engine_think_mate_waits_for_bestmove_when_enabled(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go_mate(command: str) -> None:
+        await bridge.enqueue("checkmate 7g7f 3c3d")
+
+        async def delayed_bestmove() -> None:
+            await asyncio.sleep(0.03)
+            await bridge.enqueue("bestmove 0000")
+
+        asyncio.create_task(delayed_bestmove())
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        bridge.set_handler("go mate", handle_go_mate)
+        result = await eng.think_mate(sfen="startpos", wait_for_bestmove=True, timeout=1.0)
+        assert result.is_mate
+        assert result.moves == (Move.from_usi("7g7f"), Move.from_usi("3c3d"))
+        assert eng.state == UsiEngineState.READY
 
 
 @pytest.mark.asyncio
@@ -257,21 +364,21 @@ async def test_engine_ponder_hit(tmp_path) -> None:
             request=UsiThinkRequest(movetime=100),
         )
 
-        assert result.bestmove == "7g7f"
-        assert result.ponder == "3c3d"
+        assert result.bestmove == Move.from_usi("7g7f")
+        assert result.ponder == Move.from_usi("3c3d")
 
         ponder_handle = await eng.start_ponder(
             sfen="startpos",
             moves=("7g7f", "3c3d"),
             request=UsiThinkRequest(movetime=100, ponder=True),
-            predicted_move="3c3d",
+            predicted_move=Move.from_usi("3c3d"),
         )
         assert eng.state == UsiEngineState.PONDER
         assert any(" ponder" in cmd and cmd.startswith("go ") for cmd in bridge.commands)
 
         ponder_result = await ponder_handle.hit(timings=PonderHitTimings(), timeout=1.0)
 
-        assert ponder_result.bestmove == "2g2f"
+        assert ponder_result.bestmove == Move.from_usi("2g2f")
         assert eng.state == UsiEngineState.READY
 
 
@@ -311,7 +418,7 @@ async def test_engine_early_ponder_requires_timings(tmp_path) -> None:
             request=UsiThinkRequest(movetime=100),
         )
 
-        assert result.ponder == "3c3d"
+        assert result.ponder == Move.from_usi("3c3d")
 
         ponder_handle = await eng.start_ponder(
             sfen="startpos",
@@ -322,7 +429,7 @@ async def test_engine_early_ponder_requires_timings(tmp_path) -> None:
                 byoyomi=200,
                 ponder=True,
             ),
-            predicted_move="3c3d",
+            predicted_move=Move.from_usi("3c3d"),
         )
         go_commands = [cmd for cmd in bridge.commands if cmd.startswith("go ")]
         assert go_commands[-1] == "go ponder"
@@ -333,8 +440,94 @@ async def test_engine_early_ponder_requires_timings(tmp_path) -> None:
         timings = PonderHitTimings(btime=9500, wtime=12000, byoyomi=200)
         ponder_result = await ponder_handle.hit(timings=timings, timeout=1.0)
 
-        assert ponder_result.bestmove == "2g2f"
+        assert ponder_result.bestmove == Move.from_usi("2g2f")
         assert any(cmd.startswith("ponderhit btime 9500") for cmd in bridge.commands)
+
+
+@pytest.mark.asyncio
+async def test_engine_non_early_ponderhit_ignores_timing_payload(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+            "enable_early_ponder": False,
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go(command: str) -> None:
+        if " ponder" in command:
+            return
+        await bridge.enqueue("bestmove 7g7f ponder 3c3d")
+
+    async def handle_go_ponder(command: str) -> None:
+        await asyncio.sleep(0)
+
+    async def handle_ponderhit(command: str) -> None:
+        assert command == "ponderhit"
+        await bridge.enqueue("bestmove 2g2f")
+
+    bridge.set_handler("go ", handle_go)
+    bridge.set_handler("go ponder", handle_go_ponder)
+    bridge.set_handler("ponderhit", handle_ponderhit)
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        first = await eng.think(sfen="startpos", request=UsiThinkRequest(movetime=100))
+        assert first.ponder == Move.from_usi("3c3d")
+
+        ponder_handle = await eng.start_ponder(
+            sfen="startpos",
+            moves=("7g7f", "3c3d"),
+            request=UsiThinkRequest(btime=10000, wtime=12000, binc=2000, winc=2000, ponder=True),
+            predicted_move=Move.from_usi("3c3d"),
+        )
+        result = await ponder_handle.hit(
+            timings=PonderHitTimings(btime=9000, wtime=10000, binc=2000, winc=2000),
+            timeout=1.0,
+        )
+        assert result.bestmove == Move.from_usi("2g2f")
+
+
+@pytest.mark.asyncio
+async def test_engine_early_ponder_with_movetime_keeps_movetime_request(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+            "enable_early_ponder": True,
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go(command: str) -> None:
+        if " ponder" in command:
+            return
+        await bridge.enqueue("bestmove 7g7f ponder 3c3d")
+
+    async def handle_go_ponder(command: str) -> None:
+        await asyncio.sleep(0)
+        assert command == "go ponder movetime 100"
+
+    async def handle_ponderhit(command: str) -> None:
+        assert command == "ponderhit"
+        await bridge.enqueue("bestmove 2g2f")
+
+    bridge.set_handler("go ponder", handle_go_ponder)
+    bridge.set_handler("go ", handle_go)
+    bridge.set_handler("ponderhit", handle_ponderhit)
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        first = await eng.think(sfen="startpos", request=UsiThinkRequest(movetime=100))
+        assert first.ponder == Move.from_usi("3c3d")
+
+        ponder_handle = await eng.start_ponder(
+            sfen="startpos",
+            moves=("7g7f", "3c3d"),
+            request=UsiThinkRequest(movetime=100, ponder=True),
+            predicted_move=Move.from_usi("3c3d"),
+        )
+        result = await ponder_handle.hit(timeout=1.0)
+        assert result.bestmove == Move.from_usi("2g2f")
 
 
 @pytest.mark.asyncio
@@ -368,19 +561,298 @@ async def test_engine_ponder_cancel(tmp_path) -> None:
             request=UsiThinkRequest(movetime=100),
         )
 
-        assert result.ponder == "3c3d"
+        assert result.ponder == Move.from_usi("3c3d")
 
         ponder_handle = await eng.start_ponder(
             sfen="startpos",
             moves=("7g7f", "3c3d"),
             request=UsiThinkRequest(movetime=100, ponder=True),
-            predicted_move="3c3d",
+            predicted_move=Move.from_usi("3c3d"),
         )
         cancel_result = await ponder_handle.cancel(timeout=1.0)
 
         assert cancel_result is not None
-        assert cancel_result.bestmove == "9i9h"
+        assert cancel_result.bestmove == Move.from_usi("9i9h")
         assert eng.state == UsiEngineState.READY
+
+
+@pytest.mark.asyncio
+async def test_engine_ignores_stale_bestmove_during_active_search(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go(command: str) -> None:
+        await asyncio.sleep(0)
+
+    bridge.set_handler("go ", handle_go)
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        think_task = asyncio.create_task(
+            eng.think(
+                sfen="startpos",
+                request=UsiThinkRequest(movetime=1000),
+                timeout=1.0,
+            )
+        )
+
+        for _ in range(100):
+            if eng.state == UsiEngineState.WAITING_FOR_BESTMOVE:
+                break
+            await asyncio.sleep(0.001)
+        assert eng.state == UsiEngineState.WAITING_FOR_BESTMOVE
+
+        eng._ignored_bestmove_count = 1  # noqa: SLF001
+        await bridge.enqueue("bestmove 2g2f")
+        await bridge.enqueue("bestmove 7g7f")
+
+        result = await think_task
+        assert result.bestmove == Move.from_usi("7g7f")
+        assert eng.state == UsiEngineState.READY
+
+
+@pytest.mark.asyncio
+async def test_engine_cancel_ponder_timeout_recovers_and_allows_next_think(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+    stale_bestmove_emitted = asyncio.Event()
+    non_ponder_go_count = 0
+
+    async def handle_go(command: str) -> None:
+        nonlocal non_ponder_go_count
+        if " ponder" in command:
+            await asyncio.sleep(0)
+            return
+        non_ponder_go_count += 1
+        if non_ponder_go_count == 1:
+            await bridge.enqueue("bestmove 7g7f ponder 3c3d")
+            return
+        await bridge.enqueue("bestmove 6g6f")
+
+    async def delayed_stop(command: str) -> None:
+        async def emit_stale_bestmove() -> None:
+            await asyncio.sleep(0.02)
+            await bridge.enqueue("bestmove 2g2f")
+            stale_bestmove_emitted.set()
+
+        asyncio.create_task(emit_stale_bestmove())
+
+    bridge.set_handler("go ", handle_go)
+    bridge.set_handler("stop", delayed_stop)
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        first = await eng.think(
+            sfen="startpos",
+            request=UsiThinkRequest(movetime=100),
+        )
+        assert first.ponder == Move.from_usi("3c3d")
+
+        ponder_handle = await eng.start_ponder(
+            sfen="startpos",
+            moves=("7g7f", "3c3d"),
+            request=UsiThinkRequest(movetime=100, ponder=True),
+            predicted_move=Move.from_usi("3c3d"),
+        )
+
+        async def isready_after_stale_bestmove(command: str) -> None:
+            await stale_bestmove_emitted.wait()
+            await bridge.enqueue("readyok")
+
+        bridge.set_handler("isready", isready_after_stale_bestmove)
+
+        cancel_result = await ponder_handle.cancel(timeout=0.01)
+        assert cancel_result is None
+        assert eng.state == UsiEngineState.READY
+
+        next_result = await eng.think(
+            sfen="startpos",
+            moves=("7g7f",),
+            request=UsiThinkRequest(movetime=100),
+            timeout=1.0,
+        )
+
+        assert stale_bestmove_emitted.is_set()
+        assert next_result.bestmove == Move.from_usi("6g6f")
+        assert eng.state == UsiEngineState.READY
+
+
+@pytest.mark.asyncio
+async def test_engine_stop_does_not_send_duplicate_stop(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go(command: str) -> None:
+        await asyncio.sleep(0)
+
+    async def handle_stop(command: str) -> None:
+        await asyncio.sleep(0.05)
+        await bridge.enqueue("bestmove 7g7f")
+
+    bridge.set_handler("go ", handle_go)
+    bridge.set_handler("stop", handle_stop)
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        think_task = asyncio.create_task(eng.think(sfen="startpos", request=UsiThinkRequest(movetime=1000)))
+        await asyncio.sleep(0.01)
+
+        first_stop = asyncio.create_task(eng.stop(timeout=1.0))
+        await asyncio.sleep(0.005)
+        second_stop = asyncio.create_task(eng.stop(timeout=1.0))
+
+        first_result = await first_stop
+        second_result = await second_stop
+        final_result = await think_task
+
+        assert first_result is not None
+        assert first_result.bestmove == Move.from_usi("7g7f")
+        assert second_result is None or second_result.bestmove == Move.from_usi("7g7f")
+        assert final_result.bestmove == Move.from_usi("7g7f")
+        assert sum(1 for cmd in bridge.commands if cmd == "stop") == 1
+
+
+@pytest.mark.asyncio
+async def test_engine_think_timeout_can_recover_with_stop(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go(command: str) -> None:
+        async def delayed_bestmove() -> None:
+            await asyncio.sleep(0.05)
+            await bridge.enqueue("bestmove 7g7f")
+
+        asyncio.create_task(delayed_bestmove())
+
+    async def handle_stop(command: str) -> None:
+        await asyncio.sleep(0)
+
+    bridge.set_handler("go ", handle_go)
+    bridge.set_handler("stop", handle_stop)
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        with pytest.raises(asyncio.TimeoutError):
+            await eng.think(
+                sfen="startpos",
+                request=UsiThinkRequest(movetime=1000),
+                timeout=0.01,
+            )
+
+        recovered = await eng.stop(timeout=1.0)
+        assert recovered is not None
+        assert recovered.bestmove == Move.from_usi("7g7f")
+        assert eng.state == UsiEngineState.READY
+
+
+@pytest.mark.asyncio
+async def test_engine_ponderhit_timeout_can_recover_with_cancel(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go(command: str) -> None:
+        if " ponder" in command:
+            return
+        await bridge.enqueue("bestmove 7g7f ponder 3c3d")
+
+    async def handle_ponderhit(command: str) -> None:
+        async def delayed_bestmove() -> None:
+            await asyncio.sleep(0.05)
+            await bridge.enqueue("bestmove 2g2f")
+
+        asyncio.create_task(delayed_bestmove())
+
+    async def handle_stop(command: str) -> None:
+        await asyncio.sleep(0)
+
+    bridge.set_handler("go ", handle_go)
+    bridge.set_handler("go ponder", handle_go)
+    bridge.set_handler("ponderhit", handle_ponderhit)
+    bridge.set_handler("stop", handle_stop)
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        first = await eng.think(
+            sfen="startpos",
+            request=UsiThinkRequest(movetime=100),
+        )
+        assert first.ponder == Move.from_usi("3c3d")
+
+        ponder_handle = await eng.start_ponder(
+            sfen="startpos",
+            moves=("7g7f", "3c3d"),
+            request=UsiThinkRequest(movetime=100, ponder=True),
+            predicted_move=Move.from_usi("3c3d"),
+        )
+
+        with pytest.raises(asyncio.TimeoutError):
+            await ponder_handle.hit(timeout=0.01)
+
+        recovered = await ponder_handle.cancel(timeout=1.0)
+        assert recovered is not None
+        assert recovered.bestmove == Move.from_usi("2g2f")
+        assert eng.state == UsiEngineState.READY
+
+
+@pytest.mark.asyncio
+async def test_participant_start_ponder_without_usi_ponder_option(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go(command: str) -> None:
+        if " ponder" in command:
+            await asyncio.sleep(0)
+            return
+        await bridge.enqueue("bestmove 7g7f ponder 3c3d")
+
+    bridge.set_handler("go ", handle_go)
+    bridge.set_handler("go ponder", handle_go)
+
+    engine = AsyncUsiEngine(config=config, bridge=bridge)
+    participant = EngineParticipant(engine, role="black")
+
+    await participant.prepare(initial_sfen="startpos")
+    result = await participant.think(
+        sfen="startpos",
+        moves=(),
+        request=UsiThinkRequest(movetime=100),
+    )
+    assert result.ponder == Move.from_usi("3c3d")
+
+    await participant.start_ponder(
+        sfen="startpos",
+        moves=("7g7f", "3c3d"),
+        request=UsiThinkRequest(movetime=100, ponder=True),
+        predicted_move=Move.from_usi("3c3d"),
+    )
+
+    assert any(cmd.startswith("go ") and " ponder" in cmd for cmd in bridge.commands)
+    await participant.shutdown()
 
 
 @pytest.mark.asyncio
@@ -407,9 +879,256 @@ async def test_engine_participant_wraps_engine(tmp_path) -> None:
         moves=(),
         request=UsiThinkRequest(movetime=100),
     )
-    assert result.bestmove == "7g7f"
+    assert result.bestmove == Move.from_usi("7g7f")
 
+    before_notify = len(bridge.commands)
     await participant.notify_gameover(GameResult.BLACK_WIN)
+    notify_commands = bridge.commands[before_notify:]
+    assert "gameover win" in notify_commands
+    assert "isready" not in notify_commands
+
+
+@pytest.mark.asyncio
+async def test_engine_ignores_stale_bestmove_while_waiting_for_readyok(tmp_path, caplog) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+
+        async def noisy_isready(command: str) -> None:
+            await bridge.enqueue("bestmove 9i9h")
+            await bridge.enqueue("readyok")
+
+        bridge.set_handler("isready", noisy_isready)
+        caplog.set_level(logging.WARNING)
+        await eng.trigger_isready(timeout=1.0)
+
+        assert eng.state == UsiEngineState.READY
+        warning_messages = [record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING]
+        assert not any("bestmove" in msg and "waiting_for_readyok" in msg for msg in warning_messages)
+
+
+@pytest.mark.asyncio
+async def test_trigger_isready_timeout_none_waits_without_deadline(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        eng._handshake_timeout = 0.01  # noqa: SLF001
+
+        async def delayed_readyok(command: str) -> None:
+            await asyncio.sleep(0.05)
+            await bridge.enqueue("readyok")
+
+        bridge.set_handler("isready", delayed_readyok)
+        await eng.trigger_isready(timeout=None)
+        assert eng.state == UsiEngineState.READY
+
+
+@pytest.mark.asyncio
+async def test_trigger_isready_wait_strategy_defers_until_search_finishes(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+            "isready_sync_strategy": "wait",
+        }
+    )
+    bridge = DummyBridge()
+    search_completed = asyncio.Event()
+    release_bestmove = asyncio.Event()
+
+    async def handle_go(command: str) -> None:
+        async def delayed_bestmove() -> None:
+            await release_bestmove.wait()
+            await bridge.enqueue("bestmove 7g7f")
+            search_completed.set()
+
+        asyncio.create_task(delayed_bestmove())
+
+    async def handle_isready(command: str) -> None:
+        assert search_completed.is_set()
+        await bridge.enqueue("readyok")
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        bridge.set_handler("go ", handle_go)
+        bridge.set_handler("isready", handle_isready)
+
+        think_task = asyncio.create_task(eng.think(sfen="startpos", request=UsiThinkRequest(movetime=1000)))
+        for _ in range(50):
+            if eng.state == UsiEngineState.WAITING_FOR_BESTMOVE:
+                break
+            await asyncio.sleep(0.001)
+        assert eng.state == UsiEngineState.WAITING_FOR_BESTMOVE
+        trigger_task = asyncio.create_task(eng.trigger_isready(timeout=1.0))
+        await asyncio.sleep(0.01)
+        assert not trigger_task.done()
+        release_bestmove.set()
+        await trigger_task
+        result = await think_task
+        assert result.bestmove == Move.from_usi("7g7f")
+        assert eng.state == UsiEngineState.READY
+
+
+@pytest.mark.asyncio
+async def test_engine_gameover_draw_stops_pending_ponder_and_allows_next_isready(tmp_path, caplog) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+    release_stale_bestmove = asyncio.Event()
+
+    async def handle_go(command: str) -> None:
+        if " ponder" in command:
+            return
+        await bridge.enqueue("bestmove 7g7f ponder 3c3d")
+
+    async def handle_go_ponder(command: str) -> None:
+        await asyncio.sleep(0)
+
+    async def delayed_stop_reply(command: str) -> None:
+        async def _emit_late_bestmove() -> None:
+            await release_stale_bestmove.wait()
+            await bridge.enqueue("bestmove 2g2f")
+
+        asyncio.create_task(_emit_late_bestmove())
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        bridge.set_handler("go ", handle_go)
+        bridge.set_handler("go ponder", handle_go_ponder)
+        bridge.set_handler("stop", delayed_stop_reply)
+
+        first = await eng.think(sfen="startpos", request=UsiThinkRequest(movetime=100))
+        assert first.ponder == Move.from_usi("3c3d")
+
+        await eng.start_ponder(
+            sfen="startpos",
+            moves=("7g7f", "3c3d"),
+            request=UsiThinkRequest(movetime=100, ponder=True),
+            predicted_move=Move.from_usi("3c3d"),
+        )
+        assert eng.state == UsiEngineState.PONDER
+
+        await eng.gameover("draw")
+        stop_indices = [idx for idx, cmd in enumerate(bridge.commands) if cmd == "stop"]
+        gameover_indices = [idx for idx, cmd in enumerate(bridge.commands) if cmd == "gameover draw"]
+        assert stop_indices
+        assert gameover_indices
+        assert stop_indices[-1] < gameover_indices[-1]
+
+        async def isready_with_late_bestmove(command: str) -> None:
+            release_stale_bestmove.set()
+            await asyncio.sleep(0)
+            await bridge.enqueue("readyok")
+
+        bridge.set_handler("isready", isready_with_late_bestmove)
+        caplog.set_level(logging.WARNING)
+        await eng.trigger_isready(timeout=1.0)
+        assert eng.state == UsiEngineState.READY
+        await eng.new_game()
+        next_result = await eng.think(sfen="startpos", request=UsiThinkRequest(movetime=100))
+        assert next_result.bestmove == Move.from_usi("7g7f")
+
+        warning_messages = [record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING]
+        assert not any("bestmove" in msg and "waiting_for_readyok" in msg for msg in warning_messages)
+
+
+@pytest.mark.asyncio
+async def test_engine_gameover_without_late_bestmove_allows_next_game_think(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go(command: str) -> None:
+        if " ponder" in command:
+            return
+        await bridge.enqueue("bestmove 7g7f ponder 3c3d")
+
+    async def handle_go_ponder(command: str) -> None:
+        await asyncio.sleep(0)
+
+    async def stop_without_reply(command: str) -> None:
+        await asyncio.sleep(0)
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        bridge.set_handler("go ", handle_go)
+        bridge.set_handler("go ponder", handle_go_ponder)
+        bridge.set_handler("stop", stop_without_reply)
+
+        first = await eng.think(sfen="startpos", request=UsiThinkRequest(movetime=100))
+        assert first.ponder == Move.from_usi("3c3d")
+
+        await eng.start_ponder(
+            sfen="startpos",
+            moves=("7g7f", "3c3d"),
+            request=UsiThinkRequest(movetime=100, ponder=True),
+            predicted_move=Move.from_usi("3c3d"),
+        )
+        assert eng.state == UsiEngineState.PONDER
+
+        await eng.gameover("draw")
+        await eng.trigger_isready(timeout=1.0)
+        await eng.new_game()
+        second = await eng.think(sfen="startpos", request=UsiThinkRequest(movetime=100))
+        assert second.bestmove == Move.from_usi("7g7f")
+
+
+@pytest.mark.asyncio
+async def test_fail_pending_does_not_emit_unretrieved_future_exception(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+            "enable_early_ponder": True,
+        }
+    )
+    bridge = DummyBridge()
+    contexts: list[dict[str, object]] = []
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        await eng.start_ponder(
+            sfen="startpos",
+            moves=(),
+            request=UsiThinkRequest(byoyomi=1000),
+            predicted_move=Move.from_usi("7g7f"),
+        )
+
+        loop = asyncio.get_running_loop()
+        previous_handler = loop.get_exception_handler()
+
+        def _capture_handler(loop_obj, context) -> None:
+            if isinstance(context, dict):
+                contexts.append(dict(context))
+            if previous_handler is not None:
+                previous_handler(loop_obj, context)
+
+        loop.set_exception_handler(_capture_handler)
+        try:
+            eng._fail_pending(RuntimeError("simulated output end"))  # noqa: SLF001
+            eng._bestmove_future = None  # noqa: SLF001
+            gc.collect()
+            await asyncio.sleep(0)
+        finally:
+            loop.set_exception_handler(previous_handler)
+
+    assert not any("Future exception was never retrieved" in str(ctx.get("message", "")) for ctx in contexts)
 
 
 def test_sync_engine_think(tmp_path) -> None:
@@ -435,5 +1154,51 @@ def test_sync_engine_think(tmp_path) -> None:
             moves=(),
             request=UsiThinkRequest(movetime=1000),
         )
-        assert result.bestmove == "7g7f"
-        assert result.ponder == "3c3d"
+        assert result.bestmove == Move.from_usi("7g7f")
+        assert result.ponder == Move.from_usi("3c3d")
+
+
+def test_sync_engine_ponder_roundtrip(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go(command: str) -> None:
+        if " ponder" in command:
+            return
+        await bridge.enqueue("bestmove 7g7f ponder 3c3d")
+
+    async def handle_go_ponder(command: str) -> None:
+        await asyncio.sleep(0)
+
+    async def handle_ponderhit(command: str) -> None:
+        await bridge.enqueue("bestmove 2g2f")
+
+    bridge.set_handler("go ", handle_go)
+    bridge.set_handler("go ponder", handle_go_ponder)
+    bridge.set_handler("ponderhit", handle_ponderhit)
+
+    async_engine = AsyncUsiEngine(config=config, bridge=bridge)
+    with SyncUsiEngine.from_async_engine(async_engine) as engine:
+        engine.new_game()
+        first = engine.think(
+            sfen="startpos",
+            moves=(),
+            request=UsiThinkRequest(movetime=100),
+        )
+        assert first.ponder == Move.from_usi("3c3d")
+
+        handle = engine.start_ponder(
+            sfen="startpos",
+            moves=("7g7f", "3c3d"),
+            request=UsiThinkRequest(movetime=100, ponder=True),
+            predicted_move=Move.from_usi("3c3d"),
+        )
+        assert handle.active
+
+        second = handle.hit(timings=PonderHitTimings(), timeout=1.0)
+        assert second.bestmove == Move.from_usi("2g2f")

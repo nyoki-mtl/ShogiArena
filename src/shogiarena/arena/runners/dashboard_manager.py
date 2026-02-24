@@ -71,9 +71,9 @@ class DashboardManager:
         port_js.parent.mkdir(parents=True, exist_ok=True)
         port_js.write_text(f"window.ARENA_API_PORT = {port};\n", encoding="utf-8")
 
-        logger.info("Output directory: %s", str(run_dir))
+        logger.debug("Output directory: %s", str(run_dir))
         index_url = f"http://localhost:{port}/index.html"
-        logger.info("Dashboard URL: %s", index_url)
+        logger.debug("Dashboard URL: %s", index_url)
         return port
 
     async def stop_server(self) -> None:

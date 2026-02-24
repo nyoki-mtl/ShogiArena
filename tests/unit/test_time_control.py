@@ -98,6 +98,26 @@ def test_byoyomi_think_request() -> None:
     assert req.byoyomi == 5000
 
 
+def test_byoyomi_think_request_subtracts_enemy_increment_like_shogihome() -> None:
+    # Mirrors shogihome buildTimeState behavior:
+    # when my side uses byoyomi and enemy uses increment, enemy main time is
+    # advertised as (remaining - increment) while sending only byoyomi.
+    my_limits = TimeControlLimits(time_ms=37082, byoyomi_ms=10000)
+    enemy_limits = TimeControlLimits(time_ms=28103, increment_ms=5000)
+    req = request_from_time_controls(
+        my_limits=my_limits,
+        enemy_limits=enemy_limits,
+        my_is_black=True,
+        my_remaining_ms=37082,
+        enemy_remaining_ms=28103,
+    )
+    assert req.btime == 37082
+    assert req.wtime == 23103
+    assert req.byoyomi == 10000
+    assert req.binc is None
+    assert req.winc is None
+
+
 def test_search_limits_think_request() -> None:
     my_limits = TimeControlLimits(depth_limit=16, node_limit=2000)
     enemy_limits = TimeControlLimits(depth_limit=12)

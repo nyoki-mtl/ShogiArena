@@ -1,16 +1,15 @@
 """Database layer for shogiarena."""
 
-from .factory import BaseFactory, LocalMySQLShogiDBFactory, SQLiteShogiDBFactory
+from .factory import BaseFactory, SQLiteShogiDBFactory
 from .models import Base, Game, Kifu, Player
-from .repository import ShogiDB
+from .repository import ShogiRepository
 
 __all__ = [
     "Base",
     "Player",
     "Game",
     "Kifu",
-    "ShogiDB",
+    "ShogiRepository",
     "BaseFactory",
     "SQLiteShogiDBFactory",
-    "LocalMySQLShogiDBFactory",
 ]

@@ -1,20 +1,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeAlias, TypeVar
 
-from shogiarena.records import GameInfo
+import rshogi.record
 
 from .state import SessionStopController
 
+if TYPE_CHECKING:
+    from shogiarena.arena.configs.tournament import GameSpec
+    from shogiarena.arena.orchestrators.spsa_orchestrator import SpsaGamePayload
+
+
+GameCompletionPayload: TypeAlias = "GameSpec | SpsaGamePayload"
+PayloadT = TypeVar("PayloadT")
+
 
 @dataclass
-class GameCompletionEvent:
+class GameCompletionEvent(Generic[PayloadT]):
     """Domain-agnostic payload passed to lifecycle hooks on game completion."""
 
     game_id: str
-    game_info: GameInfo
-    payload: Any
+    game_info: rshogi.record.GameRecord
+    payload: PayloadT
     worker_idx: int | None = None
     stop_requested: bool = False
 
@@ -22,7 +30,7 @@ class GameCompletionEvent:
 class GameLifecycleHooks(Protocol):
     """Protocol for runner-provided lifecycle hooks."""
 
-    async def on_game_complete(self, event: GameCompletionEvent) -> None:
+    async def on_game_complete(self, event: GameCompletionEvent[Any]) -> None:
         """Handle a completed game emitted by an orchestrator."""
 
     async def should_continue(self) -> bool:
@@ -39,7 +47,7 @@ class LifecycleHooksBase(GameLifecycleHooks):
     def stop_controller(self) -> SessionStopController:
         return self._stop_controller
 
-    async def on_game_complete(self, event: GameCompletionEvent) -> None:  # noqa: D401
+    async def on_game_complete(self, event: GameCompletionEvent[Any]) -> None:  # noqa: D401
         return
 
     async def should_continue(self) -> bool:  # noqa: D401
@@ -48,6 +56,8 @@ class LifecycleHooksBase(GameLifecycleHooks):
 
 __all__ = [
     "GameCompletionEvent",
+    "GameCompletionPayload",
     "GameLifecycleHooks",
     "LifecycleHooksBase",
+    "PayloadT",
 ]

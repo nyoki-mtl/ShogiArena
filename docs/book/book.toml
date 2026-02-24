@@ -1,0 +1,18 @@
+[book]
+title = "ShogiArena Documentation"
+authors = ["ShogiArena Developers"]
+language = "ja"
+description = "ShogiArena - 将棋AIエンジンの自動対局・レーティング管理システムのドキュメント。"
+
+[build]
+build-dir = "build"
+create-missing = false
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/nyoki-mtl/ShogiArena"
+additional-css = ["theme/custom.css"]
+
+[output.html.print]
+enable = false

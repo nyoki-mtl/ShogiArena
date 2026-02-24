@@ -1,5 +1,6 @@
 import type { LiveGameNavigationOptions } from '@/types/globals';
 import type { LiveCardId, LiveCardState, LiveClockState, WorkerSnapshotSummary } from './internal';
+import type { EngineStatusSnapshot } from '@/modules/live/utils/engineStatus';
 import type { IndexedPayload, JsonObject } from '@/types/shared';
 
 export interface WorkerSnapshot {
@@ -25,6 +26,7 @@ export interface WorkerSnapshot {
     time_control_white?: string | null;
     black_player?: string | null;
     white_player?: string | null;
+    engine_status?: EngineStatusSnapshot;
     [key: string]: unknown;
 }
 

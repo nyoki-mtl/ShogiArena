@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import logging
 
+from rshogi.core import Move
+
 from shogiarena.cli.commands._helpers import parse_option_overrides
 from shogiarena.cli.errors import CliError
 
@@ -38,6 +40,21 @@ def register_run(parser: argparse.ArgumentParser) -> None:
         help="Limit the mate search depth in plies",
     )
     parser.add_argument(
+        "--node-limit",
+        type=int,
+        help="Limit the mate search nodes",
+    )
+    parser.add_argument(
+        "--infinite",
+        action="store_true",
+        help="Use 'go mate infinite'",
+    )
+    parser.add_argument(
+        "--wait-bestmove",
+        action="store_true",
+        help="Wait for trailing bestmove after checkmate before completing",
+    )
+    parser.add_argument(
         "--timeout",
         type=float,
         default=None,
@@ -51,8 +68,8 @@ def register_run(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _format_moves(moves: tuple[str, ...]) -> str:
-    return " ".join(moves)
+def _format_moves(moves: tuple[Move, ...]) -> str:
+    return " ".join(m.to_usi() for m in moves)
 
 
 async def _mate_command(args: argparse.Namespace) -> None:
@@ -69,14 +86,28 @@ async def _mate_command(args: argparse.Namespace) -> None:
 
     if args.ply_limit is not None and args.ply_limit <= 0:
         raise CliError("ply-limit must be positive")
+    if args.node_limit is not None and args.node_limit <= 0:
+        raise CliError("node-limit must be positive")
+    if args.infinite and (args.ply_limit is not None or args.node_limit is not None):
+        raise CliError("infinite cannot be combined with ply-limit or node-limit")
+    if args.ply_limit is not None and args.node_limit is not None:
+        raise CliError("Specify only one of ply-limit or node-limit")
 
     async with engine:
         await engine.new_game()
-        LOGGER.debug("Starting mate search (limit=%s)", args.ply_limit)
+        LOGGER.debug(
+            "Starting mate search (ply_limit=%s, node_limit=%s, infinite=%s)",
+            args.ply_limit,
+            args.node_limit,
+            args.infinite,
+        )
         result = await engine.think_mate(
             sfen=position,
             moves=moves,
             ply_limit=args.ply_limit,
+            node_limit=args.node_limit,
+            infinite=bool(args.infinite),
+            wait_for_bestmove=bool(args.wait_bestmove),
             timeout=args.timeout,
         )
 

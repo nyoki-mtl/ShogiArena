@@ -3,6 +3,14 @@ import type { DashboardCoreState } from '@/types/dashboard';
 import { createBoardAdapterManager, type BoardAdapterManager, type BoardAdapterDeps } from './adapters';
 import { deleteBoardAdapter, listBoardAdapterIds, setBoardAdapter } from './state';
 
+declare const process:
+    | {
+          env?: {
+              NODE_ENV?: string;
+          };
+      }
+    | undefined;
+
 type ShogiBoardAdapterCtor = new () => LiveBoardAdapter;
 
 export interface BoardLayerOwner {

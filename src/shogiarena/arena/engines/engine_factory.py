@@ -73,6 +73,7 @@ class EngineFactory:
                 output_dir=project_dirs.output_dir,
                 engine_dir=project_dirs.engine_dir,
             )
+        config = config.resolve_isready_lock_key()
 
         instance = EngineFactory._determine_instance(instance_id, instance_pool)
 
@@ -108,10 +109,11 @@ class EngineFactory:
             cpu_affinity=tuple(cpu_affinity) if cpu_affinity else None,
         )
 
+        handshake_timeout = config.handshake_timeout if config.handshake_timeout is not None else timeout
         engine = AsyncUsiEngine(
             config=config,
             bridge=bridge,
-            handshake_timeout=timeout,
+            handshake_timeout=handshake_timeout,
         )
         return engine
 

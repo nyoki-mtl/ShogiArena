@@ -7,16 +7,29 @@ import math
 import statistics
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import aliased
 
-from shogiarena.db import ShogiDB
+from shogiarena.db import ShogiRepository
 from shogiarena.db.models import Game, Player
+from shogiarena.utils.types.coerce import coerce_int
 
 from .event_service import SpsaEventService
 from .store import SpsaStore
+from .types import (
+    ConvergenceAnalysis,
+    ConvergenceMetrics,
+    ConvergencePrediction,
+    CorrelationAnalysis,
+    GameListEntry,
+    MobilitySeriesPayload,
+    ParameterTimelineEntry,
+    ProgressSnapshot,
+    UpdateDetailResponse,
+    UpdateEntry,
+)
 from .utils import coerce_float, extract_variant_from_game_id, resolve_variant_id
 
 logger = logging.getLogger(__name__)
@@ -29,7 +42,7 @@ class SpsaDataService:
         self,
         store: SpsaStore,
         ensure_shogidb: Callable[[], None],
-        shogidb_supplier: Callable[[], ShogiDB | None],
+        shogidb_supplier: Callable[[], ShogiRepository | None],
     ) -> None:
         self._store = store
         self._ensure_shogidb = ensure_shogidb
@@ -43,7 +56,7 @@ class SpsaDataService:
     # ------------------------------------------------------------------
     # Event-backed helpers (delegated to SpsaEventService)
     # ------------------------------------------------------------------
-    def build_update_detail(self, idx: int) -> dict[str, Any]:
+    def build_update_detail(self, idx: int) -> UpdateDetailResponse:
         return self._events.build_update_detail(idx)
 
     def get_game_event_snapshot(self, game_id: str) -> dict[str, Any] | None:
@@ -52,13 +65,13 @@ class SpsaDataService:
     def collect_game_id_entries(self) -> list[tuple[str, int]]:
         return self._events.collect_game_id_entries()
 
-    def load_index_updates(self) -> list[dict[str, Any]]:
+    def load_index_updates(self) -> list[UpdateEntry]:
         return self._events.load_index_updates()
 
-    def collect_updates_from_events(self) -> list[dict[str, Any]]:
+    def collect_updates_from_events(self) -> list[UpdateEntry]:
         return self._events.collect_updates_from_events()
 
-    def compute_progress_snapshot(self, updates: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any]:
+    def compute_progress_snapshot(self, updates: Sequence[Mapping[str, Any]] | None = None) -> ProgressSnapshot:
         """Return completed update count and configured total updates."""
 
         if updates is None:
@@ -70,24 +83,17 @@ class SpsaDataService:
             meta = self._store.load_meta_data()
         except OSError:
             meta = None
-        if isinstance(meta, Mapping):
-            raw_total = meta.get("num_updates")
-            if isinstance(raw_total, int):
-                total_updates = raw_total
-            else:
-                try:
-                    total_updates = int(raw_total) if raw_total is not None else None
-                except (TypeError, ValueError):
-                    total_updates = None
+        if meta is not None:
+            total_updates = meta.effective_num_updates
         percent = None
         if total_updates and total_updates > 0:
             percent = completed / total_updates
 
-        return {
-            "completed": completed,
-            "total": total_updates,
-            "percent": percent,
-        }
+        return ProgressSnapshot(
+            completed=completed,
+            total=total_updates,
+            percent=percent,
+        )
 
     # ------------------------------------------------------------------
     # Game listings (database first, fall back to events)
@@ -97,7 +103,7 @@ class SpsaDataService:
         offset: int,
         limit: int,
         search_query: str,
-    ) -> tuple[list[dict[str, Any]], int]:
+    ) -> tuple[list[GameListEntry], int]:
         self._ensure_shogidb()
         shogidb = self._get_shogidb()
 
@@ -155,7 +161,7 @@ class SpsaDataService:
                 )
 
                 rows = session.execute(data_stmt).all()
-                games: list[dict[str, Any]] = []
+                games: list[GameListEntry] = []
                 for (
                     game_name,
                     black_player,
@@ -205,7 +211,7 @@ class SpsaDataService:
             ordered_ids.append((gid, ts))
 
         query_lower = search_query.lower() if search_query else ""
-        records: list[dict[str, Any]] = []
+        records: list[GameListEntry] = []
         for gid, ts in ordered_ids:
             entry = self.get_game_event_snapshot(gid)
             if entry is None:
@@ -248,7 +254,7 @@ class SpsaDataService:
                 "phase": entry.get("phase"),
                 "timestamp": ts,
             }
-            records.append(record)
+            records.append(cast(GameListEntry, record))
 
         records.sort(key=lambda item: item.get("timestamp") or 0, reverse=True)
         total = len(records)
@@ -261,18 +267,18 @@ class SpsaDataService:
     # ------------------------------------------------------------------
     # Analysis helpers
     # ------------------------------------------------------------------
-    def compute_correlation_analysis(self, updates: list[dict[str, Any]]) -> dict[str, Any]:
+    def compute_correlation_analysis(self, updates: list[UpdateEntry]) -> CorrelationAnalysis:
         if len(updates) < 2:
-            return {
-                "correlations": {},
-                "parameter_evolution": {},
-                "gradient_evolution": {},
-                "step_evolution": [],
-                "parameter_names": [],
-                "num_updates": len(updates),
-                "parameter_timeline": {},
-                "message": "Insufficient data for correlation analysis",
-            }
+            return CorrelationAnalysis(
+                correlations={},
+                parameter_evolution={},
+                gradient_evolution={},
+                step_evolution=[],
+                parameter_names=[],
+                num_updates=len(updates),
+                parameter_timeline={},
+                message="Insufficient data for correlation analysis",
+            )
 
         # Normalize updates: sort by update_idx and ensure initial baseline
         normalized_updates: list[dict[str, Any]] = []
@@ -306,8 +312,8 @@ class SpsaDataService:
                 # Extract initial params from update_idx = -1 or 0
                 if idx == -1 or idx == 0:
                     for name, value in params.items():
-                        if isinstance(value, int | float) and math.isfinite(value):
-                            initial_params[name] = float(value)
+                        if (coerced := coerce_float(value)) is not None:
+                            initial_params[name] = coerced
 
             # Store the latest entry for each update_idx
             if idx not in update_map:
@@ -338,22 +344,13 @@ class SpsaDataService:
         # exposed via the params API. The meta-provided values take precedence
         # over any heuristics derived from the update stream.
         try:
-            meta_data: Mapping[str, Any] | None = self._store.load_meta_data()
+            meta_data = self._store.load_meta_data()
         except OSError:
             meta_data = None
-        if isinstance(meta_data, Mapping):
-            raw_initial = meta_data.get("initial_params")
-            if isinstance(raw_initial, Mapping):
-                for key, value in raw_initial.items():
-                    try:
-                        numeric = float(value)
-                    except (TypeError, ValueError):
-                        continue
-                    if not math.isfinite(numeric):
-                        continue
-                    # meta.json is the source of truth; overwrite any
-                    # conflicting value collected from updates.
-                    initial_params[str(key)] = numeric
+        if meta_data is not None:
+            # meta.json is the source of truth; overwrite any
+            # conflicting value collected from updates.
+            initial_params.update(meta_data.initial_params)
 
         # Build parameter timeline with baseline tracking
         param_names: list[str] = sorted({name for update in normalized_updates for name in update.get("params", {})})
@@ -423,8 +420,8 @@ class SpsaDataService:
                 params = update.get("params", {})
                 if isinstance(params, dict) and not update.get("pending", False):
                     for name, value in params.items():
-                        if isinstance(value, int | float) and math.isfinite(value):
-                            current_baseline[name] = float(value)
+                        if (coerced := coerce_float(value)) is not None:
+                            current_baseline[name] = coerced
 
             # Store committed baseline snapshot *after* applying the update's
             # effect so that subsequent updates and LTC reverts can reference
@@ -461,7 +458,7 @@ class SpsaDataService:
         invalidated_indices.update(superseded_reject_points - ltc_accepted_indices)
 
         # Second pass: build timeline entries using baseline snapshots
-        parameter_timeline: dict[str, list[dict[str, Any]]] = {name: [] for name in param_names}
+        parameter_timeline: dict[str, list[ParameterTimelineEntry]] = {name: [] for name in param_names}
 
         for update in normalized_updates:
             idx_raw = update.get("update_idx")
@@ -501,8 +498,8 @@ class SpsaDataService:
             # Build timeline entries for each parameter
             for name in param_names:
                 raw_param_value = params.get(name)
-                param_value = raw_param_value if isinstance(raw_param_value, int | float) else None
-                if param_value is None or not math.isfinite(param_value):
+                param_value = coerce_float(raw_param_value)
+                if param_value is None:
                     continue
 
                 baseline_value = baseline.get(name)
@@ -524,53 +521,45 @@ class SpsaDataService:
                         revert_source = (
                             baseline_committed_snapshots.get(baseline_idx) or baseline_snapshots.get(baseline_idx) or {}
                         )
-                    reverted_value = revert_source.get(name)
-                    if isinstance(reverted_value, int | float) and math.isfinite(reverted_value):
-                        baseline_value = float(reverted_value)
+                    reverted_value = coerce_float(revert_source.get(name))
+                    if reverted_value is not None:
+                        baseline_value = reverted_value
                     effective_actual = float(baseline_value)
                 else:
                     effective_actual = float(param_value)
 
                 parameter_timeline[name].append(
-                    {
-                        "update_idx": idx,
-                        "actual": effective_actual,
-                        "baseline": float(baseline_value),
-                        "pending": bool(update.get("pending", False)),
-                        # This flag encodes "invalidated by LTC" for open intervals
-                        # (baseline, rejected). The rejection/acceptance decision
-                        # itself is exposed separately via "ltc_decision".
-                        "ltc_invalidated": ltc_invalidated,
-                        "ltc_decision": ltc_decision,
-                    }
+                    ParameterTimelineEntry(
+                        update_idx=idx,
+                        actual=effective_actual,
+                        baseline=float(baseline_value),
+                        pending=bool(update.get("pending", False)),
+                        ltc_invalidated=ltc_invalidated,
+                        ltc_decision=ltc_decision,
+                    )
                 )
 
         def resolve_baseline_for_parameter(name: str) -> float | None:
-            initial_value = initial_params.get(name)
-            if isinstance(initial_value, int | float) and math.isfinite(initial_value):
-                return float(initial_value)
+            if (initial_value := coerce_float(initial_params.get(name))) is not None:
+                return initial_value
 
             for idx in sorted_indices:
                 snapshot = baseline_snapshots.get(idx)
                 if not snapshot:
                     continue
-                snapshot_value = snapshot.get(name)
-                if isinstance(snapshot_value, int | float) and math.isfinite(snapshot_value):
-                    return float(snapshot_value)
+                if (snapshot_value := coerce_float(snapshot.get(name))) is not None:
+                    return snapshot_value
 
             for update in normalized_updates:
                 params = update.get("params", {})
                 if not isinstance(params, dict):
                     continue
-                raw_value = params.get(name)
-                if isinstance(raw_value, int | float) and math.isfinite(raw_value):
-                    return float(raw_value)
+                if (raw_value := coerce_float(params.get(name))) is not None:
+                    return raw_value
             return None
 
         def normalize_update_idx(value: Any) -> int:
-            if isinstance(value, int | float) and math.isfinite(value):
-                return int(value)
-            return 0
+            return coerce_int(value) or 0
 
         for name in param_names:
             entries = parameter_timeline.get(name)
@@ -583,14 +572,14 @@ class SpsaDataService:
                 if baseline_value is not None:
                     entries.insert(
                         0,
-                        {
-                            "update_idx": 0,
-                            "actual": baseline_value,
-                            "baseline": baseline_value,
-                            "pending": False,
-                            "ltc_invalidated": False,
-                            "ltc_decision": None,
-                        },
+                        ParameterTimelineEntry(
+                            update_idx=0,
+                            actual=baseline_value,
+                            baseline=baseline_value,
+                            pending=False,
+                            ltc_invalidated=False,
+                            ltc_decision=None,
+                        ),
                     )
             parameter_timeline[name] = entries
 
@@ -629,20 +618,20 @@ class SpsaDataService:
                     if denominator != 0:
                         correlations[f"{param1}_{param2}"] = numerator / denominator
 
-        return {
-            "correlations": correlations,
-            "parameter_evolution": param_evolution,
-            "gradient_evolution": gradient_evolution,
-            "step_evolution": step_evolution,
-            "parameter_names": param_names,
-            "num_updates": len(normalized_updates),
-            "parameter_timeline": parameter_timeline,
-        }
+        return CorrelationAnalysis(
+            correlations=correlations,
+            parameter_evolution=param_evolution,
+            gradient_evolution=gradient_evolution,
+            step_evolution=step_evolution,
+            parameter_names=param_names,
+            num_updates=len(normalized_updates),
+            parameter_timeline=parameter_timeline,
+        )
 
-    def compute_convergence_analysis(self, updates: list[dict[str, Any]]) -> dict[str, Any]:
+    def compute_convergence_analysis(self, updates: list[UpdateEntry]) -> ConvergenceAnalysis:
         total_updates_observed = len(updates)
 
-        def _extract_delta_vector(entry: dict[str, Any]) -> dict[str, float] | None:
+        def _extract_delta_vector(entry: Mapping[str, Any]) -> dict[str, float] | None:
             raw_vector = entry.get("deltas")
             if not isinstance(raw_vector, dict):
                 return None
@@ -654,7 +643,7 @@ class SpsaDataService:
                 vector[str(key)] = float(coerced)
             return vector or None
 
-        def _extract_numeric_values(entry: dict[str, Any]) -> tuple[float, float, dict[str, float] | None] | None:
+        def _extract_numeric_values(entry: Mapping[str, Any]) -> tuple[float, float, dict[str, float] | None] | None:
             delta_value = coerce_float(entry.get("delta_norm"))
             step_value = coerce_float(entry.get("step"))
             delta_vector = _extract_delta_vector(entry)
@@ -664,7 +653,7 @@ class SpsaDataService:
                 return None
             return float(delta_value), float(step_value), delta_vector
 
-        completed_updates: list[tuple[dict[str, Any], float, float, dict[str, float] | None]] = []
+        completed_updates: list[tuple[Mapping[str, Any], float, float, dict[str, float] | None]] = []
         pending_updates = 0
         for update in updates:
             extracted = _extract_numeric_values(update)
@@ -779,19 +768,19 @@ class SpsaDataService:
 
         min_delta_samples = max(1, min_delta_samples)
         if available_delta_samples < min_delta_samples:
-            return {
-                "convergence_metrics": {},
-                "prediction": {},
-                "required_delta_norms": min_delta_samples,
-                "available_delta_norms": available_delta_samples,
-                "available_updates": num_updates_available,
-                "pending_updates": pending_updates,
-                "total_updates_observed": total_updates_observed,
+            return ConvergenceAnalysis(
+                convergence_metrics=ConvergenceMetrics(),
+                prediction=ConvergencePrediction(),
+                required_delta_norms=min_delta_samples,
+                available_delta_norms=available_delta_samples,
+                available_updates=num_updates_available,
+                pending_updates=pending_updates,
+                total_updates_observed=total_updates_observed,
                 **history_payload,
-            }
+            )
 
-        convergence_metrics: dict[str, Any] = {}
-        prediction: dict[str, Any] = {}
+        convergence_metrics = ConvergenceMetrics()
+        prediction = ConvergencePrediction()
 
         recent_mean_vector_norm: float | None = None
         for value in reversed(mean_vector_norm_history):
@@ -804,54 +793,54 @@ class SpsaDataService:
             recent_avg, recent_std, trend_slope = _compute_trend(window)
             probability, confidence = _estimate_probability_confidence(trend_slope, bool(window))
             overall_avg = statistics.mean(delta_norms)
-            convergence_metrics = {
-                "recent_avg_delta_norm": recent_avg,
-                "overall_avg_delta_norm": overall_avg,
-                "recent_std_delta_norm": recent_std,
-                "trend_slope": trend_slope,
-                "is_converging": trend_slope < 0 and recent_std < overall_avg * 0.1,
-                "convergence_confidence": confidence,
-            }
+            convergence_metrics = ConvergenceMetrics(
+                recent_avg_delta_norm=recent_avg,
+                overall_avg_delta_norm=overall_avg,
+                recent_std_delta_norm=recent_std,
+                trend_slope=trend_slope,
+                is_converging=trend_slope < 0 and recent_std < overall_avg * 0.1,
+                convergence_confidence=confidence,
+            )
             if recent_mean_vector_norm is not None:
                 convergence_metrics["recent_mean_vector_delta_norm"] = recent_mean_vector_norm
                 if vector_norms_recent:
                     convergence_metrics["recent_avg_mean_vector_delta_norm"] = statistics.mean(vector_norms_recent)
             if trend_slope < 0:
                 projected_remaining = max(0.0, recent_avg / max(abs(trend_slope), 1e-6))
-                prediction = {
-                    "remaining_updates_estimate": projected_remaining,
-                    "convergence_probability": probability,
-                }
+                prediction = ConvergencePrediction(
+                    remaining_updates_estimate=projected_remaining,
+                    convergence_probability=probability,
+                )
         else:
-            convergence_metrics = {
-                "recent_avg_delta_norm": statistics.mean(delta_norms) if delta_norms else 0.0,
-                "recent_std_delta_norm": statistics.stdev(delta_norms) if len(delta_norms) > 1 else 0.0,
-                "trend_slope": 0.0,
-                "is_converging": False,
-                "convergence_confidence": 0.0,
-            }
+            convergence_metrics = ConvergenceMetrics(
+                recent_avg_delta_norm=statistics.mean(delta_norms) if delta_norms else 0.0,
+                recent_std_delta_norm=statistics.stdev(delta_norms) if len(delta_norms) > 1 else 0.0,
+                trend_slope=0.0,
+                is_converging=False,
+                convergence_confidence=0.0,
+            )
             if recent_mean_vector_norm is not None:
                 convergence_metrics["recent_mean_vector_delta_norm"] = recent_mean_vector_norm
 
         prediction.setdefault("convergence_probability", probability_history[-1] if probability_history else 0.0)
 
-        return {
-            "convergence_metrics": convergence_metrics,
-            "prediction": prediction,
-            "delta_norm_history": delta_series_all,
-            "delta_mean_vector_norm_history": mean_vector_norm_history,
-            "delta_mean_vector_window": recent_window,
-            "recent_delta_norms": delta_norms[-recent_window:],
-            "recent_step_sizes": step_sizes[-recent_window:],
-            "required_delta_norms": min_delta_samples,
-            "available_delta_norms": available_delta_samples,
-            "available_updates": num_updates_available,
-            "pending_updates": pending_updates,
-            "total_updates_observed": total_updates_observed,
-            "num_updates_analyzed": num_updates_available,
-            "mobility_series": {
-                "gain_ak": mobility_gain_ak,
-                "variant_indices": mobility_indices,
-            },
+        return ConvergenceAnalysis(
+            convergence_metrics=convergence_metrics,
+            prediction=prediction,
+            delta_norm_history=delta_series_all,
+            delta_mean_vector_norm_history=mean_vector_norm_history,
+            delta_mean_vector_window=recent_window,
+            recent_delta_norms=delta_norms[-recent_window:],
+            recent_step_sizes=step_sizes[-recent_window:],
+            required_delta_norms=min_delta_samples,
+            available_delta_norms=available_delta_samples,
+            available_updates=num_updates_available,
+            pending_updates=pending_updates,
+            total_updates_observed=total_updates_observed,
+            num_updates_analyzed=num_updates_available,
+            mobility_series=MobilitySeriesPayload(
+                gain_ak=mobility_gain_ak,
+                variant_indices=mobility_indices,
+            ),
             **history_payload,
-        }
+        )

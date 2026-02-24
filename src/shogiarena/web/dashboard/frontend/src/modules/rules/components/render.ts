@@ -1,11 +1,3 @@
-import type { ParseTimeControlSpec } from '@/modules/rules/utils/helpers';
-import {
-    formatPercentage,
-    formatTimeControl,
-    getRepetitionValue,
-    normalizeAdjudication,
-    normalizeInitialPositions,
-} from '@/modules/rules/utils/helpers';
 import type {
     RuleCard,
     RulesListEntry,
@@ -15,6 +7,14 @@ import type {
     SpsaLtcRulesConfig,
     WarnSoftFailure,
 } from '@/modules/rules/types/internal';
+import type { ParseTimeControlSpec } from '@/modules/rules/utils/helpers';
+import {
+    formatPercentage,
+    formatTimeControl,
+    getRepetitionValue,
+    normalizeAdjudication,
+    normalizeInitialPositions,
+} from '@/modules/rules/utils/helpers';
 import type { JsonObject } from '@/types/shared';
 
 function createActionButton(doc: Document, entry: RulesListEntry): HTMLButtonElement {
@@ -139,11 +139,10 @@ function buildAdjudicationSection({ doc, summary }: RenderContext): HTMLElement 
     if (Number.isFinite(maxMoves) && maxMoves > 0) {
         rows.push({ label: 'Max moves to draw', value: `${maxMoves}` });
     }
-    if (adj.enable_resign) {
-        const threshold = Number(adj.resign_threshold);
+    const resignThreshold = Number(adj.resign_threshold_cp);
+    if (Number.isFinite(resignThreshold) && resignThreshold > 0) {
         const confirmed = Number(adj.resign_confirm_count);
-        const pct = Number.isFinite(threshold) ? formatPercentage(threshold) : 'enabled';
-        const parts = [pct];
+        const parts = [`${resignThreshold} cp`];
         if (Number.isFinite(confirmed) && confirmed > 0) {
             parts.push(`${confirmed} consecutive moves`);
         }
@@ -341,6 +340,53 @@ function renderCoreRules(context: RenderContext): RuleCard | null {
     };
 }
 
+function renderGenerateConfig({ doc, summary }: RenderContext): RuleCard[] {
+    const generate = summary.generateConfig;
+    const records = summary.recordsOutput;
+    if (!generate && !records) {
+        return [];
+    }
+
+    const sections: HTMLElement[] = [];
+
+    if (generate && typeof generate === 'object') {
+        const rows: RulesListEntry[] = [];
+        const games = generate.games as number | undefined;
+        const seed = generate.seed as number | undefined;
+        const numParallel = generate.num_parallel ?? generate.numParallel;
+        if (games != null) rows.push({ label: 'Games', value: String(games) });
+        if (numParallel != null) rows.push({ label: 'Parallel', value: String(numParallel) });
+        if (seed != null) rows.push({ label: 'Seed', value: String(seed) });
+        sections.push(createSection(doc, 'Generate', createDefinitionList(doc, rows)));
+    }
+
+    if (records && typeof records === 'object') {
+        const rows: RulesListEntry[] = [];
+        if (records.format != null) rows.push({ label: 'Format', value: String(records.format) });
+        if (records.output_dir != null) rows.push({ label: 'Output dir', value: String(records.output_dir) });
+        if (records.file_prefix != null) rows.push({ label: 'File prefix', value: String(records.file_prefix) });
+        if (records.max_positions_per_file != null) {
+            rows.push({ label: 'Max positions', value: String(records.max_positions_per_file) });
+        }
+        if (records.max_games_per_file != null) {
+            rows.push({ label: 'Max games', value: String(records.max_games_per_file) });
+        }
+        sections.push(createSection(doc, 'Records Output', createDefinitionList(doc, rows)));
+    }
+
+    if (!sections.length) {
+        return [];
+    }
+
+    const wrapper = doc.createElement('div');
+    wrapper.className = 'rules-card__sections';
+    for (const section of sections) {
+        wrapper.appendChild(section);
+    }
+
+    return [{ title: 'Generate', content: wrapper }];
+}
+
 export interface RenderOptions {
     parseTimeControlSpec?: ParseTimeControlSpec;
     warnSoftFailure?: WarnSoftFailure;
@@ -366,6 +412,13 @@ export function renderRuleCards(doc: Document, summary: RulesSummary, options: R
         const sprtCards = renderSprt(context);
         if (sprtCards?.length) {
             cards.push(...sprtCards);
+        }
+    }
+
+    if (mode === 'generate') {
+        const generateCards = renderGenerateConfig(context);
+        if (generateCards?.length) {
+            cards.push(...generateCards);
         }
     }
 

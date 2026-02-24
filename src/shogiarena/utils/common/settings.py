@@ -37,6 +37,14 @@ class ArenaSettings:
     repos: dict[str, RepoSettings]
     github_token: str | None
     overlays: dict[str, Path]
+    openbench: OpenBenchSettings | None
+
+
+@dataclass(frozen=True)
+class OpenBenchSettings:
+    server: str | None = None
+    username: str | None = None
+    password_env: str = "OPENBENCH_PASSWORD"
 
 
 def _config_base_dir() -> Path:
@@ -147,6 +155,21 @@ def _load_overlays(data: Mapping[str, Any]) -> dict[str, Path]:
     return overlays
 
 
+def _load_openbench(data: Mapping[str, Any]) -> OpenBenchSettings | None:
+    raw = data.get("openbench")
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise TypeError("settings.openbench must be a mapping")
+    server_val = raw.get("server")
+    username_val = raw.get("username")
+    password_env_val = raw.get("password_env")
+    server = str(server_val).strip() if server_val else None
+    username = str(username_val).strip() if username_val else None
+    password_env = str(password_env_val).strip() if password_env_val else "OPENBENCH_PASSWORD"
+    return OpenBenchSettings(server=server, username=username, password_env=password_env)
+
+
 def load_settings(
     *, root: Path | None = None, require_settings: bool = False, suppress_warning: bool = False
 ) -> ArenaSettings:
@@ -189,6 +212,7 @@ def load_settings(
 
     repos = _load_repos(data)
     overlays = _load_overlays(data)
+    openbench = _load_openbench(data)
     github_token_raw = data.get("github_token")
     github_token = str(github_token_raw).strip() if github_token_raw else None
 
@@ -199,6 +223,7 @@ def load_settings(
         repos=repos,
         github_token=github_token,
         overlays=overlays,
+        openbench=openbench,
     )
 
 
@@ -210,6 +235,7 @@ def write_settings_file(
     repos: dict[str, RepoSettings] | None = None,
     github_token: str | None = None,
     overlays: dict[str, Path] | None = None,
+    openbench: OpenBenchSettings | None = None,
 ) -> None:
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, Any] = {
@@ -229,14 +255,14 @@ def write_settings_file(
         }
     if overlays:
         payload["overlays"] = {name: str(path) for name, path in overlays.items()}
+    if openbench is not None:
+        payload["openbench"] = {
+            "server": openbench.server,
+            "username": openbench.username,
+            "password_env": openbench.password_env,
+        }
     with open(settings_path, "w", encoding="utf-8") as handle:
         yaml.safe_dump(payload, handle, allow_unicode=True, sort_keys=True)
-
-
-def reload_settings(*, root: Path | None = None) -> ArenaSettings:
-    """Reload settings from disk using the latest root hint."""
-
-    return load_settings(root=root)
 
 
 def validate_overlays(settings: ArenaSettings) -> None:
@@ -249,11 +275,6 @@ def validate_overlays(settings: ArenaSettings) -> None:
         overlay_opts = raw.get("options") if "options" in raw else raw
         if not isinstance(overlay_opts, Mapping):
             raise TypeError(f"overlay options must be a mapping: {path}")
-
-
-# Backwards compatibility alias
-def _default_settings_path() -> Path:  # pragma: no cover - transitional
-    return default_settings_path()
 
 
 # Module-level SETTINGS initialization - suppress warning since this is just for

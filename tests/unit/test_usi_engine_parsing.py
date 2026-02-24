@@ -1,9 +1,10 @@
 import asyncio
 
 import pytest
+from rshogi.core import Move
 
 from shogiarena.arena.engines.usi_config import UsiEngineConfig
-from shogiarena.arena.engines.usi_engine import AsyncUsiEngine
+from shogiarena.arena.engines.usi_engine import AsyncUsiEngine, UsiEngineState
 from shogiarena.arena.engines.usi_protocol import UsiOption
 
 
@@ -61,13 +62,14 @@ async def test_bestmove_future_resolves_after_go() -> None:
     eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"))
 
     loop = asyncio.get_running_loop()
+    eng._state = UsiEngineState.WAITING_FOR_BESTMOVE
     eng._bestmove_future = loop.create_future()
     await eng._handle_line("info depth 18 nodes 456 time 90")
     await eng._handle_line("info string auxiliary info")
     await eng._handle_line("bestmove 7g7f ponder 3c3d")
-    res = await eng._bestmove_future
-    assert res.bestmove == "7g7f"
-    assert res.ponder == "3c3d"
+    res = await asyncio.wait_for(asyncio.shield(eng._bestmove_future), timeout=0.1)
+    assert res.bestmove == Move.from_usi("7g7f")
+    assert res.ponder == Move.from_usi("3c3d")
     assert res.pvs and len(res.pvs) == 1
     latest = res.pvs[0]
     assert latest.depth == 18 and latest.nodes == 456 and latest.time == 90
@@ -169,3 +171,144 @@ def test_overrides_require_mapping() -> None:
     config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
     with pytest.raises(TypeError):
         config.with_overrides(options=[("Threads", 2)])
+
+
+# -- info string collection tests --
+
+
+@pytest.mark.asyncio
+async def test_info_string_collection_disabled_by_default() -> None:
+    """collect_info_strings がデフォルトで無効であることを確認する。"""
+    config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
+    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"))
+
+    assert eng._collect_info_strings is False
+    assert eng._info_string_log == []
+
+    await eng._handle_line("info string debug msg 1")
+    # 無効時は _info_string_log に追加されない
+    assert eng._info_string_log == []
+
+
+@pytest.mark.asyncio
+async def test_info_string_collection_when_enabled() -> None:
+    """collect_info_strings 有効時に info string が蓄積されることを確認する。"""
+    config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
+    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), collect_info_strings=True)
+
+    await eng._handle_line("info string hello world")
+    await eng._handle_line("info string debug msg 2")
+    await eng._handle_line("info depth 10 nodes 100")  # not a string-only info
+
+    assert eng._info_string_log == ["hello world", "debug msg 2"]
+
+
+@pytest.mark.asyncio
+async def test_info_string_log_cleared_on_reset() -> None:
+    """_reset_current_info で _info_string_log もクリアされることを確認する。"""
+    config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
+    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), collect_info_strings=True)
+
+    await eng._handle_line("info string before reset")
+    assert eng._info_string_log == ["before reset"]
+
+    eng._reset_current_info()
+    assert eng._info_string_log == []
+
+    await eng._handle_line("info string after reset")
+    assert eng._info_string_log == ["after reset"]
+
+
+@pytest.mark.asyncio
+async def test_info_strings_attached_to_bestmove_result() -> None:
+    """bestmove 結果に info_strings が付与されることを確認する。"""
+    config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
+    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), collect_info_strings=True)
+
+    loop = asyncio.get_running_loop()
+    eng._bestmove_future = loop.create_future()
+    eng._state = UsiEngineState.WAITING_FOR_BESTMOVE
+
+    await eng._handle_line("info string debug line 1")
+    await eng._handle_line("info depth 10 score cp 100")
+    await eng._handle_line("info string debug line 2")
+    await eng._handle_line("bestmove 7g7f ponder 3c3d")
+
+    result = eng._bestmove_future.result()
+    assert result.bestmove == Move.from_usi("7g7f")
+    assert result.info_strings == ("debug line 1", "debug line 2")
+    # reset 後は空
+    assert eng._info_string_log == []
+
+
+@pytest.mark.asyncio
+async def test_info_strings_attached_to_checkmate_result() -> None:
+    """checkmate 結果に info_strings が付与されることを確認する。"""
+    config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
+    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), collect_info_strings=True)
+
+    loop = asyncio.get_running_loop()
+    eng._mate_future = loop.create_future()
+    eng._state = UsiEngineState.WAITING_FOR_CHECKMATE
+
+    await eng._handle_line("info string mate search started")
+    await eng._handle_line("info string depth 5 found")
+    await eng._handle_line("checkmate 7g7f 3c3d 8h2b+")
+
+    result = eng._mate_future.result()
+    assert result.is_mate is True
+    assert result.moves == (Move.from_usi("7g7f"), Move.from_usi("3c3d"), Move.from_usi("8h2b+"))
+    assert result.info_strings == ("mate search started", "depth 5 found")
+
+
+@pytest.mark.asyncio
+async def test_info_strings_attached_to_nomate_result() -> None:
+    """nomate 結果に info_strings が付与されることを確認する。"""
+    config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
+    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), collect_info_strings=True)
+
+    loop = asyncio.get_running_loop()
+    eng._mate_future = loop.create_future()
+    eng._state = UsiEngineState.WAITING_FOR_CHECKMATE
+
+    await eng._handle_line("info string searching...")
+    await eng._handle_line("checkmate nomate")
+
+    result = eng._mate_future.result()
+    assert result.is_mate is False
+    assert result.info_strings == ("searching...",)
+
+
+@pytest.mark.asyncio
+async def test_info_strings_attached_to_timeout_result() -> None:
+    """timeout 結果に info_strings が付与されることを確認する。"""
+    config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
+    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), collect_info_strings=True)
+
+    loop = asyncio.get_running_loop()
+    eng._mate_future = loop.create_future()
+    eng._state = UsiEngineState.WAITING_FOR_CHECKMATE
+
+    await eng._handle_line("info string timeout debug msg")
+    await eng._handle_line("checkmate timeout")
+
+    result = eng._mate_future.result()
+    assert result.is_mate is False
+    assert result.info_strings == ("timeout debug msg",)
+
+
+@pytest.mark.asyncio
+async def test_info_strings_empty_when_disabled() -> None:
+    """collect_info_strings 無効時は結果の info_strings が空であることを確認する。"""
+    config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
+    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"))
+
+    loop = asyncio.get_running_loop()
+    eng._bestmove_future = loop.create_future()
+    eng._state = UsiEngineState.WAITING_FOR_BESTMOVE
+
+    await eng._handle_line("info string debug msg")
+    await eng._handle_line("bestmove 7g7f")
+
+    result = eng._bestmove_future.result()
+    assert result.info_strings == ()

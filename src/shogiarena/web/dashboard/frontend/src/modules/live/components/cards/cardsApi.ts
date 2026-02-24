@@ -145,6 +145,114 @@ export function createLiveCardsApi(owner: CardsWindow): LiveCardsApi {
         fetchAndCacheWorkerSnapshot,
     } = workerSnapshotsController;
 
+    const ENGINE_LOG_MAX_LINES = 1000;
+
+    const emitEngineLogToggle = (gid: string, role: 'black' | 'white', open: boolean): void => {
+        events?.emit?.('live:engine-log-toggle', { gid, role, open });
+    };
+
+    const emitEngineLogSwitch = (prevGid: string | null, nextGid: string | null, role: 'black' | 'white'): void => {
+        events?.emit?.('live:engine-log-switch', { prevGid, nextGid, role });
+    };
+
+    type EngineLogPreference = { black?: boolean | null; white?: boolean | null };
+
+    const getEngineLogPreference = (cardState: LiveCardState, role: 'black' | 'white'): boolean | null => {
+        const prefs = (cardState.engineLogPreference ?? {}) as EngineLogPreference;
+        return prefs[role] ?? null;
+    };
+
+    const setEngineLogPreference = (cardState: LiveCardState, role: 'black' | 'white', value: boolean | null): void => {
+        const prefs = (cardState.engineLogPreference ?? {}) as EngineLogPreference;
+        prefs[role] = value;
+        cardState.engineLogPreference = prefs;
+    };
+
+    const isPreferenceOn = (value: boolean | null): boolean => value === true;
+
+    const resolveManualOpenRoles = (cardState: LiveCardState): { black: boolean; white: boolean } => ({
+        black: isPreferenceOn(getEngineLogPreference(cardState, 'black')),
+        white: isPreferenceOn(getEngineLogPreference(cardState, 'white')),
+    });
+
+    const setEngineLogPreferenceForCard = (
+        cardState: LiveCardState,
+        role: 'black' | 'white',
+        nextPref: boolean | null,
+        options: { emit?: boolean } = {},
+    ): void => {
+        const prevPref = getEngineLogPreference(cardState, role);
+        if (prevPref === nextPref) return;
+        const prevOpen = isPreferenceOn(prevPref);
+        const nextOpen = isPreferenceOn(nextPref);
+        setEngineLogPreference(cardState, role, nextPref);
+        if (options.emit && prevOpen !== nextOpen) {
+            const gid = cardState.engineLogGameKey ?? resolveEngineLogGameKey(cardState) ?? null;
+            if (nextOpen) {
+                cardState.engineLogGameKey = gid;
+                applyEngineLogSnapshot(cardState.id, role, []);
+                if (gid) {
+                    emitEngineLogToggle(gid, role, true);
+                }
+            } else if (gid) {
+                emitEngineLogToggle(gid, role, false);
+            }
+        }
+    };
+
+    const setEngineLogVisibility = (
+        cardState: LiveCardState,
+        next: { black?: boolean | null; white?: boolean | null },
+        options: { emit?: boolean } = {},
+    ): void => {
+        if (Object.hasOwn(next, 'black')) {
+            setEngineLogPreferenceForCard(cardState, 'black', next.black ?? null, options);
+        }
+        if (Object.hasOwn(next, 'white')) {
+            setEngineLogPreferenceForCard(cardState, 'white', next.white ?? null, options);
+        }
+        const { black, white } = resolveManualOpenRoles(cardState);
+        if (!black && !white) {
+            cardState.engineLogGameKey = null;
+        }
+        applyEngineLogClasses(cardState);
+    };
+
+    const applyEngineLogClasses = (cardState: LiveCardState): void => {
+        const cardEl = document.getElementById(`card-${cardState.id}`);
+        if (!cardEl) return;
+        const { black, white } = resolveManualOpenRoles(cardState);
+        const anyOpen = black || white;
+        // Keep text selection usable in the log panel by disabling card drag-and-drop while log is open.
+        cardEl.setAttribute('draggable', anyOpen ? 'false' : 'true');
+        cardEl.classList.toggle('worker-card--log-open', anyOpen);
+        cardEl.classList.toggle('worker-card--log-open-black', black);
+        cardEl.classList.toggle('worker-card--log-open-white', white);
+        cardEl.classList.toggle('worker-card--log-visible-black', black);
+        cardEl.classList.toggle('worker-card--log-visible-white', white);
+        const logPanel = cardEl.querySelector<HTMLElement>('.worker-card__engine-log');
+        if (logPanel) {
+            logPanel.setAttribute('aria-hidden', anyOpen ? 'false' : 'true');
+        }
+    };
+
+    const resolveEngineLogGameKey = (cardState: LiveCardState): string | null => {
+        const last = cardState.lastGameId;
+        if (last && typeof last === 'string') {
+            return last;
+        }
+        if (cardState.source.startsWith('db-game:')) {
+            const gameId = cardState.source.split(':')[1];
+            return gameId ? String(gameId).trim() || null : null;
+        }
+        if (cardState.source.startsWith('worker-latest:')) {
+            const workerIdx = Number(cardState.source.split(':')[1]);
+            if (!Number.isFinite(workerIdx)) return null;
+            return currentWorkerGameId(workerIdx);
+        }
+        return null;
+    };
+
     const headerController = createHeaderController({
         getCards,
         findCardBySource: findCardBySourceSafe,
@@ -172,6 +280,7 @@ export function createLiveCardsApi(owner: CardsWindow): LiveCardsApi {
             toNumber,
             cacheWorkerSnapshot,
             updateCardData: (cardState: LiveCardState) => updateCardData(cardState),
+            handleEngineLogEvent,
         });
 
     const savedGamesController = createSavedGamesController({
@@ -201,6 +310,96 @@ export function createLiveCardsApi(owner: CardsWindow): LiveCardsApi {
 
     let softLimitNoticeShown = false;
     let navigationApi: CardsNavigationApi | null = null;
+
+    const ensureEngineLogSection = (
+        cardId: LiveCardState['id'],
+        role: 'black' | 'white',
+    ): { entriesEl: HTMLElement } | null => {
+        const body = document.getElementById(`engine-log-body-${cardId}`);
+        if (!body) return null;
+        const sectionId = `engine-log-section-${role}-${cardId}`;
+        let sectionEl = document.getElementById(sectionId);
+        if (!sectionEl) {
+            sectionEl = document.createElement('div');
+            sectionEl.id = sectionId;
+            sectionEl.className = `worker-card__overlay-section worker-card__overlay-section--${role}`;
+            sectionEl.style.gridRow = role === 'black' ? '2 / 3' : '1 / 2';
+
+            const labelEl = document.createElement('div');
+            labelEl.className = 'worker-card__overlay-label';
+            sectionEl.appendChild(labelEl);
+
+            const entriesEl = document.createElement('div');
+            entriesEl.className = 'worker-card__overlay-entries';
+            entriesEl.id = `engine-log-entries-${role}-${cardId}`;
+            sectionEl.appendChild(entriesEl);
+            body.appendChild(sectionEl);
+        }
+        const labelEl = sectionEl.querySelector<HTMLElement>('.worker-card__overlay-label');
+        sectionEl.style.gridRow = role === 'black' ? '2 / 3' : '1 / 2';
+        if (labelEl) {
+            const nameEl = document.getElementById(`${role}-name-${cardId}`);
+            const nameText = nameEl?.textContent?.trim() || '';
+            labelEl.textContent = nameText ? `${role === 'black' ? 'Black' : 'White'}: ${nameText}` : role;
+        }
+        const entriesEl = sectionEl.querySelector<HTMLElement>('.worker-card__overlay-entries');
+        if (!entriesEl) return null;
+        return { entriesEl };
+    };
+
+    const setEngineLogPlaceholder = (entriesEl: HTMLElement, text: string): void => {
+        entriesEl.innerHTML = '';
+        const placeholder = document.createElement('div');
+        placeholder.className = 'worker-card__overlay-line worker-card__overlay-line--placeholder';
+        placeholder.textContent = text;
+        entriesEl.appendChild(placeholder);
+    };
+
+    const trimEngineLogEntries = (entriesEl: HTMLElement): void => {
+        let lines = entriesEl.querySelectorAll(
+            '.worker-card__overlay-line:not(.worker-card__overlay-line--placeholder)',
+        );
+        while (lines.length > ENGINE_LOG_MAX_LINES) {
+            const first = lines[0];
+            first?.parentElement?.removeChild(first);
+            lines = entriesEl.querySelectorAll(
+                '.worker-card__overlay-line:not(.worker-card__overlay-line--placeholder)',
+            );
+        }
+    };
+
+    const appendEngineLogEntries = (entriesEl: HTMLElement, entries: unknown[]): void => {
+        if (!entries.length) return;
+        const shouldStickToBottom = entriesEl.scrollTop + entriesEl.clientHeight >= entriesEl.scrollHeight - 20;
+        const placeholder = entriesEl.querySelector('.worker-card__overlay-line--placeholder');
+        if (placeholder) {
+            placeholder.remove();
+        }
+        const fragment = document.createDocumentFragment();
+        for (const raw of entries) {
+            if (!raw || typeof raw !== 'object') continue;
+            const entry = raw as { dir?: unknown; line?: unknown };
+            const dir = entry.dir === 'out' ? 'out' : 'in';
+            const lineText = typeof entry.line === 'string' && entry.line.trim() ? entry.line : '(no command)';
+            const arrow = dir === 'out' ? '>' : '<';
+            const lineEl = document.createElement('div');
+            lineEl.className = 'worker-card__overlay-line';
+            lineEl.textContent = `${arrow} ${lineText}`;
+            fragment.appendChild(lineEl);
+        }
+        entriesEl.appendChild(fragment);
+        trimEngineLogEntries(entriesEl);
+        if (shouldStickToBottom) {
+            entriesEl.scrollTop = entriesEl.scrollHeight;
+        }
+    };
+
+    const applyEngineLogSnapshot = (cardId: LiveCardState['id'], role: 'black' | 'white', entries: unknown[]): void => {
+        const section = ensureEngineLogSection(cardId, role);
+        if (!section) return;
+        setEngineLogPlaceholder(section.entriesEl, 'ログがまだありません');
+        appendEngineLogEntries(section.entriesEl, entries);
+    };
 
     function requireNavigation(): CardsNavigationApi {
         if (!navigationApi) {
@@ -256,6 +455,79 @@ export function createLiveCardsApi(owner: CardsWindow): LiveCardsApi {
     }
 
     const getGameMetadata = (gameId: string): GameMeta | null => getGameMetadataEntry(gameMetadata, gameId);
+
+    const toggleEngineLog = (cardId: LiveCardId, role: 'black' | 'white'): void => {
+        const cardState = findCardByIdSafe(cardId);
+        if (!cardState) return;
+        const cardEl = document.getElementById(`card-${cardState.id}`);
+        const isVisible = cardEl?.classList.contains(`worker-card--log-visible-${role}`) ?? false;
+        const nextPref = !isVisible;
+        setEngineLogPreferenceForCard(cardState, role, nextPref, { emit: true });
+        const { black, white } = resolveManualOpenRoles(cardState);
+        if (!black && !white) {
+            cardState.engineLogGameKey = null;
+        }
+        applyEngineLogClasses(cardState);
+    };
+
+    const closeEngineLogForCard = (cardState: LiveCardState): void => {
+        const { black, white } = resolveManualOpenRoles(cardState);
+        const gid = cardState.engineLogGameKey ?? resolveEngineLogGameKey(cardState) ?? null;
+        if (gid) {
+            if (black) emitEngineLogToggle(gid, 'black', false);
+            if (white) emitEngineLogToggle(gid, 'white', false);
+        }
+        setEngineLogVisibility(cardState, { black: false, white: false }, { emit: false });
+        cardState.engineLogGameKey = null;
+    };
+
+    const handleEngineLogGameKeyChange = (cardState: LiveCardState, prevKey: string | null, nextKey: string): void => {
+        const { black, white } = resolveManualOpenRoles(cardState);
+        if (!black && !white) return;
+        if (black) {
+            applyEngineLogSnapshot(cardState.id, 'black', []);
+        }
+        if (white) {
+            applyEngineLogSnapshot(cardState.id, 'white', []);
+        }
+        for (const role of ['black', 'white'] as const) {
+            if (!(role === 'black' ? black : white)) continue;
+            if (prevKey) {
+                emitEngineLogSwitch(prevKey, nextKey, role);
+            } else {
+                emitEngineLogToggle(nextKey, role, true);
+            }
+        }
+    };
+
+    function handleEngineLogEvent(payload: unknown): void {
+        if (!payload || typeof payload !== 'object') return;
+        const data = payload as {
+            gid?: unknown;
+            role?: unknown;
+            entries?: unknown;
+            isSnapshot?: unknown;
+        };
+        const gid = typeof data.gid === 'string' && data.gid.trim() ? data.gid.trim() : null;
+        const role = data.role === 'black' || data.role === 'white' ? data.role : null;
+        if (!gid || !role) return;
+        const entries = Array.isArray(data.entries) ? data.entries : [];
+        const isSnapshot = data.isSnapshot === true;
+        for (const cardState of getCards()) {
+            if (!cardState) continue;
+            const pref = getEngineLogPreference(cardState, role);
+            if (!isPreferenceOn(pref)) continue;
+            const cardGid = cardState.engineLogGameKey ?? resolveEngineLogGameKey(cardState);
+            if (cardGid !== gid) continue;
+            if (isSnapshot) {
+                applyEngineLogSnapshot(cardState.id, role, entries);
+            } else {
+                const section = ensureEngineLogSection(cardState.id, role);
+                if (!section) continue;
+                appendEngineLogEntries(section.entriesEl, entries);
+            }
+        }
+    }
 
     const syncWorkerViewFromCard = (cardState: LiveCardState) => {
         syncWorkerViewFromCardState(state, cardState);
@@ -328,6 +600,8 @@ export function createLiveCardsApi(owner: CardsWindow): LiveCardsApi {
         getBoardAdapter,
         warnSoftFailure,
         closeKifuPopover,
+        onEngineLogGameKeyChange: handleEngineLogGameKeyChange,
+        setEngineLogVisibility,
     });
 
     const eventsController = createEventsController();
@@ -338,7 +612,6 @@ export function createLiveCardsApi(owner: CardsWindow): LiveCardsApi {
         triggerTabResume,
         teardown: teardownEvents,
         startWorkerClockTimer,
-        stopWorkerClockTimer,
         updateWorkerClockDisplay,
         onTempoChange,
         stopLiveRendering,
@@ -444,14 +717,9 @@ export function createLiveCardsApi(owner: CardsWindow): LiveCardsApi {
                 }
             }
             for (const idx of Array.from(visibleWorkers)) {
-                if (tempo === 'unlimited' || tempo === 'auto') {
-                    // Start interval for smooth ticking.
-                    startWorkerClockTimer(idx);
-                } else {
-                    // Fixed tempo (2/4/8): stop interval and update once.
-                    stopWorkerClockTimer(idx);
-                    updateWorkerClockDisplay(idx);
-                }
+                // Clock ticking is independent from sync tempo.
+                startWorkerClockTimer(idx);
+                updateWorkerClockDisplay(idx);
             }
         };
 
@@ -560,10 +828,17 @@ export function createLiveCardsApi(owner: CardsWindow): LiveCardsApi {
             enableDragAndDropForCard,
             handleEvalChartClickCard,
             setSelectedCard,
-            deleteCard: (cardId) => cardsController.deleteCard(cardId as LiveCardId),
+            deleteCard: (cardId) => {
+                const cardState = findCardByIdSafe(cardId as LiveCardId);
+                if (cardState) {
+                    closeEngineLogForCard(cardState);
+                }
+                cardsController.deleteCard(cardId as LiveCardId);
+            },
             changeCardSource,
             goToMoveCard,
             toggleKifuCard,
+            toggleEngineLog,
             isInteractiveElement,
             populateSourceDropdown,
             mountBoardAdapter: boardAdapterManager.mount,

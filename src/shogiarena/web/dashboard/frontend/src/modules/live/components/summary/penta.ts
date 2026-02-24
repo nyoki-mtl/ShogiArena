@@ -30,6 +30,10 @@ export function createPentaController({
     fetchGamesList,
     resolveSummarySnapshot,
 }: PentaDependencies): PentaController {
+    const blackWinCodes = new Set([0, 4, 8, 12, 16]);
+    const whiteWinCodes = new Set([1, 5, 9, 13, 17]);
+    const drawCodes = new Set([2, 6, 10]);
+
     async function computePairPentanomial(
         a: string,
         b: string,
@@ -74,13 +78,11 @@ export function createPentaController({
                 const resultAB = Number(gamesAB[i].result_code);
                 const resultBA = Number(gamesBA[i].result_code);
 
-                const catAB = resultAB & 3;
-                if (catAB === 0) score += 1;
-                else if (catAB === 2) score += 0.5;
+                if (blackWinCodes.has(resultAB)) score += 1;
+                else if (drawCodes.has(resultAB)) score += 0.5;
 
-                const catBA = resultBA & 3;
-                if (catBA === 1) score += 1;
-                else if (catBA === 2) score += 0.5;
+                if (whiteWinCodes.has(resultBA)) score += 1;
+                else if (drawCodes.has(resultBA)) score += 0.5;
 
                 const bucket = score.toFixed(1);
                 if (Object.hasOwn(bins, bucket)) {

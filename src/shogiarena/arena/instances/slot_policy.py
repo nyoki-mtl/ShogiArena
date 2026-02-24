@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from typing import Any
+from typing import Protocol
 
-__all__ = ["estimate_required_slots"]
+__all__ = ["HasOptions", "estimate_required_slots"]
 
 _TRUE_VALUES = {"true", "1", "yes", "on"}
 _FALSE_VALUES = {"false", "0", "no", "off"}
 
 
-def _extract_int_option(options: Mapping[str, Any], keys: tuple[str, ...]) -> int | None:
+class HasOptions(Protocol):
+    options: Mapping[str, object] | None
+
+
+def _extract_int_option(options: Mapping[str, object], keys: tuple[str, ...]) -> int | None:
     for key in keys:
         if key not in options:
             continue
@@ -29,7 +33,7 @@ def _extract_int_option(options: Mapping[str, Any], keys: tuple[str, ...]) -> in
     return None
 
 
-def _extract_bool_option(options: Mapping[str, Any], keys: tuple[str, ...]) -> bool | None:
+def _extract_bool_option(options: Mapping[str, object], keys: tuple[str, ...]) -> bool | None:
     for key in keys:
         if key not in options:
             continue
@@ -46,7 +50,7 @@ def _extract_bool_option(options: Mapping[str, Any], keys: tuple[str, ...]) -> b
     return None
 
 
-def estimate_required_slots(engine_spec: Any, extra_options: Mapping[str, Any] | None = None) -> int:
+def estimate_required_slots(engine_spec: HasOptions, extra_options: Mapping[str, object] | None = None) -> int:
     """
     Estimate how many slots an engine should reserve on its target instance.
 
@@ -58,11 +62,11 @@ def estimate_required_slots(engine_spec: Any, extra_options: Mapping[str, Any] |
     count.
     """
 
-    option_sources: list[Mapping[str, Any]] = []
-    if isinstance(extra_options, Mapping):
+    option_sources: list[Mapping[str, object]] = []
+    if extra_options is not None:
         option_sources.append(extra_options)
-    spec_options = getattr(engine_spec, "options", None)
-    if isinstance(spec_options, Mapping):
+    spec_options = engine_spec.options
+    if spec_options is not None:
         option_sources.append(spec_options)
 
     threads: int | None = None

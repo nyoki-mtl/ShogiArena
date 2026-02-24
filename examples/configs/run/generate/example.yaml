@@ -1,0 +1,69 @@
+# Generate（selfplay）用テンプレート
+# ------------------------------------------------------------------
+# - `run generate` は自己対局で棋譜を生成します（experiment_name=generate で既定のダッシュボードが有効化）
+# - `records_output` で pack/psfen のバイナリ棋譜を保存できます
+# - コメント内の「必須/任意」「既定: ...」は TournamentRunConfig の初期値を基準にしています
+
+experiment_name: "generate"                # 任意 (既定: generate)
+# work_dir: "{output_dir}"                 # 任意 (既定: project_dirs.output_dir)
+log_level: INFO                             # 任意 (既定: INFO)
+instances:                                 # 任意 (既定: CLI --instances または local.yaml)
+  - "../../resources/instances/local_example.yaml"
+
+dashboard:                                 # 任意 (既定: enabled=true, api_port=8080)
+  enabled: true
+  api_port: 8080
+
+tournament:                                # 任意 (既定: scheduler=round_robin, games_per_pair=4, seed=42, num_parallel=4)
+  scheduler: round_robin
+  games_per_pair: 20                       # 生成する対局数（ペアごと）
+  seed: 42
+  num_parallel: 4
+  game_order: auto
+
+rules:
+  time_control:
+    node_limit: 100000                     # 100k ノード制限の簡易設定
+    allow_timeout: false
+  initial_positions:
+    type: startpos
+    flip_policy: pair_both
+  adjudication:
+    resign_threshold_cp: 800
+    resign_move_count: 8
+    max_plies: 320
+    enable_max_plies: true
+
+records_output:                            # 任意。pack/psfen のバイナリ棋譜出力
+  format: pack
+  output_dir: "./data/records/generate"
+  max_games_per_file: 500
+  file_prefix: "selfplay"
+
+engines:                                   # 必須（generate でも 2 エンジン以上が必要）
+  - name: "Selfplay-A"
+    artifact: "YaneuraOu/a5ee2786"
+    build_options:
+      target_cpu: ZEN3
+      edition: YANEURAOU_ENGINE_NNUE_HALFKP_512X2_8_64
+    options_overlays:
+      - "../../resources/engines/overlays/example.yaml"
+    options:
+      Threads: 4
+      USI_Hash: 2048
+    instance_id: "local-dev"
+
+  - name: "Selfplay-B"
+    artifact: "YaneuraOu/a5ee2786"
+    build_options:
+      target_cpu: ZEN3
+      edition: YANEURAOU_ENGINE_NNUE_HALFKP_512X2_8_64
+    options_overlays:
+      - "../../resources/engines/overlays/example.yaml"
+    options:
+      Threads: 4
+      USI_Hash: 2048
+    instance_id: "local-dev"
+
+# 実行例:
+# shogiarena run generate examples/configs/run/generate/example.yaml
