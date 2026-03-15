@@ -27,18 +27,43 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Install mdBook
-        uses: peaceiris/actions-mdbook@v2
-        with:
-          mdbook-version: "0.4.44"
+        env:
+          MDBOOK_VERSION: "0.4.44"
+        run: |
+          set -euo pipefail
+          archive_url="https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL "${archive_url}" -o "${RUNNER_TEMP}/mdbook.tar.gz"
+          tar -xzf "${RUNNER_TEMP}/mdbook.tar.gz" -C "${RUNNER_TEMP}"
+          mkdir -p "${HOME}/.local/bin"
+          install "${RUNNER_TEMP}/mdbook" "${HOME}/.local/bin/mdbook"
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.local/bin/mdbook" --version
 
       - name: Build mdBook site
         run: mdbook build docs/book
 
+      - name: Package Pages artifact
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          tar \
+            --directory docs/book/build \
+            --dereference \
+            --hard-dereference \
+            --exclude=.git \
+            --exclude=.github \
+            --exclude='.[^/]*' \
+            -cvf "${RUNNER_TEMP}/github-pages.tar" \
+            .
+          gzip -f9 "${RUNNER_TEMP}/github-pages.tar"
+
       - name: Upload artifact
         if: github.event_name == 'push'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-artifact@v6
         with:
-          path: docs/book/build
+          name: github-pages
+          path: ${{ runner.temp }}/github-pages.tar.gz
+          retention-days: 1
 
   deploy:
     if: github.repository == 'nyoki-mtl/ShogiArena' && github.event_name == 'push'
