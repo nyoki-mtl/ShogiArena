@@ -3,7 +3,7 @@ name = "shogiarena"
 version = "0.3.0"
 description = "Asynchronous tournament and SPSA tuning platform for USI shogi engines"
 authors = [
-    { name = "Hiroki Taniai", email = "nyoki.mtl@gmail.com" }
+    { name = "Hiroki Taniai", email = "charmer.popopo@gmail.com" }
 ]
 license = { text = "MIT" }
 readme = "README.md"

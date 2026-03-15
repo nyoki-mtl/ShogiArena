@@ -1,7 +1,7 @@
 # ShogiArena
 
-[![CI](https://github.com/nyoki-mtl/ShogiArena/actions/workflows/ci.yml/badge.svg)](https://github.com/nyoki-mtl/ShogiArena/actions/workflows/ci.yml)
-[![Docs](https://github.com/nyoki-mtl/ShogiArena/actions/workflows/docs.yml/badge.svg)](https://github.com/nyoki-mtl/ShogiArena/actions/workflows/docs.yml)
+[![CI](https://github.com/nyoki-mtl/ShogiArena/actions/workflows/public-ci.yml/badge.svg)](https://github.com/nyoki-mtl/ShogiArena/actions/workflows/public-ci.yml)
+[![Docs](https://github.com/nyoki-mtl/ShogiArena/actions/workflows/public-docs.yml/badge.svg)](https://nyoki-mtl.github.io/ShogiArena/index.html)
 [![PyPI](https://img.shields.io/pypi/v/shogiarena)](https://pypi.org/project/shogiarena/)
 [![Python](https://img.shields.io/pypi/pyversions/shogiarena)](https://pypi.org/project/shogiarena/)
 [![License](https://img.shields.io/github/license/nyoki-mtl/ShogiArena)](https://github.com/nyoki-mtl/ShogiArena/blob/main/LICENSE)
@@ -9,7 +9,7 @@
 > [!NOTE]
 > 本プロジェクトはまだ開発中です。公開 API は整理を進めている段階で、破壊的変更を含む更新が入ることがあります。変更履歴は [CHANGELOG](CHANGELOG.md) を参照してください。
 
-**ドキュメント:** [https://nyoki-mtl.github.io/ShogiArena/](https://nyoki-mtl.github.io/ShogiArena/)
+**ドキュメント:** [https://nyoki-mtl.github.io/ShogiArena/index.html](https://nyoki-mtl.github.io/ShogiArena/index.html)
 **English README:** [README.md](README.md)
 
 ---

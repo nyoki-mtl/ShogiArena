@@ -1,7 +1,7 @@
 # ShogiArena
 
 [![CI](https://github.com/nyoki-mtl/ShogiArena/actions/workflows/public-ci.yml/badge.svg)](https://github.com/nyoki-mtl/ShogiArena/actions/workflows/public-ci.yml)
-[![Docs](https://github.com/nyoki-mtl/ShogiArena/actions/workflows/public-docs.yml/badge.svg)](https://github.com/nyoki-mtl/ShogiArena/actions/workflows/public-docs.yml)
+[![Docs](https://github.com/nyoki-mtl/ShogiArena/actions/workflows/public-docs.yml/badge.svg)](https://nyoki-mtl.github.io/ShogiArena/index.html)
 [![PyPI](https://img.shields.io/pypi/v/shogiarena)](https://pypi.org/project/shogiarena/)
 [![Python](https://img.shields.io/pypi/pyversions/shogiarena)](https://pypi.org/project/shogiarena/)
 [![License](https://img.shields.io/github/license/nyoki-mtl/ShogiArena)](https://github.com/nyoki-mtl/ShogiArena/blob/main/LICENSE)
@@ -9,7 +9,7 @@
 > [!NOTE]
 > This project is still moving quickly. Public APIs are being clarified, and breaking changes are accepted during development. See [CHANGELOG](CHANGELOG.md) for release notes.
 
-**Documentation:** [https://nyoki-mtl.github.io/ShogiArena/](https://nyoki-mtl.github.io/ShogiArena/)
+**Documentation:** [https://nyoki-mtl.github.io/ShogiArena/index.html](https://nyoki-mtl.github.io/ShogiArena/index.html)
 **Japanese README:** [README_ja.md](README_ja.md)
 
 ShogiArena is a platform for running shogi engine tournaments, statistical testing, dashboard monitoring, and engine automation.
