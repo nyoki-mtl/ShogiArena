@@ -363,11 +363,8 @@ MLE の計算式は同一で、カテゴリ数とスコアの範囲だけが異�
 
 [^siegmund]: David Siegmund (1985). *Sequential Analysis: Tests and Confidence Intervals*. Springer. Corollary 8.33 — オーバーシュート補正の理論的基盤
 
-[^gsprt-practical]: Michel Van den Bergh, ["A Practical Introduction to the GSPRT"](https://cantate.be/Fishtest/GSPRT_approximation.pdf) — GSPRT の実用的な導入解説
-
-[^sprta]: Michel Van den Bergh, ["The SPRT for a Brownian Motion"](https://cantate.be/Fishtest/sprta.pdf) — ブラウン運動としての SPRT の理論
-
-[^fishtest-math]: [Statistical Methods and Algorithms in Fishtest](https://official-stockfish.github.io/docs/fishtest-wiki/Fishtest-Mathematics.html) — Fishtest の統計手法の包括的ドキュメント
+- Michel Van den Bergh, ["The SPRT for a Brownian Motion"](https://cantate.be/Fishtest/sprta.pdf) — ブラウン運動としての SPRT の理論
+- [Statistical Methods and Algorithms in Fishtest](https://official-stockfish.github.io/docs/fishtest-wiki/Fishtest-Mathematics.html) — Fishtest の統計手法の包括的ドキュメント
 
 ## 次に読む
 

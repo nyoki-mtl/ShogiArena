@@ -3,7 +3,7 @@ from __future__ import annotations
 import rshogi
 from rshogi.initial_positions import InitialPosition
 
-from shogiarena.utils.types.types import GameResult
+from shogiarena._core.shared.kernel.game_results import GameResult
 
 
 def _make_record(

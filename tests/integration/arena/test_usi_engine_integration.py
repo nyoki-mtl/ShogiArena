@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 from rshogi.core import Move
 
-from shogiarena.arena.engines.usi_bridge_spawner import SpawnerBackedUSIBridge
-from shogiarena.arena.engines.usi_config import UsiEngineConfig
-from shogiarena.arena.engines.usi_engine import AsyncUsiEngine, UsiEngineState
-from shogiarena.arena.engines.usi_think import UsiThinkRequest
-from shogiarena.arena.instances.models import Instance, InstanceConfig, InstanceType
+from shogiarena._core.contexts.instances.application.instance_models import Instance, InstanceConfig, InstanceType
+from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkRequest
+from shogiarena._core.platform.engine_provisioning.spawner_backed_usi_bridge import SpawnerBackedUSIBridge
+from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
+from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine, UsiEngineState
 
 
 def _write_mock_usi_engine(script_path: Path) -> None:
@@ -133,7 +133,7 @@ async def test_async_usi_engine_state_machine_with_subprocess(tmp_path: Path) ->
         await _wait_for_state(engine, UsiEngineState.READY)
 
         ponder_task = asyncio.create_task(
-            engine.think(sfen="startpos", request=UsiThinkRequest(movetime=100, ponder=True))
+            engine.think(sfen="startpos", request=UsiThinkRequest(movetime=100, is_ponder=True))
         )
         await asyncio.sleep(0.01)
         assert engine.state == UsiEngineState.PONDER
@@ -155,7 +155,7 @@ async def test_async_usi_engine_state_machine_with_subprocess(tmp_path: Path) ->
         assert mate_result.is_mate
         await _wait_for_state(engine, UsiEngineState.READY)
 
-        analysis_handle = await engine.analyze(sfen="startpos", request=UsiThinkRequest(infinite=True))
+        analysis_handle = await engine.analyze(sfen="startpos", request=UsiThinkRequest(is_infinite=True))
         await asyncio.sleep(0.01)
         assert engine.state == UsiEngineState.WAITING_FOR_BESTMOVE
         await analysis_handle.stop()

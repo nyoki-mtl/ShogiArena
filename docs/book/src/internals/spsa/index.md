@@ -235,13 +235,12 @@ if self.config.early_stop and delta_norm < threshold:
 
 | ファイル | クラス/関数 | 役割 |
 |---------|----------|------|
-| `arena/orchestrators/spsa_orchestrator.py` | `SpsaOrchestrator` | SPSA 実行の本体 |
-| `arena/orchestrators/spsa_orchestrator.py` | `_run_one_spsa_update()` | 1 回の更新サイクル |
-| `arena/tuning/param_io.py` | `ParamEntry` | パラメータ定義 |
-| `arena/tuning/param_io.py` | `read_params()` / `write_params()` | パラメータの I/O |
-| `arena/tuning/param_io.py` | `quantize_value()` | 値の量子化・クランプ |
-| `arena/configs/spsa.py` | `SpsaRunConfig` | SPSA 設定スキーマ |
-| `arena/runners/spsa_runner.py` | `SpsaRunner` | SPSA ランナー |
+| `_core/contexts/spsa/adapters/orchestrator.py` | `SpsaOrchestrator` | SPSA 実行の本体 |
+| `_core/contexts/spsa/domain/spsa_models.py` | `ParamEntry` | パラメータ定義 |
+| `_core/contexts/spsa/application/param_io.py` | `read_params()` / `write_params()` | パラメータの I/O |
+| `_core/contexts/spsa/application/param_io.py` | `quantize_value()` | 値の量子化・クランプ |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `SpsaRunConfig` | SPSA 設定スキーマ |
+| `_core/contexts/spsa/adapters/runner.py` | `SpsaRunner` | SPSA ランナー |
 
 ## 読了順序
 
@@ -252,9 +251,9 @@ if self.config.early_stop and delta_norm < threshold:
 
 ## 参考文献
 
-[^spall-1992]: James C. Spall (1992). "Multivariate Stochastic Approximation Using a Simultaneous Perturbation Gradient Approximation". *IEEE Transactions on Automatic Control*, 37(3), pp. 332-341.
-[^spall-1998]: James C. Spall (1998). "An Overview of the Simultaneous Perturbation Method for Efficient Optimization". *Johns Hopkins APL Technical Digest*, 19(4), pp. 482-492.
-[^stockfish-spsa]: [Stockfish SPSA Tuning](https://www.chessprogramming.org/Stockfish%27s_Tuning_Method) — Chess Programming Wiki のチューニング手法解説
+- James C. Spall (1992). "Multivariate Stochastic Approximation Using a Simultaneous Perturbation Gradient Approximation". *IEEE Transactions on Automatic Control*, 37(3), pp. 332-341.
+- James C. Spall (1998). "An Overview of the Simultaneous Perturbation Method for Efficient Optimization". *Johns Hopkins APL Technical Digest*, 19(4), pp. 482-492.
+- [Stockfish SPSA Tuning](https://www.chessprogramming.org/Stockfish%27s_Tuning_Method)
 
 ## 次に読む
 

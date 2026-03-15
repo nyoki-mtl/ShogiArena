@@ -3,13 +3,13 @@ from typing import cast
 
 import pytest
 
-from shogiarena.arena.engines.usi_bridge import AsyncUSIProcessBridgeProtocol
-from shogiarena.arena.engines.usi_process import AsyncUsiProcess
+from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiProcess
+from shogiarena._core.platform.engine_runtime.usi_protocol_types import AsyncUsiProcessBridgePort
 
 _SENTINEL = object()
 
 
-class DummyBridge(AsyncUSIProcessBridgeProtocol):
+class DummyBridge(AsyncUsiProcessBridgePort):
     def __init__(self) -> None:
         self.started = 0
         self.stopped = 0

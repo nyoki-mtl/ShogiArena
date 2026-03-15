@@ -253,7 +253,7 @@ Var_trinomial = Var_pentanomial + Var_bias
 
 | ファイル | 関数 | 役割 |
 |---------|------|------|
-| `arena/services/statistics/pentanomial.py` | `compute_pentanomial()` | 五項分布の計算 |
+| `_core/shared/kernel/statistics/pentanomial.py` | `compute_pentanomial()` | 五項分布の計算 |
 | Fishtest `stats/LLRcalc.py` | `LLR_logistic()` | 三項/五項の自動選択 LLR |
 | Fishtest `stats/LLRcalc.py` | `results_to_pdf()` | 頻度 → 確率分布の変換 |
 | [vdbergh/pentanomial](https://github.com/vdbergh/pentanomial) | `SPRT_pentanomial.py` | 五項 SPRT の参照実装 |

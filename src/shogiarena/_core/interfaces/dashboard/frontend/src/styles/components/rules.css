@@ -1,0 +1,97 @@
+@layer components {
+    /* Rules panels */
+    .rules-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        @apply gap-4;
+    }
+
+    .rules-card {
+        @apply rounded-xl border border-dashboard-border bg-dashboard-surface p-4;
+        box-shadow: var(--shadow-dashboard-card);
+        transition: all 0.25s var(--ease-smooth, ease);
+        animation: fadeInUp 0.4s var(--ease-out-expo, ease-out) backwards;
+    }
+
+    .rules-card:hover {
+        box-shadow: var(--shadow-dashboard-card-hover);
+        transform: translateY(-1px);
+    }
+
+    /* Stagger animation for rules cards */
+    .rules-grid .rules-card:nth-child(1) {
+        animation-delay: 0ms;
+    }
+    .rules-grid .rules-card:nth-child(2) {
+        animation-delay: 80ms;
+    }
+    .rules-grid .rules-card:nth-child(3) {
+        animation-delay: 160ms;
+    }
+    .rules-grid .rules-card:nth-child(n + 4) {
+        animation-delay: 240ms;
+    }
+
+    .rules-card h3 {
+        @apply mb-3 text-lg font-semibold text-dashboard-heading;
+    }
+
+    .rules-card__sections {
+        @apply flex flex-col gap-5;
+    }
+
+    .rules-section {
+        position: relative;
+        @apply flex flex-col gap-3 rounded-2xl border border-dashboard-border/60 bg-dashboard-surfaceMuted/80 px-4 py-4 shadow-inner;
+    }
+
+    .rules-section::before {
+        content: "";
+        position: absolute;
+        inset-block: 1rem;
+        inset-inline-start: -0.25rem;
+        width: 0.375rem;
+        border-radius: 9999px;
+        background: rgb(var(--color-dashboard-accent) / 0.65);
+    }
+
+    .rules-section__title {
+        @apply text-xs font-semibold uppercase tracking-[0.35em] text-dashboard-accent;
+    }
+
+    .rules-section__body {
+        @apply space-y-2 text-sm text-dashboard-foreground;
+    }
+
+    .rules-list {
+        @apply m-0 list-none p-0;
+    }
+
+    .rule-row {
+        @apply flex items-start justify-between gap-3 py-1;
+    }
+
+    .rule-row dt {
+        @apply font-semibold text-dashboard-heading;
+    }
+
+    .rule-row dd {
+        @apply m-0 flex-1 text-right text-dashboard-heading;
+    }
+
+    .rules-action-link {
+        background: none;
+        border: none;
+        font: inherit;
+        @apply cursor-pointer px-0 text-right text-indigo-600 underline decoration-indigo-400 decoration-1 transition-colors;
+    }
+
+    .rules-action-link:hover,
+    .rules-action-link:focus-visible {
+        @apply text-indigo-700 decoration-indigo-500;
+    }
+
+    .rules-action-link:focus-visible {
+        @apply outline-none ring-2 ring-indigo-300 ring-offset-2 ring-offset-dashboard-surface;
+    }
+}

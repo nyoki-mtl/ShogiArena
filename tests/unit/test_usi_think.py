@@ -1,6 +1,7 @@
 import pytest
+from rshogi.core import Move
 
-from shogiarena.arena.engines.usi_think import UsiThinkRequest, normalize_searchmoves
+from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkRequest, normalize_searchmoves
 
 
 def test_movetime_command() -> None:
@@ -9,7 +10,7 @@ def test_movetime_command() -> None:
 
 
 def test_infinite_with_searchmoves() -> None:
-    req = UsiThinkRequest(infinite=True, searchmoves=(" 7g7f ", ""))
+    req = UsiThinkRequest(is_infinite=True, searchmoves=(Move.from_usi("7g7f"),))
     assert req.to_command() == "go infinite searchmoves 7g7f"
 
 
@@ -59,7 +60,11 @@ def test_time_increment_handles_none() -> None:
 
 
 def test_normalize_searchmoves() -> None:
-    assert normalize_searchmoves(["a", "", " b "]) == ("a", "b")
+    m1 = Move.from_usi("7g7f")
+    m2 = Move.from_usi("3c3d")
+    assert normalize_searchmoves([m1, m2]) == (m1, m2)
+    assert normalize_searchmoves(None) == ()
+    assert normalize_searchmoves([]) == ()
 
 
 def test_ponder_command_places_ponder_immediately_after_go() -> None:
@@ -68,6 +73,6 @@ def test_ponder_command_places_ponder_immediately_after_go() -> None:
         wtime=99500,
         binc=1000,
         winc=500,
-        ponder=True,
+        is_ponder=True,
     )
     assert req.to_command() == "go ponder btime 119000 wtime 99500 binc 1000 winc 500"

@@ -1,6 +1,7 @@
 """Tests for SPSA gradient update logic and quantization behavior."""
 
-from shogiarena.arena.tuning.param_io import ParamEntry, quantize_value
+from shogiarena._core.contexts.spsa.application.param_io import quantize_value
+from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
 
 
 def test_quantize_value_int_boundary_clamping():
@@ -8,13 +9,13 @@ def test_quantize_value_int_boundary_clamping():
     p = ParamEntry(
         name="TestParam",
         type="int",
-        v=5.0,
+        value=5.0,
         min=0.0,
         max=10.0,
         step=1.0,
         delta=1.0,
         comment="Test integer parameter",
-        not_used=False,
+        is_not_used=False,
     )
 
     # Test boundary clamping
@@ -34,19 +35,19 @@ def test_quantize_value_int_preserve_fractional():
     p = ParamEntry(
         name="FracParam",
         type="int",
-        v=5.0,
+        value=5.0,
         min=0.0,
         max=10.0,
         step=1.0,
         delta=1.0,
         comment="Integer value allowed to accumulate",
-        not_used=False,
+        is_not_used=False,
     )
 
     # Without rounding, fractional increments are preserved but still clamped.
-    assert quantize_value(p, 5.2, round_int=False) == 5.2
-    assert quantize_value(p, -3.0, round_int=False) == 0.0
-    assert quantize_value(p, 15.0, round_int=False) == 10.0
+    assert quantize_value(p, 5.2, should_round_int=False) == 5.2
+    assert quantize_value(p, -3.0, should_round_int=False) == 0.0
+    assert quantize_value(p, 15.0, should_round_int=False) == 10.0
 
 
 def test_quantize_value_int_with_step():
@@ -54,13 +55,13 @@ def test_quantize_value_int_with_step():
     p = ParamEntry(
         name="StepParam",
         type="int",
-        v=10.0,
+        value=10.0,
         min=0.0,
         max=20.0,
         step=3.0,
         delta=1.0,
         comment="Integer with step 3",
-        not_used=False,
+        is_not_used=False,
     )
 
     # Should round to nearest integer regardless of step size
@@ -79,13 +80,13 @@ def test_quantize_value_float_no_step():
     p = ParamEntry(
         name="FloatParam",
         type="float",
-        v=5.0,
+        value=5.0,
         min=0.0,
         max=10.0,
         step=0.1,
         delta=1.0,
         comment="Float parameter",
-        not_used=False,
+        is_not_used=False,
     )
 
     # Float should only clamp, not snap to step by default
@@ -203,7 +204,7 @@ def test_gradient_estimation_formula():
     grad = estimate_gradient(s_plus, s_minus, c_k, delta_i)
     assert abs(grad) < 1e-10, "Equal performance should give zero gradient"
 
-    # Zero delta should give zero gradient (not_used parameter)
+    # Zero delta should give zero gradient (is_not_used parameter)
     grad_unused = estimate_gradient(0.8, 0.4, c_k, 0.0)
     assert grad_unused == 0.0, "Unused parameter should have zero gradient"
 

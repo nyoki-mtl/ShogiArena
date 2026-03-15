@@ -3,9 +3,9 @@ import asyncio
 import pytest
 from rshogi.core import Move
 
-from shogiarena.arena.engines.usi_config import UsiEngineConfig
-from shogiarena.arena.engines.usi_engine import AsyncUsiEngine, UsiEngineState
-from shogiarena.arena.engines.usi_protocol import UsiOption
+from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
+from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine, UsiEngineState
+from shogiarena._core.platform.engine_runtime.usi_protocol_types import UsiOption
 
 
 class DummyBridge:
@@ -125,7 +125,7 @@ async def test_option_candidates_apply_to_available_option() -> None:
     bridge = DummyBridge("E")
     eng = AsyncUsiEngine(config=config, bridge=bridge)
     eng._options["MaxMovesToDraw"] = UsiOption(name="MaxMovesToDraw", option_type="spin")
-    eng._process._running = True  # type: ignore[attr-defined] - priming for direct send
+    eng._process._is_running = True  # type: ignore[attr-defined] - priming for direct send
     await eng._set_option("DrawPly|MaxMovesToDraw", 128)
     assert bridge.sent[-1] == "setoption name MaxMovesToDraw value 128"
 
@@ -137,7 +137,7 @@ async def test_option_candidates_apply_to_all_matches() -> None:
     eng = AsyncUsiEngine(config=config, bridge=bridge)
     eng._options["MaxMovesToDraw"] = UsiOption(name="MaxMovesToDraw", option_type="spin")
     eng._options["DrawPly"] = UsiOption(name="DrawPly", option_type="spin")
-    eng._process._running = True  # type: ignore[attr-defined]
+    eng._process._is_running = True  # type: ignore[attr-defined]
     await eng._set_option("DrawPly|MaxMovesToDraw", 320)
     assert bridge.sent[-2:] == [
         "setoption name DrawPly value 320",
@@ -178,11 +178,11 @@ def test_overrides_require_mapping() -> None:
 
 @pytest.mark.asyncio
 async def test_info_string_collection_disabled_by_default() -> None:
-    """collect_info_strings がデフォルトで無効であることを確認する。"""
+    """should_collect_info_strings がデフォルトで無効であることを確認する。"""
     config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
     eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"))
 
-    assert eng._collect_info_strings is False
+    assert eng._should_collect_info_strings is False
     assert eng._info_string_log == []
 
     await eng._handle_line("info string debug msg 1")
@@ -192,9 +192,9 @@ async def test_info_string_collection_disabled_by_default() -> None:
 
 @pytest.mark.asyncio
 async def test_info_string_collection_when_enabled() -> None:
-    """collect_info_strings 有効時に info string が蓄積されることを確認する。"""
+    """should_collect_info_strings 有効時に info string が蓄積されることを確認する。"""
     config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
-    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), collect_info_strings=True)
+    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), should_collect_info_strings=True)
 
     await eng._handle_line("info string hello world")
     await eng._handle_line("info string debug msg 2")
@@ -207,7 +207,7 @@ async def test_info_string_collection_when_enabled() -> None:
 async def test_info_string_log_cleared_on_reset() -> None:
     """_reset_current_info で _info_string_log もクリアされることを確認する。"""
     config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
-    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), collect_info_strings=True)
+    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), should_collect_info_strings=True)
 
     await eng._handle_line("info string before reset")
     assert eng._info_string_log == ["before reset"]
@@ -223,7 +223,7 @@ async def test_info_string_log_cleared_on_reset() -> None:
 async def test_info_strings_attached_to_bestmove_result() -> None:
     """bestmove 結果に info_strings が付与されることを確認する。"""
     config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
-    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), collect_info_strings=True)
+    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), should_collect_info_strings=True)
 
     loop = asyncio.get_running_loop()
     eng._bestmove_future = loop.create_future()
@@ -245,7 +245,7 @@ async def test_info_strings_attached_to_bestmove_result() -> None:
 async def test_info_strings_attached_to_checkmate_result() -> None:
     """checkmate 結果に info_strings が付与されることを確認する。"""
     config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
-    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), collect_info_strings=True)
+    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), should_collect_info_strings=True)
 
     loop = asyncio.get_running_loop()
     eng._mate_future = loop.create_future()
@@ -265,7 +265,7 @@ async def test_info_strings_attached_to_checkmate_result() -> None:
 async def test_info_strings_attached_to_nomate_result() -> None:
     """nomate 結果に info_strings が付与されることを確認する。"""
     config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
-    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), collect_info_strings=True)
+    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), should_collect_info_strings=True)
 
     loop = asyncio.get_running_loop()
     eng._mate_future = loop.create_future()
@@ -283,7 +283,7 @@ async def test_info_strings_attached_to_nomate_result() -> None:
 async def test_info_strings_attached_to_timeout_result() -> None:
     """timeout 結果に info_strings が付与されることを確認する。"""
     config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
-    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), collect_info_strings=True)
+    eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"), should_collect_info_strings=True)
 
     loop = asyncio.get_running_loop()
     eng._mate_future = loop.create_future()
@@ -299,7 +299,7 @@ async def test_info_strings_attached_to_timeout_result() -> None:
 
 @pytest.mark.asyncio
 async def test_info_strings_empty_when_disabled() -> None:
-    """collect_info_strings 無効時は結果の info_strings が空であることを確認する。"""
+    """should_collect_info_strings 無効時は結果の info_strings が空であることを確認する。"""
     config = UsiEngineConfig.from_mapping({"name": "test", "engine_path": "/tmp/dummy"})
     eng = AsyncUsiEngine(config=config, bridge=DummyBridge("E"))
 

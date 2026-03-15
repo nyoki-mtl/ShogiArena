@@ -1,48 +1,49 @@
 # 初めてのトーナメント
 
-このチュートリアルでは、実際に複数のエンジンを使ったトーナメントを実行し、結果を分析する方法を学びます。
+このチュートリアルでは、同じエンジン設定を 2 つのバリエーションとして使い、最小構成の round-robin を動かします。
 
 ## このチュートリアルで学ぶこと
 
-- 複数エンジンの設定方法
-- さまざまなトーナメント方式の使い方
-- 持ち時間の設定とその影響
-- ダッシュボードでの結果確認
+- エンジン YAML の書き方
+- tournament YAML の最小構成
+- `--dry-run` での検証
+- ダッシュボードと run ディレクトリの見方
 
-## ステップ 1: エンジンの準備
+## ステップ 1: エンジン YAML を作る
 
-USI プロトコルに対応した将棋エンジンを用意し、設定ファイル (`.yaml`) を作成します。
+`configs/engine/yaneuraou.yaml`:
 
-**configs/engine/yaneuraou.yaml**:
 ```yaml
 name: "YaneuraOu"
-path: "/path/to/YaneuraOu"
+engine_path: "/path/to/YaneuraOu"
 options:
   Threads: 2
   USI_Hash: 256
 ```
 
-## ステップ 2: トーナメント設定
+## ステップ 2: tournament YAML を作る
 
-### ラウンドロビン方式
+`configs/arena/round_robin.yaml`:
 
-すべてのエンジンが互いに対局する方式です。
-
-**configs/arena/round_robin.yaml**:
 ```yaml
 experiment_name: "first_tournament"
 
 engines:
   - engine_path: "configs/engine/yaneuraou.yaml"
     name: "YaneuraOu_Strong"
-    options: { Threads: 4 }
+    options:
+      Threads: 4
+      USI_Hash: 1024
   - engine_path: "configs/engine/yaneuraou.yaml"
     name: "YaneuraOu_Weak"
-    options: { Threads: 1 }
+    options:
+      Threads: 1
+      USI_Hash: 128
 
 tournament:
   scheduler: round_robin
   games_per_pair: 10
+  num_parallel: 2
 
 rules:
   time_control:
@@ -51,23 +52,42 @@ rules:
 
 dashboard:
   enabled: true
+  api_port: 8080
 ```
 
-### トーナメントの実行
+同じ `engine_path` を参照しつつ、トーナメント側で `options` を上書きして強さ違いのバリエーションを作っています。
+
+## ステップ 3: まずは検証する
+
+```bash
+shogiarena run tournament configs/arena/round_robin.yaml --dry-run
+```
+
+## ステップ 4: 実行する
 
 ```bash
 shogiarena run tournament configs/arena/round_robin.yaml
 ```
 
-## ステップ 3: ダッシュボードでの確認
+結果は通常 `output_dir/runs/first_tournament-<hash8>/YYYYMMDDHHMMSS/` に保存されます。
 
-実行時に表示される URL (通常 `http://localhost:8080`) にアクセスします。
+## ステップ 5: ダッシュボードで確認する
 
-- **Overview**: 進行状況と勝率
-- **Engines**: レーティング推移
-- **Games**: 個別の対局結果と棋譜
+実行中は `http://localhost:8080` を開きます。
+
+- `Tournament`: 勝敗、Elo、対戦表
+- `Games`: 個別の棋譜と結果
+- `Engines`: 実際に使われたエンジン設定
+- `Live View`: 実行中の対局盤面
+
+終了後に見直す場合:
+
+```bash
+shogiarena dashboard serve --config configs/arena/round_robin.yaml
+```
 
 ## 次のステップ
 
-- **[Tournaments](../user-guide/tournaments.md)** - 設定項目の詳細リファレンス
-- **[SPSA Tuning](../user-guide/spsa.md)** - パラメータチューニングの方法
+- [トーナメントの実行](../user-guide/tournaments.md)
+- [エンジン設定ファイル](../user-guide/engine-configuration.md)
+- [ダッシュボードガイド](../user-guide/dashboard.md)

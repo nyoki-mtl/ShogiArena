@@ -3,14 +3,10 @@
 {
 	"name": "shogiarena",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+	"image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
 	"hostRequirements": {
 		"gpu": "optional"
 	},
-	"runArgs": [
-		"--gpus",
-		"all"
-	],
 	"features": {
 		"ghcr.io/va-h/devcontainers-features/uv:1": {
 			"shellautocompletion": true,
@@ -66,16 +62,16 @@
 	"containerUser": "vscode",
 	"containerEnv": {
 		"CUDA_HOME": "/usr/local/cuda",
-		"PATH": "/usr/local/cuda/bin:${PATH}",
 		"TENSORRT_VERSION": "8.6.1.6",
 		"TZ": "Asia/Tokyo"
 	},
 	
+	"remoteEnv": {
+        "PATH": "${containerEnv:PATH}:/usr/local/cuda/bin"
+    },
+
 	// Windows ホストとの権限同期
 	"updateRemoteUserUID": true,
-
-	// chrome-devtools-mcp のポート転送
-	"postStartCommand": "/bin/bash -lc \"nohup socat TCP-LISTEN:9222,fork,reuseaddr TCP:host.docker.internal:9222 >/tmp/socat-9222.log 2>&1 &\"",
 
 	"postCreateCommand": "/bin/bash -lc \"${containerWorkspaceFolder}/.devcontainer/postCreate.sh\""
 }

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from shogiarena.arena.engines.usi_config import UsiEngineConfig
+from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
 
 
 def test_resolve_paths_and_overrides(tmp_path: Path) -> None:
@@ -35,24 +35,24 @@ def test_resolve_paths_and_overrides(tmp_path: Path) -> None:
     assert resolved.options["Hash"] == 64
     assert resolved.options["EvalDir"] == str((evals_dir / "book").resolve())
     assert resolved.go_options == {"movetime": 1000}
-    assert resolved.enable_early_ponder is True
+    assert resolved.is_early_ponder_enabled is True
 
     overrides = resolved.with_overrides(
         options={"EvalDir": "{output_dir}/evals/new", "SkillLevel": 20},
         go_options={"nodes": 1234},
         output_dir=output_dir,
         engine_dir=engine_dir,
-        enable_early_ponder=False,
+        is_early_ponder_enabled=False,
     )
 
     assert overrides.options["EvalDir"] == str((evals_dir / "new").resolve())
     assert overrides.options["SkillLevel"] == 20
     assert overrides.go_options["nodes"] == 1234
-    assert overrides.enable_early_ponder is False
+    assert overrides.is_early_ponder_enabled is False
     # Original resolved config remains unchanged
     assert resolved.options["EvalDir"] == str((evals_dir / "book").resolve())
     assert "nodes" not in resolved.go_options
-    assert resolved.enable_early_ponder is True
+    assert resolved.is_early_ponder_enabled is True
 
 
 def test_from_file_handles_missing_engine_path(tmp_path: Path) -> None:
@@ -98,7 +98,7 @@ def test_from_mapping_parses_mate_defaults_and_sync_strategy() -> None:
         }
     )
     assert config.mate_default_ply_limit == 20000
-    assert config.mate_wait_for_bestmove is True
+    assert config.should_mate_wait_for_bestmove is True
     assert config.isready_sync_strategy == "wait"
 
 
@@ -123,3 +123,25 @@ def test_from_mapping_rejects_invalid_isready_sync_strategy() -> None:
                 "isready_sync_strategy": "invalid",
             }
         )
+
+
+def test_with_overrides_allows_runtime_name_and_path_overrides() -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "base",
+            "engine_path": "/tmp/base-engine",
+            "working_directory": "/tmp/work",
+            "options": {"Hash": 64},
+        }
+    )
+
+    overridden = config.with_overrides(
+        name="runtime-name",
+        engine_path="/opt/runtime-engine",
+        working_directory="/opt/runtime-work",
+    )
+
+    assert overridden.name == "runtime-name"
+    assert overridden.engine_path == "/opt/runtime-engine"
+    assert overridden.working_directory == "/opt/runtime-work"
+    assert overridden.options["Hash"] == 64

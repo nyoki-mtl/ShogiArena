@@ -1,0 +1,285 @@
+"""High-level asynchronous USI engine session implementation."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from collections import deque
+from collections.abc import Awaitable, Callable
+from types import TracebackType
+from typing import Any
+
+from shogiarena._core.contexts.match.ports.usi_think_ports import PonderHitTimings
+from shogiarena._core.platform.engine_runtime.session_internal_mixin import AsyncUsiEngineInternalMixin
+from shogiarena._core.platform.engine_runtime.session_lifecycle_mixin import AsyncUsiEngineLifecycleMixin
+from shogiarena._core.platform.engine_runtime.session_options_mixin import AsyncUsiEngineOptionsMixin
+from shogiarena._core.platform.engine_runtime.session_ponder_mixin import AsyncUsiEnginePonderMixin
+from shogiarena._core.platform.engine_runtime.session_protocol_mixin import AsyncUsiEngineProtocolMixin
+from shogiarena._core.platform.engine_runtime.session_search_mixin import AsyncUsiEngineSearchMixin
+from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
+from shogiarena._core.platform.engine_runtime.usi_engine_session_models import (
+    _HANDSHAKE_COMMAND_STATE,
+    _HANDSHAKE_COMMANDS,
+    _HANDSHAKE_LOG_LIMIT,
+    AnalysisHandle,
+    AsyncUsiProcess,
+    InfoHandlerFn,
+    PonderHandle,
+    ReadyTimeout,
+    TFutureResult,
+    UsiEngineStartError,
+    UsiEngineState,
+    UsiMateResult,
+    _StderrBridgePort,
+)
+from shogiarena._core.platform.engine_runtime.usi_protocol_types import (
+    AsyncUsiProcessBridgePort,
+    UsiOption,
+    UsiProtocolParser,
+    UsiThinkPV,
+)
+from shogiarena._core.shared.kernel.json_types import JsonObject
+
+logger = logging.getLogger(__name__)
+
+
+class AsyncUsiEngine(
+    AsyncUsiEngineProtocolMixin,
+    AsyncUsiEnginePonderMixin,
+    AsyncUsiEngineSearchMixin,
+    AsyncUsiEngineOptionsMixin,
+    AsyncUsiEngineLifecycleMixin,
+    AsyncUsiEngineInternalMixin,
+):
+    """High-level USI engine session built atop ``AsyncUsiProcess``."""
+
+    DEFAULT_HANDSHAKE_TIMEOUT = 120.0
+    _isready_locks: dict[str, asyncio.Lock] = {}
+
+    def __init__(
+        self,
+        *,
+        config: UsiEngineConfig,
+        bridge: AsyncUsiProcessBridgePort,
+        parser: UsiProtocolParser | None = None,
+        handshake_timeout: float = DEFAULT_HANDSHAKE_TIMEOUT,
+        monitor_queue_limit: int = 16,
+        should_collect_info_strings: bool = False,
+    ) -> None:
+        self.config = config
+        self._bridge = bridge
+        self._process = AsyncUsiProcess(bridge)
+        self._parser = parser or UsiProtocolParser()
+        self._handshake_timeout = handshake_timeout
+
+        self.engine_info: dict[str, str] = {}
+        self._options: dict[str, UsiOption] = {}
+        self._handshake_log: deque[JsonObject] = deque(maxlen=_HANDSHAKE_LOG_LIMIT)
+        self._io_log_handlers: list[Callable[[JsonObject], Awaitable[None] | None]] = []
+
+        self._monitor_task: asyncio.Task[None] | None = None
+        self._usiok_future: asyncio.Future[None] | None = None
+        self._readyok_future: asyncio.Future[None] | None = None
+        self._bestmove_future: asyncio.Future[Any] | None = None
+        self._mate_future: asyncio.Future[UsiMateResult] | None = None
+        self._pending_mate_result: UsiMateResult | None = None
+        self._should_wait_bestmove_after_mate = False
+        self._analysis_handle: AnalysisHandle | None = None
+        self._analysis_request_id = 0
+
+        self._ponder_handle: PonderHandle | None = None
+        self._ponder_request_id = 0
+        self._ignored_bestmove_count = 0
+
+        self._current_pvs: dict[int, UsiThinkPV] = {}
+        self._current_aux_info: deque[UsiThinkPV] = deque(maxlen=monitor_queue_limit)
+        self._info_handler: InfoHandlerFn | None = None
+
+        self._should_collect_info_strings = should_collect_info_strings
+        self._info_string_log: list[str] = []
+
+        self._is_started = False
+        self._is_closing = False
+        self._thinking_lock = asyncio.Lock()
+        self._state = UsiEngineState.WAITING_FOR_USIOK
+        self._has_ready_once = False
+        self._last_sent_command: str | None = None
+
+        if isinstance(self._bridge, _StderrBridgePort):
+
+            def _stderr_handler(line: str) -> None:
+                state: str | None = None
+                if self._state in {UsiEngineState.WAITING_FOR_USIOK, UsiEngineState.WAITING_FOR_READYOK}:
+                    state = self._state.value
+                self._emit_io_log("in", f"[stderr] {line}", state=state)
+
+            self._bridge.set_stderr_handler(_stderr_handler)
+
+    @property
+    def state(self) -> UsiEngineState:
+        return self._state
+
+    def _reset_current_info(self) -> None:
+        self._current_pvs.clear()
+        self._current_aux_info.clear()
+        self._info_string_log.clear()
+
+    def _collect_info_strings_snapshot(self) -> tuple[str, ...]:
+        """現在の ``_info_string_log`` のスナップショットを返す。"""
+        if not self._should_collect_info_strings or not self._info_string_log:
+            return ()
+        return tuple(self._info_string_log)
+
+    def _collect_sorted_pvs(self) -> tuple[UsiThinkPV, ...]:
+        return tuple(self._current_pvs[idx] for idx in sorted(self._current_pvs))
+
+    def _clear_mate_tracking(self) -> None:
+        self._pending_mate_result = None
+        self._should_wait_bestmove_after_mate = False
+
+    @staticmethod
+    def _consume_future_exception(future: asyncio.Future[TFutureResult]) -> None:
+        if future.cancelled():
+            return
+        try:
+            _ = future.exception()
+        except (RuntimeError, ValueError):
+            return
+
+    def _set_future_exception(self, future: asyncio.Future[TFutureResult] | None, exc: Exception) -> None:
+        if future is None or future.done():
+            return
+        future.add_done_callback(self._consume_future_exception)
+        future.set_exception(exc)
+
+    @property
+    def name(self) -> str:
+        return self.config.name
+
+    @property
+    def is_thinking(self) -> bool:
+        return self._state in {
+            UsiEngineState.WAITING_FOR_BESTMOVE,
+            UsiEngineState.PONDER,
+            UsiEngineState.WAITING_FOR_PONDER_BESTMOVE,
+            UsiEngineState.WAITING_FOR_CHECKMATE,
+        }
+
+    def get_usi_options(self) -> dict[str, JsonObject]:
+        return {
+            name: {
+                "type": option.option_type,
+                "default": option.default,
+                "current": option.current,
+                "min": option.minimum,
+                "max": option.maximum,
+                "var": list(option.choices),
+            }
+            for name, option in self._options.items()
+        }
+
+    async def __aenter__(self) -> AsyncUsiEngine:
+        await self.start()
+        return self
+
+    async def __aexit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc: BaseException | None,
+        _tb: TracebackType | None,
+    ) -> None:
+        await self.close()
+
+    def register_io_log_handler(
+        self,
+        handler: Callable[[JsonObject], Awaitable[None] | None],
+    ) -> Callable[[], None]:
+        """Register a callback invoked for each engine I/O log entry."""
+
+        self._io_log_handlers.append(handler)
+
+        def _remove() -> None:
+            try:
+                self._io_log_handlers.remove(handler)
+            except ValueError:
+                pass
+
+        return _remove
+
+    def _append_handshake_entry(
+        self,
+        direction: str,
+        line: str | None = None,
+        *,
+        state: str | None = None,
+    ) -> None:
+        ts = int(time.time() * 1000)
+        entry: JsonObject = {"dir": direction, "ts": ts}
+        if line:
+            entry["line"] = line
+        if not state:
+            state = self._state.value
+        entry["state"] = state
+        self._handshake_log.append(entry)
+
+    def _maybe_log_handshake_command(self, command: str) -> None:
+        if not command:
+            return
+        verb = command.strip().split()[0].lower()
+        if verb in _HANDSHAKE_COMMANDS or verb == "go":
+            state = _HANDSHAKE_COMMAND_STATE.get(verb)
+            self._append_handshake_entry("out", command.strip(), state=state)
+
+    def _emit_io_log(self, direction: str, line: str | None, *, state: str | None = None) -> None:
+        if not line:
+            return
+        entry: JsonObject = {
+            "dir": direction,
+            "line": line,
+            "ts": int(time.time() * 1000),
+        }
+        if not state:
+            state = self._state.value
+        entry["state"] = state
+        for handler in list(self._io_log_handlers):
+            try:
+                result = handler(entry)
+                if asyncio.iscoroutine(result):
+                    asyncio.create_task(result)
+            except (RuntimeError, TypeError, ValueError):
+                logger.warning("[%s] io log handler failed", self.name, exc_info=True)
+
+    def _emit_debug_log(self, message: str, *, state: str | None = None) -> None:
+        """Emit a non-USI debug line into the engine I/O stream."""
+        if not message:
+            return
+        self._emit_io_log("out", f"[debug] {message}", state=state)
+
+    async def _send_command(self, command: str, *, state: str | None = None) -> None:
+        if not command:
+            return
+        stripped = command.strip()
+        if not stripped:
+            return
+        self._last_sent_command = stripped
+        log_state = state
+        if log_state is None:
+            verb = stripped.split()[0].lower()
+            log_state = _HANDSHAKE_COMMAND_STATE.get(verb)
+        self._emit_io_log("out", stripped, state=log_state)
+        await self._process.send_line(command)
+
+
+__all__ = [
+    "AnalysisHandle",
+    "AsyncUsiEngine",
+    "AsyncUsiProcess",
+    "InfoHandlerFn",
+    "PonderHandle",
+    "PonderHitTimings",
+    "ReadyTimeout",
+    "UsiEngineStartError",
+    "UsiEngineState",
+    "UsiMateResult",
+]

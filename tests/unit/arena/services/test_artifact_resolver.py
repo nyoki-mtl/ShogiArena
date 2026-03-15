@@ -4,14 +4,20 @@ import io
 import os
 import stat
 import sys
+import types
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import yaml
 
-from shogiarena.arena.services.artifacts import resolver as resolver_module
-from shogiarena.arena.services.artifacts.resolver import ArtifactResolver
-from shogiarena.utils.common.settings import RepoSettings
+from shogiarena._core.contexts.game_session.adapters.engine import (
+    artifact_resolver as resolver_module,
+)
+from shogiarena._core.contexts.game_session.adapters.engine import (
+    artifact_resolver_support_mixin as resolver_support_module,
+)
+from shogiarena._core.contexts.game_session.adapters.engine.artifact_resolver import ArtifactResolver
+from shogiarena._core.shared.kernel.settings_loading.settings_models import RepoSettings
 
 
 def _write_build_config(path: Path) -> None:
@@ -167,7 +173,7 @@ def test_resolver_uses_shared_lock_per_commit(tmp_path, monkeypatch) -> None:
         def __exit__(self, exc_type, exc, tb):
             return False
 
-    monkeypatch.setattr(resolver_module, "FileLock", DummyLock)
+    monkeypatch.setattr(resolver_support_module, "FileLock", DummyLock)
 
     def fake_build(self, engine_root, art, build_opts, *, repo, artifact_id, cfg):
         tag = build_opts.get("tune_tag", "vanilla")
@@ -204,14 +210,14 @@ def test_run_logged_subprocess_streams_output(monkeypatch, tmp_path) -> None:
             pass
 
     dummy_stdout = DummyStdout()
-    monkeypatch.setattr(resolver_module.sys, "stdout", dummy_stdout)
+    monkeypatch.setattr(resolver_support_module, "_STREAM_SYS", types.SimpleNamespace(stdout=dummy_stdout))
 
     ArtifactResolver._run_logged_subprocess(
         [sys.executable, "-c", "print('hello')"],
         cwd=tmp_path,
         log_file=log_buffer,
         env=None,
-        stream=True,
+        should_stream=True,
     )
 
     assert "hello" in log_buffer.getvalue()

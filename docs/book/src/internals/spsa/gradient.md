@@ -204,9 +204,9 @@ E[\hat{g}_i] = \frac{\partial L}{\partial \theta_i} + O(c_k^2)
 
 | ファイル | 関数 | 役割 |
 |---------|------|------|
-| `arena/orchestrators/spsa_orchestrator.py` | `_run_one_spsa_update()` | 勾配推定と更新の本体 |
-| `arena/tuning/param_io.py` | `quantize_value()` | 値の量子化 |
-| `arena/orchestrators/spsa_orchestrator.py` | `_ltc_normalize_result_for_sprt()` | SPRT 用の結果正規化 |
+| `_core/contexts/spsa/adapters/orchestrator_update_mixin.py` | `_run_one_spsa_update()` | 勾配推定と更新の本体 |
+| `_core/contexts/spsa/application/param_io.py` | `quantize_value()` | 値の量子化 |
+| `_core/contexts/spsa/adapters/orchestrator_gameplay_mixin.py` | `_ltc_normalize_result_for_sprt()` | SPRT 用の結果正規化 |
 
 ## 次に読む
 

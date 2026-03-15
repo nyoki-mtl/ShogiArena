@@ -5,22 +5,31 @@ from pathlib import Path
 
 import pytest
 
-from shogiarena.arena.configs.base import OpenBenchConfig, SprtConfig
-from shogiarena.arena.configs.tournament import TournamentRunConfig
-from shogiarena.arena.runners.tournament_runner import TournamentRunner
-from shogiarena.arena.services import openbench as openbench_mod
-from shogiarena.arena.services.openbench import (
-    OpenBenchClient,
+from shogiarena._core.contexts.game_session.adapters.openbench import (
+    create_payload_builder as _openbench_create_payload_builder_mod,
+)
+from shogiarena._core.contexts.game_session.adapters.openbench.client import OpenBenchClient
+from shogiarena._core.contexts.game_session.adapters.openbench.client_totals import (
+    compute_totals as _compute_totals,
+)
+from shogiarena._core.contexts.game_session.adapters.openbench.client_types import (
     OpenBenchClientConfig,
     OpenBenchCounters,
     OpenBenchError,
-    _compute_totals,
+)
+from shogiarena._core.contexts.game_session.adapters.openbench.client_worker_capabilities import (
     _derive_worker_capabilities,
 )
-from shogiarena.arena.storage import FilesystemRunStorage
-from shogiarena.utils.common import settings as settings_mod
-from shogiarena.utils.common.settings import OpenBenchSettings
-from shogiarena.utils.types.types import GameResult
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_core import (
+    OpenBenchConfig,
+    SprtConfig,
+)
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_tournament import TournamentRunConfig
+from shogiarena._core.contexts.game_session.adapters.run_storage import FilesystemRunStorage
+from shogiarena._core.contexts.tournament.adapters.runner import TournamentRunner
+from shogiarena._core.platform.settings import facade as settings_mod
+from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.settings_loading.settings_models import OpenBenchSettings
 
 
 def _engine_config_file(tmp_path: Path, name: str) -> Path:
@@ -100,24 +109,28 @@ def test_compute_totals_for_openbench_payload() -> None:
         def get_games_with_players(self) -> list[dict[str, object]]:
             return [
                 {
+                    "game_name": "g0001-a",
                     "black_player": "dev",
                     "white_player": "base",
                     "result": GameResult.BLACK_WIN,
                     "initial_sfen": "sfen_a",
                 },
                 {
+                    "game_name": "g0002-b",
                     "black_player": "base",
                     "white_player": "dev",
                     "result": GameResult.DRAW_BY_REPETITION,
                     "initial_sfen": "sfen_a",
                 },
                 {
+                    "game_name": "g0003-c",
                     "black_player": "dev",
                     "white_player": "base",
                     "result": GameResult.WHITE_WIN_BY_TIMEOUT,
                     "initial_sfen": "sfen_b",
                 },
                 {
+                    "game_name": "g0004-d",
                     "black_player": "base",
                     "white_player": "dev",
                     "result": GameResult.WHITE_WIN_BY_ILLEGAL_MOVE,
@@ -158,7 +171,7 @@ def test_tournament_config_accepts_openbench_with_sprt(tmp_path: Path) -> None:
         },
     )
     assert cfg.openbench is not None
-    assert cfg.openbench.enabled is True
+    assert cfg.openbench.is_enabled is True
 
 
 def test_compute_totals_pairs_pentanomial_by_round_token_when_available() -> None:
@@ -210,7 +223,9 @@ def test_compute_totals_pairs_pentanomial_by_round_token_when_available() -> Non
 
 
 def test_derive_worker_capabilities_has_public_fallback_and_private_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(openbench_mod.shutil, "which", lambda _name: None)
+    import shogiarena._core.contexts.game_session.adapters.openbench.client_worker_capabilities as _worker_caps
+
+    monkeypatch.setattr(_worker_caps.shutil, "which", lambda _name: None)
     compilers, tokens = _derive_worker_capabilities(
         {
             "PublicEngine": {
@@ -240,7 +255,20 @@ def _build_runner_for_openbench(tmp_path: Path, openbench: dict[str, object]) ->
         openbench=openbench,
     )
     storage = FilesystemRunStorage(tmp_path / "run")
-    return TournamentRunner(cfg, storage=storage, no_resume=True)
+    from unittest.mock import AsyncMock, MagicMock
+
+    from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
+
+    mock_factory = AsyncMock()
+    engine_factory_service = EngineFactoryService(factory=mock_factory)
+    return TournamentRunner(
+        cfg,
+        storage=storage,
+        should_skip_resume=True,
+        engine_factory_service=engine_factory_service,
+        init_dashboard_html=MagicMock(),
+        api_server_factory=MagicMock(),
+    )
 
 
 def _base_create_payload() -> dict[str, object]:
@@ -320,9 +348,9 @@ def test_resolve_openbench_config_uses_settings_password_env_and_run_server_for_
         captured["password"] = openbench_password
         return 123456
 
-    monkeypatch.setattr(runner, "_fetch_openbench_engine_nps", _fake_fetch_nps)
+    monkeypatch.setattr(_openbench_create_payload_builder_mod, "_fetch_engine_nps", _fake_fetch_nps)
 
-    resolved = runner._resolve_openbench_config()
+    resolved = runner._openbench._resolve_config()
     assert resolved is not None
     assert resolved.server == "https://run.example.com"
     assert resolved.username == "run-user"
@@ -365,8 +393,12 @@ def test_resolve_openbench_config_falls_back_book_name_when_none_not_available(
             },
         },
     )
-    monkeypatch.setattr(runner, "_fetch_openbench_books", lambda **_kwargs: ["BookA", "BookB"])
-    resolved = runner._resolve_openbench_config()
+    monkeypatch.setattr(
+        _openbench_create_payload_builder_mod,
+        "_fetch_books",
+        lambda **_kwargs: ["BookA", "BookB"],
+    )
+    resolved = runner._openbench._resolve_config()
     assert resolved is not None
     assert resolved.create_payload is not None
     assert resolved.create_payload["book_name"] == "BookA"
@@ -375,18 +407,18 @@ def test_resolve_openbench_config_falls_back_book_name_when_none_not_available(
 @pytest.mark.asyncio
 async def test_openbench_client_submit_results_recovers_from_invalid_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     config = OpenBenchClientConfig(
-        enabled=True,
+        is_enabled=True,
         mode="existing_test",
         server="https://example.com",
         username="user",
         password="pass",
         target_test_id=42,
         submit_interval_games=1,
-        strict=True,
+        is_strict=True,
         heartbeat_interval_sec=30.0,
         poll_interval_sec=1.0,
         assignment_timeout_sec=5.0,
-        allow_insecure_http=False,
+        is_insecure_http_allowed=False,
         concurrency=1,
     )
     client = OpenBenchClient(config, tested_engine="dev", base_engine="base")
@@ -441,18 +473,18 @@ async def test_openbench_client_submit_results_recovers_from_invalid_secret(monk
 @pytest.mark.asyncio
 async def test_openbench_client_heartbeat_recovers_from_bad_machine_id(monkeypatch: pytest.MonkeyPatch) -> None:
     config = OpenBenchClientConfig(
-        enabled=True,
+        is_enabled=True,
         mode="existing_test",
         server="https://example.com",
         username="user",
         password="pass",
         target_test_id=42,
         submit_interval_games=1,
-        strict=True,
+        is_strict=True,
         heartbeat_interval_sec=30.0,
         poll_interval_sec=1.0,
         assignment_timeout_sec=5.0,
-        allow_insecure_http=False,
+        is_insecure_http_allowed=False,
         concurrency=1,
     )
     client = OpenBenchClient(config, tested_engine="dev", base_engine="base")
@@ -493,7 +525,7 @@ async def test_openbench_client_heartbeat_recovers_from_bad_machine_id(monkeypat
     monkeypatch.setattr(client, "_register_worker", _fake_register_worker)
     monkeypatch.setattr(client, "_claim_target_workload", _fake_claim_target_workload)
 
-    should_stop = await client.heartbeat()
+    should_stop = await client.should_stop_after_heartbeat()
     assert should_stop is True
     assert heartbeat_calls == 2
     assert register_calls == 1
@@ -523,8 +555,12 @@ async def test_tournament_runner_openbench_init_continues_when_strict_false(
 
     monkeypatch.setattr(OpenBenchClient, "initialize", _fail_initialize)
 
-    await runner._init_openbench_client()
-    assert runner._openbench_client is None
+    class _MockStopController:
+        def request_stop(self, *, reason: str = "") -> None:
+            pass
+
+    await runner._openbench.init(stop_controller=_MockStopController())
+    assert runner._openbench.client is None
 
 
 def test_openbench_create_payload_rejects_invalid_upload_pgns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -542,7 +578,7 @@ def test_openbench_create_payload_rejects_invalid_upload_pgns(tmp_path: Path, mo
         },
     )
     with pytest.raises(ValueError, match="upload_pgns"):
-        runner._resolve_openbench_config()
+        runner._openbench._resolve_config()
 
 
 def test_openbench_create_payload_rejects_invalid_scale_method(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -560,7 +596,7 @@ def test_openbench_create_payload_rejects_invalid_scale_method(tmp_path: Path, m
         },
     )
     with pytest.raises(ValueError, match="scale_method"):
-        runner._resolve_openbench_config()
+        runner._openbench._resolve_config()
 
 
 def test_openbench_create_payload_rejects_invalid_sprt_bounds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -579,7 +615,7 @@ def test_openbench_create_payload_rejects_invalid_sprt_bounds(tmp_path: Path, mo
         },
     )
     with pytest.raises(ValueError, match="test_bounds"):
-        runner._resolve_openbench_config()
+        runner._openbench._resolve_config()
 
 
 def test_openbench_create_payload_rejects_out_of_range_sprt_confidence(
@@ -601,4 +637,4 @@ def test_openbench_create_payload_rejects_out_of_range_sprt_confidence(
         },
     )
     with pytest.raises(ValueError, match="test_confidence"):
-        runner._resolve_openbench_config()
+        runner._openbench._resolve_config()

@@ -5,11 +5,11 @@
 
 from __future__ import annotations
 
-from shogiarena.web.dashboard.backend.generate.types import GenerateSummary
-from shogiarena.web.dashboard.backend.live.types import (
+from shogiarena._core.contexts.dashboard.application.live.view_payloads import (
     LiveViewProgress,
     LiveViewSnapshot,
 )
+from shogiarena._core.interfaces.dashboard.generate.payloads import GenerateSummary
 
 
 def _required_keys(td: type) -> set[str]:

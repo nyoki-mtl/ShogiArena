@@ -13,9 +13,9 @@
 - **Instances**: インスタンス状態の更新
 
 **実装参照**:
-- Tournament API: `src/shogiarena/web/dashboard/backend/tournament/api.py`
-- SPSA API: `src/shogiarena/web/dashboard/backend/spsa/api.py`
-- SPSA Streams: `src/shogiarena/web/dashboard/backend/spsa/streams.py`
+- Tournament API: `src/shogiarena/_core/interfaces/dashboard/tournament/api.py`
+- SPSA API: `src/shogiarena/_core/interfaces/dashboard/spsa/api.py`
+- SPSA Streams: `src/shogiarena/_core/interfaces/dashboard/spsa/stream/streams.py`
 
 ## Tournament SSE
 
@@ -185,11 +185,11 @@ SSE イベントには `seq` または `id` を付与することで、欠落検
 
 ### サーバサイド
 
-- **Tournament**: `src/shogiarena/web/dashboard/backend/tournament/api.py`
+- **Tournament**: `src/shogiarena/_core/interfaces/dashboard/tournament/api.py`
 - **SPSA**: 
-  - API: `src/shogiarena/web/dashboard/backend/spsa/api.py`
-  - Streams: `src/shogiarena/web/dashboard/backend/spsa/streams.py`
-- **Instances**: `src/shogiarena/web/dashboard/backend/instances/api.py`
+  - API: `src/shogiarena/_core/interfaces/dashboard/spsa/api.py`
+  - Streams: `src/shogiarena/_core/interfaces/dashboard/spsa/stream/streams.py`
+- **Instances**: `src/shogiarena/_core/interfaces/dashboard/instances/api.py`
 
 ### クライアントサイド
 

@@ -5,17 +5,22 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 from rshogi.core import Move
+from rshogi.types import Color
 
-from shogiarena.arena.engines.sync_usi_engine import SyncUsiEngine
-from shogiarena.arena.engines.usi_bridge import AsyncUSIProcessBridgeProtocol
-from shogiarena.arena.engines.usi_config import UsiEngineConfig
-from shogiarena.arena.engines.usi_engine import AnalysisHandle, AsyncUsiEngine, PonderHitTimings, UsiEngineState
-from shogiarena.arena.engines.usi_think import UsiThinkRequest
-from shogiarena.arena.execution.engine_participant import EngineParticipant
-from shogiarena.utils.types.types import GameResult
+from shogiarena._core.contexts.match.application.engine_participant import EngineParticipant
+from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkRequest
+from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
+from shogiarena._core.platform.engine_runtime.usi_engine_session import (
+    AnalysisHandle,
+    AsyncUsiEngine,
+    PonderHitTimings,
+    UsiEngineState,
+)
+from shogiarena._core.platform.engine_runtime.usi_protocol_types import AsyncUsiProcessBridgePort
+from shogiarena._core.shared.kernel.game_results import GameResult
 
 
-class DummyBridge(AsyncUSIProcessBridgeProtocol):
+class DummyBridge(AsyncUsiProcessBridgePort):
     def __init__(self) -> None:
         self._running = False
         self.commands: list[str] = []
@@ -89,7 +94,7 @@ async def test_engine_handshake_applies_options(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_engine_recognises_spsa_param_lines(tmp_path) -> None:
+async def test_engine_recognises_option_lines_for_custom_spsa_params(tmp_path) -> None:
     config = UsiEngineConfig.from_mapping(
         {
             "name": "Dummy",
@@ -101,7 +106,7 @@ async def test_engine_recognises_spsa_param_lines(tmp_path) -> None:
 
     async def handle_usi(command: str) -> None:
         await bridge.enqueue("id name DummyEngine")
-        await bridge.enqueue("Search_razoring_1,495,0,990,49.5,0.0020")
+        await bridge.enqueue("option name Search_razoring_1 type spin default 495 min 0 max 990")
         await bridge.enqueue("usiok")
 
     bridge.set_handler("usi", handle_usi)
@@ -249,7 +254,7 @@ async def test_engine_think_mate_supports_infinite_and_node_limit(tmp_path) -> N
 
     async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
         bridge.set_handler("go mate", handle_go_mate)
-        await eng.think_mate(sfen="startpos", infinite=True)
+        await eng.think_mate(sfen="startpos", is_infinite=True)
         await eng.think_mate(sfen="startpos", node_limit=456)
 
         go_mate_commands = [cmd for cmd in bridge.commands if cmd.startswith("go mate")]
@@ -298,7 +303,7 @@ async def test_engine_think_mate_waits_for_bestmove_when_enabled(tmp_path) -> No
 
     async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
         bridge.set_handler("go mate", handle_go_mate)
-        result = await eng.think_mate(sfen="startpos", wait_for_bestmove=True, timeout=1.0)
+        result = await eng.think_mate(sfen="startpos", should_wait_for_bestmove=True, timeout=1.0)
         assert result.is_mate
         assert result.moves == (Move.from_usi("7g7f"), Move.from_usi("3c3d"))
         assert eng.state == UsiEngineState.READY
@@ -323,7 +328,7 @@ async def test_engine_analyze_stop(tmp_path) -> None:
 
         handle: AnalysisHandle = await eng.analyze(
             sfen="startpos",
-            request=UsiThinkRequest(infinite=True),
+            request=UsiThinkRequest(is_infinite=True),
         )
 
         await handle.stop()
@@ -369,8 +374,8 @@ async def test_engine_ponder_hit(tmp_path) -> None:
 
         ponder_handle = await eng.start_ponder(
             sfen="startpos",
-            moves=("7g7f", "3c3d"),
-            request=UsiThinkRequest(movetime=100, ponder=True),
+            moves=(Move.from_usi("7g7f"), Move.from_usi("3c3d")),
+            request=UsiThinkRequest(movetime=100, is_ponder=True),
             predicted_move=Move.from_usi("3c3d"),
         )
         assert eng.state == UsiEngineState.PONDER
@@ -422,12 +427,12 @@ async def test_engine_early_ponder_requires_timings(tmp_path) -> None:
 
         ponder_handle = await eng.start_ponder(
             sfen="startpos",
-            moves=("7g7f", "3c3d"),
+            moves=(Move.from_usi("7g7f"), Move.from_usi("3c3d")),
             request=UsiThinkRequest(
                 btime=10_000,
                 wtime=12_000,
                 byoyomi=200,
-                ponder=True,
+                is_ponder=True,
             ),
             predicted_move=Move.from_usi("3c3d"),
         )
@@ -477,8 +482,8 @@ async def test_engine_non_early_ponderhit_ignores_timing_payload(tmp_path) -> No
 
         ponder_handle = await eng.start_ponder(
             sfen="startpos",
-            moves=("7g7f", "3c3d"),
-            request=UsiThinkRequest(btime=10000, wtime=12000, binc=2000, winc=2000, ponder=True),
+            moves=(Move.from_usi("7g7f"), Move.from_usi("3c3d")),
+            request=UsiThinkRequest(btime=10000, wtime=12000, binc=2000, winc=2000, is_ponder=True),
             predicted_move=Move.from_usi("3c3d"),
         )
         result = await ponder_handle.hit(
@@ -522,8 +527,8 @@ async def test_engine_early_ponder_with_movetime_keeps_movetime_request(tmp_path
 
         ponder_handle = await eng.start_ponder(
             sfen="startpos",
-            moves=("7g7f", "3c3d"),
-            request=UsiThinkRequest(movetime=100, ponder=True),
+            moves=(Move.from_usi("7g7f"), Move.from_usi("3c3d")),
+            request=UsiThinkRequest(movetime=100, is_ponder=True),
             predicted_move=Move.from_usi("3c3d"),
         )
         result = await ponder_handle.hit(timeout=1.0)
@@ -565,8 +570,8 @@ async def test_engine_ponder_cancel(tmp_path) -> None:
 
         ponder_handle = await eng.start_ponder(
             sfen="startpos",
-            moves=("7g7f", "3c3d"),
-            request=UsiThinkRequest(movetime=100, ponder=True),
+            moves=(Move.from_usi("7g7f"), Move.from_usi("3c3d")),
+            request=UsiThinkRequest(movetime=100, is_ponder=True),
             predicted_move=Move.from_usi("3c3d"),
         )
         cancel_result = await ponder_handle.cancel(timeout=1.0)
@@ -574,6 +579,40 @@ async def test_engine_ponder_cancel(tmp_path) -> None:
         assert cancel_result is not None
         assert cancel_result.bestmove == Move.from_usi("9i9h")
         assert eng.state == UsiEngineState.READY
+
+
+@pytest.mark.asyncio
+async def test_engine_close_skips_stop_when_process_already_stopped_during_ponder(tmp_path, caplog) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+            "enable_early_ponder": True,
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go_ponder(command: str) -> None:
+        return None
+
+    bridge.set_handler("go ponder", handle_go_ponder)
+
+    eng = AsyncUsiEngine(config=config, bridge=bridge)
+    await eng.start()
+    await eng.start_ponder(
+        sfen="startpos",
+        moves=[],
+        request=UsiThinkRequest(movetime=100, is_ponder=True),
+        predicted_move=Move.from_usi("3c3d"),
+    )
+
+    bridge._running = False
+    caplog.set_level(logging.ERROR)
+
+    await eng.close()
+    await eng.close()
+
+    assert not any("Error stopping ponder" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -658,8 +697,8 @@ async def test_engine_cancel_ponder_timeout_recovers_and_allows_next_think(tmp_p
 
         ponder_handle = await eng.start_ponder(
             sfen="startpos",
-            moves=("7g7f", "3c3d"),
-            request=UsiThinkRequest(movetime=100, ponder=True),
+            moves=(Move.from_usi("7g7f"), Move.from_usi("3c3d")),
+            request=UsiThinkRequest(movetime=100, is_ponder=True),
             predicted_move=Move.from_usi("3c3d"),
         )
 
@@ -675,7 +714,7 @@ async def test_engine_cancel_ponder_timeout_recovers_and_allows_next_think(tmp_p
 
         next_result = await eng.think(
             sfen="startpos",
-            moves=("7g7f",),
+            moves=(Move.from_usi("7g7f"),),
             request=UsiThinkRequest(movetime=100),
             timeout=1.0,
         )
@@ -800,8 +839,8 @@ async def test_engine_ponderhit_timeout_can_recover_with_cancel(tmp_path) -> Non
 
         ponder_handle = await eng.start_ponder(
             sfen="startpos",
-            moves=("7g7f", "3c3d"),
-            request=UsiThinkRequest(movetime=100, ponder=True),
+            moves=(Move.from_usi("7g7f"), Move.from_usi("3c3d")),
+            request=UsiThinkRequest(movetime=100, is_ponder=True),
             predicted_move=Move.from_usi("3c3d"),
         )
 
@@ -834,7 +873,7 @@ async def test_participant_start_ponder_without_usi_ponder_option(tmp_path) -> N
     bridge.set_handler("go ponder", handle_go)
 
     engine = AsyncUsiEngine(config=config, bridge=bridge)
-    participant = EngineParticipant(engine, role="black")
+    participant = EngineParticipant(engine, role=Color.BLACK)
 
     await participant.prepare(initial_sfen="startpos")
     result = await participant.think(
@@ -846,8 +885,8 @@ async def test_participant_start_ponder_without_usi_ponder_option(tmp_path) -> N
 
     await participant.start_ponder(
         sfen="startpos",
-        moves=("7g7f", "3c3d"),
-        request=UsiThinkRequest(movetime=100, ponder=True),
+        moves=(Move.from_usi("7g7f"), Move.from_usi("3c3d")),
+        request=UsiThinkRequest(movetime=100, is_ponder=True),
         predicted_move=Move.from_usi("3c3d"),
     )
 
@@ -871,7 +910,7 @@ async def test_engine_participant_wraps_engine(tmp_path) -> None:
     bridge.set_handler("go ", handle_go)
 
     engine = AsyncUsiEngine(config=config, bridge=bridge)
-    participant = EngineParticipant(engine, role="black")
+    participant = EngineParticipant(engine, role=Color.BLACK)
 
     await participant.prepare(initial_sfen="startpos")
     result = await participant.think(
@@ -1016,8 +1055,8 @@ async def test_engine_gameover_draw_stops_pending_ponder_and_allows_next_isready
 
         await eng.start_ponder(
             sfen="startpos",
-            moves=("7g7f", "3c3d"),
-            request=UsiThinkRequest(movetime=100, ponder=True),
+            moves=(Move.from_usi("7g7f"), Move.from_usi("3c3d")),
+            request=UsiThinkRequest(movetime=100, is_ponder=True),
             predicted_move=Move.from_usi("3c3d"),
         )
         assert eng.state == UsiEngineState.PONDER
@@ -1077,8 +1116,8 @@ async def test_engine_gameover_without_late_bestmove_allows_next_game_think(tmp_
 
         await eng.start_ponder(
             sfen="startpos",
-            moves=("7g7f", "3c3d"),
-            request=UsiThinkRequest(movetime=100, ponder=True),
+            moves=(Move.from_usi("7g7f"), Move.from_usi("3c3d")),
+            request=UsiThinkRequest(movetime=100, is_ponder=True),
             predicted_move=Move.from_usi("3c3d"),
         )
         assert eng.state == UsiEngineState.PONDER
@@ -1129,76 +1168,3 @@ async def test_fail_pending_does_not_emit_unretrieved_future_exception(tmp_path)
             loop.set_exception_handler(previous_handler)
 
     assert not any("Future exception was never retrieved" in str(ctx.get("message", "")) for ctx in contexts)
-
-
-def test_sync_engine_think(tmp_path) -> None:
-    config = UsiEngineConfig.from_mapping(
-        {
-            "name": "Dummy",
-            "engine_path": str(tmp_path / "engine"),
-        }
-    )
-    bridge = DummyBridge()
-
-    async def handle_go(command: str) -> None:
-        await bridge.enqueue("info depth 6 nodes 42 time 7")
-        await bridge.enqueue("bestmove 7g7f ponder 3c3d")
-
-    bridge.set_handler("go ", handle_go)
-
-    async_engine = AsyncUsiEngine(config=config, bridge=bridge)
-    with SyncUsiEngine.from_async_engine(async_engine) as engine:
-        engine.new_game()
-        result = engine.think(
-            sfen="startpos",
-            moves=(),
-            request=UsiThinkRequest(movetime=1000),
-        )
-        assert result.bestmove == Move.from_usi("7g7f")
-        assert result.ponder == Move.from_usi("3c3d")
-
-
-def test_sync_engine_ponder_roundtrip(tmp_path) -> None:
-    config = UsiEngineConfig.from_mapping(
-        {
-            "name": "Dummy",
-            "engine_path": str(tmp_path / "engine"),
-        }
-    )
-    bridge = DummyBridge()
-
-    async def handle_go(command: str) -> None:
-        if " ponder" in command:
-            return
-        await bridge.enqueue("bestmove 7g7f ponder 3c3d")
-
-    async def handle_go_ponder(command: str) -> None:
-        await asyncio.sleep(0)
-
-    async def handle_ponderhit(command: str) -> None:
-        await bridge.enqueue("bestmove 2g2f")
-
-    bridge.set_handler("go ", handle_go)
-    bridge.set_handler("go ponder", handle_go_ponder)
-    bridge.set_handler("ponderhit", handle_ponderhit)
-
-    async_engine = AsyncUsiEngine(config=config, bridge=bridge)
-    with SyncUsiEngine.from_async_engine(async_engine) as engine:
-        engine.new_game()
-        first = engine.think(
-            sfen="startpos",
-            moves=(),
-            request=UsiThinkRequest(movetime=100),
-        )
-        assert first.ponder == Move.from_usi("3c3d")
-
-        handle = engine.start_ponder(
-            sfen="startpos",
-            moves=("7g7f", "3c3d"),
-            request=UsiThinkRequest(movetime=100, ponder=True),
-            predicted_move=Move.from_usi("3c3d"),
-        )
-        assert handle.active
-
-        second = handle.hit(timings=PonderHitTimings(), timeout=1.0)
-        assert second.bestmove == Move.from_usi("2g2f")

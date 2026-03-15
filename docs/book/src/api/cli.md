@@ -19,23 +19,6 @@ shogiarena [グローバルオプション] <コマンド> [サブコマンド] 
 
 ## コマンド一覧
 
-### init
-
-設定ファイルとディレクトリを初期化します（`config init` のエイリアス）。
-
-```bash
-shogiarena init [--non-interactive] [--output-dir PATH] [--engine-dir PATH]
-```
-
-| オプション | 説明 |
-|-----------|------|
-| `--non-interactive`, `-y` | 対話モードを無効化（CI/自動化向け） |
-| `--output-dir PATH` | 出力ディレクトリ |
-| `--engine-dir PATH` | エンジンキャッシュディレクトリ |
-| `--settings PATH` | settings.yaml のパス |
-| `--force` | 既存設定を上書き |
-| `--github-token TOKEN` | GitHub トークン（プライベートリポジトリ用） |
-
 ### config
 
 設定の管理を行います。
@@ -74,12 +57,14 @@ shogiarena run tournament [config.yaml] [オプション]
 | `--run-dir PATH` | 実行ディレクトリを上書き |
 | `--no-resume` | 途中再開せず新規実行 |
 | `--provision {none,force}` | SSH インスタンスへのプロビジョニング |
+| `--git-worktree {strict,clean,allow-dirty}` | ビルド前の Git ワークツリーの状態チェック |
 | `--engine KEY=VALUE` | エンジン定義（複数指定可） |
 | `--rules KEY=VALUE` | ルール設定の上書き |
 | `--tournament KEY=VALUE` | トーナメント設定の上書き |
 | `--sprt KEY=VALUE` | SPRT 設定の上書き |
 | `--openbench KEY=VALUE` | OpenBench 設定の上書き |
 | `--dashboard KEY=VALUE` | ダッシュボード設定の上書き |
+| `--system KEY=VALUE` | システム設定の上書き |
 
 #### run spsa
 
@@ -94,7 +79,14 @@ shogiarena run spsa [config.yaml] [オプション]
 | `--dry-run` | 設定を検証するのみ |
 | `--validate-only` | 設定を検証して終了 |
 | `--no-resume` | 途中再開せず新規実行 |
+| `--experiment-name NAME` | 実験名を上書き |
+| `--run-dir PATH` | 実行ディレクトリを上書き |
+| `--provision {none,force}` | SSH インスタンスへのプロビジョニング |
+| `--git-worktree {strict,clean,allow-dirty}` | ビルド前の Git ワークツリーの状態チェック |
 | `--engine-trace` | USI エンジンの詳細ログを有効化 |
+| `--engine KEY=VALUE` | エンジン定義（複数指定可） |
+| `--rules KEY=VALUE` | ルール設定の上書き |
+| `--dashboard KEY=VALUE` | ダッシュボード設定の上書き |
 | `--spsa KEY=VALUE` | SPSA 設定の上書き |
 
 #### run sprt
@@ -107,10 +99,21 @@ shogiarena run sprt [config.yaml] [オプション]
 
 | オプション | 説明 |
 |-----------|------|
-| `--games N` | 最大対局数（デフォルト: 400） |
+| `--games N` | 最大対局数（デフォルト: 400、YAML なしの場合に使用） |
 | `--dry-run` | 設定を検証するのみ |
 | `--validate-only` | 設定を検証して終了 |
+| `--experiment-name NAME` | 実験名を上書き |
+| `--run-dir PATH` | 実行ディレクトリを上書き |
+| `--no-resume` | 途中再開せず新規実行 |
+| `--provision {none,force}` | SSH インスタンスへのプロビジョニング |
+| `--git-worktree {strict,clean,allow-dirty}` | ビルド前の Git ワークツリーの状態チェック |
+| `--engine KEY=VALUE` | エンジン定義（複数指定可） |
+| `--rules KEY=VALUE` | ルール設定の上書き |
+| `--tournament KEY=VALUE` | トーナメント設定の上書き |
+| `--sprt KEY=VALUE` | SPRT 設定の上書き |
 | `--openbench KEY=VALUE` | OpenBench 設定の上書き |
+| `--dashboard KEY=VALUE` | ダッシュボード設定の上書き |
+| `--system KEY=VALUE` | システム設定の上書き |
 
 `run tournament` / `run sprt` は dotted override も利用できます（例: `--openbench.target_test_id=1234`）。
 
@@ -141,16 +144,45 @@ shogiarena run generate [config.yaml] [オプション]
 詰将棋を解かせます。
 
 ```bash
-shogiarena run mate --engine PATH [--sfen SFEN] [--ply-limit N]
+shogiarena run mate <engine> [position] [オプション]
 ```
+
+- `engine`: エンジンバイナリまたは YAML 設定ファイルのパス（位置引数）
+- `position`: USI 形式の局面文字列（位置引数、デフォルト: `startpos`）
+
+| オプション | 説明 |
+|-----------|------|
+| `--ply-limit N` | 最大探索手数 |
+| `--node-limit N` | 最大探索ノード数 |
+| `--infinite` | `go mate infinite` を送信 |
+| `--wait-bestmove` | `checkmate` 後に `bestmove` を待つ |
+| `--timeout SEC` | タイムアウト時間（秒） |
+| `--option KEY=VALUE` | エンジンオプションの上書き（複数指定可） |
+
+`--ply-limit` と `--node-limit` は同時指定できません。`--infinite` は両者と排他です。
 
 #### run analyze
 
 局面を解析します。
 
 ```bash
-shogiarena run analyze --engine PATH [--sfen SFEN] [--time-ms N]
+shogiarena run analyze <engine> [position] [オプション]
 ```
+
+- `engine`: エンジンバイナリまたは YAML 設定ファイルのパス（位置引数）
+- `position`: USI 形式の局面文字列（位置引数、デフォルト: `startpos`）
+
+| オプション | 説明 |
+|-----------|------|
+| `--movetime MS` | 固定思考時間（ミリ秒） |
+| `--nodes N` | 探索ノード数制限 |
+| `--depth N` | 探索深さ制限 |
+| `--infinite` | 無限探索（他の制限が指定されていない場合のデフォルト） |
+| `--ponder` | ponder フラグを設定 |
+| `--searchmoves M ...` | 探索する手を制限（USI 形式） |
+| `--timeout SEC` | タイムアウト時間（秒） |
+| `--quiet` | 途中の info 行を非表示 |
+| `--option KEY=VALUE` | エンジンオプションの上書き（複数指定可） |
 
 ### dashboard
 
@@ -174,17 +206,17 @@ shogiarena dashboard serve [--run-dir PATH] [--config PATH] [--port PORT]
 
 ```bash
 # 対話モードで初期化
-shogiarena init
+shogiarena config init
 
 # 非対話モードで初期化
-shogiarena init -y --output-dir ~/shogiarena
+shogiarena config init -y --output-dir ~/shogiarena/output --engine-dir ~/shogiarena/engines
 ```
 
 ### トーナメント実行
 
 ```bash
 # 設定ファイルからトーナメントを実行
-shogiarena run tournament configs/run/arena/tournament.yaml
+shogiarena run tournament configs/run/tournament/example.yaml
 
 # ルールを上書きして実行
 shogiarena run tournament config.yaml --rules time_control.byoyomi_ms=1000
@@ -211,10 +243,10 @@ shogiarena run spsa configs/run/spsa/tune.yaml
 
 ```bash
 # 実行ディレクトリを指定して起動
-shogiarena dashboard serve --run-dir output/runs/tournament/20260214_120000
+shogiarena dashboard serve --run-dir output/runs/my-run-1a2b3c4d/20260214120000
 
 # 設定ファイルから自動推定して起動
-shogiarena dashboard serve --config configs/run/arena/tournament.yaml --port 9090
+shogiarena dashboard serve --config configs/run/tournament/example.yaml --port 9090
 ```
 
 ## 関連ドキュメント

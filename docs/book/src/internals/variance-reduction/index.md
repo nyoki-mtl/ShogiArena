@@ -197,10 +197,10 @@ inflight_factor: 8           # 同時ゲーム数の乗数
 
 | ファイル | 設定キー/関数 | 役割 |
 |---------|-------------|------|
-| `arena/configs/spsa.py` | `crn_enabled` | CRN の有効/無効 |
-| `arena/configs/spsa.py` | `update_batch_size` | バッチサイズ |
-| `arena/orchestrators/spsa_orchestrator.py` | `_run_game_pair()` | ペアゲームの実行 |
-| `arena/services/statistics/pentanomial.py` | `compute_pentanomial()` | 五項分布の計算 |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `crn_enabled` 相当設定 | CRN の有効/無効 |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `update_batch_size` | バッチサイズ |
+| `_core/contexts/spsa/adapters/orchestrator.py` | `SpsaOrchestrator` | ペアゲーム実行を含む orchestration |
+| `_core/shared/kernel/statistics/pentanomial.py` | `compute_pentanomial()` | 五項分布の計算 |
 
 ## 参考文献
 

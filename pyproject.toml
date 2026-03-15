@@ -1,13 +1,13 @@
 [project]
 name = "shogiarena"
-version = "0.2.0"
+version = "0.3.0"
 description = "Asynchronous tournament and SPSA tuning platform for USI shogi engines"
 authors = [
     { name = "Hiroki Taniai", email = "nyoki.mtl@gmail.com" }
 ]
 license = { text = "MIT" }
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = ["shogi", "usi", "tournament", "spsa", "tuning", "engine"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -16,7 +16,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Games/Entertainment :: Board Games",
@@ -33,7 +32,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "python-dotenv>=1.1.1",
     "pyyaml>=6.0.2",
-    "rshogi-py-avx2==0.7.0",
+    "rshogi-py-avx2==0.7.5",
     "sqlalchemy>=2.0.43",
     "tqdm>=4.67.1",
     "types-pyyaml>=6.0.12.20250822",
@@ -111,7 +110,7 @@ docstring-code-line-length = 120
 
 # ty configuration (type checker)
 [tool.ty.environment]
-python-version = "3.10"
+python-version = "3.11"
 root = ["src"]
 extra-paths = ["stubs"]
 
@@ -128,12 +127,13 @@ exclude = [
 # Relax rules for third-party libraries without complete type stubs (rshogi, etc.)
 # These can be tightened as ty matures and stubs improve
 unresolved-attribute = "warn"
-invalid-argument-type = "warn"
+# D-1 ratchet step: invalid-return-type + invalid-argument-type
+invalid-argument-type = "error"
 # TypedDict discrimination limitations in ty (alpha)
 invalid-key = "warn"
-invalid-return-type = "warn"
+invalid-return-type = "error"
 # Other alpha-stage limitations
-invalid-assignment = "warn"
+invalid-assignment = "error"
 invalid-type-form = "warn"
 invalid-method-override = "warn"
 no-matching-overload = "warn"

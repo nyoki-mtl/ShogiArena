@@ -11,16 +11,18 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from shogiarena.web.dashboard.backend.spsa.models import (
-    EngineStatEntry,
+from shogiarena._core.contexts.dashboard.application.spsa.io_models.index_io_models import (
     IndexData,
     IndexMetadata,
     LtcRegressionIndexInfo,
-    LtcRegressionMetaConfig,
     RawIndexUpdateEntry,
-    SpsaMetaData,
-    SummaryCachePayload,
 )
+from shogiarena._core.contexts.dashboard.application.spsa.io_models.meta_io_models import (
+    EngineStatEntry,
+    LtcRegressionMetaConfig,
+    SpsaMetaData,
+)
+from shogiarena._core.contexts.spsa.application.dashboard.summary_cache_payload import SummaryCachePayload
 
 # ---------------------------------------------------------------------------
 # EngineStatEntry
@@ -55,25 +57,25 @@ class TestEngineStatEntry:
 class TestLtcRegressionMetaConfig:
     def test_normal(self) -> None:
         c = LtcRegressionMetaConfig.model_validate({"enabled": True, "pairs": 100, "sprt_elo0": 0.0, "sprt_elo1": 5.0})
-        assert c.enabled is True
+        assert c.is_enabled is True
         assert c.pairs == 100
         assert c.sprt_elo0 == 0.0
         assert c.sprt_elo1 == 5.0
 
     def test_defaults(self) -> None:
         c = LtcRegressionMetaConfig.model_validate({})
-        assert c.enabled is False
+        assert c.is_enabled is False
         assert c.pairs is None
 
     def test_enabled_coercion_from_int(self) -> None:
         c = LtcRegressionMetaConfig.model_validate({"enabled": 1})
-        assert c.enabled is True
+        assert c.is_enabled is True
         c2 = LtcRegressionMetaConfig.model_validate({"enabled": 0})
-        assert c2.enabled is False
+        assert c2.is_enabled is False
 
     def test_enabled_coercion_from_string(self) -> None:
         c = LtcRegressionMetaConfig.model_validate({"enabled": "yes"})
-        assert c.enabled is False  # non-bool/non-int → False
+        assert c.is_enabled is False  # non-bool/non-int → False
 
 
 # ---------------------------------------------------------------------------
@@ -92,13 +94,17 @@ class TestLtcRegressionIndexInfo:
                 "pairs_played": 200,
                 "sprt": {"llr": 1.5, "threshold": 2.94},
                 "sprt_decision": "H1",
-                "accepted": True,
+                "is_accepted": True,
             }
         )
         assert info.status == "running"
         assert info.winrate == 0.55
         assert info.sprt == {"llr": 1.5, "threshold": 2.94}
-        assert info.accepted is True
+        assert info.is_accepted is True
+
+    def test_legacy_accepted_key_is_ignored(self) -> None:
+        info = LtcRegressionIndexInfo.model_validate({"accepted": True})
+        assert info.is_accepted is None
 
     def test_defaults(self) -> None:
         info = LtcRegressionIndexInfo.model_validate({})
@@ -277,7 +283,7 @@ class TestSpsaMetaData:
     def test_ltc_regression_parsed(self) -> None:
         m = SpsaMetaData.model_validate({"ltc_regression": {"enabled": True, "pairs": 50}})
         assert m.ltc_regression is not None
-        assert m.ltc_regression.enabled is True
+        assert m.ltc_regression.is_enabled is True
         assert m.ltc_regression.pairs == 50
 
     # -- properties / methods --
@@ -401,7 +407,7 @@ class TestIndexMetadata:
         )
         assert meta.last_update_idx == 99
         assert meta.total_updates == 100
-        assert meta.crn_used is True
+        assert meta.is_crn_used is True
 
     def test_defaults(self) -> None:
         meta = IndexMetadata.model_validate({})

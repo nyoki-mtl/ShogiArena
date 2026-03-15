@@ -240,9 +240,9 @@ LTC 回帰テストでフェイルしてリバートが発生した場合:
 
 | ファイル | 関数/クラス | 役割 |
 |---------|----------|------|
-| `arena/orchestrators/spsa/ltc.py` | `run_ltc_regression()` | LTC 回帰テストの本体 |
-| `arena/configs/spsa.py` | `LtcRegressionConfig` | LTC 設定 |
-| `arena/configs/spsa.py` | `LtcPassCriteria` | パス判定基準 |
+| `_core/contexts/spsa/adapters/runtime/ltc_regression.py` | `run_ltc_regression()` | LTC 回帰テストの本体 |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `LtcRegressionConfig` | LTC 設定 |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `LtcPassCriteria` | パス判定基準 |
 
 ## 次に読む
 

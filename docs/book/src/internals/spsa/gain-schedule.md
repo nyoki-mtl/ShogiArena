@@ -204,12 +204,12 @@ c_k \to 0 \qquad \sum_{k=1}^{\infty} \frac{a_k^2}{c_k^2} < \infty
 
 | ファイル | 設定キー | 役割 |
 |---------|---------|------|
-| `arena/configs/spsa.py` | `a0` | 初期ステップサイズ |
-| `arena/configs/spsa.py` | `A` | ウォームアップ定数 |
-| `arena/configs/spsa.py` | `alpha` | ステップサイズ減衰指数 |
-| `arena/configs/spsa.py` | `gamma` | 摂動スケール減衰指数 |
-| `arena/configs/spsa.py` | `mobility` | 全体学習率スケール |
-| `arena/configs/spsa.py` | `scale` | 摂動スケール |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `a0` | 初期ステップサイズ |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `A` | ウォームアップ定数 |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `alpha` | ステップサイズ減衰指数 |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `gamma` | 摂動スケール減衰指数 |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `mobility` | 全体学習率スケール |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `scale` | 摂動スケール |
 
 ## 次に読む
 

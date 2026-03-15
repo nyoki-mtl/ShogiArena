@@ -5,19 +5,14 @@
 
 from __future__ import annotations
 
-from typing import get_type_hints
-
-from shogiarena.web.dashboard.backend.tournament.types import (
-    EngineOptionsResponse,
+from shogiarena._core.contexts.dashboard.application.tournament.payloads import (
     GamesCounter,
-    GamesListResponse,
-    MatchHistoryResponse,
+    HeadToHeadPayload,
     PairStatsEntry,
-    PairStatsResponse,
+    PairStatsPayload,
     ProgressPayload,
     StandingEntry,
     StandingsPayload,
-    TournamentGameEntry,
 )
 
 
@@ -59,8 +54,7 @@ class TestStandingsPayload:
         assert _required_keys(StandingsPayload) == expected
 
     def test_references_standing_entry(self) -> None:
-        hints = get_type_hints(StandingsPayload)
-        assert "standings" in hints
+        assert "standings" in StandingsPayload.__annotations__
 
 
 # ---------------------------------------------------------------------------
@@ -82,52 +76,12 @@ class TestProgressPayload:
         assert _required_keys(ProgressPayload) == expected
 
     def test_references_games_counter(self) -> None:
-        hints = get_type_hints(ProgressPayload)
-        assert "games" in hints
+        assert "games" in ProgressPayload.__annotations__
 
 
-# ---------------------------------------------------------------------------
-# Game entry types
-# ---------------------------------------------------------------------------
-
-
-class TestTournamentGameEntry:
-    def test_all_optional(self) -> None:
-        assert _required_keys(TournamentGameEntry) == set()
-
-    def test_key_count(self) -> None:
-        assert len(_all_keys(TournamentGameEntry)) == 9
-
-    def test_contains_player_fields(self) -> None:
-        keys = _all_keys(TournamentGameEntry)
-        assert {"game_id", "black_player", "white_player", "result_code"} <= keys
-
-    def test_contains_time_control_fields(self) -> None:
-        keys = _all_keys(TournamentGameEntry)
-        assert {"time_control_black", "time_control_white"} <= keys
-
-
-class TestGamesListResponse:
+class TestHeadToHeadPayload:
     def test_all_required(self) -> None:
-        expected = {"games", "total", "offset", "limit"}
-        assert _required_keys(GamesListResponse) == expected
-
-    def test_no_optional_keys(self) -> None:
-        assert _optional_keys(GamesListResponse) == set()
-
-
-class TestMatchHistoryResponse:
-    def test_all_required(self) -> None:
-        expected = {"games", "limit", "offset", "total", "signature", "source", "fetched_at"}
-        assert _required_keys(MatchHistoryResponse) == expected
-
-    def test_key_count(self) -> None:
-        assert len(_all_keys(MatchHistoryResponse)) == 7
-
-
-# ---------------------------------------------------------------------------
-# Pair stats types
-# ---------------------------------------------------------------------------
+        assert _required_keys(HeadToHeadPayload) == {"head_to_head", "updated_at"}
 
 
 class TestPairStatsEntry:
@@ -139,21 +93,7 @@ class TestPairStatsEntry:
         assert _optional_keys(PairStatsEntry) == set()
 
 
-class TestPairStatsResponse:
+class TestPairStatsPayload:
     def test_all_required(self) -> None:
         expected = {"pairs", "total_pairs", "signature", "source", "fetched_at"}
-        assert _required_keys(PairStatsResponse) == expected
-
-
-# ---------------------------------------------------------------------------
-# Engine options types
-# ---------------------------------------------------------------------------
-
-
-class TestEngineOptionsResponse:
-    def test_all_required(self) -> None:
-        expected = {"engine", "options", "info", "updated_at"}
-        assert _required_keys(EngineOptionsResponse) == expected
-
-    def test_no_optional_keys(self) -> None:
-        assert _optional_keys(EngineOptionsResponse) == set()
+        assert _required_keys(PairStatsPayload) == expected

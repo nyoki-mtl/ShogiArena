@@ -1,324 +1,156 @@
 # 開発への貢献
 
-Shogi Arena の開発に貢献するためのガイドです。
+> [!NOTE]
+> このページには contributor 向けの内部 import 例が含まれます。外部利用者向けの supported import path は `shogiarena.engine` / `shogiarena.tournament` / `shogiarena.cli` / `shogiarena.composition` です。
 
-## 開発環境のセットアップ
+ShogiArena の開発に参加するための最小ガイドです。
 
-### 1. リポジトリのクローン
+## セットアップ
 
 ```bash
 git clone https://github.com/nyoki-mtl/ShogiArena.git
 cd ShogiArena
-```
-
-### 2. uv のインストール
-
-```bash
-# Linux / macOS
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Windows
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-### 3. 依存関係のインストール
-
-```bash
 uv sync --all-extras
 ```
 
-### 4. pre-commit のセットアップ
+必要に応じて frontend 依存も入れます。
 
 ```bash
-pre-commit install
+npm ci
 ```
 
-## コーディング規約
+## よく使うコマンド
 
-### Python コード
+```bash
+make format        # コードフォーマット（ruff format）
+make lint          # リントチェック（ruff check --fix）
+make typecheck     # 型チェック（ty）
+make check         # format, lint, convention-lint, typecheck, check-js を実行（テストは含まない）
+make test          # 全テスト実行
+make check-full    # check + test + frontend-test
+make ci            # public GitHub CI と同等の検証
+make ci-develop    # develop GitHub CI と同等の検証（typing-audit含む）
+make check-all     # check-full + pre-commit --all-files
+```
 
-#### 型ヒント
+ドキュメントは現在 `mdBook` です。
 
-すべての関数に型ヒントを付けます：
+```bash
+make docs-build    # 静的ドキュメントのビルド
+make docs-serve    # ローカルサーバーで自動リロード付きプレビュー（ブラウザが開きます）
+```
+
+## CI/CD と公開フロー
+
+- private の `ShogiArena-dev` では `develop-ci.yml` が `make ci-develop` を実行します。
+- public の `ShogiArena` では `public-ci.yml` が `make ci` を実行し、`public-docs.yml` が docs build と GitHub Pages deploy、`public-release.yml` が tag push (`v*`) を契機に GitHub Release と PyPI publish を実行します。
+- `typing-audit-ci` は `agent-docs/` の baseline に依存するため、develop 側 CI のみで実行します。
+
+public への export は補助スクリプトで行えます。
+
+```bash
+scripts/export_public_snapshot.sh --notes-file release-notes/v0.8.0.txt v0.8.0
+git push public HEAD:main
+```
+
+このスクリプトは `develop/main` を public snapshot に重ねつつ、`agent-docs/` や `AGENTS.md` などの dev-only ファイルに加えて、`dist/` や `site/` のようなローカル生成物も除外し、public 側に不要な `develop-ci.yml` も落とします。
+
+## いまの構造
+
+実装正本:
+
+- `src/shogiarena/_core/contexts`
+- `src/shogiarena/_core/platform`
+- `src/shogiarena/_core/interfaces`
+- `src/shogiarena/_core/shared/kernel`
+
+利用者向け facade:
+
+- `src/shogiarena/engine.py`
+- `src/shogiarena/tournament.py`
+- `src/shogiarena/cli.py`
+- `src/shogiarena/composition.py`
+
+## 変更時の基本方針
+
+- 公開 API の説明では `shogiarena.engine` / `shogiarena.tournament` を優先する
+- `_core` の deep import は contributor / 実装用途に限定する
+- wiring は composition root に閉じ込める
+- `apply_patch` ベースで編集し、破壊的変更を避けるための互換レイヤは原則作らない
+
+## テスト例
+
+### public API のテスト
 
 ```python
-# ✅ Good
-def calculate_rating(current: float, opponent: float, result: float) -> float:
-    return current + 16 * (result - expected_score(current, opponent))
+import shogiarena.engine
+import shogiarena.tournament
 
-# ❌ Bad
-def calculate_rating(current, opponent, result):
-    return current + 16 * (result - expected_score(current, opponent))
+
+def test_public_engine_exports() -> None:
+    exported = set(shogiarena.engine.__all__)
+    assert "AsyncUsiEngine" in exported
+    assert "create_engine" in exported
 ```
 
-#### docstring
-
-公開 API には docstring を付けます（日本語）：
+### internal service のユニットテスト
 
 ```python
-def update_ratings(engine1: str, engine2: str, result: str) -> dict[str, float]:
-    """
-    対局結果からレーティングを更新します。
+from shogiarena._core.shared.kernel.statistics.btd_rating import BTDEstimator
 
-    Args:
-        engine1: エンジン1の名前
-        engine2: エンジン2の名前
-        result: engine1から見た結果（"win", "loss", "draw"）
 
-    Returns:
-        更新後のレーティング辞書
-    """
-    ...
+def test_btd_estimation_runs() -> None:
+    estimator = BTDEstimator()
+    result = estimator.estimate(
+        games=[],
+        engine_names=["engine-a", "engine-b"],
+    )
+    assert result.anchor in {"engine-a", "engine-b"}
 ```
 
-#### 変数名
-
-- 意味のある英語の単語を使用
-- 略語は避ける（明確な場合を除く）
-
-```python
-# ✅ Good
-engine_name = "YaneuraOu"
-total_games = 100
-
-# ❌ Bad
-en = "YaneuraOu"
-n = 100
-```
-
-#### ロガーメッセージ
-
-ログメッセージは英語で記述：
-
-```python
-# ✅ Good
-logger.info("Starting tournament with %d engines", len(engines))
-
-# ❌ Bad
-logger.info("トーナメントを開始します")
-```
-
-### フォーマットとリント
-
-#### ruff による自動フォーマット
-
-```bash
-make format
-```
-
-#### ruff によるリントチェック
-
-```bash
-make lint
-```
-
-#### ty による型チェック
-
-```bash
-make typecheck
-```
-
-#### すべてのチェックを実行
-
-```bash
-make check
-```
-
-## テスト
-
-### テストの実行
-
-```bash
-# すべてのテストを実行
-make test
-
-# カバレッジ付き
-make test-cov
-
-# ユニットテストのみ
-make test-unit
-
-# 統合テストのみ
-make test-integration
-```
-
-### テストの書き方
-
-#### ユニットテスト
+### 非同期 engine テスト
 
 ```python
 import pytest
-from shogiarena.arena.services.rating import EloRatingService
 
-def test_rating_update_after_win():
-    """勝利後のレーティング更新をテスト"""
-    service = EloRatingService(initial_rating=1500, k_factor=16)
+from shogiarena.engine import UsiThinkRequest, create_engine_from_mapping
 
-    new_ratings = service.update_ratings("EngineA", "EngineB", "win")
-
-    assert new_ratings["EngineA"] > 1500  # EngineA のレーティングが上昇
-    assert new_ratings["EngineB"] < 1500  # EngineB のレーティングが下降
-```
-
-#### 非同期テスト
-
-```python
-import pytest
-from shogiarena.arena.engines.engine_factory import EngineFactory
 
 @pytest.mark.asyncio
-async def test_engine_lifecycle():
-    """エンジンのライフサイクルをテスト"""
-    engine = await EngineFactory.create_engine("tests/fixtures/mock_engine.yaml")
-    await engine.start()
-
-    assert engine.name == "MockEngine"
-
-    await engine.close()
+async def test_engine_lifecycle() -> None:
+    async with await create_engine_from_mapping(
+        {
+            "name": "mock",
+            "engine_path": "tests/fixtures/mock_engine.py",
+            "options": {},
+        }
+    ) as engine:
+        result = await engine.think(
+            sfen="startpos",
+            request=UsiThinkRequest(movetime=100),
+        )
+        assert result.bestmove is not None
 ```
 
-#### プロパティベーステスト
+## コミット
 
-```python
-from hypothesis import given, strategies as st
-from shogiarena.arena.services.rating import EloRatingService
+Conventional Commits を使います。
 
-@given(
-    rating1=st.floats(min_value=0, max_value=3000),
-    rating2=st.floats(min_value=0, max_value=3000),
-)
-def test_rating_conservation(rating1: float, rating2: float):
-    """レーティングの総和が保存されることをテスト"""
-    service = EloRatingService(k_factor=16)
-    service._ratings = {"A": rating1, "B": rating2}
+例:
 
-    initial_sum = rating1 + rating2
-    new_ratings = service.update_ratings("A", "B", "win")
-    final_sum = new_ratings["A"] + new_ratings["B"]
+- `refactor: move internals under _core`
+- `docs: align public api docs with facades`
+- `test: add public surface regression coverage`
 
-    assert abs(final_sum - initial_sum) < 1e-6  # 誤差を許容
-```
+## レビュー観点
 
-## ブランチ戦略
+特に次を見ます。
 
-### ブランチ命名規則
+- 公開 API と internal API の境界が崩れていないか
+- `_core` への移動で import 方向が壊れていないか
+- facade が wiring を持ち込みすぎていないか
+- docs が public surface と一致しているか
 
-- `feature/{feature-name}`: 新機能
-- `fix/{bug-name}`: バグ修正
-- `refactor/{description}`: リファクタリング
-- `docs/{description}`: ドキュメント更新
+## 補足
 
-### 例
-
-```bash
-git checkout -b feature/add-swiss-system
-git checkout -b fix/rating-calculation-bug
-git checkout -b docs/update-api-reference
-```
-
-## コミットメッセージ
-
-### フォーマット
-
-```
-<type>: <subject>
-
-<body>
-```
-
-### type の種類
-
-- `feat`: 新機能
-- `fix`: バグ修正
-- `refactor`: リファクタリング
-- `docs`: ドキュメント
-- `test`: テスト追加・修正
-- `chore`: その他の変更
-
-### 例
-
-```
-feat: add Swiss system tournament scheduler
-
-Implement a new scheduler that supports Swiss system tournaments.
-This allows for more efficient tournament execution with large
-numbers of participants.
-
-Closes #123
-```
-
-## プルリクエスト
-
-### プルリクエストを作成する前に
-
-1. すべてのテストがパスすることを確認
-
-```bash
-make check
-make test
-```
-
-2. コミットメッセージが規約に従っていることを確認
-
-3. 変更内容を説明する README や docs を更新
-
-### プルリクエストのテンプレート
-
-```markdown
-## 概要
-
-この PR は何をするものか簡潔に説明してください。
-
-## 変更内容
-
-- 変更点1
-- 変更点2
-- 変更点3
-
-## テスト方法
-
-この変更をテストする方法を説明してください。
-
-## チェックリスト
-
-- [ ] テストがパスする
-- [ ] ドキュメントを更新した
-- [ ] コーディング規約に従っている
-- [ ] 型チェックがパスする
-```
-
-### レビュープロセス
-
-1. 自動テストが実行される（GitHub Actions）
-2. コードレビューを受ける
-3. 承認されたらマージ
-
-## リリースプロセス
-
-### バージョニング
-
-Semantic Versioning (SemVer) を使用：
-
-- `MAJOR.MINOR.PATCH`
-- 例: `1.2.3`
-
-### リリース手順
-
-1. バージョン番号を更新（`pyproject.toml`）
-2. CHANGELOG を更新
-3. タグを作成
-
-```bash
-git tag -a v1.2.3 -m "Release version 1.2.3"
-git push origin v1.2.3
-```
-
-## 質問・サポート
-
-- **GitHub Issues**: バグ報告や機能リクエスト
-- **GitHub Discussions**: 使い方の質問や議論
-
-## 次のステップ
-
-- **[プロジェクト構造](project-structure.md)** - コードベースの構造
-- **[Architecture Overview](../technical/architecture.md)** - アーキテクチャの詳細
+このリポジトリはまだ破壊的変更を許容しています。したがって、互換レイヤを残すよりも「現在の正本を明確にする」ことを優先します。

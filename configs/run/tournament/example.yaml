@@ -1,0 +1,128 @@
+## Equivalent: shogiarena run tournament configs/run/tournament/example.yaml
+
+# Arena example (current spec with defaults)
+
+# 実験名（省略時はファイル名のstem: 本ファイルなら "example"）
+#experiment_name: "example"
+
+# 参加エンジン（少なくとも2つ必要）
+# 指定方法（いずれか片方は必須・同時指定は不可）:
+# - artifact: "<repo>/<commit>"（厳密）
+#   - build_options.target_cpu は必須（例: ZEN2, ZEN3, AVX2 など）
+#   - edition/compiler/target/jobs は任意で上書き可
+#   - name 省略時は自動命名: <repo>_<commit>
+# - engine_path: エンジンYAMLファイルへのパス
+#   - build_options は使用しません。指定がある場合はエラーになります。
+# 共通（両方式）:
+# - options_overlays: USIオプション上書き用のYAMLをリスト指定（overlayの上にマージ）
+# - options: USIオプション上書き（overlay/options_overlaysの上にマージ）
+# - time_control: 片側の時間制御上書き（rules.time_control の上にマージ）
+engines: []
+
+# 記述例（artifact 指定）
+# engines:
+#   - artifact: "yaneuraou/3570416"
+#     build_options:
+#       target_cpu: ZEN3
+#     options_overlays:
+#       - "{eval_config_dir}/example.yaml"
+#     options:
+#       Threads: 4
+#   - artifact: "yaneuraou/9f89431a"
+#     build_options:
+#       target_cpu: AVX2
+#     options_overlays:
+#       - "{eval_config_dir}/example.yaml"
+
+# 記述例（engine_path 指定）
+# engines:
+#   - engine_path: "configs/resources/engines/YO_9f89431a.yaml"
+#     options_overlays:
+#       - "{eval_config_dir}/example.yaml"
+
+tournament:
+  # スケジューラ: round_robin | gauntlet（デフォルト: round_robin）
+  scheduler: "round_robin"
+  # 1 ペアあたりの対局数（先後合算）。デフォルト: 4
+  games_per_pair: 4
+  # 同時実行数（デフォルト: 4）
+  num_parallel: 4
+  # スケジュールのシード（デフォルト: 42）
+  seed: 42
+  # 試合順（デフォルト: auto）: auto | pairwise | interleave | shuffle
+  game_order: "auto"
+  # gauntlet の場合のみ: 先頭を baseline として扱う数（デフォルト: 1）
+  baseline_count: 1
+rules:
+  # 初期局面
+  initial_positions:
+    type: "startpos"   # startpos | file
+    flip_policy: "pair_both"   # alternate | random | none | pair_both
+    # file の場合のみ指定（絶対パス/相対パス対応）
+    source: null
+
+  # Adjudication（早期終了）設定
+  adjudication:
+    enable_max_plies: true
+    max_plies: 320
+    sync_max_plies_with_engine: true
+    engine_max_ply_option_names: "auto"
+    enable_resign: false
+  # 同一局面が何回現れたら千日手とみなすか（デフォルト: 2, 公式ルールは4）
+  repetition_occurrences_to_draw: 2
+  # 時間制御（指定しなければ時間制御は無効）
+  # fixed_time_ms / time_ms+increment_ms / time_ms+byoyomi_ms から選択
+  #depth_limit/node_limit は任意で付与
+  #time_control:
+  #  fixed_time_ms: null
+  #  time_ms: null
+  #  increment_ms: null
+  #  byoyomi_ms: null
+  #  depth_limit: null
+  #  node_limit: null
+  #  expiry_margin_ms: 500
+  #  allow_timeout: false
+  # SPRT 設定はトップレベルの sprt に移行
+
+sprt:
+  # 早期打切り（任意）
+  #elo0: 0.0
+  #elo1: 5.0
+  #alpha: 0.05
+  #beta: 0.05
+  #min_games: 0   # 早期終了の前に最低消化する局数
+
+# OpenBench/ShogiBench への結果提出（任意、SPRT時のみ）
+#openbench:
+#  enabled: true
+#  mode: existing_test   # or: create_test
+#  server: "https://your-openbench.example.com"
+#  username: "your-user"
+#  password_env: "OPENBENCH_PASSWORD"
+#  target_test_id: 1234
+#  submit_interval_games: 2
+#  strict: true
+#  # create:             # required when mode=create_test
+#  #   discovery_timeout_sec: 180
+#  #   payload:
+#  #     dev_engine: "YaneuraOu"
+#  #     base_engine: "YaneuraOu"
+
+rating:
+  initial: 1500.0
+  k_factor: 16.0
+
+dashboard:
+  enabled: true
+  api_port: 8080
+
+# ログレベル（デフォルト: INFO）: DEBUG | INFO | WARNING | ERROR
+log_level: "INFO"
+
+# 実行パス
+# run_dir: 既定は {output_dir}/runs/<config_stem>-<hash8>/YYYYMMDDHHmmSS
+#run_dir: null
+
+# インスタンス指定（CLI）
+# - Arena/SPSA ともに `--instances configs/resources/instances/<file>.yaml` を共有利用
+# - インスタンス定義は configs/resources/instances/ を参照（単一ファイル/hosts 展開のみ）

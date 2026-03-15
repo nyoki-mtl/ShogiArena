@@ -16,7 +16,7 @@ shogiarena config init
 shogiarena config init --non-interactive --output-dir /path/to/output --engine-dir /path/to/engines
 ```
 
-> **Note**: 初期化は `shogiarena init`（`shogiarena config init` の互換エイリアス）を使用します。
+> **Note**: 初期化コマンドは `shogiarena config init` です。
 
 | オプション | 説明 |
 | --- | --- |
@@ -47,6 +47,7 @@ shogiarena run mate <engine> [position] [options]
 | `--infinite` | `go mate infinite` を送信。 |
 | `--wait-bestmove` | `checkmate` 後に trailing `bestmove` 受信まで待機。 |
 | `--timeout SEC` | タイムアウト時間。 |
+| `--option KEY=VALUE` | エンジンオプションの上書き（複数指定可）。 |
 
 `--ply-limit` と `--node-limit` は同時指定できません。`--infinite` は両者と排他です。
 

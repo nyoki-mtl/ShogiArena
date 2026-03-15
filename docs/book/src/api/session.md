@@ -1,369 +1,134 @@
 # Session API
 
-セッション制御の API リファレンスです。Runner と Orchestrator が共有するコンテキスト・ライフサイクルフック・停止制御を提供します。
+> [!WARNING]
+> このページは contributor 向けの内部リファレンスです。正式な公開 API ではありません。利用者向けの import は facade 側を使い、ここで紹介する `_core` 型は runner / orchestrator 実装用と考えてください。
 
-## SessionContext クラス
+session レイヤーは「1 回の run に紐づく共有状態」と「協調停止フック」を提供します。トーナメント runner と orchestration 層のあいだで共通に使われます。
+
+## 主な型
 
 ```python
-shogiarena.arena.session.SessionContext(
-    storage: RunStorage,
-    num_workers: int,
-    run_id: str,
-    instance_pool: InstancePool | None = None,
-    metadata: SessionMetadata | None = None,
-    services: SessionServices | None = None,
+from shogiarena._core.contexts.game_session.ports.session_context import SessionContext
+from shogiarena._core.shared.kernel.session_hooks import (
+    CallbackGameLifecycleHooks,
+    GameCompletionEvent,
+    GameLifecycleHooks,
+    NoopGameLifecycleHooks,
+    SessionStopController,
 )
 ```
 
-実行コンテキストを保持するイミュータブルなデータクラスです（`@dataclass(frozen=True, slots=True)`）。
+## `SessionContext`
 
-SessionContext は以下の機能を持ちます：
+[`SessionContext`](/workspaces/ShogiArena/src/shogiarena/_core/contexts/game_session/ports/session_context.py) は immutable な実行コンテキストです。保持するのは resume 可能な metadata と run 単位の基礎情報だけで、runtime service 自体は抱えません。
 
-- 実行に必要なストレージ・ワーカー数・インスタンスプールの一元管理
-- メタデータとサービスの保持
-- スナップショットとしての保存・復元
+主要フィールド:
 
-### 引数
+- `storage`
+  `RunStoragePort` 実装
+- `num_workers`
+  scheduler / orchestrator が使う worker 数
+- `run_id`
+  run の識別子
+- `instance_pool`
+  任意の instance pool 参照
+- `metadata`
+  resume 可能な JSON 互換メタデータ
 
-- **storage**: `RunStorage`
-  ストレージ（必須）。`run_dir` は `storage.run_dir` から取得されます。
-- **num_workers**: `int`
-  ワーカー数（1 以上）。
-- **run_id**: `str`
-  実行 ID。
-- **instance_pool**: `InstancePool | None` (デフォルト: `None`)
-  インスタンスプール。
-- **metadata**: `SessionMetadata | None` (デフォルト: `None`)
-  セッションメタデータ（`TournamentSessionMetadata` または `SpsaSessionMetadata`）。
-- **services**: `SessionServices | None` (デフォルト: `None`)
-  セッションサービス（`TournamentServices` または `SpsaServices`）。
+### 生成と復元
 
-### メソッド
+- `SessionContext.build(...)`
+  loosely typed な入力から検証済み context を構築します
+- `to_snapshot()`
+  `run_id` / `num_workers` / `metadata` を JSON object へ落とします
+- `save_to_storage(filename="session_context.json")`
+  snapshot を `RunStorage` に保存します
+- `from_snapshot(...)`
+  検証付きで snapshot から復元します
+- `load_from_storage(...)`
+  保存済み JSON があれば context を復元します
 
-#### `build()`
+### バリデーション
 
-```python
-SessionContext.build(
-    *,
-    storage: RunStorage,
-    num_workers: int,
-    instance_pool: InstancePool | None = None,
-    run_id: str | None = None,
-    metadata: Mapping[str, Any] | None = None,
-    services: Mapping[str, Any] | None = None,
-) -> SessionContext
-```
+- `storage.run_dir` は絶対パスかつ既存ディレクトリである必要があります
+- `num_workers >= 1`
+- `run_id` は空文字不可
+- `metadata` は string key の object に正規化されます
 
-SessionContext を構築するクラスメソッドです。`run_id` が省略された場合は自動生成されます。
+## 停止制御
 
-**使用例:**
+### `SessionStopController`
 
-```python
-from shogiarena.arena.session import SessionContext
-from shogiarena.arena.storage import FilesystemRunStorage
+[`SessionStopController`](/workspaces/ShogiArena/src/shogiarena/_core/shared/kernel/session_hooks.py) は「これ以上ゲームを新規投入してよいか」を表す最小の協調停止コントローラです。
 
-storage = FilesystemRunStorage(Path("output/runs/test"))
+- `request_stop(reason: str | None = None)`
+- `should_continue() -> bool`
+- `is_stop_requested`
+- `reason`
 
-ctx = SessionContext.build(
-    storage=storage,
-    num_workers=4,
-    run_id="run_001",
-    metadata={
-        "experiment_name": "test_tournament",
-        "engines": ["engine1", "engine2"],
-    },
-)
+SPRT 判定や外部停止要求を runner 側から伝播するときに使います。
 
-print(f"Run ID: {ctx.run_id}")
-```
+## 完了イベントと hooks
 
----
+### `GameCompletionEvent`
 
-#### `to_snapshot()`
+1 局終了時に lifecycle hooks へ渡されるイベントです。
 
-```python
-ctx.to_snapshot() -> SessionSnapshot
-```
+- `game_id`
+- `game_info`
+  `rshogi.record.GameRecord`
+- `payload`
+  runner 固有の付加情報
+- `worker_idx`
+- `is_stop_requested`
 
-セッション情報をスナップショットとして返します。
+### `GameLifecycleHooks`
 
----
+orchestrator が期待する最小 protocol です。
 
-#### `save_to_storage()`
+- `on_game_complete(event)`
+- `should_continue()`
 
-```python
-ctx.save_to_storage(*, filename: str = "session_context.json") -> None
-```
+### `NoopGameLifecycleHooks`
 
-セッション情報をストレージに保存します。
+stop controller だけを持つデフォルト実装です。特別な処理が不要な runner でそのまま使えます。
 
----
+### `CallbackGameLifecycleHooks`
 
-#### `from_snapshot()`
+runner ごとのネストした hook class を減らすための汎用実装です。
 
-```python
-SessionContext.from_snapshot(
-    *,
-    storage: RunStorage,
-    snapshot: Mapping[str, Any],
-    instance_pool: InstancePool | None = None,
-    services: Mapping[str, Any] | None = None,
-) -> SessionContext
-```
-
-スナップショットから SessionContext を復元するクラスメソッドです。
-
----
-
-#### `load_from_storage()`
-
-```python
-SessionContext.load_from_storage(
-    *,
-    storage: RunStorage,
-    instance_pool: InstancePool | None = None,
-    services: Mapping[str, Any] | None = None,
-    filename: str = "session_context.json",
-) -> SessionContext | None
-```
-
-ストレージから SessionContext を読み込むクラスメソッドです。ファイルが存在しない場合は `None` を返します。
-
----
-
-## ライフサイクルフック
-
-### GameCompletionEvent クラス
-
-```python
-shogiarena.arena.session.GameCompletionEvent(
-    game_id: str,
-    game_info: Any,
-    payload: Any,
-    worker_idx: int | None = None,
-    stop_requested: bool = False,
-)
-```
-
-対局完了イベントを表すデータクラスです。
-
-#### 引数
-
-- **game_id**: `str` 対局 ID
-- **game_info**: `Any` 対局情報
-- **payload**: `Any` 追加データ
-- **worker_idx**: `int | None` (デフォルト: `None`) ワーカーインデックス
-- **stop_requested**: `bool` (デフォルト: `False`) 停止が要求されたか
-
----
-
-### GameLifecycleHooks プロトコル
-
-```python
-shogiarena.arena.session.GameLifecycleHooks
-```
-
-ライフサイクルフックのプロトコルです。
-
-#### メソッド
-
-#### `on_game_complete()`
-
-```python
-async def on_game_complete(self, event: GameCompletionEvent) -> None
-```
-
-対局完了時に呼ばれます。**非同期メソッド**です。
-
----
-
-#### `should_continue()`
-
-```python
-async def should_continue(self) -> bool
-```
-
-継続すべきか判定します。**非同期メソッド**です。
-
----
-
-### LifecycleHooksBase クラス
-
-```python
-shogiarena.arena.session.LifecycleHooksBase(
-    stop_controller: SessionStopController,
-)
-```
-
-`GameLifecycleHooks` のデフォルト実装です。
-
-#### 引数
-
-- **stop_controller**: `SessionStopController`
-  停止コントローラ。
-
-#### プロパティ
-
-- **`stop_controller`**: `SessionStopController` 停止コントローラ
-
-#### メソッド
-
-#### `on_game_complete()`
-
-```python
-async def on_game_complete(self, event: GameCompletionEvent) -> None
-```
-
-デフォルトでは何もしません。サブクラスでオーバーライドして使用します。
-
----
-
-#### `should_continue()`
-
-```python
-async def should_continue(self) -> bool
-```
-
-`stop_controller.should_continue()` の結果を返します。
-
----
-
-## SessionStopController クラス
-
-```python
-shogiarena.arena.session.SessionStopController()
-```
-
-協調停止を管理するコントローラです。
-
-### プロパティ
-
-- **`stop_requested`**: `bool` 停止が要求されたか
-- **`reason`**: `str | None` 停止理由
-
-### メソッド
-
-#### `request_stop()`
-
-```python
-controller.request_stop(*, reason: str | None = None) -> None
-```
-
-停止を要求します。
-
-**引数:**
-- **reason**: `str | None` (デフォルト: `None`) 停止理由
-
----
-
-#### `should_continue()`
-
-```python
-controller.should_continue() -> bool
-```
-
-継続すべきか判定します。停止が要求されていない場合に `True` を返します。
-
----
-
-#### `assert_running()`
-
-```python
-controller.assert_running() -> None
-```
-
-停止済みなら `RuntimeError` を送出します。
-
----
+- payload type を受け取る
+- typed callback を 1 つ登録する
+- payload 型が違えば `TypeError` にします
 
 ## 使用例
 
-### SessionContext の構築
-
 ```python
 from pathlib import Path
-from shogiarena.arena.session import SessionContext
-from shogiarena.arena.storage import FilesystemRunStorage
 
-storage = FilesystemRunStorage(Path("output/runs/test"))
+from shogiarena._core.contexts.game_session.adapters.run_storage import (
+    FilesystemRunStorage,
+)
+from shogiarena._core.contexts.game_session.ports.session_context import (
+    SessionContext,
+)
+from shogiarena._core.shared.kernel.session_hooks import SessionStopController
 
-ctx = SessionContext.build(
+storage = FilesystemRunStorage(Path(".sandbox/work_dir/example-run"))
+context = SessionContext.build(
     storage=storage,
     num_workers=4,
-    run_id="run_001",
-    metadata={
-        "experiment_name": "test_tournament",
-        "engines": ["engine1", "engine2"],
-    },
+    metadata={"experiment_name": "example"},
 )
 
-print(f"Run ID: {ctx.run_id}")
+context.save_to_storage()
+
+stop_controller = SessionStopController()
+stop_controller.request_stop(reason="sprt accepted")
 ```
 
-### ライフサイクルフックの実装
+## 設計メモ
 
-```python
-from shogiarena.arena.session import LifecycleHooksBase, GameCompletionEvent, SessionStopController
-
-class MyHooks(LifecycleHooksBase):
-    def __init__(self):
-        super().__init__(SessionStopController())
-        self.completed_games = []
-
-    async def on_game_complete(self, event: GameCompletionEvent) -> None:
-        self.completed_games.append(event.game_id)
-        print(f"Game {event.game_id} completed")
-
-        # 10局完了したら停止
-        if len(self.completed_games) >= 10:
-            self.stop_controller.request_stop(reason="10 games completed")
-
-hooks = MyHooks()
-```
-
-### 停止制御
-
-```python
-from shogiarena.arena.session import SessionStopController
-
-controller = SessionStopController()
-
-# 別スレッド/タスクから停止を要求
-controller.request_stop(reason="User requested stop")
-
-# Orchestrator 内でチェック
-if not controller.should_continue():
-    print(f"Stopping: {controller.reason}")
-```
-
-### Runner との統合
-
-```python
-from shogiarena.arena.session import LifecycleHooksBase, SessionStopController
-from shogiarena.arena.services.statistics.sprt import SprtDecision
-
-class TournamentHooks(LifecycleHooksBase):
-    def __init__(self, sprt_service, max_games):
-        super().__init__(SessionStopController())
-        self.sprt_service = sprt_service
-        self.max_games = max_games
-        self.game_count = 0
-
-    async def on_game_complete(self, event):
-        self.game_count += 1
-
-        # SPRT 判定
-        if self.sprt_service:
-            result = self.sprt_service.add_game_result(event.game_info.result)
-            if result.decision != SprtDecision.CONTINUE:
-                self.stop_controller.request_stop(reason=f"SPRT: {result.decision}")
-
-        # 最大対局数
-        if self.game_count >= self.max_games:
-            self.stop_controller.request_stop(reason="Max games reached")
-```
-
-## 関連ドキュメント
-
-- [Runners API](runners.md) - Runner との連携
-- [Orchestrators API](orchestrators.md) - Orchestrator との連携
+- `SessionContext` は service locator ではありません
+- 永続化対象は snapshot 化できる最小情報だけに絞っています
+- 停止制御は例外ではなく明示的な state と hook で伝える方針です

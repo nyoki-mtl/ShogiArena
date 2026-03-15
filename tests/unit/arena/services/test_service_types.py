@@ -6,10 +6,10 @@ SprtStateSnapshot, OpenBenchCounters, および EngineIoTailEntry の
 
 from __future__ import annotations
 
-from shogiarena.arena.services.openbench import OpenBenchCounters
-from shogiarena.arena.services.statistics.sprt import SprtStateSnapshot
-from shogiarena.utils.types.snapshots import EngineIoTailEntry
-from shogiarena.web.dashboard.backend.types import GamesSnapshotPayload
+from shogiarena._core.contexts.dashboard.application.events import GamesSnapshotPayload
+from shogiarena._core.contexts.game_session.adapters.openbench.client_types import OpenBenchCounters
+from shogiarena._core.contexts.game_session.application.sprt_service import SprtStateSnapshot
+from shogiarena._core.shared.kernel.snapshots import EngineIoTailEntry
 
 
 def _required_keys(td: type) -> set[str]:
@@ -121,10 +121,16 @@ class TestEngineIoTailEntry:
 
 class TestGamesSnapshotPayload:
     def test_required_keys(self) -> None:
-        assert _required_keys(GamesSnapshotPayload) == {"type", "rows", "snapshotMeta"}
+        assert _required_keys(GamesSnapshotPayload) == {
+            "kind",
+            "revision",
+            "base_revision",
+            "rows",
+            "snapshotMeta",
+        }
 
     def test_no_optional_keys(self) -> None:
         assert _optional_keys(GamesSnapshotPayload) == set()
 
     def test_key_count(self) -> None:
-        assert len(_required_keys(GamesSnapshotPayload)) == 3
+        assert len(_required_keys(GamesSnapshotPayload)) == 5

@@ -9,8 +9,8 @@
 ダッシュボードの Live 更新は WebSocket `/ws` で配信します。
 
 **実装参照**:
-- サーバ: `src/shogiarena/web/dashboard/backend/ws_server.py`
-- フロント: `src/shogiarena/web/dashboard/frontend/src/modules/live/`
+- サーバ: `src/shogiarena/_core/interfaces/dashboard/ws_server.py`
+- フロント: `src/shogiarena/_core/interfaces/dashboard/frontend/src/modules/live/`
 
 ## LiveEnvelope
 
@@ -128,7 +128,7 @@ Payload には `gids` と `assignment_rev` が含まれます。
 
 ### WS Hub
 
-Topic state は TTL/最大件数で自動 prune されます（`ws_server.py`）。
+Topic state は TTL/最大件数で自動 prune されます（`_core/interfaces/dashboard/api_server/runtime_mixin.py`）。
 
 **環境変数**:
 - `SHOGI_ARENA_DASHBOARD_WS_TOPIC_TTL_SECONDS`（秒、既定: 1800 / 30分、`0|off|false` で無効化）
@@ -136,7 +136,7 @@ Topic state は TTL/最大件数で自動 prune されます（`ws_server.py`）
 
 ### API Server
 
-Game snapshot キャッシュは LRU で上限化されます（`api_server.py`）。
+Game snapshot キャッシュは LRU で上限化されます（`_core/contexts/dashboard/application/game/cache.py`）。
 
 **環境変数**:
 - `SHOGI_ARENA_DASHBOARD_MAX_GAME_SNAPSHOTS`（既定: 512）
@@ -159,9 +159,9 @@ Game snapshot キャッシュは LRU で上限化されます（`api_server.py`�
 
 ### サーバサイド
 
-- **WebSocket Hub**: `src/shogiarena/web/dashboard/backend/ws_server.py`
-- **スナップショット供給**: `src/shogiarena/web/dashboard/backend/api_server.py`
-- **Live 更新**: `src/shogiarena/web/dashboard/backend/live/`
+- **WebSocket Hub**: `src/shogiarena/_core/interfaces/dashboard/ws_server.py`
+- **スナップショット供給**: `src/shogiarena/_core/interfaces/dashboard/api_server/server.py`
+- **Live 更新**: `src/shogiarena/_core/interfaces/dashboard/frontend/src/modules/live/`
 
 ### クライアントサイド
 

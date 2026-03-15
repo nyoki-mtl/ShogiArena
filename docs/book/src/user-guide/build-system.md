@@ -304,50 +304,40 @@ git status
 
 **~/.config/shogiarena/builds/yaneuraou.yaml**:
 ```yaml
-commits:
-  main:
-    targets:
-      YaneuraOu-by-gcc:
-        command: "make -j$(nproc) TARGET=YaneuraOu-by-gcc"
-        binary: "YaneuraOu-by-gcc"
-      
-      YaneuraOu-by-clang:
-        command: "make -j$(nproc) TARGET=YaneuraOu-by-clang"
-        binary: "YaneuraOu-by-clang"
-      
-      YaneuraOu-avx2:
-        command: "TARGET_CPU=AVX2 make -j$(nproc) TARGET=YaneuraOu-by-gcc"
-        binary: "YaneuraOu-by-gcc"
+work_dir: "{repo.path}/source"
+defaults:
+  jobs: 4
+commands:
+  - ["make", "clean"]
+  - ["make", "-j{opts.jobs}", "tournament"]
+artifacts:
+  - path: "{work_dir}/YaneuraOu-by-gcc"
+    chmod: "755"
 ```
 
 ### Makefile がないエンジン
 
 ```yaml
-commits:
-  main:
-    targets:
-      myengine:
-        command: |
-          mkdir -p build
-          cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release
-          make -j$(nproc)
-        binary: "build/myengine"
+work_dir: "{repo.path}"
+defaults:
+  jobs: 4
+commands:
+  - ["mkdir", "-p", "build"]
+  - ["bash", "-lc", "cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j{opts.jobs}"]
+artifacts:
+  - path: "{work_dir}/build/myengine"
+    chmod: "755"
 ```
 
 ### Rust プロジェクト
 
 ```yaml
-commits:
-  main:
-    targets:
-      release:
-        command: "cargo build --release"
-        binary: "target/release/myengine"
-      
-      native:
-        command: "RUSTFLAGS='-C target-cpu=native' cargo build --release"
-        binary: "target/release/myengine"
+work_dir: "{repo.path}"
+commands:
+  - ["cargo", "build", "--release"]
+artifacts:
+  - path: "{work_dir}/target/release/myengine"
+    chmod: "755"
 ```
 
 ## トラブルシューティング

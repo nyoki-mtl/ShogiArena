@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from shogiarena.arena.instances.pool import InstancePool
+from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 
 
 def _write_yaml(tmp_path: Path, name: str, content: str) -> Path:
@@ -47,7 +47,7 @@ hosts:
   - 192.0.2.2
 slots: 4
 identity_file: ~/.ssh/id_rsa
-strict_host_key_checking: true
+is_strict_host_key_checking: true
 """.strip(),
     )
 

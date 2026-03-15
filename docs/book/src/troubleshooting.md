@@ -9,10 +9,10 @@ ShogiArena の使用中に発生する可能性のある問題と解決方法を
 #### Python バージョンが古い
 
 ```
-ERROR: Package 'shogiarena' requires a different Python: 3.9.0 not in '>=3.10'
+ERROR: Package 'shogiarena' requires a different Python: 3.10.0 not in '>=3.11'
 ```
 
-**解決**: Python 3.10 以上にアップグレードしてください。
+**解決**: Python 3.11 以上にアップグレードしてください。
 
 ```bash
 # Python バージョン確認
@@ -60,7 +60,7 @@ brew install python@3.11
 
 3. 絶対パスで試す
    ```yaml
-   path: "/full/path/to/engine"
+   engine_path: "/full/path/to/engine"
    ```
 
 #### エラー: `PermissionError: [Errno 13] Permission denied`
@@ -81,7 +81,7 @@ chmod +x /path/to/engine
 ```yaml
 # engine.yaml
 name: "SlowEngine"
-path: "/path/to/engine"
+engine_path: "/path/to/engine"
 startup_timeout_sec: 60  # デフォルトは 10 秒
 ```
 
@@ -127,21 +127,20 @@ brew install tbb          # macOS
 **解決**:
 1. インスタンス設定ファイルを確認
    ```bash
-   cat configs/resources/instances/local.yaml
+   cat configs/resources/instances/example.yaml
    ```
 
 2. `slots` と `max_engines` の設定を確認
    ```yaml
-   instances:
-     - instance_id: "local"
-       type: "local"
-       slots: 4          # 同時実行対局数
-       max_engines: 8    # 同時起動エンジン数
+   name: "local"
+   type: "local"
+   slots: 4
+   max_engines: 8
    ```
 
 3. デフォルトインスタンスを使用
    ```bash
-   # --instances を指定しない
+   # run 設定の instances を外してローカル既定設定に任せる
    shogiarena run tournament tournament.yaml
    ```
 
@@ -157,13 +156,12 @@ brew install tbb          # macOS
    ```
 
 2. 必須フィールドが揃っているか確認
-   - `experiment_name`
-   - `engines` リスト
-   - `tournament.scheduler`
+   - `engines` リスト（少なくとも 2 つ）
+   - `rules`（時間制御などのルール定義）
 
 3. サンプル設定と比較
    ```bash
-   cat examples/configs/run/tournament/example.yaml
+   cat configs/run/tournament/example.yaml
    ```
 
 #### dry-run で確認
@@ -197,8 +195,7 @@ shogiarena run tournament tournament.yaml --dry-run
 
 3. エンジンを単体でテスト
    ```bash
-   shogiarena run mate configs/engine/myengine.yaml \
-     --position startpos --ply-limit 5
+   shogiarena run mate configs/engine/myengine.yaml startpos --ply-limit 5
    ```
 
 #### 対局数が想定より少ない
@@ -212,12 +209,14 @@ shogiarena run tournament tournament.yaml --dry-run
      games_per_pair: 100  # デフォルトは 4
    ```
 
-2. SPRT の場合、条件を確認
+2. SPRT の場合、早期停止条件を確認
    ```yaml
    sprt:
-     enabled: true
-     elo0: 0
-     elo1: 5
+     elo0: 0.0
+     elo1: 5.0
+     alpha: 0.05
+     beta: 0.05
+     max_games: 400
    ```
 
 ## ダッシュボード関連
@@ -331,8 +330,7 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 **解決**:
 1. プロビジョニングを強制
    ```bash
-   shogiarena run tournament tournament.yaml \
-     --instances ssh.yaml --provision force
+   shogiarena run tournament tournament.yaml --provision force
    ```
 
 2. または、リモート側に手動で配置
@@ -431,9 +429,9 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 
 3. `max_engines` を制限
    ```yaml
-   instances:
-     - instance_id: "local"
-       max_engines: 4
+   name: "local"
+   type: "local"
+   max_engines: 4
    ```
 
 ## その他
@@ -445,7 +443,7 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 shogiarena config show
 
 # 出力ディレクトリを確認
-ls {output_dir}/tournament/
+ls {output_dir}/runs/
 ```
 
 デフォルトは以下の通り：
@@ -459,7 +457,7 @@ ls {output_dir}/tournament/
 # 設定ファイルを削除
 rm ~/.config/shogiarena/settings.yaml  # Linux
 rm ~/Library/Application\ Support/shogiarena/settings.yaml  # macOS
-del %LOCALAPPDATA%\shogiarena\settings.yaml  # Windows
+del %APPDATA%\shogiarena\settings.yaml  # Windows
 
 # 再初期化
 shogiarena config init
@@ -484,7 +482,7 @@ shogiarena config init
 
 問題が解決しない場合は、以下の情報を含めて GitHub Issues で報告してください。
 
-- ShogiArena のバージョン: `pip show shogiarena`
+- ShogiArena のバージョン: `uv run shogiarena --version`
 - Python のバージョン: `python --version`
 - OS とバージョン
 - エラーメッセージの全文

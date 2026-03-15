@@ -230,9 +230,9 @@ class SprtResult:
 
 | ファイル | 関数 | 役割 |
 |---------|------|------|
-| `arena/services/statistics/sprt.py` | `_update_llr()` | 尤度比の計算と LLR の更新 |
-| `arena/services/statistics/sprt.py` | `to_snapshot()` | 状態の永続化 |
-| `arena/services/statistics/sprt.py` | `from_snapshot()` | 状態の復元 |
+| `_core/contexts/game_session/application/sprt_service.py` | `_update_llr()` | 尤度比の計算と LLR の更新 |
+| `_core/contexts/game_session/application/sprt_service.py` | `to_snapshot()` | 状態の永続化 |
+| `_core/contexts/game_session/application/sprt_service.py` | `from_snapshot()` | 状態の復元 |
 | Fishtest `stats/LLRcalc.py` | `LLR()` | GSPRT ベースの正確な LLR |
 | Fishtest `stats/LLRcalc.py` | `LLR_alt2()` | 2 次近似 LLR |
 | Fishtest `stats/stat_util.py` | `get_elo()` | Elo 推定と信頼区間 |

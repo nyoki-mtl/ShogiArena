@@ -1,331 +1,121 @@
 # Scheduler API
 
-対局スケジューリングの API リファレンスです。
+> [!WARNING]
+> このページは contributor 向けの内部リファレンスです。scheduler は public facade に出していません。外部利用者に見せたいのは `run_tournament()` や `TournamentRunner` であり、個々の scheduler 実装は内部部品です。
 
-## 概要
+tournament scheduler は `GameSpec` の列を生成します。責務は「どの engine 同士を、どの初期局面で、どの順番で対局させるか」を決めることです。
 
-Scheduler は対局の組み合わせ（`GameSpec`）を生成し、Runner/Orchestrator に供給します。
-
-- **GameScheduler**: スケジューラの抽象基底クラス
-- **SelfPlayScheduler**: 単一エンジンの自己対局
-- **RoundRobinScheduler**: 総当たり戦
-- **GauntletScheduler**: ガントレット戦
-- **SwissScheduler**: スイス式（未実装）
-
----
-
-## 型エイリアス
-
-### SeedLike
+## 主な型
 
 ```python
-SeedLike = int | float | str | bytes | bytearray | None
-```
-
-スケジューラの `seed` 引数に渡せる型です。再現性のあるスケジュール生成に使用します。
-
----
-
-## GameScheduler クラス
-
-スケジューラの抽象基底クラスです。全てのスケジューラはこのクラスを継承します。
-
-```python
-from shogiarena.arena.scheduler.game_scheduler import GameScheduler
-```
-
-#### generate_schedule()
-
-```python
-def generate_schedule(
-    self,
-    engines: list[EngineConfig],
-    games_per_pair: int,
-    seed: SeedLike,
-    initial_positions: InitialPositionConfig,
-) -> list[GameSpec]
-```
-
-対局スケジュールを生成する抽象メソッドです。
-
-- **engines**: `list[EngineConfig]` エンジン仕様のリスト
-- **games_per_pair**: `int` ペアあたりの対局数
-- **seed**: `SeedLike` 再現性のためのランダムシード
-- **initial_positions**: `InitialPositionConfig` 初期局面の設定
-
----
-
-#### get_total_games()
-
-```python
-def get_total_games(self, num_engines: int, games_per_pair: int) -> int
-```
-
-総対局数を計算する抽象メソッドです。
-
-- **num_engines**: `int` エンジン数
-- **games_per_pair**: `int` ペアあたりの対局数
-
----
-
-## SelfPlayScheduler クラス
-
-単一エンジンの自己対局スケジューラです。`GameScheduler` を継承しています。
-
-```python
-from shogiarena.arena.scheduler.game_scheduler import SelfPlayScheduler
-
-scheduler = SelfPlayScheduler()
-schedule = scheduler.generate_schedule(
-    engines=[engine],  # 正確に1台のエンジン
-    games_per_pair=100,
-    seed=42,
-    initial_positions=initial_positions,
+from shogiarena._core.contexts.tournament.application.schedule_generation import (
+    GameScheduler,
+    GauntletScheduler,
+    RoundRobinScheduler,
+    SelfPlayScheduler,
+    create_scheduler,
+)
+from shogiarena._core.contexts.tournament.domain.tournament_models import (
+    GameSpec,
 )
 ```
 
-### 特徴
+## `GameSpec`
 
-- エンジンは正確に1台のみ指定可能（それ以外は `ValueError`）
-- 同一エンジンが先手・後手の両方を担当
-- `flip_policy="pair_both"` の場合、同一局面で先後を入れ替えた2局を生成
-- 総対局数: `games_per_pair`
+[`GameSpec`](/workspaces/ShogiArena/src/shogiarena/_core/contexts/tournament/domain/tournament_models.py) は 1 局の scheduling 単位です。
 
----
+主要フィールド:
 
-## RoundRobinScheduler クラス
+- `black_engine`
+- `white_engine`
+- `initial_sfen`
+- `game_id`
+- `round_num`
+- `assigned_instance_black`
+- `assigned_instance_white`
+- `should_require_install`
 
-総当たり戦のスケジューラです。`GameScheduler` を継承しています。
+`GameSpec.create(black, white, sfen, round_num, seed)` は stable な `game_id` を生成します。
 
-```python
-from shogiarena.arena.scheduler.game_scheduler import RoundRobinScheduler
+## `GameScheduler`
 
-scheduler = RoundRobinScheduler()
-schedule = scheduler.generate_schedule(
-    engines=config.engines,
-    games_per_pair=4,
-    seed=42,
-    initial_positions=config.rules.initial_positions,
-)
-```
+abstract base class です。
 
-### 特徴
+- `generate_schedule(engines, games_per_pair, seed, initial_positions) -> list[GameSpec]`
+- `get_total_games(num_engines, games_per_pair) -> int`
 
-- 全エンジンペアを `games_per_pair` 回対局（最低2台のエンジンが必要）
-- `flip_policy` に従って先後を決定
-- 総対局数: `n*(n-1)/2 * games_per_pair`
+`engines` 側に求めるのは厳密な concrete type ではなく、少なくとも `name` を持つことです。
 
-### flip_policy の動作
+## `SelfPlayScheduler`
 
-| 値 | 動作 |
-|----|------|
-| `alternate` | 偶数ゲームは A=先手、奇数ゲームは B=先手 |
-| `random` | ランダムに決定 |
-| `pair_both` | 同一局面で両方向対局 |
+1 engine だけで自己対局を生成します。
 
----
+特徴:
 
-## GauntletScheduler クラス
+- engine は 1 台ちょうど必要
+- `flip_policy == "pair_both"` では同一局面を 2 回使います
+- 総局数は `games_per_pair`
 
-ガントレット戦のスケジューラです。ベースラインエンジンと他のエンジンを対局させます。`GameScheduler` を継承しています。
+## `RoundRobinScheduler`
 
-```python
-from shogiarena.arena.scheduler.game_scheduler import GauntletScheduler
+総当たりを生成します。
 
-GauntletScheduler(baseline_count: int = 1)
-```
+特徴:
 
-- **baseline_count**: `int` (デフォルト: `1`) ベースラインエンジンの数（1以上）
+- 2 engine 以上必要
+- `alternate` / `random` / `pair_both` の先後 policy を扱います
+- 総局数は `n * (n - 1) / 2 * games_per_pair`
 
-### 特徴
+## `GauntletScheduler`
 
-- 先頭 `baseline_count` 台がベースライン
-- 残りのエンジンはベースラインとのみ対局
-- `flip_policy="pair_both"` の場合、各対戦カードで先後入替の2局をミニシリーズとして交互に生成
-- 総対局数: `baseline_count * (num_engines - baseline_count) * games_per_pair`
+先頭 `baseline_count` 台を baseline とし、残り challenger とだけ当てます。
 
-### 使用例
+特徴:
 
-```python
-scheduler = GauntletScheduler(baseline_count=1)
-schedule = scheduler.generate_schedule(
-    engines=config.engines,
-    games_per_pair=10,
-    seed=42,
-    initial_positions=config.rules.initial_positions,
-)
-```
+- `baseline_count >= 1`
+- baseline と challenger の直積だけを schedule します
+- `pair_both` では同一局面で先後を入れ替えます
 
----
+## `create_scheduler()`
 
-## SwissScheduler クラス
+factory は現在次の 3 種だけを受け付けます。
 
-スイス式トーナメントのスケジューラです（現在未実装）。`GameScheduler` を継承しています。
+- `"selfplay"`
+- `"round_robin"`
+- `"gauntlet"`
 
-`generate_schedule()` を呼び出すと `NotImplementedError` が発生します。`get_total_games()` は `log2(n)` ラウンドに基づく推定値を返します。
+`"swiss"` は現行実装にはありません。以前のドキュメントにあった記述は古いものです。
 
----
+## 初期局面 source
 
-## create_scheduler 関数
+scheduler が依存するのは `InitialPositionSource` protocol です。
 
-文字列からスケジューラを生成するファクトリ関数です。
+- `flip_policy: str`
+- `generate(count: int, seed: str) -> list[str]`
 
-```python
-from shogiarena.arena.scheduler.game_scheduler import create_scheduler
-
-def create_scheduler(scheduler_type: str) -> GameScheduler
-```
-
-- **scheduler_type**: `str` スケジューラの種類
-
-対応する文字列:
-
-| 文字列 | スケジューラ | 備考 |
-|--------|-------------|------|
-| `"selfplay"` | `SelfPlayScheduler` | |
-| `"round_robin"` | `RoundRobinScheduler` | |
-| `"gauntlet"` | `GauntletScheduler` | `baseline_count=1` で生成 |
-| `"swiss"` | -- | `NotImplementedError` を送出 |
-
-不明な文字列を渡すと `ValueError` が発生します。
-
----
-
-## GameSpec クラス
-
-対局仕様を表すデータクラスです。
-
-```python
-from shogiarena.arena.configs.tournament import GameSpec
-```
-
-```python
-@dataclass
-class GameSpec:
-    black_engine: str
-    white_engine: str
-    initial_sfen: str
-    game_id: str
-    round_num: int = 0
-    assigned_instance_black: str | None = None
-    assigned_instance_white: str | None = None
-    require_install: bool = False
-```
-
-- **black_engine**: `str` 先手エンジン名
-- **white_engine**: `str` 後手エンジン名
-- **initial_sfen**: `str` 初期局面（SFEN 形式）
-- **game_id**: `str` 対局 ID（自動生成）
-- **round_num**: `int` (デフォルト: `0`) ラウンド番号
-- **assigned_instance_black**: `str | None` (デフォルト: `None`) 先手側の優先インスタンス
-- **assigned_instance_white**: `str | None` (デフォルト: `None`) 後手側の優先インスタンス
-- **require_install**: `bool` (デフォルト: `False`) リモートインスタンスで環境準備が必要かどうか
-
-#### create()
-
-```python
-@classmethod
-def create(
-    cls,
-    black: str,
-    white: str,
-    sfen: str,
-    round_num: int,
-    seed: str,
-    version: str = "v1",
-) -> GameSpec
-```
-
-エンジン名、局面、ラウンド番号、シードから一意の `game_id` を自動生成して `GameSpec` を作成します。`game_id` は `g{round_num+1:04d}-{hash}` の形式になります。
-
----
+つまり scheduler 自体は opening book や file format を知りません。必要数の SFEN を供給する source に依存します。
 
 ## 使用例
 
-### 基本的な使用
-
 ```python
-from shogiarena.arena.scheduler.game_scheduler import create_scheduler
-from shogiarena.arena.configs.tournament import TournamentRunConfig
+from shogiarena.tournament import load_tournament_config
+from shogiarena._core.contexts.tournament.application.schedule_generation import (
+    create_scheduler,
+)
 
-config = TournamentRunConfig.from_yaml("tournament.yaml")
-
-# スケジューラを作成
+config = load_tournament_config(".sandbox/configs/tournament/example.yaml")
 scheduler = create_scheduler(config.tournament.scheduler)
 
-# スケジュールを生成
 schedule = scheduler.generate_schedule(
     engines=config.engines,
     games_per_pair=config.tournament.games_per_pair,
     seed=config.tournament.seed,
     initial_positions=config.rules.initial_positions,
 )
-
-print(f"総対局数: {len(schedule)}")
-for spec in schedule[:5]:
-    print(f"{spec.game_id}: {spec.black_engine} vs {spec.white_engine}")
 ```
 
-### 総対局数の計算
+## 設計メモ
 
-```python
-scheduler = create_scheduler("round_robin")
-total = scheduler.get_total_games(num_engines=4, games_per_pair=10)
-print(f"4エンジン、10局/ペア: {total}局")  # 60局
-```
-
-### 自己対局
-
-```python
-from shogiarena.arena.scheduler.game_scheduler import create_scheduler
-
-scheduler = create_scheduler("selfplay")
-schedule = scheduler.generate_schedule(
-    engines=[engine],  # 1台のみ
-    games_per_pair=200,
-    seed=42,
-    initial_positions=initial_positions,
-)
-# 200局の自己対局
-```
-
-### ガントレット戦
-
-```python
-from shogiarena.arena.scheduler.game_scheduler import GauntletScheduler
-
-# 2台のベースラインエンジン
-scheduler = GauntletScheduler(baseline_count=2)
-schedule = scheduler.generate_schedule(
-    engines=engines,  # 5台のエンジン
-    games_per_pair=20,
-    seed=42,
-    initial_positions=initial_positions,
-)
-# ベースライン2台 x チャレンジャー3台 x 20局 = 120局
-```
-
-### カスタム初期局面
-
-```python
-from shogiarena.arena.configs.base import InitialPositionConfig
-
-# ファイルから初期局面を読み込み
-initial_positions = InitialPositionConfig(
-    type="file",
-    source="opening_book.sfen",
-    flip_policy="pair_both",
-)
-
-schedule = scheduler.generate_schedule(
-    engines=config.engines,
-    games_per_pair=100,
-    seed=42,
-    initial_positions=initial_positions,
-)
-```
-
-## 関連ドキュメント
-
-- [トーナメントガイド](../user-guide/tournaments.md) - トーナメント設定
-- [開局集](../user-guide/opening-books.md) - 初期局面の設定
+- scheduler は pairing のみを担当し、実行状態や停止判定は持ちません
+- `GameSpec` 生成は deterministic id を含み、resume と dashboard 参照の基礎になります
+- public facade にしないのは、config model と scheduler protocol の境界がまだ内部都合で変化しやすいためです

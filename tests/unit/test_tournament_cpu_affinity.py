@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from shogiarena.arena.configs.tournament import EngineConfig
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_engine import EngineConfig
 
 
 def _dummy_engine_path(tmp_path) -> str:

@@ -134,7 +134,9 @@ from rshogi.record import GameRecord
 
 # 棋譜ファイルを読み込み
 board = Board()
-record = GameRecord.read_kif("game.kif")
+with open("game.kif", encoding="utf-8") as f:
+    kif_text = f.read()
+record = GameRecord.from_kif_str(kif_text)
 
 with open("openings.sfen", "w") as f:
     for move_rec in record.moves[:10]:  # 最初の10手まで

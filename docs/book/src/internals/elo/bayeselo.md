@@ -185,7 +185,7 @@ Fishtest は当初 BayesElo をベースにした SPRT を使用していまし�
 
 | ファイル | クラス/関数 | 役割 |
 |---------|----------|------|
-| `arena/services/statistics/rating_service.py` | `EloRatingService` | Logistic Elo の計算 |
+| `_core/contexts/game_session/application/elo_rating_service.py` | `EloRatingService` | Logistic Elo の計算 |
 | Fishtest `stats/stat_util.py` | `bayeselo_to_proba()` | BayesElo → 三項確率 |
 | Fishtest `stats/stat_util.py` | `proba_to_bayeselo()` | 三項確率 → BayesElo |
 

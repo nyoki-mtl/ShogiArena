@@ -13,28 +13,31 @@ frontend/src/styles/
 │   ├── tables.css    # テーブル体裁
 │   ├── tournament.css # トーナメント/サマリータブ
 │   ├── games.css     # ゲーム一覧タブ
+│   ├── generate.css  # 棋譜生成タブ
 │   ├── instances.css # インスタンスタブ
+│   ├── match.css     # マッチタブ
+│   ├── sprt.css      # SPRTタブ
 │   ├── spsa.css      # SPSAタブ
 │   └── rules.css     # ルールタブ
-├── theme.css         # テーマ設定
-└── README.md         # （このドキュメントに統合）
+└── theme.css         # テーマ設定
 ```
 
 ## 運用原則
 
 ### 1. エントリーポイントの単純化
 
-`src/style.css` は Tailwind の `@tailwind` 指示と `@import` のみを担当します。実スタイルは `styles/components/*.css` または `styles/theme.css` に配置してください。
+`src/style.css` は `@import` と Tailwind の `@tailwind` 指示のみを担当します。実スタイルは `styles/components/*.css` または `styles/theme.css` に配置してください。
 
 ```css
 /* src/style.css */
+@import "@styles/theme.css";
+@import "@styles/components/common.css";
+@import "@styles/components/tables.css";
+/* ... */
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import './styles/components/common.css';
-@import './styles/components/tables.css';
-/* ... */
 ```
 
 ### 2. レイヤーごとの分類

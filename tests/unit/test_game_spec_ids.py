@@ -1,4 +1,4 @@
-from shogiarena.arena.configs.tournament import GameSpec
+from shogiarena._core.contexts.tournament.domain.tournament_models import GameSpec
 
 
 def _create_spec(round_num: int) -> str:

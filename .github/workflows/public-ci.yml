@@ -1,0 +1,17 @@
+name: Public CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  ci:
+    if: github.repository == 'nyoki-mtl/ShogiArena'
+    uses: ./.github/workflows/_ci-reusable.yml
+    with:
+      make_target: ci

@@ -5,10 +5,18 @@ from pathlib import Path
 import rshogi
 from rshogi.core import Board, Move
 
-from shogiarena.arena.configs.tournament import RecordOutputConfig
-from shogiarena.records import get_codec, supported_formats
-from shogiarena.records.storage.binary_writer import RecordBinaryWriter, RecordBinaryWriterConfig
-from shogiarena.utils.types.types import GameResult
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_engine import RecordOutputConfig
+from shogiarena._core.platform.records.binary_writer import (
+    RecordBinaryWriter,
+    RecordBinaryWriterConfig,
+)
+from shogiarena._core.platform.records.codecs import (
+    get_reader,
+    get_serializer,
+    get_stream_exporter,
+    iter_psv_entries,
+)
+from shogiarena._core.shared.kernel.game_results import GameResult
 
 _STARTPOS = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1"
 
@@ -73,22 +81,22 @@ def test_record_output_config_supports_sbinpack_and_rejects_pack() -> None:
         raise AssertionError("pack should be rejected")
 
 
-def test_supported_formats_include_sbinpack_and_exclude_pack() -> None:
-    formats = set(supported_formats())
-    assert "sbinpack" in formats
-    assert "pack" not in formats
+def test_serializer_formats_include_sbinpack() -> None:
+    assert get_serializer("sbinpack") is not None
 
 
-def test_sbinpack_codec_roundtrip() -> None:
-    codec = get_codec("sbinpack")
-    assert codec is not None
+def test_sbinpack_roundtrip() -> None:
+    serializer = get_serializer("sbinpack")
+    reader = get_reader("sbinpack")
+    assert serializer is not None
+    assert reader is not None
 
     record = _sample_record()
-    payload = codec.serialize(record)
+    payload = serializer.serialize(record)
     assert isinstance(payload, bytes)
     assert payload[:4] == b"SBIN"
 
-    decoded = codec.deserialize(payload)
+    decoded = reader.deserialize(payload)
     decoded_dict = decoded.to_dict()
     decoded_moves = decoded_dict.get("moves", [])
     assert isinstance(decoded_moves, list)
@@ -127,20 +135,21 @@ def test_sbinpack_binary_writer_rotates_by_max_games(tmp_path: Path) -> None:
     assert len(files) == 2
 
 
-def test_sfen_codec_is_not_registered() -> None:
-    assert get_codec("sfen") is None
+def test_sfen_serializer_is_not_registered() -> None:
+    assert get_serializer("sfen") is None
 
 
-def test_psv_codec_serializes_all_positions() -> None:
-    codec = get_codec("psv")
-    assert codec is not None
+def test_psv_is_stream_exporter_only() -> None:
+    exporter = get_stream_exporter("psv")
+    assert exporter is not None
 
-    one_move_payload = codec.serialize(_sample_psv_record())
-    all_moves_payload = codec.serialize(_sample_record())
-    assert isinstance(one_move_payload, bytes)
-    assert isinstance(all_moves_payload, bytes)
-    assert len(one_move_payload) > 0
-    assert len(all_moves_payload) > len(one_move_payload)
+    reader = get_reader("psv")
+    assert reader is None
+
+    one_move_entries = list(exporter.export(_sample_psv_record()))
+    all_moves_entries = list(exporter.export(_sample_record()))
+    assert len(one_move_entries) > 0
+    assert len(all_moves_entries) > len(one_move_entries)
 
 
 def test_psv_binary_writer_appends_record(tmp_path: Path) -> None:
@@ -156,9 +165,7 @@ def test_psv_binary_writer_appends_record(tmp_path: Path) -> None:
     )
 
     record = _sample_record()
-    codec = get_codec("psv")
-    assert codec is not None
-    expected_payload = codec.serialize(record)
+    expected_payload = b"".join(iter_psv_entries(record))
 
     writer.append_record(record)
     writer.close()

@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from shogiarena.arena.services.persistence.records import (
+from shogiarena._core.shared.kernel.participation_records import (
     EngineArtifactSnapshot,
     GameParticipationRecord,
     InstanceSnapshot,
@@ -30,8 +30,8 @@ def _make_participation_record() -> GameParticipationRecord:
         ),
         binary_path="/opt/engine-a",
         build_flags={"avx2": True},
-        started_at=datetime(2026, 2, 16, 1, 2, 3, tzinfo=timezone.utc),
-        completed_at=datetime(2026, 2, 16, 1, 3, 4, tzinfo=timezone.utc),
+        started_at=datetime(2026, 2, 16, 1, 2, 3, tzinfo=UTC),
+        completed_at=datetime(2026, 2, 16, 1, 3, 4, tzinfo=UTC),
         run_id="run-001",
         extra={"pool_key": "engine-a#black"},
     )
@@ -61,6 +61,16 @@ def test_deserialize_participation_handles_invalid_payload() -> None:
     assert deserialize_participation_records('[{"role":"black"}]') == ()
 
 
+def test_deserialize_participation_accepts_missing_optional_fields() -> None:
+    raw = '[{"role":"black","engine_name":"engine-a"}]'
+    decoded = deserialize_participation_records(raw)
+    assert len(decoded) == 1
+    assert decoded[0].role == "black"
+    assert decoded[0].engine_name == "engine-a"
+    assert decoded[0].engine_display_name is None
+    assert decoded[0].started_at is None
+
+
 def test_deserialize_participation_invalid_datetime_becomes_none() -> None:
     raw = """
     [
@@ -82,4 +92,4 @@ def test_deserialize_participation_invalid_datetime_becomes_none() -> None:
     decoded = deserialize_participation_records(raw)
     assert len(decoded) == 1
     assert decoded[0].started_at is None
-    assert decoded[0].completed_at == datetime(2026, 2, 16, 1, 3, 4, tzinfo=timezone.utc)
+    assert decoded[0].completed_at == datetime(2026, 2, 16, 1, 3, 4, tzinfo=UTC)

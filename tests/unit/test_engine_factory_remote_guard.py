@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from shogiarena.arena.engines import engine_factory
-from shogiarena.arena.instances.models import Instance, InstanceConfig, InstanceType
+from shogiarena._core.contexts.instances.adapters.engine_runtime_adapter import create_default_engine_runtime_factory
+from shogiarena._core.contexts.instances.application.instance_models import Instance, InstanceConfig, InstanceType
+from shogiarena._core.platform.engine_provisioning import runtime_factory
 
 
 @pytest.mark.asyncio
 async def test_remote_instances_rejected_on_windows_host(tmp_path, monkeypatch) -> None:
     # Simulate Windows platform on orchestrator host
-    monkeypatch.setattr(engine_factory.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(runtime_factory._platform, "system", lambda: "Windows")
 
     local_bin_dir = tmp_path / "engines" / "test"
     local_bin_dir.mkdir(parents=True)
@@ -28,8 +29,10 @@ async def test_remote_instances_rejected_on_windows_host(tmp_path, monkeypatch) 
     )
     instance = Instance(config=cfg)
 
+    factory = create_default_engine_runtime_factory()
+
     with pytest.raises(RuntimeError) as excinfo:
-        await engine_factory.EngineFactory._compute_exec_paths(instance, str(local_bin))
+        await factory._compute_exec_paths(instance, str(local_bin))
 
     assert "Linux" in str(excinfo.value)
     assert "WSL" in str(excinfo.value)

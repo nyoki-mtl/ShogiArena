@@ -8,7 +8,7 @@ ShogiArena で使用するエンジンの設定方法を詳しく解説します
 
 ```yaml
 name: "MyEngine"
-path: "/path/to/engine/binary"
+engine_path: "/path/to/engine/binary"
 options:
   Threads: 4
   Hash: 256
@@ -24,24 +24,24 @@ options:
 name: "YaneuraOu-Strong"
 ```
 
-### path
+### engine_path
 
 エンジンのバイナリファイルへのパスです。
 
 ```yaml
 # 絶対パス
-path: "/home/user/engines/YaneuraOu"
+engine_path: "/home/user/engines/YaneuraOu"
 
-# プレースホルダーを使用（shogiarena init で設定した場合）
-path: "{engine_dir}/yaneuraou/YaneuraOu"
+# プレースホルダーを使用（config init 済みの場合）
+engine_path: "{engine_dir}/yaneuraou/YaneuraOu"
 
 # 相対パス（設定ファイルからの相対パス）
-path: "../../bin/myengine"
+engine_path: "../../bin/myengine"
 ```
 
 > **Tip: プレースホルダー**
 >
-> `{engine_dir}` は `shogiarena init` で設定したエンジンディレクトリに展開されます。
+> `{engine_dir}` は `shogiarena config init` で設定したエンジンディレクトリに展開されます。
 > 複数の環境で設定を共有する場合に便利です。
 
 
@@ -89,27 +89,15 @@ env:
   OMP_NUM_THREADS: "4"
 ```
 
-### startup_timeout_sec
+### handshake_timeout
 
-エンジンの起動タイムアウト時間（秒）です。デフォルトは 10 秒です。
+エンジンの起動時ハンドシェイクタイムアウト時間（秒、float）です。デフォルトは `None`（システムデフォルトを使用）です。
 
 ```yaml
-startup_timeout_sec: 30
+handshake_timeout: 30.0
 ```
 
 大規模なニューラルネットワークモデルを読み込むエンジンでは、長めに設定する必要があります。
-
-### init_commands
-
-エンジン起動後、`usinewgame` の前に送信する追加のコマンドを指定します。
-
-```yaml
-init_commands:
-  - "setoption name USI_Ponder value false"
-  - "setoption name MultiPV value 3"
-```
-
-通常は `options` フィールドで十分ですが、特殊な初期化が必要な場合に使用します。
 
 ### mate_default_ply_limit / mate_default_node_limit / mate_default_infinite
 
@@ -151,7 +139,7 @@ isready_sync_strategy: "direct"  # direct | wait | stop
 
 ```yaml
 name: "YaneuraOu"
-path: "/usr/local/bin/YaneuraOu"
+engine_path: "/usr/local/bin/YaneuraOu"
 options:
   Threads: 2
   Hash: 128
@@ -161,7 +149,7 @@ options:
 
 ```yaml
 name: "YaneuraOu-Weak"
-path: "/usr/local/bin/YaneuraOu"
+engine_path: "/usr/local/bin/YaneuraOu"
 options:
   Threads: 1
   Hash: 64
@@ -172,9 +160,9 @@ options:
 
 ```yaml
 name: "DLShogi"
-path: "/opt/dlshogi/bin/dlshogi"
+engine_path: "/opt/dlshogi/bin/dlshogi"
 working_dir: "/opt/dlshogi"
-startup_timeout_sec: 60  # モデル読み込みに時間がかかる
+handshake_timeout: 60.0  # モデル読み込みに時間がかかる
 options:
   model_path: "model/model.onnx"
   use_gpu: true
@@ -187,7 +175,7 @@ env:
 
 ```yaml
 name: "YaneuraOu-ZEN3"
-path: "{engine_dir}/YaneuraOu/YaneuraOu-by-gcc-zen3"
+engine_path: "{engine_dir}/YaneuraOu/YaneuraOu-by-gcc-zen3"
 options:
   Threads: 16
   Hash: 8192
@@ -258,8 +246,7 @@ options:
 
 ```bash
 # エンジンが起動するか確認
-shogiarena run mate configs/engine/myengine.yaml \
-  --position startpos --ply-limit 5
+shogiarena run mate configs/engine/myengine.yaml startpos --ply-limit 5
 
 # トーナメント設定を dry-run で検証
 shogiarena run tournament configs/arena/test.yaml --dry-run
@@ -286,10 +273,10 @@ shogiarena run tournament configs/arena/test.yaml --dry-run
 
 ### タイムアウトエラー
 
-ニューラルネットワークモデルの読み込みに時間がかかるエンジンでは、`startup_timeout_sec` を長めに設定してください。
+ニューラルネットワークモデルの読み込みに時間がかかるエンジンでは、`handshake_timeout` を長めに設定してください。
 
 ```yaml
-startup_timeout_sec: 60
+handshake_timeout: 60.0
 ```
 
 ### オプションが反映されない

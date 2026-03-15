@@ -1,0 +1,37 @@
+@import "@styles/theme.css";
+@import "@styles/components/common.css";
+@import "@styles/components/tables.css";
+@import "@styles/components/tournament.css";
+@import "@styles/components/games.css";
+@import "@styles/components/instances.css";
+@import "@styles/components/spsa.css";
+@import "@styles/components/match.css";
+@import "@styles/components/sprt.css";
+@import "@styles/components/generate.css";
+@import "@styles/components/rules.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    body {
+        @apply min-h-screen bg-dashboard-base text-dashboard-foreground antialiased;
+    }
+
+    a {
+        @apply text-dashboard-accent hover:text-dashboard-accentMuted transition-colors;
+    }
+
+    .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+    }
+}

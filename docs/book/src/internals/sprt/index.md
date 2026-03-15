@@ -198,10 +198,10 @@ sprt:
 
 | ファイル | クラス/関数 | 役割 |
 |---------|----------|------|
-| `arena/services/statistics/sprt.py` | `Sprt` | SPRT 実装本体 |
-| `arena/services/statistics/sprt.py` | `SprtDecision` | 判定結果の列挙型 |
-| `arena/services/statistics/sprt.py` | `SprtResult` | 結果データクラス |
-| `arena/configs/base.py` | `SprtConfig` | 設定スキーマ |
+| `_core/contexts/game_session/application/sprt_service.py` | `Sprt` | SPRT 実装本体 |
+| `_core/contexts/game_session/application/sprt_service.py` | `SprtDecision` | 判定結果の列挙型 |
+| `_core/contexts/game_session/application/sprt_service.py` | `SprtResult` | 結果データクラス |
+| `_core/contexts/game_session/adapters/orchestration/config_core.py` | `SprtConfig` | 設定スキーマ |
 
 ## SPRT と GSPRT
 
@@ -222,12 +222,12 @@ GSPRT は、未知パラメータを最尤推定量（MLE）で置き換える�
 
 ## 参考文献
 
-[^wald-sprt]: Abraham Wald (1945). "Sequential Tests of Statistical Hypotheses". *Annals of Mathematical Statistics* 16(2), pp. 117-186.
-[^fishtest-sprt]: [Stockfish Testing Framework (Fishtest)](https://tests.stockfishchess.org/) — チェスエンジン開発で最も広く使われている SPRT 実装
-[^gsprt-li]: Xiaoou Li, Jingchen Liu, and Zhiliang Ying (2014). "Generalized Sequential Probability Ratio Test for Separate Families of Hypotheses". *Sequential Analysis*, 33(4), pp. 539-563.
-[^cpw-sprt]: [Chess Programming Wiki: Sequential Probability Ratio Test](https://www.chessprogramming.org/Sequential_Probability_Ratio_Test) — SPRT の概要と一般的なパラメータ設定
-[^cpw-match-stats]: [Chess Programming Wiki: Match Statistics](https://www.chessprogramming.org/Match_Statistics#SPRT) — 対局結果の統計的分析手法
-[^fishtest-math]: [Statistical Methods and Algorithms in Fishtest](https://official-stockfish.github.io/docs/fishtest-wiki/Fishtest-Mathematics.html) — Fishtest で使用されている統計手法の包括的な解説
+- Abraham Wald (1945). "Sequential Tests of Statistical Hypotheses". *Annals of Mathematical Statistics* 16(2), pp. 117-186.
+- [Stockfish Testing Framework (Fishtest)](https://tests.stockfishchess.org/)
+- Xiaoou Li, Jingchen Liu, and Zhiliang Ying (2014). "Generalized Sequential Probability Ratio Test for Separate Families of Hypotheses". *Sequential Analysis*, 33(4), pp. 539-563.
+- [Chess Programming Wiki: Sequential Probability Ratio Test](https://www.chessprogramming.org/Sequential_Probability_Ratio_Test)
+- [Chess Programming Wiki: Match Statistics](https://www.chessprogramming.org/Match_Statistics#SPRT)
+- [Statistical Methods and Algorithms in Fishtest](https://official-stockfish.github.io/docs/fishtest-wiki/Fishtest-Mathematics.html)
 
 ## 次に読む
 

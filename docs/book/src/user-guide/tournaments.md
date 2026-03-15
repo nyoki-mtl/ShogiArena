@@ -15,11 +15,13 @@ shogiarena run tournament <config_path> [options]
 | オプション | 説明 |
 | --- | --- |
 | `--dry-run` | 実際に対局を行わず、設定の検証とスケジュール生成のみを行います。 |
+| `--validate-only` | 設定だけ検証して終了します。 |
 | `--no-resume` | 既存ランの再開をせず新規として実行します。`--run-dir` で既存ディレクトリを指定した場合のみ、そのディレクトリ内の既存成果物が上書きされます。 |
 | `--engine KEY=VALUE ...` | エンジンをCLIで定義します（複数指定可）。`instance_id=...` を含めることで割当も可能です。 |
-| `--instances PATH` | インスタンス設定ファイル（YAML）を指定します。デフォルトは `configs/resources/instances/local.yaml` です。 |
 | `--provision {none,force}` | SSH リモート実行時にファイルを同期するか制御します。`force` は毎回同期します。 |
 | `--git-worktree {strict,clean,allow-dirty}` | ビルド前の Git ワークツリーの状態チェックを制御します。 |
+| `--experiment-name NAME` | 自動生成する run グループ名を上書きします。 |
+| `--run-dir PATH` | run ディレクトリを明示指定します。 |
 
 ### 実行ディレクトリの決まり方
 
@@ -61,6 +63,9 @@ rules:
 dashboard:
   enabled: true
   api_port: 8080
+
+instances:
+  - configs/resources/instances/local.yaml
 ```
 
 ### Engines (`engines`)
@@ -76,6 +81,7 @@ dashboard:
 | `options` | USI オプションの上書き設定。 |
 | `time_control` | このエンジン固有の持ち時間設定（`rules` より優先されます）。 |
 | `cpu_affinity` | CPU コアの固定（例: `"0,2-3"`）。 |
+| `instance_id` | 実行先インスタンス名。SSH 分散実行時に使います。 |
 
 ### Tournament (`tournament`)
 
@@ -113,10 +119,16 @@ dashboard:
 
 #### Adjudication (`adjudication`)
 
-- `enable_resign`: 投了有効化（デフォルト False）。
-- `resign_score_cp`: 投了判定スコア（例: 800）。
+- `enable_max_plies`: 最大手数による引き分け判定を有効化（デフォルト True）。
+- `max_plies`: 最大手数（デフォルト 320）。
+- `sync_max_plies_with_engine`: エンジンの引き分け手数オプションを同期するか（デフォルト True）。
+- `engine_max_ply_option_names`: 同期対象のエンジンオプション名（`"auto"` で自動検出）。
+- `resign_threshold_cp`: 投了判定スコア（例: 800）。`None` で投了無効、非 `None` で有効。
 - `resign_move_count`: 連続何手で投了するか。
-- `max_plies`: 最大手数（引き分け判定）。
+
+#### Repetition (`repetition_occurrences_to_draw`)
+
+同一局面が何回現れたら千日手とみなすか（デフォルト 2、公式ルールは 4）。
 
 ### Rating (`rating`)
 
@@ -129,6 +141,16 @@ Elo レーティング計算の設定です。
 
 - `enabled`: ダッシュボードを有効にするか。
 - `api_port`: ポート番号。
+
+### Instances (`instances`)
+
+インスタンス設定ファイルのパスを指定します。1 ファイルでも複数ファイルでも指定できます。
+
+```yaml
+instances:
+  - configs/resources/instances/local.yaml
+  - configs/resources/instances/gpu.yaml
+```
 
 ### Records Output (`records_output`)
 
@@ -163,12 +185,14 @@ records_output:
 ```text
 output_dir/
 └── tournament/
-    └── <config_stem>-<hash8>/
-        └── YYYYMMDDHHmmSS/
-            ├── game.db         # 結果データベース
-            ├── logs/           # 実行ログ
-            ├── matches/        # 各対局のログ
-            └── artifacts/      # ビルドされたエンジンなど
+    └── runs/
+        └── <config_stemまたはexperiment_name>-<hash8>/
+            └── YYYYMMDDHHmmSS/
+                ├── game.db         # 結果データベース
+                ├── run_state.json  # 進行状態
+                ├── data/           # ダッシュボード用データ
+                ├── logs/           # 実行ログ
+                └── records/        # records_output を使う場合
 ```
 
 `output_dir` の設定については[設定システム](configuration.md)を参照してください。

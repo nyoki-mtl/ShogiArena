@@ -8,10 +8,14 @@ import pytest
 import rshogi
 from rshogi.initial_positions import InitialPosition
 
-from shogiarena.arena.orchestrators.spsa_orchestrator import SpsaGamePayload
-from shogiarena.arena.runners.spsa_runner import SpsaRunner
-from shogiarena.arena.session import GameCompletionEvent, SessionStopController
-from shogiarena.utils.types.types import GameResult
+from shogiarena._core.contexts.spsa.adapters.runner import SpsaRunner
+from shogiarena._core.contexts.spsa.domain.spsa_models import SpsaGamePayload
+from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.session_hooks import (
+    CallbackGameLifecycleHooks,
+    GameCompletionEvent,
+    SessionStopController,
+)
 
 
 def _make_game_record(*, game_name: str, result: GameResult) -> object:
@@ -33,14 +37,18 @@ def _make_game_record(*, game_name: str, result: GameResult) -> object:
 
 @pytest.mark.asyncio
 async def test_spsa_lifecycle_forwards_completion() -> None:
-    runner = types.SimpleNamespace(_handle_game_completion=AsyncMock())
-    lifecycle = SpsaRunner._SpsaLifecycle(runner, SessionStopController())
+    handler = AsyncMock()
+    lifecycle = CallbackGameLifecycleHooks(
+        stop_controller=SessionStopController(),
+        payload_type=SpsaGamePayload,
+        on_game_complete_fn=handler,
+    )
 
     payload = SpsaGamePayload(
         update_idx=1,
         tuned_params=[],
         current_params=[],
-        tuned_as_black=True,
+        is_tuned_as_black=True,
         winner_code=1,
         phase="plus",
     )
@@ -49,7 +57,7 @@ async def test_spsa_lifecycle_forwards_completion() -> None:
 
     await lifecycle.on_game_complete(event)
 
-    runner._handle_game_completion.assert_awaited_once_with(event, payload)
+    handler.assert_awaited_once_with(event)
 
 
 @pytest.mark.asyncio
@@ -58,12 +66,12 @@ async def test_spsa_runner_does_not_persist_error_result_when_stop_requested() -
         update_idx=1,
         tuned_params=[],
         current_params=[],
-        tuned_as_black=True,
+        is_tuned_as_black=True,
         winner_code=1,
         phase="plus",
     )
     game_info = _make_game_record(game_name="g-stop-error", result=GameResult.ERROR)
-    event = GameCompletionEvent(game_id="g-stop-error", game_info=game_info, payload=payload, stop_requested=True)
+    event = GameCompletionEvent(game_id="g-stop-error", game_info=game_info, payload=payload, is_stop_requested=True)
 
     db_service = types.SimpleNamespace(
         append_record_list=Mock(),
@@ -71,9 +79,12 @@ async def test_spsa_runner_does_not_persist_error_result_when_stop_requested() -
         record_game_participation=Mock(),
     )
     progress = types.SimpleNamespace(on_game_complete=Mock())
-    runner = types.SimpleNamespace(
+    state = types.SimpleNamespace(
         db_service=db_service,
-        _completion_lock=asyncio.Lock(),
+        completion_lock=asyncio.Lock(),
+    )
+    runner = types.SimpleNamespace(
+        _state=state,
         _append_spsa_event=Mock(),
         progress=progress,
     )

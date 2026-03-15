@@ -1,11 +1,13 @@
 import asyncio
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
-from shogiarena.arena.instances.pool import InstancePool
-from shogiarena.arena.orchestrators.engine_pool import EnginePool
+from shogiarena._core.contexts.game_session.adapters.engine.pool import EnginePool
+from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
+from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
 
 
 class _DummyEngine:
@@ -32,6 +34,17 @@ def _local_instance_pool(max_engines: int) -> InstancePool:
     return pool
 
 
+def _make_engine_factory_service(created: list[_DummyEngine]) -> EngineFactoryService:
+    async def _create_engine(*args: Any, **kwargs: Any) -> _DummyEngine:  # noqa: ARG001
+        engine = _DummyEngine(name=f"dummy-{len(created)}")
+        created.append(engine)
+        return engine
+
+    mock_factory = AsyncMock()
+    mock_factory.create_engine = _create_engine
+    return EngineFactoryService(factory=mock_factory)
+
+
 def test_engine_pool_slot_key():
     assert EnginePool.slot_key("engine", None) == "engine@auto"
     assert EnginePool.slot_key("engine", "local") == "engine@local"
@@ -40,20 +53,15 @@ def test_engine_pool_slot_key():
 
 
 @pytest.mark.asyncio
-async def test_engine_pool_wakes_waiters_across_slot_keys(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_engine_pool_wakes_waiters_across_slot_keys(tmp_path: Path) -> None:
     config_path = _write_dummy_config(tmp_path)
     instance_pool = _local_instance_pool(max_engines=1)
-    engine_pool = EnginePool(max_instances_per_engine=2, instance_pool=instance_pool)
     created: list[_DummyEngine] = []
-
-    async def _create_engine(*args: Any, **kwargs: Any) -> _DummyEngine:  # noqa: ARG001
-        engine = _DummyEngine(name=f"dummy-{len(created)}")
-        created.append(engine)
-        return engine
-
-    monkeypatch.setattr(
-        "shogiarena.arena.orchestrators.engine_pool.EngineFactory.create_engine",
-        _create_engine,
+    service = _make_engine_factory_service(created)
+    engine_pool = EnginePool(
+        max_instances_per_engine=2,
+        instance_pool=instance_pool,
+        engine_factory_service=service,
     )
 
     first = await engine_pool.acquire("engine-a#black", config_path, instance_override="local")
@@ -76,22 +84,16 @@ async def test_engine_pool_wakes_waiters_across_slot_keys(monkeypatch: pytest.Mo
 
 @pytest.mark.asyncio
 async def test_engine_pool_evicts_idle_engines_when_instance_capacity_is_full(
-    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     config_path = _write_dummy_config(tmp_path)
     instance_pool = _local_instance_pool(max_engines=1)
-    engine_pool = EnginePool(max_instances_per_engine=2, instance_pool=instance_pool)
     created: list[_DummyEngine] = []
-
-    async def _create_engine(*args: Any, **kwargs: Any) -> _DummyEngine:  # noqa: ARG001
-        engine = _DummyEngine(name=f"dummy-{len(created)}")
-        created.append(engine)
-        return engine
-
-    monkeypatch.setattr(
-        "shogiarena.arena.orchestrators.engine_pool.EngineFactory.create_engine",
-        _create_engine,
+    service = _make_engine_factory_service(created)
+    engine_pool = EnginePool(
+        max_instances_per_engine=2,
+        instance_pool=instance_pool,
+        engine_factory_service=service,
     )
 
     local_instance = instance_pool.ensure_local_instance()

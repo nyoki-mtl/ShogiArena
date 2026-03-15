@@ -1,8 +1,13 @@
 import pytest
 
-from shogiarena.arena.instances.models import Instance, InstanceConfig, InstanceType
-from shogiarena.arena.instances.pool import InstancePool, ResourceRequest
-from shogiarena.arena.instances.slot_policy import estimate_required_slots
+from shogiarena._core.contexts.instances.application.instance_models import (
+    Instance,
+    InstanceConfig,
+    InstanceType,
+)
+from shogiarena._core.contexts.instances.application.instance_pool import InstancePool, ResourceRequest
+from shogiarena._core.contexts.instances.application.instance_runtime_serialization import serialize_instance
+from shogiarena._core.contexts.instances.application.slot_policy import estimate_required_slots
 
 
 class DummySpec:
@@ -74,11 +79,11 @@ def test_partial_resource_reservations() -> None:
     instance = pool.get_instance("local")
     assert instance is not None
 
-    assert instance.acquire_resources(slots=2, engines=0)
+    assert instance.try_acquire_resources(slots=2, engines=0)
     assert instance.metrics.in_use_slots == 2
     assert instance.metrics.in_use_engines == 0
 
-    assert instance.acquire_resources(slots=0, engines=3)
+    assert instance.try_acquire_resources(slots=0, engines=3)
     assert instance.metrics.in_use_slots == 2
     assert instance.metrics.in_use_engines == 3
 
@@ -98,7 +103,7 @@ def test_try_acquire_resources_rolls_back_on_failure() -> None:
     inst_b = pool.get_instance("b")
     assert inst_a is not None and inst_b is not None
 
-    inst_b.drain = True
+    inst_b.is_draining = True
     requirements = {
         "a": ResourceRequest(slots=1, engines=1),
         "b": ResourceRequest(slots=1, engines=1),
@@ -114,8 +119,8 @@ def test_acquire_resources_respects_drain() -> None:
     pool.add_instance(cfg)
     instance = pool.get_instance("local")
     assert instance is not None
-    instance.drain = True
-    assert not instance.acquire_resources(slots=1, engines=1)
+    instance.is_draining = True
+    assert not instance.try_acquire_resources(slots=1, engines=1)
 
 
 def test_auto_slots_and_engines() -> None:
@@ -124,8 +129,8 @@ def test_auto_slots_and_engines() -> None:
     instance.metrics.cpu_count = 8
     assert instance.available_slots == 8
     assert instance.available_engines == 8
-    assert instance.acquire_resources(slots=3, engines=2)
-    info = instance.to_dict()
+    assert instance.try_acquire_resources(slots=3, engines=2)
+    info = serialize_instance(instance)
     assert info["available_slots"] == 5
     assert info["engine_limit"] == 8
     assert info["slot_capacity"] == 8
@@ -134,5 +139,5 @@ def test_auto_slots_and_engines() -> None:
 def test_slot_limit_enforced_when_max_engines_unlimited() -> None:
     cfg = InstanceConfig(name="limited", type=InstanceType.LOCAL, engine_dir="", slots=3, max_engines=0)
     instance = Instance(config=cfg)
-    assert instance.acquire_resources(slots=2, engines=2)
-    assert not instance.acquire_resources(slots=2, engines=1)
+    assert instance.try_acquire_resources(slots=2, engines=2)
+    assert not instance.try_acquire_resources(slots=2, engines=1)

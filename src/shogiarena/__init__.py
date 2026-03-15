@@ -1,10 +1,5 @@
-"""Shogi Arena core package.
+"""Public package surface for ShogiArena."""
 
-This package provides the N-engine tournament components under
-`shogiarena.arena` and the dashboard utilities under
-`shogiarena.web.dashboard`.
-"""
+__version__ = "0.3.0"
 
-__version__ = "0.2.0"
-
-__all__: list[str] = []
+__all__ = ["__version__"]

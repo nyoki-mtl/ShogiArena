@@ -1,12 +1,12 @@
 import pytest
 from rshogi.core import Move
 
-from shogiarena.arena.engines.usi_protocol import (
+from shogiarena._core.platform.engine_runtime.usi_protocol_types import (
     UsiIdField,
     UsiOption,
     UsiProtocolParser,
+    UsiThinkPV,
 )
-from shogiarena.arena.engines.usi_types import UsiThinkPV
 
 
 def test_parse_id_line() -> None:

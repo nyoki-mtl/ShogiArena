@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from aiohttp.test_utils import make_mocked_request
 
-from shogiarena.web.dashboard.backend.spsa import (
+from shogiarena._core.contexts.dashboard.application.spsa.detail_payload_filter import (
     DetailViewConfig,
     apply_detail_view,
     parse_detail_view_config,

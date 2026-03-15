@@ -5,20 +5,14 @@
 
 from __future__ import annotations
 
-from shogiarena.web.dashboard.backend.match.types import (
-    ColorCounts,
+from shogiarena._core.interfaces.dashboard.match.payloads import (
     ColorTimelineEntry,
     ConfidenceInterval,
-    MatchGames,
-    MatchPayload,
     MatchTimelineEntry,
     WdlGamesCount,
 )
-from shogiarena.web.dashboard.backend.sprt.types import (
+from shogiarena._core.interfaces.dashboard.sprt.payloads import (
     SprtConfig,
-    SprtGames,
-    SprtPayload,
-    SprtStatus,
     SprtTimelineEntry,
 )
 
@@ -59,22 +53,6 @@ class TestWdlGamesCount:
         assert _optional_keys(WdlGamesCount) == set()
 
 
-class TestColorCounts:
-    def test_required_keys(self) -> None:
-        assert _required_keys(ColorCounts) == {"black", "white"}
-
-    def test_no_optional_keys(self) -> None:
-        assert _optional_keys(ColorCounts) == set()
-
-
-class TestMatchGames:
-    def test_required_keys(self) -> None:
-        assert _required_keys(MatchGames) == {"completed", "total", "wins", "losses", "draws"}
-
-    def test_no_optional_keys(self) -> None:
-        assert _optional_keys(MatchGames) == set()
-
-
 class TestColorTimelineEntry:
     def test_required_keys(self) -> None:
         assert _required_keys(ColorTimelineEntry) == {
@@ -107,28 +85,6 @@ class TestMatchTimelineEntry:
         assert _optional_keys(MatchTimelineEntry) == set()
 
 
-class TestMatchPayload:
-    def test_all_optional(self) -> None:
-        assert _required_keys(MatchPayload) == set()
-
-    def test_optional_keys(self) -> None:
-        assert _optional_keys(MatchPayload) == {
-            "mode",
-            "summarySource",
-            "tested",
-            "baseline",
-            "games",
-            "winRate",
-            "winRateCi95",
-            "eloEstimate",
-            "eloCi95",
-            "colors",
-            "timeline",
-            "timestamp",
-            "liveView",
-        }
-
-
 # ---------------------------------------------------------------------------
 # SPRT types
 # ---------------------------------------------------------------------------
@@ -147,33 +103,6 @@ class TestSprtConfig:
 
     def test_no_optional_keys(self) -> None:
         assert _optional_keys(SprtConfig) == set()
-
-
-class TestSprtStatus:
-    def test_required_keys(self) -> None:
-        assert _required_keys(SprtStatus) == {
-            "llr",
-            "lower",
-            "upper",
-            "decision",
-            "wins",
-            "draws",
-            "losses",
-            "games",
-            "winRate",
-            "eloEstimate",
-        }
-
-    def test_no_optional_keys(self) -> None:
-        assert _optional_keys(SprtStatus) == set()
-
-
-class TestSprtGames:
-    def test_required_keys(self) -> None:
-        assert _required_keys(SprtGames) == {"completed", "total"}
-
-    def test_no_optional_keys(self) -> None:
-        assert _optional_keys(SprtGames) == set()
 
 
 class TestSprtTimelineEntry:
@@ -196,25 +125,6 @@ class TestSprtTimelineEntry:
         assert _optional_keys(SprtTimelineEntry) == set()
 
 
-class TestSprtPayload:
-    def test_all_optional(self) -> None:
-        assert _required_keys(SprtPayload) == set()
-
-    def test_optional_keys(self) -> None:
-        assert _optional_keys(SprtPayload) == {
-            "mode",
-            "summarySource",
-            "tested",
-            "baseline",
-            "config",
-            "status",
-            "games",
-            "timeline",
-            "timestamp",
-            "liveView",
-        }
-
-
 # ---------------------------------------------------------------------------
 # Cross-type consistency
 # ---------------------------------------------------------------------------
@@ -222,13 +132,6 @@ class TestSprtPayload:
 
 class TestCrossTypeConsistency:
     """型間の構造的一貫性を検証する。"""
-
-    def test_sprt_timeline_superset_of_status(self) -> None:
-        """SprtTimelineEntry は SprtStatus の全キーを含む（+ gameIndex）。"""
-        status_keys = _all_keys(SprtStatus)
-        timeline_keys = _all_keys(SprtTimelineEntry)
-        assert status_keys < timeline_keys
-        assert timeline_keys - status_keys == {"gameIndex"}
 
     def test_match_timeline_color_entry_consistency(self) -> None:
         """MatchTimelineEntry は ColorTimelineEntry のキーを含む。"""

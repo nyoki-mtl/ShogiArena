@@ -1,0 +1,542 @@
+@layer components {
+    /* === Tournament Progress === */
+    #progressBar {
+        @apply relative mt-4 flex items-center overflow-hidden rounded-2xl border border-dashboard-border/60 bg-dashboard-surfaceMuted/70 px-4 py-3 shadow-inner;
+    }
+
+    #progressFill {
+        @apply absolute inset-y-0 left-0 w-0 rounded-2xl transition-all duration-500 ease-out;
+        background: rgb(var(--color-dashboard-accent) / 0.4);
+    }
+
+    #progressText {
+        @apply text-sm font-semibold text-dashboard-heading;
+    }
+
+    #progressBar #progressText {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1rem;
+        font-weight: 700;
+        color: rgb(var(--color-dashboard-heading));
+        text-shadow: none;
+        transition:
+            color 160ms ease,
+            text-shadow 160ms ease;
+    }
+
+    #progressText[data-progress-tone="light"] {
+        color: #fff;
+        text-shadow: 0 2px 6px rgba(15, 23, 42, 0.45);
+    }
+
+    #progressText[data-progress-tone="dark"] {
+        color: rgb(var(--color-dashboard-heading));
+        text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+    }
+
+    /* === KPI Cards === */
+    .hero-kpis {
+        @apply grid gap-4 sm:grid-cols-2 lg:grid-cols-4;
+    }
+
+    .hero-kpi {
+        @apply rounded-2xl border border-dashboard-border/60 bg-dashboard-surface/80 px-4 py-3 text-sm text-dashboard-foreground shadow-sm;
+    }
+
+    .hero-kpi.primary {
+        @apply border-dashboard-accent/40 bg-dashboard-accent/15 text-dashboard-accent;
+    }
+
+    .hero-kpi.success {
+        @apply border-dashboard-success/40 bg-dashboard-success/15 text-dashboard-success;
+    }
+
+    .hero-kpi.warning {
+        @apply border-dashboard-warning/40 bg-dashboard-warning/15 text-dashboard-warning;
+    }
+
+    /* === Matchup / Penta Panels === */
+    .matchup-panel {
+        position: relative;
+        overflow: hidden;
+        @apply mt-4 w-full rounded-2xl border border-dashboard-border/70 bg-dashboard-surface/95 px-4 py-4 shadow-sm;
+    }
+
+    .matchup-panel::before {
+        content: "";
+        position: absolute;
+        inset-block: 0;
+        inset-inline-start: 0;
+        width: 6px;
+        background: linear-gradient(
+            180deg,
+            rgb(var(--color-dashboard-accent) / 0.35),
+            rgb(var(--color-dashboard-accent) / 0.05)
+        );
+        pointer-events: none;
+    }
+
+    .matchup-header {
+        @apply flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-dashboard-border/60 pb-3;
+    }
+
+    .matchup-title {
+        @apply text-base font-semibold text-dashboard-heading;
+    }
+
+    .matchup-overview {
+        @apply text-xs font-medium text-dashboard-muted;
+    }
+
+    .matchup-table {
+        border-collapse: separate;
+        border-spacing: 0;
+        @apply mt-3 w-full text-sm;
+    }
+
+    .matchup-table thead tr {
+        @apply bg-dashboard-surfaceMuted/60 text-xs uppercase tracking-wide text-dashboard-muted;
+    }
+
+    .matchup-table :where(th, td) {
+        @apply px-3 py-2 text-left align-middle;
+    }
+
+    .matchup-table tbody tr {
+        transition:
+            background-color 160ms ease,
+            box-shadow 160ms ease;
+        @apply cursor-pointer text-dashboard-foreground;
+    }
+
+    .matchup-table tbody tr:nth-child(odd) :where(td) {
+        background: rgb(var(--color-dashboard-surfaceMuted) / 0.4);
+    }
+
+    .matchup-table tbody tr:nth-child(even) :where(td) {
+        background: rgb(var(--color-dashboard-surfaceMuted) / 0.25);
+    }
+
+    .matchup-table tbody tr :where(td:first-child) {
+        border-top-left-radius: 0.75rem;
+        border-bottom-left-radius: 0.75rem;
+    }
+
+    .matchup-table tbody tr :where(td:last-child) {
+        border-top-right-radius: 0.75rem;
+        border-bottom-right-radius: 0.75rem;
+    }
+
+    .matchup-table tbody tr:hover :where(td) {
+        background: rgb(var(--color-dashboard-accent) / 0.18);
+    }
+
+    .matchup-table tbody tr.is-selected :where(td),
+    .matchup-table tbody tr.is-selected:hover :where(td) {
+        background: rgb(var(--color-dashboard-accent) / 0.28);
+        box-shadow: inset 0 0 0 1px rgb(var(--color-dashboard-accent) / 0.45);
+    }
+
+    .matchup-opponent {
+        @apply inline-flex items-center gap-2 rounded-full border border-transparent bg-transparent px-3 py-1 font-semibold text-dashboard-heading transition;
+    }
+
+    .matchup-opponent:hover,
+    .matchup-table tbody tr.is-selected .matchup-opponent {
+        @apply border-dashboard-accent/70 bg-dashboard-accent/10 text-dashboard-accent;
+    }
+
+    .standings-rating {
+        font-variant-numeric: tabular-nums;
+        @apply font-semibold text-dashboard-accent text-right;
+        width: 12ch;
+        white-space: pre;
+    }
+
+    .standings-rating.rating-left {
+        text-align: left;
+    }
+
+    .standings-rating .rating-ci {
+        font-weight: 600;
+        color: rgb(var(--color-dashboard-neutral) / 0.8);
+        margin-left: 0.375rem;
+        font-size: 0.85em;
+    }
+
+    .rating-delta {
+        font-weight: 700;
+        margin-right: 0.375rem;
+    }
+
+    .rating-delta.pos {
+        color: rgb(var(--color-dashboard-success));
+    }
+
+    .rating-delta.neg {
+        color: #f87171;
+    }
+
+    .rating-delta.neu {
+        color: rgb(var(--color-dashboard-neutral));
+    }
+
+    .engines-card__header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 0.5rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .engines-table-wrapper {
+        overflow-x: auto;
+    }
+
+    :where(.engines-detail-row td) {
+        padding: 0;
+        border: none;
+    }
+
+    .engines-detail {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        font-size: 0.95rem;
+        color: rgb(var(--color-dashboard-heading));
+    }
+
+    /* Tournament tab layout */
+    #tournamentTab .standings,
+    #tournamentTab #headToHeadSection {
+        background: none;
+        border-radius: 0;
+        padding: 0;
+        margin-bottom: 1rem;
+        box-shadow: none;
+        border: none;
+    }
+
+    #tournamentTab h2 {
+        margin-top: 0;
+        margin-bottom: 0.75rem;
+    }
+
+    .summary-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+
+    #progressFill[data-progress-tone="dark"] {
+        background: rgb(var(--color-dashboard-accent) / 0.4);
+    }
+
+    #progressFill[data-progress-tone="light"] {
+        background: rgb(var(--color-dashboard-accent) / 0.8);
+    }
+
+    #progressBar.paused #progressFill {
+        background: rgb(var(--color-dashboard-muted));
+    }
+
+    #progressBar.draining #progressFill {
+        background: rgb(var(--color-dashboard-warning));
+    }
+
+    #progressBar.finished #progressFill {
+        background: rgb(var(--color-dashboard-accent) / 0.85);
+    }
+
+    #openingsTab .standings,
+    #tournamentTab .standings,
+    #tournamentTab #headToHeadSection {
+        background: none;
+        border-radius: 0;
+        padding: 0;
+        margin-bottom: 1rem;
+        box-shadow: none;
+        border: none;
+    }
+
+    /* Transient rating delta after game end */
+    @keyframes bump {
+        0% {
+            transform: translateY(-4px);
+        }
+        50% {
+            transform: translateY(2px);
+        }
+        100% {
+            transform: translateY(0);
+        }
+    }
+
+    .details-body.theme-engine,
+    .details-pane.theme-engine,
+    .details-body.theme-time,
+    .details-pane.theme-time,
+    .details-body.theme-stats,
+    .details-pane.theme-stats,
+    .details-body.theme-rating,
+    .details-pane.theme-rating {
+        background: transparent;
+    }
+
+    .details-pane.theme-engine,
+    .details-pane.theme-time,
+    .details-pane.theme-stats,
+    .details-pane.theme-rating {
+        background: rgb(var(--color-dashboard-surface));
+        border-width: 2px;
+        border-style: solid;
+    }
+
+    .details-pane.theme-stats,
+    .details-pane.theme-rating {
+        border-color: #facc15;
+    }
+    .details-pane .path {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        font-family: monospace;
+        color: rgb(var(--color-dashboard-heading));
+    }
+    .details-pane .path-value {
+        word-break: break-word;
+        overflow-wrap: anywhere;
+    }
+    .opening-engine-stats-pane :where(table) {
+        margin-top: 8px;
+    }
+
+    /* Hide rating progression chart for now */
+    .rating-chart {
+        display: none;
+    }
+    .details-pane .title {
+        font-weight: 800;
+        margin-bottom: 8px;
+        color: rgb(var(--color-dashboard-heading));
+    }
+    .details-pane .subtle {
+        color: rgb(var(--color-dashboard-muted));
+    }
+    .details-pane table.opt-table {
+        border-collapse: collapse;
+    }
+    .details-pane table.opt-table :where(th, td) {
+        padding: 4px 6px;
+    }
+    .details-pane table.opt-table tr.selected {
+        background: rgb(var(--color-dashboard-accent) / 0.12);
+    }
+    :root[data-theme="dark"] .details-pane table.opt-table tr.selected {
+        background: rgb(var(--color-dashboard-accent) / 0.2);
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) .details-pane table.opt-table tr.selected {
+            background: rgb(var(--color-dashboard-accent) / 0.2);
+        }
+    }
+
+    /* Time control + clocks */
+    .timectl-row {
+        margin-bottom: 6px;
+        font-size: 0.9rem;
+        color: rgb(var(--color-dashboard-muted));
+    }
+
+    /* Group label and name so background can cover the space between them */
+    .clock-row .side-header {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px; /* visual spacing between label and name */
+        padding: 2px 6px; /* unify padding for highlight area */
+        border-radius: 6px;
+        flex: 1; /* occupy left area so clocks align to the right */
+        background: transparent;
+    }
+
+    /* Padding/border now applied to the wrapper (.side-header) */
+
+    /* New TC label between name and remaining */
+    .clock-row .side-tc {
+        display: inline-flex;
+        align-items: center;
+        width: 14ch; /* widen to fit depth/nodes (e.g., "d20 1M nodes") */
+        justify-content: center;
+        font-family: monospace;
+        font-weight: 700;
+        color: #2d3748; /* darker text for readability */
+        background: #f0fff4; /* subtle green tint to highlight TC area */
+        border: 1px solid #c6f6d5;
+        border-radius: 6px;
+        padding: 2px 6px;
+        margin: 0 6px; /* breathing room between name/inc/remaining */
+    }
+
+    /* Active side highlight: emphasize label+name group including the gap */
+    .clock-row.active .side-header {
+        background: #eef2ff; /* soft indigo */
+    }
+    .clock-row.top.active .side-header {
+        background: #f3e8ff; /* soft purple for Gote */
+    }
+
+    /* Rating chart */
+    .rating-chart {
+        margin-top: 1rem;
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 12px;
+        padding: 1rem;
+    }
+
+    .rating-canvas {
+        width: 100%;
+        height: 180px;
+    }
+
+    /* Pairwise matrix */
+    .pairwise-matrix {
+        margin-top: 1rem;
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 12px;
+        padding: 1rem;
+        overflow-x: auto;
+    }
+
+    .kifu-line {
+        padding: 0.25rem 0;
+        cursor: pointer;
+    }
+
+    .kifu-line .stats--popover {
+        display: grid;
+        grid-template-columns:
+            minmax(3.5ch, max-content)
+            minmax(6ch, 11ch)
+            minmax(6ch, max-content)
+            minmax(6.5ch, max-content)
+            minmax(9ch, max-content)
+            minmax(6.5ch, max-content);
+        align-items: center;
+        gap: 0.7rem;
+        padding: 0.4rem 0.75rem;
+        border-radius: 6px;
+        font-size: 0.82rem;
+        font-family: "JetBrains Mono", "Source Code Pro", Menlo, Consolas, monospace;
+        background: transparent;
+        transition:
+            background-color 0.18s ease,
+            color 0.18s ease;
+    }
+
+    .kifu-line .stats--popover.dimmed {
+        opacity: 0.65;
+    }
+
+    .kifu-line .stats--popover.terminal {
+        font-style: italic;
+    }
+
+    .kifu-col {
+        display: inline-flex;
+        align-items: center;
+        min-width: 0;
+        white-space: nowrap;
+    }
+
+    .kifu-col--num,
+    .kifu-col--eval,
+    .kifu-col--ms,
+    .kifu-col--nodes,
+    .kifu-col--depth {
+        justify-content: flex-end;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .kifu-col--mv {
+        justify-content: flex-start;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .kifu-col--mv .move-cell {
+        width: 100%;
+        --move-prefix-width: 2ch;
+    }
+
+    .kifu-col--mv .move-body {
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .kifu-line.current .stats--popover {
+        background: #4c51bf;
+        color: white;
+    }
+
+    /* Kifu popover */
+    .kifu-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.15);
+        display: none;
+        z-index: 1000;
+    }
+
+    /* Tournament Statistics Cards */
+    .stats-card {
+        background: rgba(255, 255, 255, 0.9);
+        border-radius: 8px;
+        padding: 1rem;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+    }
+
+    /* Recent Results */
+    .recent-results-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    /* Matchups Table */
+    .head-to-head-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.5rem;
+    }
+
+    .head-to-head-table :where(th, td) {
+        padding: 0.5rem;
+        text-align: left;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    }
+
+    :where(.head-to-head-table) th {
+        background: rgba(76, 81, 191, 0.1);
+        font-weight: 600;
+        color: #333;
+    }
+
+    .head-to-head-table td:nth-child(2),
+    .head-to-head-table td:nth-child(3) {
+        text-align: center;
+        font-family: monospace;
+        font-weight: 500;
+    }
+
+    /* Tournament Navigation */
+    #tournamentNavigation a:hover {
+        background: rgba(76, 81, 191, 0.2);
+        transform: translateY(-1px);
+    }
+}

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import rshogi
 
-from shogiarena.utils.types.types import GameResult
+from shogiarena._core.shared.kernel.game_results import GameResult
 
 
 def test_csa_parser_extracts_terminal_time_and_comment() -> None:

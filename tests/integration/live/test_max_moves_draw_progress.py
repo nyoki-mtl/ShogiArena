@@ -1,21 +1,22 @@
 import asyncio
 import json
 from collections import deque
+from collections.abc import Sequence
 
 import pytest
 from rshogi.core import Move
 
-from shogiarena.arena.engines.time_control import TimeControl, TimeControlLimits
-from shogiarena.arena.engines.usi_engine import PonderHitTimings
-from shogiarena.arena.engines.usi_think import UsiThinkRequest
-from shogiarena.arena.engines.usi_types import UsiThinkPV, UsiThinkResult, move_from_usi
-from shogiarena.arena.execution.game_runner import GameRunner
-from shogiarena.arena.execution.types import GameEngineProtocol, InfoHandler
-from shogiarena.arena.services.game_control.adjudication import AdjudicationConfig
-from shogiarena.utils.types.types import GameResult
+from shogiarena._core.contexts.match.application.runner import GameRunner
+from shogiarena._core.contexts.match.domain.adjudication import AdjudicationConfig
+from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort, InfoHandler
+from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkRequest
+from shogiarena._core.platform.engine_runtime.usi_engine_session import PonderHitTimings
+from shogiarena._core.platform.engine_runtime.usi_protocol_types import UsiThinkPV, UsiThinkResult, move_from_usi
+from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.time_control import GameClock, TimeControlLimits
 
 
-class ScriptedEngine(GameEngineProtocol):
+class ScriptedEngine(GameEnginePort):
     """Minimal engine that plays from a scripted sequence of USI moves."""
 
     def __init__(self, name: str, moves: list[str]) -> None:
@@ -33,7 +34,7 @@ class ScriptedEngine(GameEngineProtocol):
         self,
         *,
         sfen: str,
-        moves: tuple[str, ...] | list[str],
+        moves: Sequence[Move],
         request: UsiThinkRequest,
         info_handler: InfoHandler | None = None,
         timeout: float | None = None,
@@ -55,7 +56,7 @@ class ScriptedEngine(GameEngineProtocol):
         self,
         *,
         sfen: str,
-        moves: tuple[str, ...] | list[str],
+        moves: Sequence[Move],
         ply_limit: int | None = None,
         timeout: float | None = None,
     ) -> UsiThinkResult:
@@ -65,7 +66,7 @@ class ScriptedEngine(GameEngineProtocol):
         self,
         *,
         sfen: str,
-        moves: tuple[str, ...] | list[str],
+        moves: Sequence[Move],
         request: UsiThinkRequest,
         info_handler: InfoHandler | None = None,
     ) -> UsiThinkResult:
@@ -84,11 +85,11 @@ class ScriptedEngine(GameEngineProtocol):
         self,
         *,
         sfen: str,
-        moves: tuple[str, ...] | list[str],
+        moves: Sequence[Move],
         request: UsiThinkRequest,
         predicted_move: Move | None,
         info_handler: InfoHandler | None = None,
-        enable_early_ponder: bool | None = None,
+        should_enable_early_ponder: bool | None = None,
     ) -> None:
         return None
 
@@ -130,7 +131,7 @@ def _new_result(bestmove: str, ponder: str | None = None) -> UsiThinkResult:
     return result
 
 
-class PonderAwareScriptedEngine(GameEngineProtocol):
+class PonderAwareScriptedEngine(GameEnginePort):
     def __init__(
         self,
         name: str,
@@ -158,7 +159,7 @@ class PonderAwareScriptedEngine(GameEngineProtocol):
         self,
         *,
         sfen: str,
-        moves: tuple[str, ...] | list[str],
+        moves: Sequence[Move],
         request: UsiThinkRequest,
         info_handler: InfoHandler | None = None,
         timeout: float | None = None,
@@ -173,7 +174,7 @@ class PonderAwareScriptedEngine(GameEngineProtocol):
         self,
         *,
         sfen: str,
-        moves: tuple[str, ...] | list[str],
+        moves: Sequence[Move],
         ply_limit: int | None = None,
         timeout: float | None = None,
     ) -> UsiThinkResult:
@@ -183,7 +184,7 @@ class PonderAwareScriptedEngine(GameEngineProtocol):
         self,
         *,
         sfen: str,
-        moves: tuple[str, ...] | list[str],
+        moves: Sequence[Move],
         request: UsiThinkRequest,
         info_handler: InfoHandler | None = None,
     ) -> UsiThinkResult:
@@ -202,11 +203,11 @@ class PonderAwareScriptedEngine(GameEngineProtocol):
         self,
         *,
         sfen: str,
-        moves: tuple[str, ...] | list[str],
+        moves: Sequence[Move],
         request: UsiThinkRequest,
         predicted_move: Move | None,
         info_handler: InfoHandler | None = None,
-        enable_early_ponder: bool | None = None,
+        should_enable_early_ponder: bool | None = None,
     ) -> None:
         self.start_ponder_calls += 1
         self._active_predicted = predicted_move
@@ -259,8 +260,8 @@ async def test_max_moves_draw_includes_terminal_move_progress() -> None:
     queue: asyncio.Queue = asyncio.Queue()
     limits = TimeControlLimits(time_ms=1000, increment_ms=0)
     adjudication_cfg = AdjudicationConfig(
-        resign_enabled=False,
-        max_plies_enabled=True,
+        is_resign_enabled=False,
+        is_max_plies_enabled=True,
         max_plies=4,
     )
     runner = GameRunner(
@@ -306,17 +307,17 @@ async def test_max_moves_draw_includes_terminal_move_progress() -> None:
     assert terminal_updates, "expected move_progress at ply 4"
     assert any(update.get("move") == "8c8d" for update in terminal_updates)
 
-    result_updates = [payload for _move_count, payload in move_events if payload.get("result_code") is not None]
-    assert result_updates, "expected move_progress with result_code"
-    assert result_updates[-1]["result_code"] == GameResult.DRAW_BY_MAX_PLIES.value
+    result_updates = [payload for _move_count, payload in move_events if payload.get("game_result") is not None]
+    assert result_updates, "expected move_progress with game_result"
+    assert result_updates[-1]["game_result"] == "DRAW_BY_MAX_PLIES"
 
 
 @pytest.mark.asyncio
 async def test_max_moves_draw_notifies_both_engines_with_draw_gameover() -> None:
     limits = TimeControlLimits(time_ms=1000, increment_ms=0)
     adjudication_cfg = AdjudicationConfig(
-        resign_enabled=False,
-        max_plies_enabled=True,
+        is_resign_enabled=False,
+        is_max_plies_enabled=True,
         max_plies=4,
     )
     runner = GameRunner(
@@ -349,7 +350,7 @@ async def test_game_runner_uses_ponderhit_when_prediction_matches() -> None:
     runner = GameRunner(
         progress_queue=None,
         time_control_limits=limits,
-        adjudication_config=AdjudicationConfig(resign_enabled=False),
+        adjudication_config=AdjudicationConfig(is_resign_enabled=False),
         repetition_occurrences_to_draw=2,
     )
 
@@ -382,7 +383,7 @@ async def test_game_runner_cancels_ponder_when_prediction_mismatches() -> None:
     runner = GameRunner(
         progress_queue=None,
         time_control_limits=limits,
-        adjudication_config=AdjudicationConfig(resign_enabled=False),
+        adjudication_config=AdjudicationConfig(is_resign_enabled=False),
         repetition_occurrences_to_draw=2,
     )
 
@@ -414,7 +415,7 @@ async def test_game_runner_counts_cancel_ponder_latency_in_move_time() -> None:
     runner = GameRunner(
         progress_queue=None,
         time_control_limits=limits,
-        adjudication_config=AdjudicationConfig(resign_enabled=False),
+        adjudication_config=AdjudicationConfig(is_resign_enabled=False),
         repetition_occurrences_to_draw=2,
     )
 
@@ -451,8 +452,8 @@ async def test_game_runner_counts_cancel_ponder_latency_in_move_time() -> None:
 
 def test_ponderhit_timings_do_not_mix_byoyomi_and_increment() -> None:
     runner = GameRunner(progress_queue=None, time_control_limits=TimeControlLimits(time_ms=1000, increment_ms=0))
-    current = TimeControl(TimeControlLimits(time_ms=10_000, byoyomi_ms=2000))
-    enemy = TimeControl(TimeControlLimits(time_ms=10_000, increment_ms=1000))
+    current = GameClock(TimeControlLimits(time_ms=10_000, byoyomi_ms=2000))
+    enemy = GameClock(TimeControlLimits(time_ms=10_000, increment_ms=1000))
 
     timings = runner._build_ponder_hit_timings(
         current_time_control=current,
@@ -468,8 +469,8 @@ def test_ponderhit_timings_do_not_mix_byoyomi_and_increment() -> None:
 
 def test_ponderhit_timings_match_go_time_adjustment_for_increment() -> None:
     runner = GameRunner(progress_queue=None, time_control_limits=TimeControlLimits(time_ms=1000, increment_ms=0))
-    current = TimeControl(TimeControlLimits(time_ms=30_000, increment_ms=2_000))
-    enemy = TimeControl(TimeControlLimits(time_ms=28_103, increment_ms=5_000))
+    current = GameClock(TimeControlLimits(time_ms=30_000, increment_ms=2_000))
+    enemy = GameClock(TimeControlLimits(time_ms=28_103, increment_ms=5_000))
 
     timings = runner._build_ponder_hit_timings(
         current_time_control=current,

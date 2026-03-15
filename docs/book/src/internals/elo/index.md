@@ -145,9 +145,9 @@ Elo レーティングには以下の限界があります。
 
 | ファイル | クラス/関数 | 役割 |
 |---------|----------|------|
-| `arena/services/statistics/rating_service.py` | `EloRatingService` | レーティング計算の本体 |
-| `arena/services/statistics/rating_service.py` | `calculate_rating_series()` | 対局系列からのレーティング算出 |
-| `arena/services/statistics/rating_service.py` | `calculate_rating_confidence_intervals()` | 信頼区間の計算 |
+| `_core/contexts/game_session/application/elo_rating_service.py` | `EloRatingService` | レーティング計算の本体 |
+| `_core/shared/kernel/statistics/btd_rating.py` | `BTDEstimator` | 複数エンジンの強さ推定 |
+| `_core/shared/kernel/statistics/pentanomial.py` | `compute_pentanomial()` | ペアゲーム集計 |
 
 ## 参考文献
 

@@ -7,11 +7,15 @@ import pytest
 import rshogi
 from rshogi.initial_positions import InitialPosition
 
-from shogiarena.arena.configs.base import SprtConfig
-from shogiarena.arena.configs.spsa import LtcPassCriteria, LtcRegressionConfig
-from shogiarena.arena.orchestrators.spsa_orchestrator import SpsaOrchestrator
-from shogiarena.arena.tuning.param_io import ParamEntry
-from shogiarena.utils.types.types import GameResult
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_core import SprtConfig
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_spsa_models import (
+    LtcPassCriteria,
+    LtcRegressionConfig,
+)
+from shogiarena._core.contexts.spsa.adapters.orchestrator import SpsaOrchestrator
+from shogiarena._core.contexts.spsa.adapters.runtime.ltc_regression import run_ltc_regression
+from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
+from shogiarena._core.shared.kernel.game_results import GameResult
 
 
 def _make_record(result: GameResult) -> object:
@@ -107,8 +111,8 @@ def test_store_ltc_baseline_clones_entries():
 
     assert orch._ltc_baseline_update_idx == 5
     assert orch._ltc_baseline_snapshot is not params
-    params[0].v = 99.0
-    assert orch._ltc_baseline_snapshot[0].v != params[0].v
+    params[0].value = 99.0
+    assert orch._ltc_baseline_snapshot[0].value != params[0].value
 
 
 @pytest.mark.asyncio
@@ -117,7 +121,8 @@ async def test_ltc_regression_records_rejection_without_stopping(tmp_path):
     tuned_params = [_make_param(3.0)]
     baseline_params = [_make_param(1.0)]
 
-    record = await orch._run_ltc_regression(
+    record = await run_ltc_regression(
+        orch,
         update_idx=4,
         tuned_params=tuned_params,
         baseline_params=baseline_params,
@@ -125,7 +130,7 @@ async def test_ltc_regression_records_rejection_without_stopping(tmp_path):
     )
 
     assert record["status"] == "failed"
-    assert record["accepted"] is False
+    assert record["is_accepted"] is False
     assert record["baseline_update_idx"] == -1
     assert record["baseline_variant_token"] == "v000000"
     assert record["tuned_variant_token"] == "v000004"
@@ -143,7 +148,8 @@ async def test_ltc_regression_uses_sprt_acceptance(tmp_path):
     tuned_params = [_make_param(3.0)]
     baseline_params = [_make_param(1.0)]
 
-    record = await orch._run_ltc_regression(
+    record = await run_ltc_regression(
+        orch,
         update_idx=4,
         tuned_params=tuned_params,
         baseline_params=baseline_params,
@@ -151,7 +157,7 @@ async def test_ltc_regression_uses_sprt_acceptance(tmp_path):
     )
 
     assert record["status"] == "passed"
-    assert record["accepted"] is True
+    assert record["is_accepted"] is True
     assert record["sprt"] is not None
     assert record["sprt"]["decision"] == "accept_h1"
     assert record["pairs_played"] == 1
@@ -164,7 +170,8 @@ async def test_ltc_regression_uses_sprt_rejection(tmp_path):
     tuned_params = [_make_param(3.0)]
     baseline_params = [_make_param(1.0)]
 
-    record = await orch._run_ltc_regression(
+    record = await run_ltc_regression(
+        orch,
         update_idx=4,
         tuned_params=tuned_params,
         baseline_params=baseline_params,
@@ -172,7 +179,7 @@ async def test_ltc_regression_uses_sprt_rejection(tmp_path):
     )
 
     assert record["status"] == "failed"
-    assert record["accepted"] is False
+    assert record["is_accepted"] is False
     assert record["sprt"] is not None
     assert record["sprt"]["decision"] == "accept_h0"
     assert record["pairs_played"] == 1

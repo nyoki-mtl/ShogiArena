@@ -1,23 +1,28 @@
 import json
 import textwrap
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 import rshogi
 from rshogi.initial_positions import InitialPosition
 
-from shogiarena.arena.configs.spsa import load_config_yaml
-from shogiarena.arena.orchestrators.base_orchestrator_utils import numeric_game_id
-from shogiarena.arena.orchestrators.spsa_orchestrator import SpsaOrchestrator
-from shogiarena.arena.session import GameCompletionEvent, LifecycleHooksBase, SessionContext
-from shogiarena.arena.storage import FilesystemRunStorage
-from shogiarena.arena.tuning.param_io import read_params
-from shogiarena.utils.types.types import GameResult
+from shogiarena._core.contexts.game_session.adapters.run_storage import FilesystemRunStorage
+from shogiarena._core.contexts.game_session.application.orchestration.concurrent_executor import numeric_game_id
+from shogiarena._core.contexts.game_session.ports.session_context import SessionContext
+from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
+from shogiarena._core.contexts.spsa.adapters.orchestrator import SpsaOrchestrator
+from shogiarena._core.contexts.spsa.application.param_io import read_params
+from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.session_hooks import GameCompletionEvent, NoopGameLifecycleHooks
+from tests.unit.spsa_config_test_helpers import load_spsa_run_config
+
+_mock_engine_factory_service = EngineFactoryService(factory=AsyncMock())
 
 
-class _CapturingHooks(LifecycleHooksBase):
+class _CapturingHooks(NoopGameLifecycleHooks):
     def __init__(self) -> None:
         super().__init__()
         self.events: list[GameCompletionEvent] = []
@@ -86,23 +91,25 @@ async def test_spsa_update_matches_reference_script(tmp_path: Path) -> None:
         """,
     )
 
-    cfg = load_config_yaml(str(config_yaml))
+    cfg = load_spsa_run_config(config_yaml)
     storage = FilesystemRunStorage(tmp_path)
     session = SessionContext.build(storage=storage, num_workers=1, run_id="test")
-    orch = SpsaOrchestrator(cfg, session=session, hooks=LifecycleHooksBase())
-    now = datetime.now(timezone.utc).isoformat()
+    orch = SpsaOrchestrator(
+        cfg, session=session, hooks=NoopGameLifecycleHooks(), engine_factory_service=_mock_engine_factory_service
+    )
+    now = datetime.now(UTC).isoformat()
     state = {
         "type": "spsa",
         "created_at": now,
         "updated_at": now,
-        "finished": False,
+        "is_finished": False,
         "completed_updates": 0,
         "total_updates": 1,
     }
     (tmp_path / "run_state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     params = read_params(params_path)
-    orch.set_update_items([0], params, ["startpos"])
+    orch.set_work_items([0], params, ["startpos"])
 
     # Make perturbation deterministic and provide scripted match outcomes.
     orch._make_rng = lambda _idx: _DummyRng()  # type: ignore[assignment]
@@ -111,13 +118,13 @@ async def test_spsa_update_matches_reference_script(tmp_path: Path) -> None:
     async def fake_run_game_pair(*_args, **_kwargs):
         return (next(scores), None, None)
 
-    orch._run_game_pair = fake_run_game_pair  # type: ignore[assignment]
+    orch._run_game_pair = fake_run_game_pair
 
     await orch._run_one_spsa_update(0)
 
     # Expect +1.0 shift in parameter value: 10.0 -> 11.0
     updated_params = read_params(params_path)
-    assert pytest.approx(updated_params[0].v, abs=1e-6) == 11.0
+    assert pytest.approx(updated_params[0].value, abs=1e-6) == 11.0
 
 
 @pytest.mark.asyncio
@@ -162,15 +169,15 @@ async def test_spsa_completion_reports_assigned_worker(tmp_path: Path) -> None:
         """,
     )
 
-    cfg = load_config_yaml(str(config_yaml))
+    cfg = load_spsa_run_config(config_yaml)
     storage = FilesystemRunStorage(tmp_path)
     session = SessionContext.build(storage=storage, num_workers=2, run_id="test")
     hooks = _CapturingHooks()
-    orch = SpsaOrchestrator(cfg, session=session, hooks=hooks)
+    orch = SpsaOrchestrator(cfg, session=session, hooks=hooks, engine_factory_service=_mock_engine_factory_service)
     params = read_params(params_path)
-    orch.set_update_items([0], params, ["startpos"])
+    orch.set_work_items([0], params, ["startpos"])
 
-    async def fake_execute_game(self, spec):  # type: ignore[no-untyped-def]
+    async def fake_execute_game(_orchestrator, spec):
         return rshogi.record.GameRecord.from_dict(
             {
                 "metadata": {
@@ -186,18 +193,22 @@ async def test_spsa_completion_reports_assigned_worker(tmp_path: Path) -> None:
             }
         )
 
-    orch._execute_game = fake_execute_game.__get__(orch, SpsaOrchestrator)  # type: ignore[assignment]
+    import shogiarena._core.contexts.spsa.adapters.orchestrator_gameplay_mixin as _gpm
 
-    await orch._run_single_spsa_game(
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(_gpm, "_execute_game_service", fake_execute_game)
+
+    await orch._run_game(
         start_sfen="startpos",
         tuned_params=params,
         current_params=params,
         worker_idx=1,  # intentionally differs from actual slot the orchestrator will pick (0)
-        tuned_as_black=True,
+        is_tuned_as_black=True,
         update_idx=0,
         phase="plus",
         preassigned_game_id=None,
     )
+    monkeypatch.undo()
 
     assert hooks.events, "expected SPSA completion event"
     assert hooks.events[-1].worker_idx == 0
@@ -247,18 +258,18 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
         """,
     )
 
-    cfg = load_config_yaml(str(config_yaml))
+    cfg = load_spsa_run_config(config_yaml)
     storage = FilesystemRunStorage(tmp_path)
     session = SessionContext.build(storage=storage, num_workers=2, run_id="test")
     hooks = _CapturingHooks()
-    orch = SpsaOrchestrator(cfg, session=session, hooks=hooks)
+    orch = SpsaOrchestrator(cfg, session=session, hooks=hooks, engine_factory_service=_mock_engine_factory_service)
     params = read_params(params_path)
-    orch.set_update_items([0], params, ["startpos"])
+    orch.set_work_items([0], params, ["startpos"])
 
     # Force preassignment failure so that initial resolved worker is None
     orch.worker_busy = {0, 1}
 
-    async def fake_execute_game(self, spec):  # type: ignore[no-untyped-def]
+    async def fake_execute_game(_orchestrator, spec):
         orch.game_to_worker[numeric_game_id(spec.game_id)] = 1
         return rshogi.record.GameRecord.from_dict(
             {
@@ -275,18 +286,23 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
             }
         )
 
-    orch._execute_game = fake_execute_game.__get__(orch, SpsaOrchestrator)  # type: ignore[assignment]
+    import shogiarena._core.contexts.spsa.adapters.orchestrator_gameplay_mixin as _gpm
 
-    await orch._run_single_spsa_game(
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(_gpm, "_execute_game_service", fake_execute_game)
+
+    await orch._run_game(
         start_sfen="startpos",
         tuned_params=params,
         current_params=params,
         worker_idx=7,
-        tuned_as_black=True,
+        is_tuned_as_black=True,
         update_idx=0,
         phase="plus",
         preassigned_game_id="test-game",
     )
+
+    monkeypatch.undo()
 
     assert hooks.events, "expected SPSA completion event"
     assert hooks.events[-1].worker_idx == 1

@@ -212,8 +212,8 @@ ShogiArena の LTC 回帰テスト機能は、この研究から着想を得て�
 
 | 知見 | ShogiArena での実装 |
 |:---|:---|
-| SPRT の設計 | `arena/services/statistics/sprt.py` |
-| 五項分布モデル | `arena/services/statistics/pentanomial.py` |
+| SPRT の設計 | `_core/contexts/game_session/application/sprt_service.py` |
+| 五項分布モデル | `_core/shared/kernel/statistics/pentanomial.py` |
 | STC→LTC ワークフロー | LTC 回帰テスト（`LtcRegressionConfig`） |
 | 統計的方法論 | SPRT パラメータのデフォルト値設計 |
 
@@ -245,9 +245,9 @@ SPRT 実装や裁定ロジックの**参照実装**として多くのフレー�
 
 | 影響を受けた領域 | ShogiArena での実装 |
 |:---|:---|
-| SPRT 実装の設計 | `arena/services/statistics/sprt.py`（cutechess の `sprt.cpp` を参考） |
-| 裁定ロジック | `arena/services/game_control/adjudication.py` |
-| 持ち時間管理 | `arena/engines/time_control.py` |
+| SPRT 実装の設計 | `_core/contexts/game_session/application/sprt_service.py`（cutechess の `sprt.cpp` を参考） |
+| 裁定ロジック | `_core/contexts/match/domain/adjudication.py` |
+| 持ち時間管理 | `_core/shared/kernel/time_control.py` |
 | トーナメント形式 | Round-robin、スイス式をサポート |
 
 ## ShogiArena の位置付け
@@ -309,13 +309,12 @@ ShogiArena の OpenBench クライアントは以下の API エンドポイン�
 
 | ファイル | クラス/関数 | 役割 |
 |---------|----------|------|
-| `arena/services/openbench.py` | `OpenBenchClient` | OpenBench API クライアント |
-| `arena/services/openbench.py` | `OpenBenchCounters` | 三項/五項分布結果カウンタ |
-| `arena/services/statistics/sprt.py` | `Sprt` | SPRT 実装（cutechess ベース） |
-| `arena/services/game_control/adjudication.py` | — | ゲーム裁定ロジック |
-| `arena/engines/time_control.py` | `TimeControl` | 持ち時間管理 |
-| `arena/engines/usi_engine.py` | `AsyncUsiEngine` | USI プロトコル実装 |
-| `arena/scheduler/game_scheduler.py` | — | 対局スケジューリング |
+| `_core/contexts/game_session/adapters/openbench/` | `OpenBenchClient` ほか | OpenBench API 連携 |
+| `_core/contexts/game_session/application/sprt_service.py` | `Sprt` | SPRT 実装（cutechess ベース） |
+| `_core/contexts/match/domain/adjudication.py` | `AdjudicationConfig` | ゲーム裁定ロジック |
+| `_core/shared/kernel/time_control.py` | `TimeControlLimits`, `GameClock` | 持ち時間管理 |
+| `_core/platform/engine_runtime/usi_engine_session.py` | `AsyncUsiEngine` | USI プロトコル実装 |
+| `_core/contexts/tournament/application/schedule_generation.py` | `GameScheduler` ほか | 対局スケジューリング |
 
 ## 参考文献
 

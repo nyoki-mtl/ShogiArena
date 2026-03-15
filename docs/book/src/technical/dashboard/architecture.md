@@ -2,7 +2,7 @@
 
 ## Module Layout
 
-フロントエンドは `src/shogiarena/web/dashboard/frontend/src/modules` 以下で機能単位に分割されています。各機能ディレクトリは次の構造を共有します。
+フロントエンドは `src/shogiarena/_core/interfaces/dashboard/frontend/src/modules` 以下で機能単位に分割されています。各機能ディレクトリは次の構造を共有します。
 
 ```text
 modules/<feature>/
@@ -18,9 +18,8 @@ modules/<feature>/
 要点:
 
 - `index.ts` がモジュールの公開 API を再エクスポートします。外部インポートは常に `@/modules/<feature>` エイリアスを使い、内部構造の変更に強くします。
-- 内部限定の型は `types/internal.ts`（もしくは `types/time.ts` などのドメイン別ファイル）に住みます。`window` 拡張は `src/shogiarena/web/dashboard/frontend/src/types/*.d.ts` 側で管理します。
+- 内部限定の型は `types/internal.ts`（もしくは `types/time.ts` などのドメイン別ファイル）に住みます。`window` 拡張は `src/shogiarena/_core/interfaces/dashboard/frontend/src/types/*.d.ts` 側で管理します。
 - 共有のテストヘルパーは `testing/` サブディレクトリにまとめ、プロダクションバンドルから除外します。
-- 起動順序を検証するブートレベルのテストは `src/shogiarena/web/dashboard/frontend/src/bootstrap.*.test.ts` に配置します。
 
 ## Module Status (2026-02)
 
@@ -59,7 +58,7 @@ DashboardCore
   │    └─ Depends on cards + time
   ├─ installLiveUpdatesModule → DashboardLive.updates / DashboardLiveUpdates
   │    └─ Depends on cards + time
-  └─ installLiveMain → Requires all APIs above
+  └─ initializeLiveMain → Requires all APIs above
 ```
 
 `DashboardLiveDiagnostics` は登録順やプロバイダ、タイムスタンプを記録し、スナップショット更新のたびに `dashboardlive:diagnostics` イベントを window に発火します。

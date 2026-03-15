@@ -1,6 +1,6 @@
 {
     "files": [],
     "references": [
-        { "path": "./src/shogiarena/web/dashboard/frontend/tsconfig.json" }
+        { "path": "./src/shogiarena/_core/interfaces/dashboard/frontend/tsconfig.json" }
     ]
 }

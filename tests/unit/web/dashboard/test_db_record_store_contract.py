@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 import rshogi
 from rshogi.initial_positions import InitialPosition
 
-from shogiarena.db.factory import SQLiteShogiDBFactory
-from shogiarena.records.storage.db_store import DBRecordStore
-from shogiarena.utils.types.types import GameResult
+from shogiarena._core.platform.db.store.record_store import DBRecordStore
+from shogiarena._core.platform.db.store.repository_factory import SQLiteShogiDBFactory
+from shogiarena._core.shared.kernel.game_results import GameResult
 
 
 def _make_record(
@@ -155,3 +157,49 @@ def test_db_record_store_append_prefers_engine_info_timing_fields(tmp_path) -> N
     assert engine_info is not None
     assert engine_info.wall_time_ms == 130
     assert engine_info.latency_delta_ms == 7
+
+
+def test_create_tables_rejects_legacy_result_code_schema(tmp_path) -> None:
+    db_path = tmp_path / "legacy.sqlite3"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE game (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_type VARCHAR(16) NOT NULL,
+                game_name VARCHAR(128) NOT NULL,
+                result_code SMALLINT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    repo = SQLiteShogiDBFactory(db_path).create()
+    with pytest.raises(RuntimeError, match="Unsupported shogidb schema detected"):
+        repo.create_tables()
+
+
+def test_create_tables_rejects_incomplete_game_result_schema(tmp_path) -> None:
+    db_path = tmp_path / "incomplete.sqlite3"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE game (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_type VARCHAR(16) NOT NULL,
+                game_name VARCHAR(128) NOT NULL,
+                game_result VARCHAR(64) NOT NULL
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    repo = SQLiteShogiDBFactory(db_path).create()
+    with pytest.raises(RuntimeError, match="missing columns"):
+        repo.create_tables()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from rshogi.record import GameResult
 
-from shogiarena.utils.types.coerce import (
+from shogiarena._core.shared.kernel.scalar_coercion.api import (
     coerce_bool,
     coerce_float,
     coerce_game_result,
@@ -349,30 +349,33 @@ class TestCoerceGameResult:
     def test_invalid_returns_none(self) -> None:
         assert coerce_game_result(None) is None
         assert coerce_game_result("abc") is None
+        assert coerce_game_result("DRAW") is None
         assert coerce_game_result("") is None
         assert coerce_game_result([]) is None
         assert coerce_game_result({}) is None
 
     def test_strict_raises(self) -> None:
         with pytest.raises(ValueError):
-            coerce_game_result(None, strict=True)
+            coerce_game_result(None, is_strict=True)
         with pytest.raises(ValueError):
-            coerce_game_result(True, strict=True)
+            coerce_game_result(True, is_strict=True)
         with pytest.raises(ValueError):
-            coerce_game_result("abc", strict=True)
+            coerce_game_result("abc", is_strict=True)
         with pytest.raises(ValueError):
-            coerce_game_result("", strict=True)
+            coerce_game_result("DRAW", is_strict=True)
+        with pytest.raises(ValueError):
+            coerce_game_result("", is_strict=True)
 
     def test_strict_raises_on_float(self) -> None:
         with pytest.raises(ValueError):
-            coerce_game_result(1.0, strict=True)
+            coerce_game_result(1.0, is_strict=True)
 
     def test_strict_valid(self) -> None:
-        result = coerce_game_result(1, strict=True)
+        result = coerce_game_result(1, is_strict=True)
         assert isinstance(result, GameResult)
 
     def test_strict_valid_from_str(self) -> None:
-        result = coerce_game_result("1", strict=True)
+        result = coerce_game_result("1", is_strict=True)
         assert isinstance(result, GameResult)
 
     def test_invalid_int(self) -> None:
@@ -381,7 +384,7 @@ class TestCoerceGameResult:
 
     def test_strict_invalid_int(self) -> None:
         with pytest.raises(ValueError):
-            coerce_game_result(999999, strict=True)
+            coerce_game_result(999999, is_strict=True)
 
 
 # ── coerce_str_list ────────────────────────────────────────────

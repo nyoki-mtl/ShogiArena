@@ -10,7 +10,7 @@ from typing import get_type_hints
 
 import pytest
 
-from shogiarena.web.dashboard.backend.spsa.types import (
+from shogiarena._core.contexts.dashboard.ports.spsa_payloads import (
     ConvergenceAnalysis,
     ConvergenceMetrics,
     ConvergencePrediction,
@@ -72,14 +72,14 @@ class TestGameBriefEntry:
 
     def test_optional_keys_contain_player_fields(self) -> None:
         optional = _optional_keys(GameBriefEntry)
-        assert {"black_player", "white_player", "result_code"} <= optional
+        assert {"black_player", "white_player", "game_result"} <= optional
 
     def test_all_keys(self) -> None:
         expected = {
             "game_id",
             "black_player",
             "white_player",
-            "result_code",
+            "game_result",
             "num_moves",
             "variant_id",
             "phase",
@@ -136,7 +136,7 @@ class TestUpdateEntry:
 
     def test_ltc_keys_present(self) -> None:
         keys = _all_keys(UpdateEntry)
-        assert {"ltc_regression", "has_ltc_regression", "ltc_rejected", "ltc_reverted_to"} <= keys
+        assert {"ltc_regression", "has_ltc_regression", "is_ltc_rejected", "ltc_reverted_to"} <= keys
 
 
 class TestUpdateDetailResponse:
@@ -162,7 +162,7 @@ class TestProgressSnapshot:
 
 class TestParameterTimelineEntry:
     def test_all_required(self) -> None:
-        expected = {"update_idx", "actual", "baseline", "pending", "ltc_invalidated", "ltc_decision"}
+        expected = {"update_idx", "actual", "baseline", "is_pending", "is_ltc_invalidated", "ltc_decision"}
         assert _required_keys(ParameterTimelineEntry) == expected
 
 
@@ -237,7 +237,7 @@ class TestSpsaSummaryPayload:
 
 class TestParamEntry:
     def test_all_required(self) -> None:
-        expected = {"name", "type", "v", "min", "max", "step", "delta", "comment", "not_used"}
+        expected = {"name", "type", "v", "min", "max", "step", "delta", "comment", "is_not_used"}
         assert _required_keys(ParamEntry) == expected
 
 
@@ -269,7 +269,7 @@ class TestLtcSummary:
 
     def test_contains_core_fields(self) -> None:
         keys = _all_keys(LtcSummary)
-        assert {"enabled", "status", "config", "best_estimate"} <= keys
+        assert {"is_enabled", "status", "config", "best_estimate"} <= keys
 
 
 # ---------------------------------------------------------------------------

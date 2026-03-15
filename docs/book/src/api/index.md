@@ -2,90 +2,61 @@
 
 Shogi Arena を Python ライブラリとして使用するための API リファレンスです。
 
-## API 一覧
+## Formal Public Surface
 
-| カテゴリ | 説明 | ドキュメント |
-|---------|------|-------------|
-| **CLI** | コマンドラインインターフェース | [cli.md](cli.md) |
-| **Configs** | 設定モデル（トーナメント・SPSA） | [configs.md](configs.md) |
-| **Engines** | USI エンジン操作 | [engines.md](engines.md) |
-| **Runners** | トーナメント/SPSA 実行 | [runners.md](runners.md) |
-| **Orchestrators** | 並列実行制御 | [orchestrators.md](orchestrators.md) |
-| **Scheduler** | 対局スケジューリング | [scheduler.md](scheduler.md) |
-| **Execution** | 対局実行 | [execution.md](execution.md) |
-| **Services** | 統計・永続化・判定 | [services.md](services.md) |
-| **Records** | 棋譜データ・パーサ | [records.md](records.md) |
-| **Instances** | インスタンス管理 | [instances.md](instances.md) |
-| **Session** | セッション制御 | [session.md](session.md) |
-| **Storage** | ストレージ抽象 | [storage.md](storage.md) |
-| **Dashboard** | Web ダッシュボード | [dashboard.md](dashboard.md) |
-| **DB** | データベース | [db.md](db.md) |
-| **Utils** | ユーティリティ | [utils.md](utils.md) |
+現在、正式に公開 API として扱うのは次のモジュールです。
 
-## インストール
+| モジュール | 用途 | 主な公開シンボル |
+| --- | --- | --- |
+| `shogiarena.engine` | USI エンジン操作 | `AnalysisHandle`, `AsyncUsiEngine`, `AsyncUsiProcess`, `AsyncUsiProcessBridgePort`, `PonderHandle`, `PonderHitTimings`, `SpawnerBackedUSIBridge`, `UsiEngineConfig`, `UsiEngineStartError`, `UsiEngineState`, `UsiMateResult`, `UsiOption`, `UsiProtocolParser`, `UsiThinkPV`, `UsiThinkRequest`, `UsiThinkResult`, `create_engine()`, `create_engine_from_mapping()`, `move_from_usi()` |
+| `shogiarena.tournament` | tournament / sprt 実行 | `FilesystemRunStorage`, `GameSpec`, `RunStorage`, `TournamentRunConfig`, `TournamentRunner`, `build_tournament_runner()`, `create_run_storage()`, `load_tournament_config()`, `run_tournament()` |
+| `shogiarena.cli` | CLI entrypoint | `CliArgumentError`, `CliError`, `build_parser()`, `main()` |
+| `shogiarena.composition` | advanced wiring | `DefaultRoot`, `build_default_root()` |
 
-```bash
-pip install shogiarena
-```
+`shogiarena._core.*` は実装正本ですが、公開 API ではありません。
 
-開発版をインストールする場合:
-
-```bash
-git clone https://github.com/nyoki-mtl/ShogiArena.git
-cd ShogiArena
-uv sync --all-extras
-```
-
-## クイックスタート
-
-### エンジンで思考させる（同期版）
-
-```python
-from shogiarena.arena.engines.sync_usi_engine import SyncUsiEngine
-from shogiarena.arena.engines.usi_think import UsiThinkRequest
-
-with SyncUsiEngine.from_config_path("configs/engine/yaneuraou.yaml") as engine:
-    result = engine.think(sfen="startpos", request=UsiThinkRequest(byoyomi=1000))
-    print(result.bestmove)
-```
-
-### エンジンで思考させる（非同期版）
+## Quick Start
 
 ```python
 import asyncio
-from pathlib import Path
 
-from shogiarena.arena.engines.engine_factory import EngineFactory
-from shogiarena.arena.engines.usi_think import UsiThinkRequest
+from shogiarena.engine import UsiThinkRequest, create_engine
+from shogiarena.tournament import run_tournament
 
-async def main():
-    engine = await EngineFactory.create_engine(Path("configs/engine/yaneuraou.yaml"))
-    await engine.start()
-    result = await engine.think(sfen="startpos", request=UsiThinkRequest(byoyomi=1000))
-    print(result.bestmove)
-    await engine.close()
+
+async def main() -> None:
+    async with await create_engine("engine.yaml") as engine:
+        result = await engine.think(
+            sfen="startpos",
+            request=UsiThinkRequest(byoyomi=1_000),
+        )
+        print(result.bestmove)
+
+    await run_tournament("tournament.yaml", run_dir="runs/example")
+
 
 asyncio.run(main())
 ```
 
-### トーナメントを実行する
+## Public Module Docs
 
-```python
-from pathlib import Path
+- [Engines](engines.md)
+- [Runners](runners.md)
+- [CLI](cli.md)
 
-from shogiarena.arena.configs.tournament import TournamentRunConfig
-from shogiarena.arena.runners.tournament_runner import TournamentRunner
-from shogiarena.arena.storage import FilesystemRunStorage
+## Internal / Contributor Reference
 
-config = TournamentRunConfig.from_yaml("configs/run/arena/tournament.yaml")
-storage = FilesystemRunStorage(Path("runs/tournament"))
-runner = TournamentRunner(config, storage=storage)
-result = runner.run_sync()
-print(result.tournament.get_leaderboard())
-```
+以下のページは contributor 向けの補足リファレンスです。公開 API ではなく、互換保証もありません。
 
-## 次のステップ
-
-- [Python ライブラリガイド](../user-guide/python-library.md) - API を組み合わせた実践例
-- [アーキテクチャ](../technical/architecture.md) - 内部構造の理解
-- [Runners & Orchestrators](../technical/runners-orchestrators.md) - 実行フローの詳細
+- [Configs](configs.md)
+- [Orchestrators](orchestrators.md)
+- [Scheduler](scheduler.md)
+- [Execution](execution.md)
+- [Services](services.md)
+- [Records](records.md)
+- [Instances](instances.md)
+- [Session](session.md)
+- [Storage](storage.md)
+- [Dashboard](dashboard.md)
+- [DB](db.md)
+- [Utils](utils.md)

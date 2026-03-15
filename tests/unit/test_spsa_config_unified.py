@@ -1,13 +1,19 @@
 import textwrap
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import ValidationError
 
-from shogiarena.arena.configs.spsa import load_config_yaml
-from shogiarena.arena.engines.time_control import TimeControlLimits
-from shogiarena.arena.orchestrators.spsa_orchestrator import SpsaOrchestrator
-from shogiarena.arena.session import LifecycleHooksBase, SessionContext
-from shogiarena.arena.storage import FilesystemRunStorage
+from shogiarena._core.contexts.game_session.adapters.run_storage import FilesystemRunStorage
+from shogiarena._core.contexts.game_session.ports.session_context import SessionContext
+from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
+from shogiarena._core.contexts.spsa.adapters.orchestrator import SpsaOrchestrator
+from shogiarena._core.shared.kernel.session_hooks import NoopGameLifecycleHooks
+from shogiarena._core.shared.kernel.time_control import TimeControlLimits
+from tests.unit.spsa_config_test_helpers import load_spsa_run_config
+
+_mock_engine_factory_service = EngineFactoryService(factory=AsyncMock())
 
 
 def write(tmp: Path, rel: str, content: str) -> Path:
@@ -51,11 +57,13 @@ def test_spsa_engine_initializes_with_global_time_control(tmp_path: Path) -> Non
     write(tmp_path, "sfens.txt", "startpos\n")
     write(tmp_path, "params.txt", "# empty\n")
 
-    cfg = load_config_yaml(str(cfg_yaml))
+    cfg = load_spsa_run_config(cfg_yaml)
     # Ensure orchestrator initializes with global time_control only
     storage = FilesystemRunStorage(tmp_path)
     session = SessionContext.build(storage=storage, num_workers=1, run_id="test")
-    orch = SpsaOrchestrator(cfg, session=session, hooks=LifecycleHooksBase())
+    orch = SpsaOrchestrator(
+        cfg, session=session, hooks=NoopGameLifecycleHooks(), engine_factory_service=_mock_engine_factory_service
+    )
     assert orch is not None
 
 
@@ -93,10 +101,12 @@ def test_spsa_engine_with_time_control_initializes(tmp_path: Path) -> None:
     write(tmp_path, "sfens.txt", "startpos\n")
     write(tmp_path, "params.txt", "# empty\n")
 
-    cfg = load_config_yaml(str(cfg_yaml))
+    cfg = load_spsa_run_config(cfg_yaml)
     storage = FilesystemRunStorage(tmp_path)
     session = SessionContext.build(storage=storage, num_workers=1, run_id="test")
-    orch = SpsaOrchestrator(cfg, session=session, hooks=LifecycleHooksBase())
+    orch = SpsaOrchestrator(
+        cfg, session=session, hooks=NoopGameLifecycleHooks(), engine_factory_service=_mock_engine_factory_service
+    )
     assert orch is not None
 
 
@@ -141,10 +151,10 @@ def test_spsa_ltc_regression_config(tmp_path: Path) -> None:
     write(tmp_path, "sfens.txt", "startpos\n")
     write(tmp_path, "params.txt", "# empty\n")
 
-    cfg = load_config_yaml(str(cfg_yaml))
+    cfg = load_spsa_run_config(cfg_yaml)
     assert cfg.ltc_regression is not None
     ltc = cfg.ltc_regression
-    assert ltc.enabled is True
+    assert ltc.is_enabled is True
     assert ltc.every_n_updates == 5
     assert ltc.total_pairs == 12
     assert isinstance(ltc.time_control, TimeControlLimits)
@@ -193,5 +203,5 @@ def test_ltc_regression_rejects_removed_fail_action(tmp_path):
         """,
     )
 
-    with pytest.raises(ValueError, match="fail_action is no longer supported"):
-        load_config_yaml(str(cfg_yaml))
+    with pytest.raises(ValidationError, match="fail_action"):
+        load_spsa_run_config(cfg_yaml)

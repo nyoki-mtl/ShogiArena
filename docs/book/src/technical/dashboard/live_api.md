@@ -23,11 +23,11 @@
 
 | Key | 主な利用者 | 入力経路 | 備考 |
 | --- | --- | --- | --- |
-| `workers`, `workerSnapshots`, `boardAdapters` | Live Cards | SSE `worker_update`, `worker_clock`, `worker_snapshot` | `modules/live/services/updates` が一元正規化。直接 mutate せず `DashboardCore.mutateState` 経由。 |
-| `liveViewSnapshot` | Live Summary, SPSA Hero, Tournament overview | SSE `summary` / `saved_games` の `liveView` ブロック（REST `/api/live/saved-games` フォールバック時も同スキーマ） | 2025-11 以降は `liveView:update` イベントで購読し、REST で得たスナップショットも `normalizeLiveViewSnapshot` を通す。 |
+| `workers`, `workerSnapshots`, `boardAdapters` | Live Cards | WebSocket `live.game.*.moves.diff`, `live.game.*.clock.diff`, `live.assignment.snapshot` | `modules/live/services/updates` が一元正規化。直接 mutate せず `DashboardCore.mutateState` 経由。 |
+| `liveViewSnapshot` | Live Summary, SPSA Hero, Tournament overview | SSE `summary` / `saved_games` の `liveView` ブロック | 2025-11 以降は `liveView:update` イベントで購読し、REST で得たスナップショットも `normalizeLiveViewSnapshot` を通す。 |
 | `runtimeMode`, `spsaMode` | Tab 切替、SPSA/Tournament Gatekeeper | SSE `summary` (`mode`), REST `/api/spsa/summary` 初期判定 | `applyTabConfiguration` 後は直接書き換え禁止。 |
 | `spsaSummary`, `spsaParams`, `spsaEvents` | SPSA タブ | SSE `spsa_updates`、REST `/api/spsa/{summary,params,events}` | `ensureDetailHydration` によりタブ初期表示時に REST でハイドレートし、その後は SSE 差分で更新。 |
-| `gamesList`, `gamesSignature*` | Tournament Saved Games | SSE `saved_games`, REST `/api/live/saved-games` | 同期を崩さないよう `liveView` 正規化を通す。 |
+| `gamesList`, `gamesSignature*` | Tournament Saved Games | SSE `saved_games` | 同期を崩さないよう `liveView` 正規化を通す。 |
 | `engineFinalRatings`, `ratingDeltas`, `standingsTCMap` | Tournament standings / charts | REST `/api/tournament/*` | `registerFetcher('tournament:standings', ...)` で共有ロード。 |
 
 ### SPSA Dashboard state data flow
@@ -48,10 +48,10 @@
 | --- | --- | --- | --- |
 | `version` | `number \| null` | SSE 正規化 (`normalizeLiveViewSnapshot`) | 仕様互換性管理用。未指定時は `null`。 |
 | `mode` | `'spsa' \| 'tournament' \| 'match' \| 'sprt' \| 'unknown'` | SSE `summary.mode` / REST `/api/*/summary` | ランタイムモードの確定値。 |
-| `progress` | `{ kind, unitLabel, completed, total, cancelled, isFinal, state, updatedAt } \| null` | SSE `summary` / `spsa_updates.progress`, REST `/api/live/saved-games` | Live progress バーの唯一のデータソース。`unitLabel` と `state` で UI 表示を統一。 |
-| `savedGames` | `{ signature, source, total, limit, count, updatedAt } \| null` | SSE `saved_games`, REST `/api/live/saved-games` | Saved Games ドロップダウンとトーナメント/SPSA 両タブの game list を初期化。 |
+| `progress` | `{ kind, unitLabel, completed, total, cancelled, isFinal, state, updatedAt } \| null` | SSE `summary` / `spsa_updates.progress` | Live progress バーの唯一のデータソース。`unitLabel` と `state` で UI 表示を統一。 |
+| `savedGames` | `{ signature, source, total, limit, count, updatedAt } \| null` | SSE `saved_games` | Saved Games ドロップダウンとトーナメント/SPSA 両タブの game list を初期化。 |
 
-> **運用ルール**: REST で取得した `liveView` を手動構築しないでください。`modules/live/services/updates/normalizers.ts` が公開する `normalizeLiveViewSnapshot` を必ず通し、正規化後に `DashboardCore.events.emit('liveView:update', snapshot)` で広報します。
+> **運用ルール**: REST で取得した `liveView` を手動構築しないでください。`modules/live/services/updates/normalizers/` が公開する `normalizeLiveViewSnapshot` を必ず通し、正規化後に `DashboardCore.events.emit('liveView:update', snapshot)` で広報します。
 
 ## High-level Events
 
@@ -65,12 +65,6 @@
 
 `summary:update`  
 :   SSE `summary` ペイロード受信時。レガシーの `window.ARENA_SUMMARY` 参照は廃止されました。
-
-`game:complete`  
-:   ワーカーのゲーム完了時に発火。`gameId` と最新ワーカーのスナップショットを含み、cards/history モジュールが利用します。
-
-`spsa:update`  
-:   SPSA ダッシュボード向けに予約。現状は REST ポーリングが継続しています。
 
 `dashboard:recoverable-failure`  
 :   `reportDashboardRecoverableFailure` を通じて発火される、ダッシュボード全体の「recoverable failure」通知イベント。
@@ -122,13 +116,9 @@ Summary の進捗は全モードで `games` オブジェクトに統一されて
 
 Live View の Progress バーやゲームセレクタはこのブロックのみを読めばよく、SPSA/Tournament で個別の正規化ロジックを持つ必要がありません。
 
-### REST フォールバック
-
-`/api/live/saved-games` (GET) を追加し、最新の `saved_games` スナップショットを REST でも取得できます。SSE が未接続でも同じスキーマ（上記 `liveView` ブロックを含む）が返るため、単一のエンドポイントで Saved Games ドロップダウンを初期化できます。
-
 ## Migration Guidance
 
-- Cards は `worker:snapshot`、`worker:clock`、`game:complete` を購読し、`window.ARENA_WORKER_*` はブートストラップ用フォールバックに限定します。
+- Cards は `worker:snapshot`、`worker:clock` を購読し、`window.ARENA_WORKER_*` はブートストラップ用フォールバックに限定します。
 - Summary は `summary:update` と共有フェッチャーに依存します。
 - 共有ローダーを追加する場合は必ず `DashboardCore.registerFetcher` を利用して、ネットワーク呼び出しの重複を防ぎます。
 - 新しいイベントを導入するときはペイロードを本ドキュメントに記述し、クロスモジュール呼び出しではなく Live オーケストレータから発火してください。
@@ -208,7 +198,7 @@ Live View では SSE を第一優先にしつつ、REST を「初期ハイドレ
 | `/api/spsa/summary` | SSE `spsa_updates.summary_patch`（常時）、REST は初期描画のみ | `SUMMARY_CACHE_TTL_MS = 10s`。SSE 受信後は REST を呼ばない | `spsa:hydration:summary` | HUD で 45/h を超える High load が出たら `SUMMARY_CACHE_TTL_MS` を伸ばす or `ensureDetailHydration` の遅延トリガーを見直す |
 | `/api/spsa/params` | REST（SSE なし） | `PARAMS_REFRESH_INTERVAL_MS = 60s` より短い間隔での再フェッチ禁止。`paramsCache` を reuse | `spsa:hydration:params` | タブをまたいだ使い回しでは cache hit が 80%以上になるよう `ensureDetailHydration` を遅延実行する |
 | `/api/games`（Tournament matchups） | REST + `DashboardLive.savedGames` シグネチャ監視 | `MATCHUPS_GAMES_TTL_MS = 90s`。signature が変わるまで `state.gamesListCache` を流用 | `tournament:hydration:matchups` | signature 変化で cache を破棄し、その他の場合は hydrate 1 回のみ。Live Diagnostics で 120/h 以上なら TTL を延長 or `saved_games` SSE で強制更新する |
-| `/api/live/saved-games` | SSE `saved_games` でほぼ常時更新。REST は初期ロード & 手動更新時のみ | `savedGames` ブロックが 5 分以内なら再フェッチ不要 | `live:hydration:saved-games` | Saved Games ドロップダウンは `liveViewSnapshot.savedGames` を参照し、REST で得た結果も正規化して同じストアに入れる |
+| (saved-games) | SSE `saved_games` でほぼ常時更新 | `savedGames` ブロックが 5 分以内なら再フェッチ不要 | `live:hydration:saved-games` | Saved Games ドロップダウンは `liveViewSnapshot.savedGames` を参照する |
 | `/api/worker/{idx}` | SSE `worker_update` が正とし、REST は非同期デバッグ用 | なし（worker snapshot が無ければ 404 想定） | `worker:hydration`（任意） | `shogiarena run tournament` 未実行の run_dir では 404 が正常。`data/workers/*` を再生成する場合は `write_dashboard_assets` を直接呼ぶ |
 
 ### 実装メモ

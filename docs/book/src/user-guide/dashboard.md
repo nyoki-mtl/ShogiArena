@@ -5,7 +5,7 @@ Shogi Arena のダッシュボードは、トーナメントや SPSA チュー�
 ## 起動方法
 
 ### トーナメント実行時
-`TournamentRunConfig` で `dashboard.enabled: true` に設定すると自動的に起動します（デフォルトポート: 8080）。
+run 設定で `dashboard.enabled: true` に設定すると自動的に起動します（デフォルトポート: 8080）。
 
 ```bash
 shogiarena run tournament my_config.yaml
@@ -17,6 +17,8 @@ shogiarena run tournament my_config.yaml
 
 ```bash
 shogiarena dashboard serve --run-dir work_dir/... --port 8080
+# または設定ファイルから最新 run を解決
+shogiarena dashboard serve --config tournament.yaml
 ```
 
 ## ランタイムモード

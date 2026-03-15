@@ -3,7 +3,7 @@ from __future__ import annotations
 import rshogi
 from rshogi.initial_positions import InitialPosition
 
-from shogiarena.utils.types.types import GameResult
+from shogiarena._core.shared.kernel.game_results import GameResult
 
 
 def _record_with_result(result: GameResult) -> object:
@@ -21,9 +21,9 @@ def _record_with_result(result: GameResult) -> object:
     )
 
 
-def test_to_kif_handles_error_result_code_3() -> None:
+def test_to_kif_preserves_error_label_for_error_result() -> None:
     kif = _record_with_result(GameResult.ERROR).to_kif()
-    assert "中断" in kif
+    assert "ERROR" in kif
 
 
 def test_to_kif_draw_labels_follow_game_result_codes() -> None:

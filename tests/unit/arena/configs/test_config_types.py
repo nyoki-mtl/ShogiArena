@@ -5,7 +5,8 @@ _WdlCounts および _EngineWdlCounts の構造的整合性を検証する。
 
 from __future__ import annotations
 
-from shogiarena.arena.configs.tournament import _EngineWdlCounts, _WdlCounts
+from shogiarena._core.contexts.game_session.domain.summary_models import EngineWdlCounts as _EngineWdlCounts
+from shogiarena._core.contexts.game_session.domain.summary_models import WdlCounts as _WdlCounts
 
 
 def _required_keys(td: type) -> set[str]:

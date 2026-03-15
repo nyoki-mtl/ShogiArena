@@ -1,7 +1,9 @@
-import pytest
-from rshogi.core import Move
-
-from shogiarena.arena.engines.usi_types import UsiBound, UsiEvalValue, UsiThinkPV, UsiThinkResult
+from shogiarena._core.platform.engine_runtime.usi_protocol_types import (
+    UsiBound,
+    UsiEvalValue,
+    UsiThinkPV,
+    UsiThinkResult,
+)
 
 
 def test_eval_value_to_string_variants() -> None:
@@ -41,16 +43,6 @@ def test_from_info_string_parses_score_and_bound() -> None:
     pv2 = UsiThinkPV.from_info_string("info score mate -3 lowerbound")
     assert pv2 is not None and isinstance(pv2.eval, UsiEvalValue) and pv2.bound is UsiBound.LOWER
     assert pv2.eval.to_string() == "mate -3"
-
-
-def test_bestmove_to_usi_string_requires_bestmove() -> None:
-    r = UsiThinkResult()
-    with pytest.raises(ValueError):
-        _ = r.to_usi_string()
-    r.bestmove = Move.from_usi("7g7f")
-    assert r.to_usi_string() == "bestmove 7g7f"
-    r.ponder = Move.from_usi("3c3d")
-    assert r.to_usi_string() == "bestmove 7g7f ponder 3c3d"
 
 
 def test_get_last_pv_works_with_default_index() -> None:

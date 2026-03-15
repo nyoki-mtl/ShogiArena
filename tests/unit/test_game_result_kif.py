@@ -1,11 +1,7 @@
 import rshogi
 
-from shogiarena.utils.types.types import (
-    Color,
-    GameResult,
-    game_result_score,
-    timeout_win_result,
-)
+from shogiarena._core.shared.kernel.game_record_types import Color, game_result_score
+from shogiarena._core.shared.kernel.game_results import GameResult, timeout_win_result
 
 
 def test_game_result_from_kif_resign() -> None:

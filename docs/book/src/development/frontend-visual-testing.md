@@ -28,4 +28,4 @@ This repository still lacks automated screenshot-based regression checks. The lo
 PERCY_TOKEN=... npx percy exec -- npm run frontend:visual
 ```
 
-For now, component-level HTML snapshot tests (see `src/modules/tournament/__tests__/`) provide a textual regression signal. Moving those HTML strings into Playwright-driven screenshots is the next step once the tooling above is in place.
+For now, component-level HTML snapshot tests (see frontend の `src/modules/tournament/__tests__/`) provide a textual regression signal. Moving those HTML strings into Playwright-driven screenshots is the next step once the tooling above is in place.
