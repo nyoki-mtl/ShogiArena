@@ -1,0 +1,5 @@
+This patch release hardens USI engine I/O handling for trace-heavy debugging workflows.
+
+- Moved engine I/O log handlers off the monitor loop so slow trace consumers no longer delay `bestmove` parsing.
+- Improved timeout-recovery robustness when `stop()` must collect a late `bestmove` under heavy logging.
+- Added regression tests covering blocked synchronous log handlers during `think()` and recovery paths.

@@ -5,6 +5,6 @@ This package provides the N-engine tournament components under
 `shogiarena._core.interfaces.dashboard`.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 __all__: list[str] = []

@@ -1,6 +1,7 @@
 import asyncio
 import gc
 import logging
+import threading
 from collections.abc import Awaitable, Callable
 
 import pytest
@@ -153,6 +154,45 @@ async def test_engine_think_returns_bestmove(tmp_path) -> None:
         assert result.bestmove == Move.from_usi("7g7f")
         assert result.ponder == Move.from_usi("3c3d")
         assert seen_infos == [10]
+
+
+@pytest.mark.asyncio
+async def test_engine_think_progresses_while_sync_io_log_handler_is_blocked(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+    handler_started = threading.Event()
+    handler_release = threading.Event()
+
+    async def handle_go(command: str) -> None:
+        await bridge.enqueue("info depth 10 nodes 123 time 45")
+        await bridge.enqueue("bestmove 7g7f ponder 3c3d")
+
+    def blocking_handler(entry: dict[str, object]) -> None:
+        line = entry.get("line")
+        if line == "info depth 10 nodes 123 time 45":
+            handler_started.set()
+            # Keep the handler blocked well past the assertion timeout so the test
+            # proves think() is decoupled from synchronous log processing.
+            handler_release.wait(timeout=1.0)
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        bridge.set_handler("go ", handle_go)
+        eng.register_io_log_handler(blocking_handler)
+
+        think_task = asyncio.create_task(eng.think(sfen="startpos", request=UsiThinkRequest(movetime=1000)))
+        started = await asyncio.to_thread(handler_started.wait, 1.0)
+        assert started
+
+        result = await asyncio.wait_for(think_task, timeout=0.05)
+        handler_release.set()
+
+        assert result.bestmove == Move.from_usi("7g7f")
+        assert result.ponder == Move.from_usi("3c3d")
 
 
 @pytest.mark.asyncio
@@ -798,6 +838,51 @@ async def test_engine_think_timeout_can_recover_with_stop(tmp_path) -> None:
         assert recovered is not None
         assert recovered.bestmove == Move.from_usi("7g7f")
         assert eng.state == UsiEngineState.READY
+
+
+@pytest.mark.asyncio
+async def test_engine_stop_recovers_while_sync_io_log_handler_is_blocked(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+    handler_started = threading.Event()
+    handler_release = threading.Event()
+
+    async def handle_go(command: str) -> None:
+        await bridge.enqueue("info string trace busy=1")
+
+    async def handle_stop(command: str) -> None:
+        await bridge.enqueue("bestmove 7g7f")
+
+    def blocking_handler(entry: dict[str, object]) -> None:
+        line = entry.get("line")
+        if line == "info string trace busy=1":
+            handler_started.set()
+            # Keep the handler blocked well past the assertion timeout so the test
+            # proves stop() recovery is decoupled from synchronous log processing.
+            handler_release.wait(timeout=1.0)
+
+    bridge.set_handler("go ", handle_go)
+    bridge.set_handler("stop", handle_stop)
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        eng.register_io_log_handler(blocking_handler)
+
+        think_task = asyncio.create_task(eng.think(sfen="startpos", request=UsiThinkRequest(movetime=1000)))
+        started = await asyncio.to_thread(handler_started.wait, 1.0)
+        assert started
+
+        recovered = await asyncio.wait_for(eng.stop(timeout=1.0), timeout=0.05)
+        handler_release.set()
+        final_result = await think_task
+
+        assert recovered is not None
+        assert recovered.bestmove == Move.from_usi("7g7f")
+        assert final_result.bestmove == Move.from_usi("7g7f")
 
 
 @pytest.mark.asyncio

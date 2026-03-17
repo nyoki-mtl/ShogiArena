@@ -48,6 +48,7 @@ class AsyncUsiEngineLifecycleMixin:
     _clear_ponder_handle: Any
     stop: Any
     _emit_debug_log: Any
+    _shutdown_io_log_dispatcher: Any
 
     @property
     def is_running(self) -> bool:
@@ -115,6 +116,7 @@ class AsyncUsiEngineLifecycleMixin:
             except RuntimeError as exc:
                 if "not running" not in str(exc):
                     raise
+            await self._shutdown_io_log_dispatcher()
         finally:
             self._is_started = False
             self._is_closing = False

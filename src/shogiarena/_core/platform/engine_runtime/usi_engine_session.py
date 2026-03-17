@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from collections import deque
@@ -55,6 +56,7 @@ class AsyncUsiEngine(
     """High-level USI engine session built atop ``AsyncUsiProcess``."""
 
     DEFAULT_HANDSHAKE_TIMEOUT = 120.0
+    IO_LOG_DRAIN_TIMEOUT_SECONDS = 5.0
     _isready_locks: dict[str, asyncio.Lock] = {}
 
     def __init__(
@@ -77,6 +79,8 @@ class AsyncUsiEngine(
         self._options: dict[str, UsiOption] = {}
         self._handshake_log: deque[JsonObject] = deque(maxlen=_HANDSHAKE_LOG_LIMIT)
         self._io_log_handlers: list[Callable[[JsonObject], Awaitable[None] | None]] = []
+        self._io_log_dispatch_queue: asyncio.Queue[JsonObject | None] | None = None
+        self._io_log_dispatch_task: asyncio.Task[None] | None = None
 
         self._monitor_task: asyncio.Task[None] | None = None
         self._usiok_future: asyncio.Future[None] | None = None
@@ -242,13 +246,88 @@ class AsyncUsiEngine(
         if not state:
             state = self._state.value
         entry["state"] = state
-        for handler in list(self._io_log_handlers):
+        if not self._io_log_handlers:
+            return
+        self._ensure_io_log_dispatcher()
+        queue = self._io_log_dispatch_queue
+        if queue is None:
+            return
+        queue.put_nowait(entry)
+
+    def _ensure_io_log_dispatcher(self) -> None:
+        task = self._io_log_dispatch_task
+        if task is not None and not task.done():
+            return
+        self._io_log_dispatch_queue = asyncio.Queue()
+        self._io_log_dispatch_task = asyncio.create_task(
+            self._dispatch_io_logs(),
+            name=f"usi-io-log-dispatch-{self.name}",
+        )
+
+    async def _dispatch_io_logs(self) -> None:
+        queue = self._io_log_dispatch_queue
+        if queue is None:
+            return
+        while True:
+            entry = await queue.get()
             try:
-                result = handler(entry)
-                if asyncio.iscoroutine(result):
-                    asyncio.create_task(result)
-            except (RuntimeError, TypeError, ValueError):
-                logger.warning("[%s] io log handler failed", self.name, exc_info=True)
+                if entry is None:
+                    return
+                for handler in list(self._io_log_handlers):
+                    await self._run_io_log_handler(handler, entry)
+            finally:
+                queue.task_done()
+
+    async def _run_io_log_handler(
+        self,
+        handler: Callable[[JsonObject], Awaitable[None] | None],
+        entry: JsonObject,
+    ) -> None:
+        entry_copy: JsonObject = dict(entry)
+        try:
+            if self._is_async_io_log_handler(handler):
+                result = handler(entry_copy)
+                if inspect.isawaitable(result):
+                    await result
+            else:
+                # Keep supporting sync wrappers that return an awaitable even if
+                # they are not declared with ``async def``.
+                result = await asyncio.to_thread(handler, entry_copy)
+                if inspect.isawaitable(result):
+                    await result
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("[%s] io log handler failed", self.name, exc_info=True)
+
+    @staticmethod
+    def _is_async_io_log_handler(handler: Callable[[JsonObject], Awaitable[None] | None]) -> bool:
+        if inspect.iscoroutinefunction(handler):
+            return True
+        if not callable(handler):
+            return False
+        return inspect.iscoroutinefunction(handler.__call__)
+
+    async def _shutdown_io_log_dispatcher(self) -> None:
+        task = self._io_log_dispatch_task
+        queue = self._io_log_dispatch_queue
+        if task is None:
+            self._io_log_dispatch_queue = None
+            return
+        if queue is not None:
+            queue.put_nowait(None)
+        try:
+            await asyncio.wait_for(task, timeout=self.IO_LOG_DRAIN_TIMEOUT_SECONDS)
+        except TimeoutError:
+            logger.warning("[%s] timed out draining io log handlers during shutdown", self.name)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        finally:
+            self._io_log_dispatch_task = None
+            self._io_log_dispatch_queue = None
 
     def _emit_debug_log(self, message: str, *, state: str | None = None) -> None:
         """Emit a non-USI debug line into the engine I/O stream."""

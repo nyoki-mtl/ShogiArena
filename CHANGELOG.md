@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1]
+
+### Fixed
+- **Engine runtime**: Decoupled USI I/O log handlers from the monitor loop so heavy trace consumers no longer delay `bestmove` parsing and `stop()` recovery.
+- **Testing**: Added regression coverage for blocked synchronous I/O log handlers during `think()` and timeout recovery paths.
+
 ## [0.3.0]
 
 *v0.1.x からの大規模リファクタリングにより、すべてのモジュール構成・API・設定形式が刷新されました。
@@ -24,5 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.3.1
 [0.3.0]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.3.0
