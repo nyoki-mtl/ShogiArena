@@ -47,7 +47,7 @@ class DashboardLifecycleCoordinator:
         self.api_server: Any | None = None
 
     def ensure_assets(self, run_dir: Path, num_workers: int) -> None:
-        self._init_dashboard_html(run_dir, num_workers=num_workers, profiles=self._profiles)
+        self._init_dashboard_html(run_dir / "dashboard", num_workers=num_workers, profiles=self._profiles)
 
     async def start_server(self, run_dir: Path, preferred_port: int, num_workers: int) -> int:
         """Start dashboard API server with port fallback. Returns actual_port."""
@@ -85,7 +85,7 @@ class DashboardLifecycleCoordinator:
         await srv.start()
         self.api_server = srv
 
-        port_js = run_dir / "data" / "arena_port.js"
+        port_js = run_dir / "dashboard" / "data" / "arena_port.js"
         port_js.parent.mkdir(parents=True, exist_ok=True)
         port_js.write_text(f"window.ARENA_API_PORT = {port};\n", encoding="utf-8")
 
@@ -122,11 +122,11 @@ class DashboardLifecycleCoordinator:
         DashboardLifecycleCoordinator.cleanup_run_dir(
             run_dir,
             files=[
-                "index.html",
-                "data/shogi-board.js",
-                "data/arena_port.js",
+                "dashboard/index.html",
+                "dashboard/data/shogi-board.js",
+                "dashboard/data/arena_port.js",
             ],
-            dirs=["spsa", "static", "html"],
+            dirs=["dashboard/static", "dashboard/html"],
         )
 
 

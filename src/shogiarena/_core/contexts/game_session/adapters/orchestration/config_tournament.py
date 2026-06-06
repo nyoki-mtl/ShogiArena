@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
+from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
 from shogiarena._core.platform.settings import project_dirs
 from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_serialized
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
-from shogiarena._core.shared.kernel.paths import resolve_path_like
+from shogiarena._core.shared.kernel.paths import PATH_OPTION_KEYS, resolve_path_like
+from shogiarena._core.shared.kernel.run_artifact_contract import (
+    build_run_artifact_payload_bundle,
+    build_schedule_payload,
+)
+from shogiarena._core.shared.kernel.run_artifact_hashes import RunArtifactHashBundle
+from shogiarena._core.shared.kernel.run_artifact_hashes import schedule_hash as compute_schedule_hash
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_str, coerce_str_list
 from shogiarena._core.shared.kernel.serialization import json_serialize
 
@@ -29,6 +35,7 @@ from .config_engine import (
     DashboardConfig,
     EngineConfig,
     GenerateConfig,
+    LoggingConfig,
     RatingConfig,
     RecordOutputConfig,
     SystemConfig,
@@ -48,6 +55,7 @@ class TournamentRunConfig(BaseModel):
     openbench: OpenBenchConfig | None = None
     rating: RatingConfig = Field(default_factory=RatingConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
     log_level: str = "INFO"
     system: SystemConfig = Field(default_factory=SystemConfig)
     records_output: RecordOutputConfig | None = None
@@ -55,6 +63,9 @@ class TournamentRunConfig(BaseModel):
     instances: tuple[Path, ...] | None = None
     output_dir: Path = Field(default_factory=lambda: project_dirs.output_dir)
     source_path: Path | None = None
+
+    _run_artifact_hashes_cache: RunArtifactHashBundle | None = PrivateAttr(default=None)
+    _schedule_hash_cache: str | None = PrivateAttr(default=None)
 
     @field_validator("system", mode="before")
     @classmethod
@@ -69,6 +80,7 @@ class TournamentRunConfig(BaseModel):
                 "resource_poll_interval",
                 "resource_poll_max_interval",
                 "engine_handshake_timeout",
+                "path_preflight",
                 "extras",
             }
             payload: dict[str, JsonValue] = {k: source[k] for k in source if k in allowed_keys}
@@ -137,6 +149,8 @@ class TournamentRunConfig(BaseModel):
             if self.sprt.num_parallel is not None and self.tournament.num_parallel == 4:
                 self.tournament.num_parallel = int(self.sprt.num_parallel)
 
+        self._preflight_path_options()
+
         # Normalize instances
         if self.instances:
             normalized: list[Path] = []
@@ -155,6 +169,51 @@ class TournamentRunConfig(BaseModel):
 
         self.output_dir = Path(self.output_dir)
         return self
+
+    def _preflight_path_options(self) -> None:
+        mode = self.system.path_preflight
+        if mode == "off":
+            return
+        errors: list[str] = []
+        for engine in self.engines:
+            for option_name, resolved_path in self._iter_path_option_values(engine):
+                candidate = Path(resolved_path)
+                if candidate.exists():
+                    continue
+                message = f"Engine '{engine.name}' path option '{option_name}' references missing path: {candidate}"
+                if mode == "error":
+                    errors.append(message)
+                else:
+                    logger.warning("%s", message)
+        if errors:
+            raise FileNotFoundError("; ".join(errors))
+
+    def _iter_path_option_values(self, engine: EngineConfig) -> list[tuple[str, str]]:
+        option_names = set(PATH_OPTION_KEYS)
+        option_names.update(engine.path_options)
+        if not option_names:
+            return []
+        merged = self._load_engine_file_options(engine)
+        merged.update(engine.load_overlay_options())
+        merged.update({str(key): json_serialize(value) for key, value in engine.options.items()})
+        values: list[tuple[str, str]] = []
+        for option_name in sorted(option_names):
+            raw_value = merged.get(option_name)
+            if not isinstance(raw_value, str) or not raw_value.strip():
+                continue
+            resolved = resolve_path_like(raw_value, output_dir=self.output_dir, engine_dir=project_dirs.engine_dir)
+            values.append((option_name, resolved))
+        return values
+
+    def _load_engine_file_options(self, engine: EngineConfig) -> JsonObject:
+        if engine.engine_path is None:
+            return {}
+        config = UsiEngineConfig.from_file(
+            engine.engine_path,
+            output_dir=self.output_dir,
+            engine_dir=project_dirs.engine_dir,
+        )
+        return {str(key): json_serialize(value) for key, value in config.options.items()}
 
     @classmethod
     def from_mapping(
@@ -306,17 +365,43 @@ class TournamentRunConfig(BaseModel):
         return tuple(resolved)
 
     def get_schedule_hash(self) -> str:
-        components = [
-            self.tournament.seed or "",
-            str(self.tournament.games_per_pair),
-            self.tournament.scheduler,
-            "|".join(str(e.name) for e in self.engines),
-            self.tournament.game_order,
-            getattr(self.rules.initial_positions, "flip_policy", None) or "",
-            getattr(self.tournament, "baseline_count", 1),
-        ]
-        hash_input = "-".join(str(c) for c in components)
-        return hashlib.sha256(hash_input.encode()).hexdigest()[:16]
+        cached = self._schedule_hash_cache
+        if cached is not None:
+            return cached
+        payload = self.model_dump(mode="json")
+        digest = compute_schedule_hash(build_schedule_payload(payload))
+        self._schedule_hash_cache = digest
+        return digest
+
+    def get_resume_hash(self) -> str:
+        resume_digest = self.get_run_artifact_hashes().resume_hash
+        if resume_digest is None:
+            raise ValueError("resume_hash requires sealed provenance")
+        return resume_digest
+
+    def get_run_artifact_hashes(self) -> RunArtifactHashBundle:
+        cached = self._run_artifact_hashes_cache
+        if cached is not None:
+            return cached
+        payload = self.model_dump(mode="json")
+        hashes = build_run_artifact_payload_bundle(payload).hashes
+        self._run_artifact_hashes_cache = hashes
+        self._schedule_hash_cache = hashes.schedule_hash
+        return hashes
+
+    def clear_run_artifact_hash_cache(self) -> None:
+        """Clear memoized run artifact hashes after config mutation."""
+
+        self._run_artifact_hashes_cache = None
+        self._schedule_hash_cache = None
+
+    def has_unresolved_artifacts(self) -> bool:
+        """Return true when provenance needs artifact resolution before hashing."""
+
+        for engine in self.engines:
+            if engine.artifact and engine.engine_path is None:
+                return True
+        return False
 
 
 # ---- Retired from spsa.py ----

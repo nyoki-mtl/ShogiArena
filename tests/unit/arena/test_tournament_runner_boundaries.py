@@ -18,10 +18,8 @@ from shogiarena._core.shared.kernel.exceptions import ContractParseError
 
 def test_parse_tournament_run_state_boundary_accepts_valid_payload_with_nested_openbench() -> None:
     payload = {
-        "config": {"experiment_name": "boundary-test"},
         "schedule_hash": "abc",
         "total_games": 1,
-        "completed_game_ids": ["g01"],
         "cancelled_game_ids": [],
         "completed_games_count": 1,
         "cancelled_games_count": 0,
@@ -61,14 +59,6 @@ def test_parse_tournament_run_state_boundary_accepts_valid_payload_with_nested_o
             "result_id": 7,
             "blacklist": [1, "2", 3.0],
         },
-        "completed_game_summaries": {
-            "g01": {
-                "game_result": "BLACK_WIN",
-                "total_plies": "42",
-                "start_time": "2026-01-01T00:00:30Z",
-                "end_time": "2026-01-01T00:00:55Z",
-            }
-        },
         "game_instance_overrides": {"g01": {"shared": "w1", "mode": "shared"}},
         "cancelled_games": [],
     }
@@ -77,27 +67,21 @@ def test_parse_tournament_run_state_boundary_accepts_valid_payload_with_nested_o
     assert parsed["openbench_state"] is not None
     assert parsed["openbench_state"]["target_test_id"] == 12
     assert parsed["openbench_state"]["submitted"]["losses"] == 2
-    assert parsed["completed_game_summaries"]["g01"]["game_result"] == "BLACK_WIN"
     assert parsed["game_instance_overrides"]["g01"]["shared"] == "w1"
 
 
-def test_parse_tournament_run_state_boundary_rejects_invalid_completed_summary() -> None:
+def test_parse_tournament_run_state_boundary_rejects_completed_game_ids() -> None:
     payload = {
-        "completed_game_summaries": {"g01": "bad"},
+        "completed_game_ids": ["g01"],
     }
 
     with pytest.raises(ContractParseError, match="Failed to parse wire payload"):
         parse_tournament_run_state_boundary(payload)
 
 
-def test_parse_tournament_run_state_boundary_rejects_legacy_summary_keys() -> None:
+def test_parse_tournament_run_state_boundary_rejects_completed_summaries() -> None:
     payload = {
-        "completed_game_summaries": {
-            "g01": {
-                "game_result": "BLACK_WIN",
-                "result_code": 0,
-            }
-        }
+        "completed_game_summaries": {"g01": {"game_result": "BLACK_WIN"}},
     }
 
     with pytest.raises(ContractParseError, match="Failed to parse wire payload"):

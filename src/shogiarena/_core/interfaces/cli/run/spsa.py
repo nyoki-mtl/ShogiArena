@@ -5,8 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 
+from shogiarena._core.contexts.game_session.application.session.run_metadata_persistence_service import (
+    RunManifestSealError,
+)
 from shogiarena._core.contexts.spsa.application.entrypoints import (
     build_spsa_run_config,
     create_spsa_run_storage,
@@ -14,10 +18,12 @@ from shogiarena._core.contexts.spsa.application.entrypoints import (
     spsa_engine_trace_logger_names,
 )
 from shogiarena._core.interfaces.cli.config_file_loaders import parse_spsa_config_file
+from shogiarena._core.interfaces.cli.main import CliError
 from shogiarena._core.interfaces.composition_root.default_root import build_default_root
 from shogiarena._core.platform.settings import project_dirs
 from shogiarena._core.platform.settings.facade import current_settings
 from shogiarena._core.platform.settings.loader import validate_overlays
+from shogiarena._core.shared.kernel.run_manifest_reader import read_sealed_manifest_resume_hash
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_bool, coerce_int, coerce_optional_text
 from shogiarena._core.shared.kernel.serialization import json_serialize
 
@@ -37,6 +43,7 @@ async def run_spsa_command(
     git_worktree: str,
     experiment_name: str | None,
     run_dir_override: str | None,
+    config_payload: Mapping[str, object] | None = None,
     base_cmd: BaseRunCommand | None = None,
 ) -> None:
     logger = LOGGER
@@ -44,8 +51,12 @@ async def run_spsa_command(
 
     root = build_default_root()
 
-    config_payload = parse_spsa_config_file(config_file)
-    cfg = build_spsa_run_config(config_payload, source_path=config_file, runtime=root.spsa_runtime)
+    effective_payload = config_payload if config_payload is not None else parse_spsa_config_file(config_file)
+    cfg = build_spsa_run_config(
+        effective_payload,
+        source_path=None if config_payload is not None else config_file,
+        runtime=root.spsa_runtime,
+    )
     validate_overlays(current_settings())
 
     if should_validate_only:
@@ -95,18 +106,22 @@ async def run_spsa_command(
         logger.debug("Run directory: %s", run_dir)
         logger.debug("Baseline: %s", base_names)
         logger.debug("Tuned: %s", tuned_names)
-        logger.debug("Parameters path: %s", cfg.parameters_path)
+        logger.debug("Space path: %s", cfg.space_path)
         logger.debug("Start SFENs: %s", cfg.start_sfens_path)
         return
 
     storage = create_spsa_run_storage(run_dir, runtime=root.spsa_runtime)
-    await run_spsa_session(
-        cfg,
-        storage=storage,
-        should_skip_resume=should_skip_resume,
-        instance_pool=instance_pool,
-        runtime=root.spsa_runtime,
-    )
+    try:
+        await run_spsa_session(
+            cfg,
+            storage=storage,
+            should_skip_resume=should_skip_resume,
+            instance_pool=instance_pool,
+            runtime=root.spsa_runtime,
+        )
+    except RunManifestSealError as exc:
+        message = "Run manifest is not compatible with current config/provenance. Use --no-resume to start fresh."
+        raise CliError(message) from exc
 
 
 def _scan_spsa_candidates(group_dir: Path) -> list[ResumeCandidate]:
@@ -117,7 +132,7 @@ def _scan_spsa_candidates(group_dir: Path) -> list[ResumeCandidate]:
         if not (entry.name.isdigit() and len(entry.name) == 14):
             continue
 
-        state_path = entry / "run_state.json"
+        state_path = entry / "state.json"
 
         if not state_path.exists():
             continue
@@ -133,6 +148,13 @@ def _scan_spsa_candidates(group_dir: Path) -> list[ResumeCandidate]:
             state = {}
         if isinstance(state, dict):
             state_map = {str(key): json_serialize(value) for key, value in state.items()}
+            manifest_resume_hash = read_sealed_manifest_resume_hash(entry / "manifest.json", logger=LOGGER)
+            if (
+                manifest_resume_hash is None
+                or coerce_optional_text(state_map.get("resume_hash")) != manifest_resume_hash
+            ):
+                LOGGER.info("Skipping resume candidate without matching sealed manifest: %s", entry)
+                continue
             updated_at = state_map.get("updated_at") or state_map.get("created_at") or updated_at
             completed_val = state_map.get("completed_updates")
             total_val = state_map.get("total_updates")
@@ -148,7 +170,7 @@ def _scan_spsa_candidates(group_dir: Path) -> list[ResumeCandidate]:
                 "total": total,
                 "updated_at": coerce_optional_text(updated_at) or "-",
                 "is_finished": is_finished,
-                "schedule_hash": None,  # SPSA runs don't typically hash the schedule in the same way
+                "match_hash": None,
             }
         )
     return candidates

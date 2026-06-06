@@ -10,7 +10,6 @@ from .state_models import (
     _BOUNDARY_ID_SPSA,
     _BOUNDARY_ID_SPSA_INDEX,
     _BOUNDARY_ID_TOURNAMENT,
-    _CompletedGameSummaryPayload,
     _RunStatePayload,
     _SpsaIndexPayload,
     _SpsaRunStatePayload,
@@ -38,18 +37,6 @@ def parse_tournament_run_state_boundary(
             openbench_state,
             path=f"{path}.openbench_state",
         )
-
-    completed_summaries = parsed_state.get("completed_game_summaries", {})
-    parsed_state["completed_game_summaries"] = {
-        str(game_id): (
-            summary.model_dump(mode="python")
-            if isinstance(summary, _CompletedGameSummaryPayload)
-            else {str(key): val for key, val in summary.items()}
-            if isinstance(summary, Mapping)
-            else summary
-        )
-        for game_id, summary in completed_summaries.items()
-    }
 
     typed_state: _TournamentRunStateType = parsed_state
     return typed_state

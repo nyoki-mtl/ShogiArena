@@ -67,7 +67,8 @@ class _FinalPayloadServiceStub:
 
 
 class _DbServiceStub:
-    def get_games_with_players(self) -> list[object]:
+    def get_games_with_players(self, *, game_type: str) -> list[object]:
+        assert game_type == "arena"
         return []
 
 

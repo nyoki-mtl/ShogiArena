@@ -7,6 +7,7 @@ import time
 from datetime import UTC
 from pathlib import Path
 
+from shogiarena._core.shared.kernel.atomic_json import write_json_atomic
 from shogiarena._core.shared.kernel.boundary_parsers.runner_state_payloads.parsers import (
     parse_spsa_index_boundary,
     parse_spsa_run_state_boundary,
@@ -134,13 +135,13 @@ def update_index_json(
     with open(index_path, "w", encoding="utf-8") as handle:
         json.dump(update_data, handle, ensure_ascii=False, indent=2)
 
-    state_path = run_dir / "run_state.json"
+    state_path = run_dir / "state.json"
     if not state_path.exists():
-        raise ValueError("run_state.json missing for SPSA run")
+        raise ValueError("state.json missing for SPSA run")
     with open(state_path, encoding="utf-8") as handle:
         state_raw = json.load(handle)
     if not isinstance(state_raw, dict):
-        raise ValueError("run_state.json must contain a JSON object")
+        raise ValueError("state.json must contain a JSON object")
     parsed_state = parse_spsa_run_state_boundary(state_raw, path=str(state_path))
 
     completed_updates = max(coerce_int(parsed_state.get("completed_updates")) or 0, update_idx + 1)
@@ -151,8 +152,7 @@ def update_index_json(
     next_state["total_updates"] = total_updates
     next_state["is_finished"] = total_updates > 0 and completed_updates >= total_updates
 
-    with open(state_path, "w", encoding="utf-8") as handle:
-        json.dump(next_state, handle, ensure_ascii=False, indent=2)
+    write_json_atomic(state_path, next_state)
 
 
 def record_ltc_result(

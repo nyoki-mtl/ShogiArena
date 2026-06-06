@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import argparse
 import logging
-from collections.abc import Sequence
 
-from rshogi.core import Move, normalize_usi_position
+from rshogi.core import Move, normalize_usi_position, parse_usi_position_parts
 
 from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkPVPort, UsiThinkRequest, UsiThinkResultPort
 from shogiarena._core.interfaces.cli.main import CliArgumentError
@@ -33,8 +32,7 @@ def parse_position_argument(text: str) -> PositionTuple:
         raise CliArgumentError("position string must contain tokens")
 
     head = tokens[0]
-    moves: Sequence[Move] = ()
-    remainder: Sequence[str] = ()
+    remainder: list[str] = []
 
     if head == "startpos":
         base_sfen = "startpos"
@@ -53,10 +51,16 @@ def parse_position_argument(text: str) -> PositionTuple:
     if remainder:
         if remainder[0] != "moves":
             raise CliArgumentError("expected 'moves' keyword after base position")
-        moves = tuple(Move.from_usi(tok.strip()) for tok in remainder[1:] if tok.strip())
 
-    normalized = normalize_usi_position(base_sfen)
-    return normalized, tuple(moves)
+    try:
+        normalized = normalize_usi_position(base_sfen)
+        parts = parse_usi_position_parts(raw)
+    except ValueError as exc:
+        if remainder and remainder[0] == "moves":
+            raise CliArgumentError(f"invalid or illegal move in position: {exc}") from exc
+        raise CliArgumentError(f"invalid base position: {base_sfen!r}") from exc
+
+    return normalized, tuple(parts.moves)
 
 
 def register_run(parser: argparse.ArgumentParser) -> None:

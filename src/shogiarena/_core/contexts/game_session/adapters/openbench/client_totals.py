@@ -40,7 +40,7 @@ def _score_from_tested(result: GameResult, *, is_tested_black: bool) -> float:
 
 
 def compute_totals(db: DatabaseServicePort, *, tested_engine: str, base_engine: str) -> OpenBenchCounters:
-    games = db.get_games_with_players()
+    games = db.get_games_with_players(game_type="arena")
     relevant: list[GameRecordPlayers] = []
     totals = OpenBenchCounters()
     for game in games:

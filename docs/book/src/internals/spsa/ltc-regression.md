@@ -162,7 +162,7 @@ elif status == "failed":
     # 前の基準点までパラメータをリバート
     params.clear()
     params.extend(baseline_params)
-    write_params(self.config.parameters_path, params)
+    write_params(params_path, params)
 ```
 
 ## 判定基準の選び方

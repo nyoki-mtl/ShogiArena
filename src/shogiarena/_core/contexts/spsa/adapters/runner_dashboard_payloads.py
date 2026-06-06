@@ -105,7 +105,7 @@ def _build_spsa_meta_payload(
     meta: JsonObject = {
         "type": "spsa",
         "experiment_name": config.experiment_name,
-        "parameters_path": str(config.parameters_path),
+        "space_path": str(config.space_path),
         "start_sfens_path": str(config.start_sfens_path),
         **dict(spsa_algorithm_config),
         "num_workers": int(num_workers),

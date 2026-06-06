@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import random
 from typing import Any
 
@@ -75,6 +76,10 @@ class SpsaOrchestratorUpdateMixin:
                 entry.delta,
                 entry.comment,
                 entry.is_not_used,
+                entry.option_name,
+                entry.value_encoding,
+                entry.scale,
+                entry.significant_digits,
             )
             for entry in entries
         ]
@@ -84,16 +89,17 @@ class SpsaOrchestratorUpdateMixin:
         self._ltc_baseline_update_idx = update_idx
 
     def _make_rng(self, idx: int) -> random.Random:
-        seed_src = f"{self.config.parameters_path}|{idx}"
+        seed_base = getattr(self.config, "space_path", None) or "spsa"
+        seed_src = f"{seed_base}|{idx}"
         hashed = int(hashlib.sha1(seed_src.encode("utf-8")).hexdigest()[:16], 16)
         return random.Random(hashed)
 
     def _stochastic_round(self, value: float, rng: random.Random) -> int:
         """Apply stochastic rounding for integers to reduce bias."""
         if self.config.int_rounding == "stochastic":
-            floor_val = int(value)
-            frac = value - floor_val
-            return floor_val + (1 if rng.random() < frac else 0)
+            # Use math.floor (not int(), which truncates toward zero) so negative
+            # values round symmetrically and stay consistent with the pair builder.
+            return math.floor(value + rng.random())
         else:
             return int(round(value))
 
@@ -108,15 +114,91 @@ class SpsaOrchestratorUpdateMixin:
         for entry in params:
             if entry.is_not_used:
                 continue
-            qv = quantize_value(entry, entry.value, should_snap_float=self.config.is_snap_float_to_step)
+            should_defer_int_round = (
+                entry.type == "int" and should_allow_stochastic and self.config.int_rounding == "stochastic"
+            )
+            qv = quantize_value(
+                entry,
+                entry.value,
+                should_snap_float=self.config.is_snap_float_to_step,
+                should_round_int=not should_defer_int_round,
+            )
+            option_name = entry.engine_option_name
             if entry.type == "int":
                 if should_allow_stochastic and rng is not None:
-                    options[entry.name] = self._stochastic_round(qv, rng)
+                    options[option_name] = self._stochastic_round(qv, rng)
                 else:
-                    options[entry.name] = int(round(qv))
+                    options[option_name] = int(round(qv))
+            elif entry.value_encoding == "scaled_integer":
+                if entry.scale is None or entry.scale <= 0:
+                    raise ValueError(f"scaled_integer parameter '{entry.name}' requires positive scale")
+                options[option_name] = int(round(qv * entry.scale))
+            elif entry.value_encoding == "decimal":
+                options[option_name] = _format_canonical_decimal(qv, significant_digits=entry.significant_digits)
             else:
-                options[entry.name] = qv
+                options[option_name] = qv
         return options
+
+    def _build_engine_option_maps_for_pair(
+        self,
+        plus_params: list[ParamEntry],
+        minus_params: list[ParamEntry],
+        *,
+        rng: random.Random,
+    ) -> tuple[JsonObject, JsonObject]:
+        """Build plus/minus option maps with shared stochastic integer samples."""
+        plus_options: JsonObject = {}
+        minus_options: JsonObject = {}
+        minus_by_name = {entry.name: entry for entry in minus_params}
+        for plus_entry in plus_params:
+            if plus_entry.is_not_used:
+                continue
+            minus_entry = minus_by_name.get(plus_entry.name)
+            if minus_entry is None or minus_entry.is_not_used:
+                continue
+            should_defer_int_round = plus_entry.type == "int" and self.config.int_rounding == "stochastic"
+            plus_qv = quantize_value(
+                plus_entry,
+                plus_entry.value,
+                should_snap_float=self.config.is_snap_float_to_step,
+                should_round_int=not should_defer_int_round,
+            )
+            minus_qv = quantize_value(
+                minus_entry,
+                minus_entry.value,
+                should_snap_float=self.config.is_snap_float_to_step,
+                should_round_int=not should_defer_int_round,
+            )
+            option_name = plus_entry.engine_option_name
+            if plus_entry.type == "int":
+                if self.config.int_rounding == "stochastic":
+                    sample = rng.random()
+                    plus_options[option_name] = math.floor(plus_qv + sample)
+                    minus_options[option_name] = math.floor(minus_qv + sample)
+                else:
+                    plus_options[option_name] = int(round(plus_qv))
+                    minus_options[option_name] = int(round(minus_qv))
+            elif plus_entry.value_encoding == "scaled_integer":
+                if plus_entry.scale is None or plus_entry.scale <= 0:
+                    raise ValueError(f"scaled_integer parameter '{plus_entry.name}' requires positive scale")
+                minus_scale = minus_entry.scale if minus_entry.scale is not None else plus_entry.scale
+                if minus_scale <= 0:
+                    raise ValueError(f"scaled_integer parameter '{minus_entry.name}' requires positive scale")
+                plus_options[option_name] = int(round(plus_qv * plus_entry.scale))
+                minus_options[option_name] = int(round(minus_qv * minus_scale))
+            elif plus_entry.value_encoding == "decimal":
+                plus_options[option_name] = _format_canonical_decimal(
+                    plus_qv,
+                    significant_digits=plus_entry.significant_digits,
+                )
+                minus_options[option_name] = _format_canonical_decimal(
+                    minus_qv,
+                    significant_digits=minus_entry.significant_digits,
+                )
+            else:
+                plus_options[option_name] = plus_qv
+                minus_options[option_name] = minus_qv
+        return plus_options, minus_options
 
     def _ltc_should_run(self, update_idx: int) -> bool:
         config = self._ltc_config
@@ -130,3 +212,19 @@ class SpsaOrchestratorUpdateMixin:
 
     async def _run_one_spsa_update(self, update_idx: int) -> None:
         await run_one_spsa_update(self, update_idx)
+
+
+def _format_canonical_decimal(value: float, *, significant_digits: int) -> str:
+    if not math.isfinite(value):
+        raise ValueError(f"decimal option value must be finite: {value!r}")
+    digits = max(1, int(significant_digits))
+    text = f"{float(value):.{digits}g}"
+    if "e" in text or "E" in text:
+        text = f"{float(value):.{digits}f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    if text in {"-0", "+0", ""}:
+        return "0"
+    if text.startswith("+"):
+        text = text[1:]
+    return text

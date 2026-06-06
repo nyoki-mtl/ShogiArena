@@ -157,6 +157,16 @@ def _build_markdown(
     return "\n".join(lines)
 
 
+def _build_summary(totals: Counter[str], baseline: dict[str, int] | None) -> str:
+    lines = ["Type Safety Audit totals:"]
+    for pattern_key in sorted(totals):
+        count = totals[pattern_key]
+        base = baseline[pattern_key] if baseline and pattern_key in baseline else 0
+        delta = count - base if baseline else 0
+        lines.append(f"- {pattern_key}: {count} (baseline {base}, delta {delta:+d})")
+    return "\n".join(lines)
+
+
 def _load_baseline(path: Path | None) -> dict[str, int] | None:
     if path is None or not path.exists():
         return None
@@ -208,6 +218,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Exit non-zero when any pattern exceeds baseline.",
     )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print only totals instead of the full markdown report.",
+    )
     return parser.parse_args()
 
 
@@ -230,6 +245,8 @@ def main() -> int:
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(report, encoding="utf-8")
+    elif args.summary:
+        print(_build_summary(totals, baseline_totals))
     else:
         print(report)
 

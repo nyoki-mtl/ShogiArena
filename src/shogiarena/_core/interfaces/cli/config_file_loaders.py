@@ -31,6 +31,7 @@ class _TournamentRunConfigWire(BaseModel):
     openbench: dict[str, object] | None = None
     rating: dict[str, object] | None = None
     dashboard: dict[str, object] | None = None
+    logging: dict[str, object] | None = None
     log_level: str = "INFO"
     system: dict[str, object] | None = None
     records_output: dict[str, object] | None = None

@@ -26,18 +26,18 @@ from .scalar_validation import _require_float, _require_int, _require_positive_i
 
 
 def _load_target_from_run_state(run_dir: Path, *, should_skip_resume: bool) -> int | None:
-    run_state_path = run_dir / "run_state.json"
+    run_state_path = run_dir / "state.json"
     if not run_state_path.exists() or should_skip_resume:
         return None
     try:
         with open(run_state_path, encoding="utf-8") as file:
             raw = json.load(file)
     except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
-        raise RuntimeError("Failed to read run_state for OpenBench target reuse") from exc
+        raise RuntimeError("Failed to read state for OpenBench target reuse") from exc
     try:
         state = parse_tournament_run_state_boundary(raw, path=str(run_state_path))
     except ContractParseError as exc:
-        raise RuntimeError("Failed to parse run_state for OpenBench target reuse") from exc
+        raise RuntimeError("Failed to parse state for OpenBench target reuse") from exc
     openbench_state = state.get("openbench_state")
     if openbench_state is None:
         return None

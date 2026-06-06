@@ -105,7 +105,7 @@ class DashboardSnapshotStorageFactoryFn(Protocol):
 
 
 class DashboardRunStateLoaderFn(Protocol):
-    """Load ``run_state.json`` from a run directory as a JSON object."""
+    """Load ``state.json`` from a run directory as a JSON object."""
 
     def __call__(
         self,

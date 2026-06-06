@@ -49,7 +49,7 @@ class SpsaMetaData(BaseModel):
     total: int | None = None
     experiment_name: str | None = None
     initial_params: dict[str, float] = Field(default_factory=dict)
-    parameters_path: str | None = None
+    space_path: str | None = None
 
     engine_time_controls: dict[str, str] = Field(default_factory=dict)
     default_time_control: str | None = None

@@ -55,7 +55,8 @@ class TournamentSummaryFinalizeService:
         self._reporting_service.log_tournament_results(results)
 
         db_service = runtime.dependencies.db_service
-        games = db_service.get_games_with_players() if db_service else []
+        game_type = "generate" if runtime.actions.is_generate_run() else "arena"
+        games = db_service.get_games_with_players(game_type=game_type) if db_service else []
         engine_names = [str(e.name) for e in runtime.request.config.engines]
         anchor_name = engine_names[0] if engine_names else None
         btd = self._reporting_service.estimate_btd(games=games, anchor_name=anchor_name, engine_names=engine_names)

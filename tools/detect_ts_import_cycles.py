@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -31,13 +32,16 @@ def discover_modules(root: Path) -> list[Path]:
         for path in root.rglob(pattern):
             if path.name.endswith(".d.ts"):
                 continue
-            modules[path.resolve()] = None
+            modules[_normalize_path(path.absolute())] = None
     return sorted(modules)
 
 
-def resolve_target(module_file: Path, spec: str, root: Path) -> Path | None:
-    root_resolved = root.resolve()
-    base = (module_file.parent / spec).resolve()
+def _normalize_path(path: Path) -> Path:
+    return Path(os.path.normpath(os.fspath(path)))
+
+
+def resolve_target(module_file: Path, spec: str, module_paths: frozenset[Path]) -> Path | None:
+    base = _normalize_path(module_file.parent / spec)
     base_suffix = base.suffix.lower()
     explicit_ts_suffixes = {".ts", ".tsx", ".mts", ".cts"}
     js_suffixes = {".js", ".jsx", ".mjs", ".cjs"}
@@ -68,8 +72,8 @@ def resolve_target(module_file: Path, spec: str, root: Path) -> Path | None:
     ]
 
     for candidate in candidates:
-        resolved = candidate.resolve()
-        if resolved.is_file() and resolved.is_relative_to(root_resolved):
+        resolved = _normalize_path(candidate)
+        if resolved in module_paths:
             return resolved
     return None
 
@@ -77,6 +81,7 @@ def resolve_target(module_file: Path, spec: str, root: Path) -> Path | None:
 def build_graph(root: Path, modules: list[Path]) -> tuple[dict[str, set[str]], int]:
     root_resolved = root.resolve()
     module_key = {module: module.relative_to(root_resolved).with_suffix("").as_posix() for module in modules}
+    module_paths = frozenset(modules)
     graph: dict[str, set[str]] = defaultdict(set)
 
     for source in modules:
@@ -88,7 +93,7 @@ def build_graph(root: Path, modules: list[Path]) -> tuple[dict[str, set[str]], i
                 spec = match.group("path")
                 if not spec.startswith("."):
                     continue
-                target_path = resolve_target(source, spec, root)
+                target_path = resolve_target(source, spec, module_paths)
                 if target_path is None:
                     continue
                 target_key = module_key.get(target_path)

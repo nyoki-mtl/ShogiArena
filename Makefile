@@ -1,4 +1,4 @@
-.PHONY: help test test-cov test-unit test-property test-integration format format-check lint lint-fix typecheck typing-audit typing-audit-baseline typing-audit-ci architecture-lint architecture-lint-strict architecture-lint-dynamic architecture-lint-dynamic-strict architecture-lint-final architecture-lint-final-strict convention-lint convention-lint-strict frontend-test check check-full check-all ci ci-develop clean docs docs-build docs-serve
+.PHONY: help test test-cov test-unit test-property test-integration format format-check lint lint-fix python-import-cycle-check ts-import-cycle-check import-cycle-check type-safety-audit-check ty-check frontend-typecheck typecheck typing-audit typing-audit-baseline typing-audit-ci architecture-lint architecture-lint-strict architecture-lint-dynamic architecture-lint-dynamic-strict architecture-lint-final architecture-lint-final-strict convention-lint convention-lint-strict frontend-test check check-full check-all ci ci-develop clean docs docs-build docs-serve
 
 MDBOOK ?= $(shell command -v mdbook 2>/dev/null || printf "%s/.cargo/bin/mdbook" "$$HOME")
 
@@ -26,7 +26,7 @@ help:
 	@echo "  architecture-lint-dynamic-strict - 動的 import 迂回があれば失敗扱い"
 	@echo "  convention-lint - 命名/構成規約違反を計測（warn-only）"
 	@echo "  convention-lint-strict - 命名/構成規約違反を失敗扱い"
-	@echo "  check        - format, lint, convention-lint, typecheck, check-js を順番に実行（テストなし）"
+	@echo "  check        - format 後に lint, convention-lint, typecheck, check-js を並列実行（テストなし）"
 	@echo "  check-full   - check + test + frontend:test"
 	@echo "  check-all    - check-full + pre-commitで全ファイルをチェック"
 	@echo "  ci           - GitHub Actions の public CI と同等の検証"
@@ -72,17 +72,31 @@ lint:
 lint-fix:
 	uv run ruff check . --fix --config=pyproject.toml
 
-import-cycle-check:
+python-import-cycle-check:
 	uv run python tools/detect_python_import_cycles.py
+
+ts-import-cycle-check:
 	uv run python tools/detect_ts_import_cycles.py
 
-typecheck: import-cycle-check architecture-lint-strict architecture-lint-dynamic-strict architecture-lint-final-strict
+import-cycle-check:
+	$(MAKE) -j2 python-import-cycle-check ts-import-cycle-check
+
+type-safety-audit-check:
 	uv run python tools/typing_audit.py \
 		--root src \
 		--baseline-json agent-docs/tasks/0012-type-safety-hardening/logs/typing-audit-baseline.json \
-		--fail-on-regression
+		--fail-on-regression \
+		--summary
+
+ty-check:
 	uv run ty check src/
+
+frontend-typecheck:
 	npm run frontend:typecheck
+
+typecheck:
+	$(MAKE) --no-print-directory -j5 python-import-cycle-check ts-import-cycle-check architecture-lint-strict architecture-lint-dynamic-strict architecture-lint-final-strict
+	$(MAKE) --no-print-directory -j3 type-safety-audit-check ty-check frontend-typecheck
 
 architecture-lint:
 	uv run python tools/detect_architecture_imports.py --root src/shogiarena
@@ -138,7 +152,12 @@ frontend-test:
 	npm run frontend:test
 
 # 統合チェック
-check: format lint convention-lint typecheck check-js
+check: format
+	$(MAKE) --no-print-directory -j8 \
+		lint convention-lint check-js \
+		python-import-cycle-check ts-import-cycle-check \
+		architecture-lint-strict architecture-lint-dynamic-strict architecture-lint-final-strict \
+		type-safety-audit-check ty-check frontend-typecheck
 
 check-full: check test frontend-test
 

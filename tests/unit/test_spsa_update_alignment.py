@@ -14,7 +14,7 @@ from shogiarena._core.contexts.game_session.application.orchestration.concurrent
 from shogiarena._core.contexts.game_session.ports.session_context import SessionContext
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
 from shogiarena._core.contexts.spsa.adapters.orchestrator import SpsaOrchestrator
-from shogiarena._core.contexts.spsa.application.param_io import read_params
+from shogiarena._core.contexts.spsa.application.space_spec import load_spsa_space_spec
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.session_hooks import GameCompletionEvent, NoopGameLifecycleHooks
 from tests.unit.spsa_config_test_helpers import load_spsa_run_config
@@ -44,9 +44,74 @@ class _DummyRng:
         return 0.0
 
 
+class _SharedStochasticRng(_DummyRng):
+    def random(self) -> float:
+        return 0.2
+
+
+def _write_space(write, *, initial: float = 10.0) -> Path:
+    return write(
+        "cfg/space.yaml",
+        f"""
+        schema_version: shogiarena.spsa.space.v1
+        target:
+          engine_family: test
+          protocol: usi_options
+          required_options_policy: strict
+          tunable_manifest:
+            required: false
+            command: usi_tunables
+        parameters:
+          - id: param1
+            target:
+              option: param1
+              value_encoding: decimal
+            value_type: float
+            initial: {initial}
+            bounds:
+              min: 0.0
+              max: 20.0
+            schedule:
+              c_end: 2.0
+              r_end: 0.5
+        """,
+    )
+
+
+def _write_int_space(write, *, initial: int = 10) -> Path:
+    return write(
+        "cfg/space.yaml",
+        f"""
+        schema_version: shogiarena.spsa.space.v1
+        target:
+          engine_family: test
+          protocol: usi_options
+          required_options_policy: strict
+          tunable_manifest:
+            required: false
+            command: usi_tunables
+        parameters:
+          - id: visits
+            target:
+              option: Tune.Visits
+              value_encoding: integer
+            value_type: int
+            initial: {initial}
+            bounds:
+              min: 0
+              max: 20
+            schedule:
+              c_end: 0.5
+              r_end: 0.1
+            rounding:
+              mode: stochastic
+        """,
+    )
+
+
 @pytest.mark.asyncio
 async def test_spsa_update_matches_reference_script(tmp_path: Path) -> None:
-    """Verify SPSA updates follow the BloodgateSPSA (YaneuraOu) semantics."""
+    """Verify direct plus/minus SPSA update math with a deterministic score."""
 
     def write(rel: str, content: str) -> Path:
         path = tmp_path / rel
@@ -63,7 +128,7 @@ async def test_spsa_update_matches_reference_script(tmp_path: Path) -> None:
         """,
     )
     sfens = write("cfg/sfens.txt", "startpos\n")
-    params_path = write("cfg/spsa.params", "param1, float, 10.0, 0.0, 20.0, 2.0, 0.5\n")
+    space_path = _write_space(write)
 
     config_yaml = write(
         "cfg/spsa.yaml",
@@ -80,14 +145,21 @@ async def test_spsa_update_matches_reference_script(tmp_path: Path) -> None:
             type: file
             source: "{sfens}"
         spsa:
-          parameters_path: "{params_path}"
+          space: "{space_path}"
           num_updates: 1
+          pairs_per_update: 1
           num_parallel: 1
-          mobility: 1.0
-          scale: 1.0
-          alpha: 0.0
-          gamma: 0.0
-          A: 0.0
+          algorithm:
+            name: classic
+            alpha: 0.0
+            gamma: 0.0
+            A:
+              mode: absolute
+              value: 0.0
+          variants:
+            pairing: plus_minus
+            crn: true
+            integer_rounding: none
         """,
     )
 
@@ -106,25 +178,117 @@ async def test_spsa_update_matches_reference_script(tmp_path: Path) -> None:
         "completed_updates": 0,
         "total_updates": 1,
     }
-    (tmp_path / "run_state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (tmp_path / "state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    params = read_params(params_path)
-    orch.set_work_items([0], params, ["startpos"])
+    params = load_spsa_space_spec(space_path).to_param_entries()
+    orch.set_work_items([1], params, ["startpos"])
 
     # Make perturbation deterministic and provide scripted match outcomes.
     orch._make_rng = lambda _idx: _DummyRng()  # type: ignore[assignment]
-    scores: Iterator[float] = iter([1.0, -1.0])
+    scores: Iterator[float] = iter([0.5])
 
     async def fake_run_game_pair(*_args, **_kwargs):
         return (next(scores), None, None)
 
     orch._run_game_pair = fake_run_game_pair
 
-    await orch._run_one_spsa_update(0)
+    await orch._run_one_spsa_update(1)
 
-    # Expect +1.0 shift in parameter value: 10.0 -> 11.0
-    updated_params = read_params(params_path)
-    assert pytest.approx(updated_params[0].value, abs=1e-6) == 11.0
+    # Direct pairing converts a pair average of +0.5 into score_sum=+1.0.
+    assert pytest.approx(orch._params[0].value, abs=1e-6) == 11.0
+
+
+@pytest.mark.asyncio
+async def test_spsa_int_stochastic_options_are_assigned_once_and_reused(tmp_path: Path) -> None:
+    def write(rel: str, content: str) -> Path:
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(content), encoding="utf-8")
+        return path
+
+    engine_cfg = write(
+        "cfg/engine.yaml",
+        """
+        engine_path: "/bin/echo"
+        options:
+          Threads: 1
+        """,
+    )
+    sfens = write("cfg/sfens.txt", "startpos\n")
+    space_path = _write_int_space(write)
+    config_yaml = write(
+        "cfg/spsa.yaml",
+        f"""
+        experiment_name: exp
+        engines:
+          - engine_path: "{engine_cfg}"
+            name: tuned
+        rules:
+          time_control:
+            node_limit: 1
+          initial_positions:
+            type: file
+            source: "{sfens}"
+        spsa:
+          space: "{space_path}"
+          num_updates: 1
+          pairs_per_update: 1
+          num_parallel: 1
+          algorithm:
+            name: classic
+            alpha: 0.0
+            gamma: 0.0
+            A:
+              mode: absolute
+              value: 0.0
+          variants:
+            pairing: plus_minus
+            crn: true
+            integer_rounding: stochastic
+        """,
+    )
+
+    cfg = load_spsa_run_config(config_yaml)
+    storage = FilesystemRunStorage(tmp_path)
+    session = SessionContext.build(storage=storage, num_workers=1, run_id="test")
+    orch = SpsaOrchestrator(
+        cfg,
+        session=session,
+        hooks=NoopGameLifecycleHooks(),
+        engine_factory_service=_mock_engine_factory_service,
+    )
+    now = datetime.now(UTC).isoformat()
+    state = {
+        "type": "spsa",
+        "created_at": now,
+        "updated_at": now,
+        "is_finished": False,
+        "completed_updates": 0,
+        "total_updates": 1,
+    }
+    (tmp_path / "state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    params = load_spsa_space_spec(space_path).to_param_entries()
+    orch.set_work_items([1], params, ["startpos"])
+    orch._make_rng = lambda _idx: _SharedStochasticRng()  # type: ignore[assignment]
+    captured_options: list[tuple[dict[str, object], dict[str, object]]] = []
+
+    async def fake_run_game_pair(*_args, **kwargs):
+        captured_options.append((dict(kwargs["tuned_option_map"]), dict(kwargs["baseline_option_map"])))
+        return (0.0, None, None)
+
+    orch._run_game_pair = fake_run_game_pair
+
+    await orch._run_one_spsa_update(1)
+
+    variant_line = (tmp_path / "spsa" / "variants.jsonl").read_text(encoding="utf-8").strip()
+    variant_payload = json.loads(variant_line)
+    plus_options = variant_payload["variants"]["plus"]["applied_options"]
+    minus_options = variant_payload["variants"]["minus"]["applied_options"]
+
+    assert plus_options == {"Tune.Visits": 10}
+    assert minus_options == {"Tune.Visits": 9}
+    assert captured_options == [(plus_options, minus_options)]
 
 
 @pytest.mark.asyncio
@@ -144,7 +308,7 @@ async def test_spsa_completion_reports_assigned_worker(tmp_path: Path) -> None:
         """,
     )
     sfens = write("cfg/sfens.txt", "startpos\n")
-    params_path = write("cfg/spsa.params", "param1, float, 10.0, 0.0, 20.0, 2.0, 0.5\n")
+    space_path = _write_space(write)
     config_yaml = write(
         "cfg/spsa.yaml",
         f"""
@@ -160,11 +324,10 @@ async def test_spsa_completion_reports_assigned_worker(tmp_path: Path) -> None:
             type: file
             source: "{sfens}"
         spsa:
-          parameters_path: "{params_path}"
+          space: "{space_path}"
           num_updates: 1
+          pairs_per_update: 1
           num_parallel: 1
-          mobility: 1.0
-          scale: 1.0
           inflight_factor: 1
         """,
     )
@@ -174,8 +337,8 @@ async def test_spsa_completion_reports_assigned_worker(tmp_path: Path) -> None:
     session = SessionContext.build(storage=storage, num_workers=2, run_id="test")
     hooks = _CapturingHooks()
     orch = SpsaOrchestrator(cfg, session=session, hooks=hooks, engine_factory_service=_mock_engine_factory_service)
-    params = read_params(params_path)
-    orch.set_work_items([0], params, ["startpos"])
+    params = load_spsa_space_spec(space_path).to_param_entries()
+    orch.set_work_items([1], params, ["startpos"])
 
     async def fake_execute_game(_orchestrator, spec):
         return rshogi.record.GameRecord.from_dict(
@@ -204,7 +367,7 @@ async def test_spsa_completion_reports_assigned_worker(tmp_path: Path) -> None:
         current_params=params,
         worker_idx=1,  # intentionally differs from actual slot the orchestrator will pick (0)
         is_tuned_as_black=True,
-        update_idx=0,
+        update_idx=1,
         phase="plus",
         preassigned_game_id=None,
     )
@@ -233,7 +396,7 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
         """,
     )
     sfens = write("cfg/sfens.txt", "startpos\n")
-    params_path = write("cfg/spsa.params", "param1, float, 10.0, 0.0, 20.0, 2.0, 0.5\n")
+    space_path = _write_space(write)
     config_yaml = write(
         "cfg/spsa.yaml",
         f"""
@@ -249,11 +412,10 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
             type: file
             source: "{sfens}"
         spsa:
-          parameters_path: "{params_path}"
+          space: "{space_path}"
           num_updates: 1
+          pairs_per_update: 1
           num_parallel: 1
-          mobility: 1.0
-          scale: 1.0
           inflight_factor: 1
         """,
     )
@@ -263,8 +425,8 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
     session = SessionContext.build(storage=storage, num_workers=2, run_id="test")
     hooks = _CapturingHooks()
     orch = SpsaOrchestrator(cfg, session=session, hooks=hooks, engine_factory_service=_mock_engine_factory_service)
-    params = read_params(params_path)
-    orch.set_work_items([0], params, ["startpos"])
+    params = load_spsa_space_spec(space_path).to_param_entries()
+    orch.set_work_items([1], params, ["startpos"])
 
     # Force preassignment failure so that initial resolved worker is None
     orch.worker_busy = {0, 1}
@@ -297,7 +459,7 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
         current_params=params,
         worker_idx=7,
         is_tuned_as_black=True,
-        update_idx=0,
+        update_idx=1,
         phase="plus",
         preassigned_game_id="test-game",
     )

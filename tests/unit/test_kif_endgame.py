@@ -21,9 +21,9 @@ def _record_with_result(result: GameResult) -> object:
     )
 
 
-def test_to_kif_preserves_error_label_for_error_result() -> None:
+def test_to_kif_normalizes_error_result_to_interrupt_label() -> None:
     kif = _record_with_result(GameResult.ERROR).to_kif()
-    assert "ERROR" in kif
+    assert "中断" in kif
 
 
 def test_to_kif_draw_labels_follow_game_result_codes() -> None:

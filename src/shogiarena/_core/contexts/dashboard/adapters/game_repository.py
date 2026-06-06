@@ -63,14 +63,19 @@ def load_games_for_dashboard(db_path: Path, *, game_type: str = "arena") -> list
         repository.close_db()
 
 
-def load_game_record(db_path: Path, *, game_name: str) -> rshogi.record.GameRecord | None:
+def load_game_record(
+    db_path: Path,
+    *,
+    game_name: str | None = None,
+    game_id: int | None = None,
+) -> rshogi.record.GameRecord | None:
     """Load a single game record from the dashboard DB."""
 
     repository = open_dashboard_repository(db_path)
     if repository is None:
         return None
     try:
-        return DBRecordStore(repository).load(game_name=game_name)
+        return DBRecordStore(repository).load(game_name=game_name, game_id=game_id)
     finally:
         repository.close_db()
 

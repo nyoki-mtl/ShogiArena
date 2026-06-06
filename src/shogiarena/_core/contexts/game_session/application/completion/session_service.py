@@ -57,6 +57,8 @@ class TournamentSessionCompletionService:
         context: CompletionPersistenceContext,
         *,
         record: rshogi.record.GameRecord,
+        game_id: str,
+        game_type: str,
         extract_participation: Callable[[object], tuple[object, ...]],
     ) -> None:
         db = context.db_service
@@ -66,12 +68,12 @@ class TournamentSessionCompletionService:
             if participation:
                 game_id_raw = record.metadata.attributes.get("game_name")
                 game_id_name = str(game_id_raw).strip() if game_id_raw is not None else ""
-                game_id = db.get_game_id_by_name(game_id_name) if game_id_name else None
-                if game_id is not None:
-                    db.record_game_participation(game_id=game_id, participation=participation)
+                db_game_id = db.get_game_id_by_name(game_id_name) if game_id_name else None
+                if db_game_id is not None:
+                    db.record_game_participation(game_id=db_game_id, participation=participation)
 
         if context.record_writer is not None:
-            context.record_writer.append_record(record)
+            context.record_writer.append_record(record, game_id=game_id, game_type=game_type)
 
     def update_rating_state(
         self,
@@ -137,7 +139,13 @@ class TournamentSessionCompletionService:
         result = record.result
         should_persist = self.should_persist_record(result, is_stop_requested=is_stop_requested)
         if should_persist:
-            self.persist_record_outputs(context.persistence, record=record, extract_participation=extract_participation)
+            self.persist_record_outputs(
+                context.persistence,
+                record=record,
+                game_id=str(game_spec.game_id),
+                game_type="generate" if context.metadata.is_generate_run else "arena",
+                extract_participation=extract_participation,
+            )
         self.update_rating_state(context.rating, game_spec, result=result)
         update_dashboard = self.commit_completion_state(
             context.state,

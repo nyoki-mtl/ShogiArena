@@ -345,7 +345,8 @@ def read_dashboard_profiles_metadata(run_dir: Path) -> tuple[DashboardProfile, .
     Raises:
         json.JSONDecodeError: If metadata file exists but contains invalid JSON.
     """
-    metadata_path = run_dir / PROFILE_METADATA_FILENAME
+    dashboard_path = run_dir / "dashboard" / PROFILE_METADATA_FILENAME
+    metadata_path = dashboard_path if dashboard_path.exists() else run_dir / PROFILE_METADATA_FILENAME
     if not metadata_path.exists():
         return None
 

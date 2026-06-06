@@ -54,5 +54,9 @@ class TournamentRunnerState:
     engine_metadata_runtime_sig: str | None = None
     engine_time_controls_cache: tuple[dict[str, str], str | None] | None = None
 
+    # -- Sealed run-artifact contract --------------------------------------
+    sealed_schedule_hash: str | None = None
+    sealed_resume_hash: str | None = None
+
 
 __all__ = ["TournamentRunnerState"]

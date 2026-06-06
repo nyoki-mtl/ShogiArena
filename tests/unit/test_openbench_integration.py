@@ -106,7 +106,8 @@ def test_tournament_config_rejects_openbench_without_sprt(tmp_path: Path) -> Non
 
 def test_compute_totals_for_openbench_payload() -> None:
     class _DummyDB:
-        def get_games_with_players(self) -> list[dict[str, object]]:
+        def get_games_with_players(self, *, game_type: str) -> list[dict[str, object]]:
+            assert game_type == "arena"
             return [
                 {
                     "game_name": "g0001-a",
@@ -176,7 +177,8 @@ def test_tournament_config_accepts_openbench_with_sprt(tmp_path: Path) -> None:
 
 def test_compute_totals_pairs_pentanomial_by_round_token_when_available() -> None:
     class _DummyDB:
-        def get_games_with_players(self) -> list[dict[str, object]]:
+        def get_games_with_players(self, *, game_type: str) -> list[dict[str, object]]:
+            assert game_type == "arena"
             return [
                 # Pair 1 (g0001, g0002): tested wins both -> WW
                 {

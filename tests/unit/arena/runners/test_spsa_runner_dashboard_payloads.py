@@ -36,6 +36,36 @@ def _load_spsa_run_config(config_path: Path):
     return parse_spsa_config_mapping(payload, source_path=config_path)
 
 
+def _write_space(tmp_path: Path) -> Path:
+    return _write(
+        tmp_path,
+        "cfg/space.yaml",
+        """
+        schema_version: shogiarena.spsa.space.v1
+        target:
+          engine_family: test
+          protocol: usi_options
+          required_options_policy: strict
+          tunable_manifest:
+            required: false
+            command: usi_tunables
+        parameters:
+          - id: p1
+            target:
+              option: p1
+              value_encoding: decimal
+            value_type: float
+            initial: 1.0
+            bounds:
+              min: 0.0
+              max: 10.0
+            schedule:
+              c_end: 1.0
+              r_end: 0.1
+        """,
+    )
+
+
 def test_seed_spsa_initial_summary_uses_canonical_engine_catalog_helpers(tmp_path: Path) -> None:
     engine_yaml = _write(
         tmp_path,
@@ -46,6 +76,7 @@ def test_seed_spsa_initial_summary_uses_canonical_engine_catalog_helpers(tmp_pat
           Threads: 1
         """,
     )
+    space_yaml = _write_space(tmp_path)
     config_yaml = _write(
         tmp_path,
         "cfg/spsa.yaml",
@@ -61,13 +92,12 @@ def test_seed_spsa_initial_summary_uses_canonical_engine_catalog_helpers(tmp_pat
           time_control:
             node_limit: 100
         spsa:
-          parameters_path: {tmp_path}/params.txt
+          space: {space_yaml}
           num_updates: 1
           num_parallel: 1
         """,
     )
     _write(tmp_path, "sfens.txt", "startpos\n")
-    _write(tmp_path, "params.txt", "# empty\n")
 
     config = _load_spsa_run_config(config_yaml)
     baseline = config.baseline[0].model_copy(deep=True, update={"name": "baseline", "instance_id": "local"})

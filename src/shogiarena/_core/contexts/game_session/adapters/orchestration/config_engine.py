@@ -36,6 +36,7 @@ class EngineConfig(BaseModel):
     name_style: Literal["hash", "short"] = "hash"
     options: EngineOptionMap = Field(default_factory=dict)
     options_overlays: list[Path] = Field(default_factory=list)
+    path_options: tuple[str, ...] = ()
     mate_default_ply_limit: int | None = Field(default=None, gt=0)
     mate_default_node_limit: int | None = Field(default=None, gt=0)
     is_mate_default_infinite: bool = Field(default=False, alias="mate_default_infinite")
@@ -87,6 +88,25 @@ class EngineConfig(BaseModel):
             raise FileNotFoundError(f"Options overlay file not found: {candidate}")
         normalized.append(candidate)
         return normalized
+
+    @field_validator("path_options", mode="before")
+    @classmethod
+    def _normalize_path_options(cls, v: JsonValue | tuple[JsonValue, ...] | None) -> tuple[str, ...]:
+        if v is None:
+            return ()
+        if isinstance(v, str):
+            stripped = v.strip()
+            return (stripped,) if stripped else ()
+        if not isinstance(v, list | tuple):
+            raise TypeError("path_options must be a string or list of strings")
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            value = str(item).strip()
+            if value and value not in seen:
+                seen.add(value)
+                normalized.append(value)
+        return tuple(normalized)
 
     @field_validator(
         "isready_lock_key",
@@ -213,12 +233,22 @@ class DashboardConfig(BaseModel):
     api_port: int = 8080
 
 
+class LoggingConfig(BaseModel):
+    """実行時ログ artifact の出力設定。"""
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    is_usi_transcript_enabled: bool = Field(default=False, alias="usi_transcript")
+    usi_transcript_detail: Literal["commands", "commands_and_info"] = "commands"
+
+
 class SystemConfig(BaseModel):
     """System-level configuration placeholder."""
 
     resource_poll_interval: float = Field(default=0.1, gt=0)
     resource_poll_max_interval: float = Field(default=1.0, gt=0)
     engine_handshake_timeout: float | None = Field(default=None, gt=0)
+    path_preflight: Literal["off", "warn", "error"] = "off"
     extras: EngineOptionMap = Field(default_factory=dict)
 
     @model_validator(mode="after")

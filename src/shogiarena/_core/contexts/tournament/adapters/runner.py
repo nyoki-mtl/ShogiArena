@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from shutil import rmtree
 from typing import Any
 
 import rshogi.record
@@ -27,6 +28,9 @@ from shogiarena._core.contexts.game_session.adapters.openbench.client_types impo
 )
 from shogiarena._core.contexts.game_session.adapters.openbench.delegate import OpenBenchDelegate
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_tournament import TournamentRunConfig
+from shogiarena._core.contexts.game_session.adapters.orchestration.engine_config_artifacts import (
+    resolve_engine_config_entry,
+)
 from shogiarena._core.contexts.game_session.adapters.results.run_result_models import (
     TournamentRunResult,
     TournamentRunResultBuilder,
@@ -49,6 +53,7 @@ from shogiarena._core.contexts.game_session.application.session.execution_servic
 )
 from shogiarena._core.contexts.game_session.application.session.run_loop_service import TournamentRunLoopService
 from shogiarena._core.contexts.game_session.application.session.run_metadata_persistence_service import (
+    RunManifestSealError,
     RunMetadataPersistenceService,
 )
 from shogiarena._core.contexts.game_session.application.session.run_service import TournamentSessionRunService
@@ -272,6 +277,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             should_skip_resume=self._run_options.should_skip_resume,
         )
         self._record_writer: RecordBinaryWriter | None = None
+        self._frozen_run_config_payload: JsonObject | None = None
 
     # ======================================================================
     # Schedule context
@@ -492,6 +498,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             scheduler=scheduler_runtime_context,
             state=self._state,
             openbench=self._openbench,
+            db_service=self._state.db_service,
             reorder_and_shuffle=self._reorder_and_shuffle,
             reset_schedule_tracking=lambda: _reset_schedule_tracking(self._state, list(self.config.engines)),
             write_schedule_file=lambda schedule: self._mutation_service.write_schedule_file(
@@ -503,6 +510,8 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             ensure_display_order_for_specs=lambda specs: _ensure_display_order_for_specs(self._state, specs),
             refresh_game_assignments=lambda: _refresh_game_assignments(self._state, list(self.config.engines)),
             build_save_context=self._build_state_save_context,
+            schedule_hash=self._state.sealed_schedule_hash,
+            resume_hash=self._state.sealed_resume_hash,
         )
 
     def _build_state_save_context(self) -> TournamentStateSaveContext:
@@ -515,6 +524,8 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             is_generate_run=self._is_generate_run,
             serialize_assignment_override=_serialize_assignment_override,
             shared_override_label=_shared_override_label,
+            schedule_hash=self._state.sealed_schedule_hash,
+            resume_hash=self._state.sealed_resume_hash,
         )
 
     def _build_summary_runtime_context(self) -> TournamentSummaryRuntimeContext:
@@ -574,14 +585,13 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
         rd = self.run_dir
         rd.mkdir(parents=True, exist_ok=True)
 
-        db = self.storage.db_service()
-        db.ensure_schema_compatibility()
-        self._state.db_service = db
+        self._ensure_db_service()
 
         self._state.rating_service = EloRatingService(
             initial_rating=self.config.rating.initial, k_factor=self.config.rating.k_factor
         )
         self._record_writer = self._create_record_writer()
+        self._backfill_records_output()
         sprt_conf = self.config.sprt
         if sprt_conf is not None:
             self._state.sprt = Sprt(
@@ -603,6 +613,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
         if config is None:
             return None
         output_dir = config.output_dir or (self.run_dir / "records")
+        self._validate_records_output_dir(output_dir)
         file_prefix = config.file_prefix or config.format
         writer_config = RecordBinaryWriterConfig(
             format_id=config.format,
@@ -612,6 +623,62 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             file_prefix=str(file_prefix),
         )
         return RecordBinaryWriter(writer_config)
+
+    def _ensure_db_service(self) -> Any:
+        db = self._state.db_service
+        if db is None:
+            db = self.storage.db_service()
+            db.ensure_schema_compatibility()
+            self._state.db_service = db
+        return db
+
+    def _records_output_dir(self) -> Path | None:
+        config = self.config.records_output
+        if config is None:
+            return self.run_dir / "records"
+        return config.output_dir or (self.run_dir / "records")
+
+    def _validate_records_output_dir(self, output_dir: Path) -> None:
+        if self._is_path_within(output_dir, self.run_dir):
+            return
+        has_existing = output_dir.exists() and any(output_dir.iterdir())
+        if not has_existing:
+            return
+        is_resume_attempt = not self._run_options.should_skip_resume and (self.run_dir / "state.json").exists()
+        if not is_resume_attempt:
+            raise ValueError(
+                "records_output.output_dir already contains files and is outside the run directory; "
+                "choose an empty output_dir or resume the matching run directory"
+            )
+
+    def _backfill_records_output(self) -> None:
+        writer = self._record_writer
+        db = self._state.db_service
+        if writer is None or db is None:
+            return
+        completed_ids = set(self._state.completed_game_ids)
+        written_ids = writer.written_game_ids()
+        orphan_ids = written_ids - completed_ids
+        if orphan_ids:
+            sample = ", ".join(sorted(orphan_ids)[:5])
+            raise ValueError(
+                "records output contains game IDs that are not completed in game.db; "
+                f"start fresh before continuing. Examples: {sample}"
+            )
+        game_type = "generate" if self._is_generate_run() else "arena"
+        for game_id in sorted(completed_ids - written_ids):
+            record = db.load_record(game_name=game_id)
+            if record is None:
+                raise ValueError(f"game.db is missing completed record payload for {game_id}")
+            writer.append_record(record, game_id=game_id, game_type=game_type)
+
+    @staticmethod
+    def _is_path_within(path: Path, parent: Path) -> bool:
+        try:
+            path.resolve().relative_to(parent.resolve())
+        except ValueError:
+            return False
+        return True
 
     @property
     def engine_metadata(self) -> list[JsonObject]:
@@ -665,13 +732,57 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
         rd.mkdir(parents=True, exist_ok=True)
         if self._run_options.should_skip_resume:
             self._cleanup_existing_run()
-        self._run_metadata_service.write_run_metadata_files(
-            run_dir=rd,
+        inputs = self._run_metadata_service.write_inputs_only_manifest(
+            run_dir=self.run_dir,
             config_payload=self.config.model_dump(mode="json"),
             package_name="shogiarena",
         )
+        self._frozen_run_config_payload = inputs.config_payload
+
+    def _seal_artifact_engine_configs(self) -> None:
+        cfg_out_dir = self.run_dir / "inputs" / "engine_configs"
+        resolver = self._engine_factory_service.artifact_resolver
+        changed = False
+        for engine in self.config.engines:
+            before = engine.engine_path
+            resolved = resolve_engine_config_entry(
+                engine,
+                output_dir=cfg_out_dir,
+                extra_options=None,
+                artifact_resolver=resolver,
+            )
+            changed = changed or resolved.engine_path != before
+        if changed:
+            self.config.clear_run_artifact_hash_cache()
 
     async def prepare_domain(self) -> None:
+        self._ensure_db_service()
+        self._seal_artifact_engine_configs()
+        frozen_payload = self._frozen_run_config_payload
+        if frozen_payload is None:
+            raise RuntimeError("inputs-only manifest must be written before prepare_domain")
+        resolved_payload = self.config.model_dump(mode="json")
+        try:
+            sealed = self._run_metadata_service.seal_provenance_manifest(
+                run_dir=self.run_dir,
+                inputs_config_payload=frozen_payload,
+                resolved_config_payload=resolved_payload,
+                package_name="shogiarena",
+            )
+        except RunManifestSealError as exc:
+            if self._run_options.should_skip_resume or not (self.run_dir / "state.json").exists():
+                raise
+            logger.warning("Run manifest could not be sealed; resume will be rejected: %s", exc)
+            current_hashes = self._run_metadata_service.build_sealed_hashes(
+                inputs_config_payload=frozen_payload,
+                resolved_config_payload=resolved_payload,
+            )
+            self._state.sealed_schedule_hash = current_hashes.schedule_hash
+            self._state.sealed_resume_hash = current_hashes.resume_hash
+            await self._try_setup_tournament()
+            return
+        self._state.sealed_schedule_hash = sealed.hashes.schedule_hash
+        self._state.sealed_resume_hash = sealed.hashes.resume_hash
         await self._try_setup_tournament()
 
     def get_dashboard_params(self) -> tuple[Path, int, int] | None:
@@ -726,15 +837,16 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             rd,
             files=[
                 "game.db",
-                "run_state.json",
-                "game_schedule.json",
+                "state.json",
+                "schedule.json",
                 "completed.flag",
-                "index.html",
-                "data/shogi-board.js",
-                "data/arena_port.js",
+                "manifest.json",
             ],
-            dirs=["spsa", "html", "static"],
+            dirs=["spsa", "html", "static", "dashboard", "inputs", "results", "failures", "logs", "records"],
         )
+        records_output_dir = self._records_output_dir()
+        if records_output_dir is not None and self._is_path_within(records_output_dir, rd):
+            rmtree(records_output_dir, ignore_errors=True)
 
     def _reorder_and_shuffle(self, games: list[GameSpec]) -> list[GameSpec]:
         return reorder_and_shuffle(

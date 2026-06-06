@@ -1272,23 +1272,22 @@ wheels = [
 
 [[package]]
 name = "rshogi-py-avx2"
-version = "0.7.5"
+version = "0.10.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/02/3a/99510f9d47fc5d87f246e57db1a2443bf514106b6b7a7870c5a4973b2009/rshogi_py_avx2-0.7.5.tar.gz", hash = "sha256:b56cac5e02d48e0af477c807d307671edb33ef7bfed00bfa483e5f26b4edb555", size = 302827, upload-time = "2026-03-08T07:40:25.123Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fe/27/11da7955be8847524a64b671f27198562a902b9857d776969eaabf09f490/rshogi_py_avx2-0.7.5-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:0c33a9edb05c27ea17648c74ab9149e4fc20c31fbde5507516e0f23569bca2df", size = 791293, upload-time = "2026-03-08T07:40:03.19Z" },
-    { url = "https://files.pythonhosted.org/packages/8b/4b/859414ff27f3f5a1569133560cfd87747fe4f8423cd8fc3458b2b0099d35/rshogi_py_avx2-0.7.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:95f6c14522c844803ebbb8fb76ea86f3ecf122f12ce5163503755b9e28b965e7", size = 853399, upload-time = "2026-03-08T07:40:04.569Z" },
-    { url = "https://files.pythonhosted.org/packages/c2/d0/2d30341551ccec1c256fe8444d5b54d9013b7e93fa04e41042dde8fb790b/rshogi_py_avx2-0.7.5-cp311-cp311-win_amd64.whl", hash = "sha256:085e5e694dcf3be7b9e4ff77549015389a63a561bfd459f2b7702b3608e32a08", size = 674583, upload-time = "2026-03-08T07:40:05.66Z" },
-    { url = "https://files.pythonhosted.org/packages/4c/ad/f0b89229cde1eca1dca1eb9fbee68810654f329708b90f8add9261e388e6/rshogi_py_avx2-0.7.5-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:786d35bc7cc3bec41b72ab0919a7f4e36321a5c5e00f041b4a0d993873921d98", size = 784086, upload-time = "2026-03-08T07:40:07.203Z" },
-    { url = "https://files.pythonhosted.org/packages/53/e8/25d5f070b10a6d47e7aef84229ec79d21cce57ae01061a975448e355d768/rshogi_py_avx2-0.7.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:099cb6bd025e4db1a8f9e2bffe6f2947a7eb9055a8d1fe9e8c92b3aebefea3b7", size = 859894, upload-time = "2026-03-08T07:40:08.864Z" },
-    { url = "https://files.pythonhosted.org/packages/51/0a/dc5d4be0e80380c10d8a6c65560448bb3e8e67b4bf814c4e276a50af9218/rshogi_py_avx2-0.7.5-cp312-cp312-win_amd64.whl", hash = "sha256:2e12a9aeb1de59e467baa1a6d80b5149fc680735167f99620bb999aaada4ff82", size = 680942, upload-time = "2026-03-08T07:40:10.085Z" },
-    { url = "https://files.pythonhosted.org/packages/28/a8/851da49a3ece80f8c523275ea770c93c3976a7e01ba430512906b7f262fb/rshogi_py_avx2-0.7.5-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:a42686544c5ad60ea0ccee40ee28ecd179ff2892e0bfd648d294002951535f89", size = 785176, upload-time = "2026-03-08T07:40:11.854Z" },
-    { url = "https://files.pythonhosted.org/packages/8a/e3/50a5390367ba991af10f6a0693e3115e1c82c0d141692d585ebe85e2b8bb/rshogi_py_avx2-0.7.5-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4c8b22d5aa44e9dee8e710724aa970d07fa4366c950ad9641a741c1b8612bf2b", size = 860864, upload-time = "2026-03-08T07:40:12.993Z" },
-    { url = "https://files.pythonhosted.org/packages/37/9f/e4cca8884778c8b129335ef490022443840d43de628c6862dfa488eb0b84/rshogi_py_avx2-0.7.5-cp313-cp313-win_amd64.whl", hash = "sha256:4e6f5bdb81f7783191c9aaadd1c06ae3cb2d4d0c8922651528e37738b8909956", size = 682321, upload-time = "2026-03-08T07:40:14.102Z" },
-    { url = "https://files.pythonhosted.org/packages/65/af/fa086ff6e9d50840ff141ae95d8bcf40cde30eb2c8e6d4d93535bc2b83ab/rshogi_py_avx2-0.7.5-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:b040048262bf8fca8c4602a16b500da8b972a284329f9b220a3cc2744da40614", size = 801506, upload-time = "2026-03-08T07:40:15.225Z" },
-    { url = "https://files.pythonhosted.org/packages/ef/26/9bb5625e5a7af4e69e4efe419ca67d888207c20df0d1edff24547e61a167/rshogi_py_avx2-0.7.5-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:098e4455be3ffa22db465a732cbb2e3816ab945072df3c88812496244ecf6022", size = 879287, upload-time = "2026-03-08T07:40:16.639Z" },
-    { url = "https://files.pythonhosted.org/packages/c8/fe/26f20cebb644544bcf31b22636bd2152de5c9b6ce43261b87f87d3b05e71/rshogi_py_avx2-0.7.5-cp314-cp314-win_amd64.whl", hash = "sha256:f59af9268f1b26af1751421b4854bfb54e056ab254fcc134014360ba01d9855d", size = 700965, upload-time = "2026-03-08T07:40:20.066Z" },
-    { url = "https://files.pythonhosted.org/packages/2b/8f/94a003e38f0fdf729e430e2dd62b7da4008a3022480f591defe2b33008a0/rshogi_py_avx2-0.7.5-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:cf430d79a7252b0077a7e39c2bd89ceb81c72839b01ae75d6f77daff854b4c27", size = 851855, upload-time = "2026-03-08T07:40:23.098Z" },
+    { url = "https://files.pythonhosted.org/packages/92/8f/a457a6117e69718587345c2ab5f21e9e5bca14b8aad1e61a24113d65c25f/rshogi_py_avx2-0.10.3-cp311-cp311-macosx_10_12_x86_64.whl", hash = "sha256:605ae1e302bd45680525011cea452c5ecaec0be120faebdfdb8e4f0605bd3b61", size = 951774, upload-time = "2026-06-06T06:11:17.936Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/d3/ffb5e3e0cc5d4e1750c759191d17285abe505e8e460b8df774227b6973db/rshogi_py_avx2-0.10.3-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:19382aa75bdfff65341770ab5476d75937aff319e063ab9bb6059f5e9a9ffb0c", size = 966908, upload-time = "2026-06-06T06:11:19.193Z" },
+    { url = "https://files.pythonhosted.org/packages/44/d4/26aa721807f7e5c8f1bbac49be34c36d7e43c35a94f171c06b4a7027a3ff/rshogi_py_avx2-0.10.3-cp311-cp311-win_amd64.whl", hash = "sha256:930018868112587030fd4b88807dd9f3352b667ea26b12faebdd2bbaa739ff25", size = 853457, upload-time = "2026-06-06T06:11:20.624Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/91/01c98e5bb5bb5068a0005e0cbc6a3eb656200f2636a4175cd76e732d3eeb/rshogi_py_avx2-0.10.3-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:0acfc0949f6a59a7acdc891b19fcb691ba35f1207b5836b91f3a45e62cad3fa5", size = 953573, upload-time = "2026-06-06T06:11:21.708Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/b9/94b7f7010a9d918489b998eef5a32661b0a959ed5a5081be2ea80932dfdd/rshogi_py_avx2-0.10.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0c7bd2a349e04b0067ea466685a87193feba93e3464f8cbd056d97eaa6cf592d", size = 974787, upload-time = "2026-06-06T06:11:22.912Z" },
+    { url = "https://files.pythonhosted.org/packages/30/2a/0b3dd0ffa0d3c0c80f80c9b9eb64d89f7fce4f3817fcb5e9a91e5dd7af71/rshogi_py_avx2-0.10.3-cp312-cp312-win_amd64.whl", hash = "sha256:afe8dad6a741cb0c8a53dab389ef341bb5d6471e49cc830f30b02465a1360ec8", size = 861024, upload-time = "2026-06-06T06:11:24.16Z" },
+    { url = "https://files.pythonhosted.org/packages/89/11/496a370185b86d5363ce8f1b0233d77d0df6ea9d353213bc0bb44d840345/rshogi_py_avx2-0.10.3-cp313-cp313-macosx_10_12_x86_64.whl", hash = "sha256:ce8f0bd19048f8ae93e1c4a46ac23d6b6fb5eb7c1c99b604497996050456bda5", size = 954972, upload-time = "2026-06-06T06:11:25.207Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/f4/76f0cee036dc44758a7e716618953b7c383daab84b7a894b541552569840/rshogi_py_avx2-0.10.3-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:776d72c04b778a90f049f13c57f403023e7f2cfcfd8cdb8a86cf66cbc64fccf0", size = 975902, upload-time = "2026-06-06T06:11:26.371Z" },
+    { url = "https://files.pythonhosted.org/packages/77/80/05e3ed7b57c1caccc61dff035305d8efa34851dcc737b0cee0abe4e9a4b4/rshogi_py_avx2-0.10.3-cp313-cp313-win_amd64.whl", hash = "sha256:c0fe7d8227d95222f75789e9db97c565fb88bb2897f4ac4390bec4434e48aba9", size = 861822, upload-time = "2026-06-06T06:11:27.466Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/a1/a83b7d56ee37bda0161e24260342511b3083605e96d479d72776441a7991/rshogi_py_avx2-0.10.3-cp314-cp314-macosx_10_12_x86_64.whl", hash = "sha256:4a63c269e92bf3c6f1f13415235744e2af2ad92558e66f47f89bca8730f62761", size = 975052, upload-time = "2026-06-06T06:11:28.633Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/e4/1680a4c033c1722a76fc73477c7ee5c4c576b28f49d00f8647a2082485dc/rshogi_py_avx2-0.10.3-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6454913edce3f9df162e19dcaba0e0ab6fb0af71d659fa4f1f11e66ac470b2ec", size = 994562, upload-time = "2026-06-06T06:11:29.902Z" },
+    { url = "https://files.pythonhosted.org/packages/87/9e/6eb6e1335f9e940bf373037ac3a0145d5556dd663b740636dd14938dce01/rshogi_py_avx2-0.10.3-cp314-cp314-win_amd64.whl", hash = "sha256:b7d38858a113256fe5b5ba6e7838c72f1ff7cf8a7524bf46b54d05fd8dfafabc", size = 883409, upload-time = "2026-06-06T06:11:31.174Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/44/00458cc53307177674340e8eea05a452557a54c51bd6600f76fec787c69f/rshogi_py_avx2-0.10.3-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:412a5cb8def9c03942bf3a3ed0eea298c37571b9267381622c9bb04ff0b98b9e", size = 966740, upload-time = "2026-06-06T06:11:32.26Z" },
 ]
 
 [[package]]
@@ -1319,7 +1318,7 @@ wheels = [
 
 [[package]]
 name = "shogiarena"
-version = "0.3.1"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -1357,7 +1356,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "rshogi-py-avx2", specifier = "==0.7.5" },
+    { name = "rshogi-py-avx2", specifier = "==0.10.3" },
     { name = "sqlalchemy", specifier = ">=2.0.43" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20250822" },

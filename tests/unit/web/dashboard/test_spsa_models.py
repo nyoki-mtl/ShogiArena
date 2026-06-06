@@ -135,7 +135,7 @@ class TestSpsaMetaData:
             "num_updates": 500,
             "experiment_name": "test_exp",
             "initial_params": {"param_a": 1.5, "param_b": 2.0},
-            "parameters_path": "/path/to/params.txt",
+            "space_path": "/path/to/space.yaml",
             "engine_time_controls": {"engine1": "1000+10"},
             "default_time_control": "1000+10",
             "engines": ["engine1", "engine2"],

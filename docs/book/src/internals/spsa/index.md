@@ -192,29 +192,29 @@ async def _run_one_spsa_update(self, update_idx, params, sfens):
 
 ## 設定例
 
+実際の設定スキーマ（`spsa` ブロック、`algorithm` / `variants` ネスト、`space` spec への参照）については
+[SPSA Tuning](../../user-guide/spsa.md) を参照してください。以下は本章で説明した各概念が設定のどこに対応するかを示す抜粋です。
+
 ```yaml
-# SPSA 設定
-num_updates: 1000         # 更新回数
-mobility: 0.5             # 全体の学習率スケール
-scale: 1.0                # 摂動スケール
+spsa:
+  space: "./configs/resources/spsa/rshogi-az-mcts.yaml"  # チューニング対象パラメータの定義
+  num_updates: 1000        # 更新回数
+  pairs_per_update: 4      # 1 更新あたりの対局ペア数（バッチサイズ）
+  inflight_factor: 8       # 先行投入する更新バッチ数
 
-# ゲインスケジュール
-a0: 1.0                   # 初期ステップサイズ
-A: 100.0                  # スケーリング定数
-alpha: 0.602              # ステップサイズ減衰指数
-gamma: 0.101              # 摂動スケール減衰指数
+  algorithm:               # ゲインスケジュール
+    alpha: 0.602           # ステップサイズ減衰指数
+    gamma: 0.101           # 摂動スケール減衰指数
+    A:                     # 安定化項
+      mode: ratio
+      value: 0.1
 
-# 分散削減
-crn_enabled: true          # Common Random Number
-update_batch_size: 4       # バッチサイズ
+  variants:                # 分散削減
+    crn: true              # Common Random Numbers
 
-# 並列実行
-inflight_factor: 8         # 同時ゲーム数の乗数
-
-# Early Stopping
-early_stop:
-  type: "delta_norm"
-  threshold: 0.001
+  early_stop:              # 早期終了（delta_norm が閾値を下回ったら停止）
+    type: "delta_norm"
+    threshold: 0.001
 ```
 
 ## Early Stopping

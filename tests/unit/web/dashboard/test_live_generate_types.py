@@ -74,4 +74,6 @@ class TestGenerateSummary:
             "outputDir",
             "filePrefix",
             "rules",
+            "runStatus",
+            "isResumable",
         }

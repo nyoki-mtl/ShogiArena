@@ -6,7 +6,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from shogiarena._core.shared.kernel.scalar_coercion.api import (
-    coerce_game_result,
     coerce_non_negative_int_strict,
     coerce_optional_int_strict,
     coerce_optional_non_negative_int_strict,
@@ -23,27 +22,6 @@ def _coerce_assignment_override(value: Any | None) -> _AssignmentOverrideWire:
         parsed = _AssignmentOverridePayloadModel.model_validate(value)
         return parsed.model_dump(mode="python")
     raise ValueError("Assignment override must be string or mapping")
-
-
-class _CompletedGameSummaryPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    game_result: str | None = None
-    total_plies: int | None = None
-    start_time: str | None = None
-    end_time: str | None = None
-
-    @field_validator("total_plies", mode="before")
-    @classmethod
-    def _coerce_optional_int(cls, value: Any | None) -> int | None:
-        return coerce_optional_int_strict(value)
-
-    @field_validator("game_result", mode="before")
-    @classmethod
-    def _coerce_game_result_name(cls, value: Any | None) -> str | None:
-        if value is None:
-            return None
-        return coerce_game_result(value, is_strict=True).name
 
 
 class _AssignmentOverridePayloadModel(BaseModel):
@@ -111,10 +89,9 @@ class _SprtStatePayload(BaseModel):
 class _RunStatePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    config: dict[str, object] | None = None
     schedule_hash: str | None = None
+    resume_hash: str | None = None
     total_games: int | None = None
-    completed_game_ids: list[str] = Field(default_factory=list)
     cancelled_game_ids: list[str] = Field(default_factory=list)
     completed_games_count: int | None = None
     cancelled_games_count: int | None = None
@@ -126,7 +103,6 @@ class _RunStatePayload(BaseModel):
     updated_at: str | None = None
     sprt_state: _SprtStatePayload | None = None
     openbench_state: Mapping[str, object] | None = None
-    completed_game_summaries: dict[str, _CompletedGameSummaryPayload] = Field(default_factory=dict)
     game_instance_overrides: dict[str, _AssignmentOverrideWire] = Field(default_factory=dict)
 
     @field_validator("game_display_order", mode="before")
@@ -141,24 +117,6 @@ class _RunStatePayload(BaseModel):
                 raise ValueError("game_id keys cannot be empty")
             items[key_str] = coerce_non_negative_int_strict(raw_value)
         return items
-
-    @field_validator("completed_game_summaries", mode="before")
-    @classmethod
-    def _coerce_completed_game_summaries(cls, value: Any | None) -> dict[str, _CompletedGameSummaryPayload]:
-        if value is None:
-            return {}
-        if not isinstance(value, Mapping):
-            raise ValueError("completed_game_summaries must be a mapping")
-        summaries: dict[str, _CompletedGameSummaryPayload] = {}
-        for key, raw_summary in value.items():
-            key_str = coerce_optional_text(key)
-            if key_str is None:
-                raise ValueError("game_id keys cannot be empty")
-            if not isinstance(raw_summary, Mapping):
-                raise ValueError("completed_game_summaries values must be mappings")
-            payload = _CompletedGameSummaryPayload.model_validate(raw_summary)
-            summaries[key_str] = payload
-        return summaries
 
     @field_validator("game_instance_overrides", mode="before")
     @classmethod
@@ -181,4 +139,4 @@ class _RunStatePayload(BaseModel):
         return coerce_optional_non_negative_int_strict(value)
 
 
-__all__ = ["_CompletedGameSummaryPayload", "_RunStatePayload"]
+__all__ = ["_RunStatePayload"]

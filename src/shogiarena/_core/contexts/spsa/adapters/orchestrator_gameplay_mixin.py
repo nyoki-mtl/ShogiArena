@@ -104,6 +104,8 @@ class SpsaOrchestratorGameplayMixin:
         reserved_ids: tuple[str, str] | None = None,
         tuned_variant_token: str | None = None,
         baseline_variant_token: str | None = None,
+        tuned_option_map: JsonObject | None = None,
+        baseline_option_map: JsonObject | None = None,
         event_family: str = "spsa",
         time_control_override: TimeControlLimits | None = None,
     ) -> tuple[float, rshogi.record.GameRecord, rshogi.record.GameRecord]:
@@ -121,6 +123,8 @@ class SpsaOrchestratorGameplayMixin:
             preassigned_game_id=black_reserved,
             tuned_variant_token=tuned_variant_token,
             baseline_variant_token=baseline_variant_token,
+            tuned_option_map=tuned_option_map,
+            baseline_option_map=baseline_option_map,
             event_family=event_family,
             time_control_override=time_control_override,
         )
@@ -135,6 +139,8 @@ class SpsaOrchestratorGameplayMixin:
             preassigned_game_id=white_reserved,
             tuned_variant_token=tuned_variant_token,
             baseline_variant_token=baseline_variant_token,
+            tuned_option_map=tuned_option_map,
+            baseline_option_map=baseline_option_map,
             event_family=event_family,
             time_control_override=time_control_override,
         )
@@ -154,6 +160,8 @@ class SpsaOrchestratorGameplayMixin:
         preassigned_game_id: str | None = None,
         tuned_variant_token: str | None = None,
         baseline_variant_token: str | None = None,
+        tuned_option_map: JsonObject | None = None,
+        baseline_option_map: JsonObject | None = None,
         event_family: str = "spsa",
         time_control_override: TimeControlLimits | None = None,
     ) -> tuple[int, rshogi.record.GameRecord]:
@@ -162,9 +170,14 @@ class SpsaOrchestratorGameplayMixin:
         Returns (winner_code, GameRecord) where winner_code is 1 for tuned win,
         0 for baseline win, 2 for draw.
         """
-        rng = self._make_rng(update_idx + worker_idx)  # Deterministic but different per game
-        tuned_option_map = self._build_engine_option_map(tuned_params, rng=rng, should_allow_stochastic=True)
-        baseline_option_map = self._build_engine_option_map(current_params, should_allow_stochastic=False)
+        if tuned_option_map is None or baseline_option_map is None:
+            rng = self._make_rng(update_idx + worker_idx)
+            tuned_option_map = self._build_engine_option_map(tuned_params, rng=rng, should_allow_stochastic=True)
+            baseline_option_map = self._build_engine_option_map(
+                current_params,
+                rng=rng,
+                should_allow_stochastic=True,
+            )
 
         tuned_token = tuned_variant_token or variant_token(update_idx)
         baseline_token = baseline_variant_token or tuned_token
@@ -237,6 +250,8 @@ class SpsaOrchestratorGameplayMixin:
             baseline_options=baseline_option_map,
             tuned_label=context.tuned_label,
             baseline_label=context.baseline_label,
+            clear_hash=bool(self.config.variants.apply.is_clear_hash_enabled),
+            after_setoption=str(self.config.variants.apply.after_setoption),
         )
 
         class _SpsaBeforeGameHook:

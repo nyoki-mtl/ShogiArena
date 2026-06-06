@@ -32,7 +32,7 @@ def _make_game(game_id: str, *, round_num: int = 0) -> GameSpec:
     )
 
 
-def _make_config(*, seed: str = "1234", schedule_hash: str = "schedule-hash") -> Any:
+def _make_config(*, seed: str = "1234", schedule_hash: str = "schedule-hash", resume_hash: str = "resume-hash") -> Any:
     return SimpleNamespace(
         experiment_name="state-store-test",
         engines=[SimpleNamespace(name="EngineA"), SimpleNamespace(name="EngineB")],
@@ -53,6 +53,7 @@ def _make_config(*, seed: str = "1234", schedule_hash: str = "schedule-hash") ->
         openbench=None,
         records_output=None,
         get_schedule_hash=lambda: schedule_hash,
+        get_resume_hash=lambda: resume_hash,
     )
 
 
@@ -79,6 +80,19 @@ class _SchedulerStub:
         return list(self._schedule)
 
 
+class _DbStub:
+    def __init__(self, game_names: Iterable[str]) -> None:
+        self._game_names = list(game_names)
+        self.game_types: list[str] = []
+
+    def get_games_with_players(self, *, game_type: str) -> list[dict[str, object]]:
+        self.game_types.append(game_type)
+        return [{"game_name": game_name} for game_name in self._game_names]
+
+    def load_record(self, *, game_id: int | None = None, game_name: str | None = None) -> None:
+        return None
+
+
 class _OpenBenchStub:
     def __init__(self, snapshot: JsonObject | None = None) -> None:
         self._snapshot = snapshot
@@ -97,6 +111,9 @@ def _build_save_context(
     config: Any,
     state: TournamentRunnerState,
     openbench: _OpenBenchStub,
+    schedule_hash: str = "schedule-hash",
+    resume_hash: str = "resume-hash",
+    is_generate_run: bool = False,
 ) -> TournamentStateSaveContext:
     return TournamentStateSaveContext(
         run_dir=run_dir,
@@ -104,9 +121,24 @@ def _build_save_context(
         state=state,
         openbench=cast(TournamentOpenBenchStatePort, openbench),
         build_rules_payload=lambda: {"board": "standard"},
-        is_generate_run=lambda: False,
+        is_generate_run=lambda: is_generate_run,
         serialize_assignment_override=_serialize_assignment_override,
         shared_override_label=_shared_override_label,
+        schedule_hash=schedule_hash,
+        resume_hash=resume_hash,
+    )
+
+
+def _write_sealed_manifest(run_dir: Path, *, resume_hash: str = "resume-hash") -> None:
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "status": "provenance_sealed",
+                "hashes": {"resume_hash": resume_hash},
+            }
+        ),
+        encoding="utf-8",
     )
 
 
@@ -199,7 +231,7 @@ async def test_try_setup_tournament_creates_schedule_and_persists_run_state(tmp_
     def _write_schedule_file(schedule_to_write: list[GameSpec]) -> None:
         payload = [spec.game_id for spec in schedule_to_write]
         events.append(("write", payload))
-        (tmp_path / "game_schedule.json").write_text(json.dumps(payload), encoding="utf-8")
+        (tmp_path / "schedule.json").write_text(json.dumps(payload), encoding="utf-8")
 
     def _notify_schedule_available() -> None:
         events.append(("notify", None))
@@ -211,6 +243,7 @@ async def test_try_setup_tournament_creates_schedule_and_persists_run_state(tmp_
         scheduler=cast(TournamentScheduleGeneratorPort, scheduler),
         state=state,
         openbench=cast(TournamentOpenBenchStatePort, openbench),
+        db_service=None,
         reorder_and_shuffle=lambda games: list(reversed(games)),
         reset_schedule_tracking=_reset_schedule_tracking,
         write_schedule_file=_write_schedule_file,
@@ -225,6 +258,8 @@ async def test_try_setup_tournament_creates_schedule_and_persists_run_state(tmp_
             state=state,
             openbench=openbench,
         ),
+        schedule_hash="schedule-hash",
+        resume_hash="resume-hash",
     )
 
     store = TournamentSessionStateStore()
@@ -240,8 +275,9 @@ async def test_try_setup_tournament_creates_schedule_and_persists_run_state(tmp_
         ("notify", None),
     ]
 
-    run_state = json.loads((tmp_path / "run_state.json").read_text(encoding="utf-8"))
+    run_state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     assert run_state["schedule_hash"] == "schedule-hash"
+    assert run_state["resume_hash"] == "resume-hash"
     assert run_state["total_games"] == 2
     assert run_state["game_display_order"] == {"g002": 1, "g001": 2}
     assert run_state["openbench_state"]["target_test_id"] == 42
@@ -255,7 +291,7 @@ async def test_try_setup_tournament_resumes_existing_run_state_round_trip(tmp_pa
     cancelled_spec.assigned_instance_white = "worker-2"
     cancelled_spec.should_require_install = True
 
-    config = _make_config(seed="9876", schedule_hash="resume-hash")
+    config = _make_config(seed="9876", schedule_hash="schedule-hash", resume_hash="resume-hash")
     saved_openbench = _OpenBenchStub(
         snapshot={
             "submitted": {
@@ -302,6 +338,7 @@ async def test_try_setup_tournament_resumes_existing_run_state_round_trip(tmp_pa
     )
 
     store = TournamentSessionStateStore()
+    _write_sealed_manifest(tmp_path)
     store.save_run_state(
         _build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=saved_openbench)
     )
@@ -326,6 +363,7 @@ async def test_try_setup_tournament_resumes_existing_run_state_round_trip(tmp_pa
         scheduler=cast(TournamentScheduleGeneratorPort, scheduler),
         state=resumed_state,
         openbench=cast(TournamentOpenBenchStatePort, restored_openbench),
+        db_service=cast(Any, _DbStub(["g001"])),
         reorder_and_shuffle=lambda games: games,
         reset_schedule_tracking=lambda: callback_events.append("reset"),
         write_schedule_file=lambda schedule_to_write: callback_events.append("write"),
@@ -340,6 +378,8 @@ async def test_try_setup_tournament_resumes_existing_run_state_round_trip(tmp_pa
             state=resumed_state,
             openbench=restored_openbench,
         ),
+        schedule_hash="schedule-hash",
+        resume_hash="resume-hash",
     )
 
     resumed = await store.try_setup_tournament(ctx)
@@ -351,7 +391,7 @@ async def test_try_setup_tournament_resumes_existing_run_state_round_trip(tmp_pa
     assert resumed_state.cancelled_specs["g002"].assigned_instance_white == "worker-2"
     assert resumed_state.cancelled_specs["g002"].should_require_install is True
     assert resumed_state.completed_game_ids == {"g001"}
-    assert resumed_state.completed_game_summaries["g001"]["game_result"] == "BLACK_WIN"
+    assert resumed_state.completed_game_summaries == {}
     assert resumed_state.game_display_order == {"g001": 1, "g002": 2}
     assert resumed_state.original_total_games == 2
     assert isinstance(resumed_state.sprt, Sprt)
@@ -359,3 +399,101 @@ async def test_try_setup_tournament_resumes_existing_run_state_round_trip(tmp_pa
     assert resumed_state.sprt.wins == 1
     assert restored_openbench.restored == saved_openbench.snapshot_state()
     assert callback_events == ["ensure_display_order", "ensure_display_order", "refresh", "notify"]
+
+
+@pytest.mark.asyncio
+async def test_try_setup_tournament_resumes_generate_games_by_generate_game_type(tmp_path: Path) -> None:
+    config = _make_config(seed="9876", schedule_hash="schedule-hash", resume_hash="resume-hash")
+    saved_state = TournamentRunnerState(game_schedule=[_make_game("g001"), _make_game("g002")])
+    openbench = _OpenBenchStub()
+    store = TournamentSessionStateStore()
+    _write_sealed_manifest(tmp_path)
+    store.save_run_state(
+        _build_save_context(
+            run_dir=tmp_path,
+            config=config,
+            state=saved_state,
+            openbench=openbench,
+            is_generate_run=True,
+        )
+    )
+
+    resumed_state = TournamentRunnerState()
+    db = _DbStub(["g001"])
+    ctx = TournamentStateSetupContext(
+        run_dir=tmp_path,
+        run_options=SimpleNamespace(should_skip_resume=False),
+        config=config,
+        scheduler=cast(TournamentScheduleGeneratorPort, _SchedulerStub([_make_game("g001"), _make_game("g002")])),
+        state=resumed_state,
+        openbench=cast(TournamentOpenBenchStatePort, openbench),
+        db_service=cast(Any, db),
+        reorder_and_shuffle=lambda games: games,
+        reset_schedule_tracking=lambda: None,
+        write_schedule_file=lambda schedule_to_write: None,
+        notify_schedule_available=lambda: None,
+        reset_display_order=lambda: None,
+        apply_assignment_override=_apply_assignment_override,
+        ensure_display_order_for_specs=lambda specs: None,
+        refresh_game_assignments=lambda: None,
+        build_save_context=lambda: _build_save_context(
+            run_dir=tmp_path,
+            config=config,
+            state=resumed_state,
+            openbench=openbench,
+            is_generate_run=True,
+        ),
+        schedule_hash="schedule-hash",
+        resume_hash="resume-hash",
+    )
+
+    resumed = await store.try_setup_tournament(ctx)
+
+    assert resumed is True
+    assert resumed_state.completed_game_ids == {"g001"}
+    assert db.game_types == ["generate"]
+
+
+@pytest.mark.asyncio
+async def test_try_setup_tournament_rejects_unsealed_manifest(tmp_path: Path) -> None:
+    config = _make_config()
+    state = TournamentRunnerState()
+    saved_state = TournamentRunnerState(game_schedule=[_make_game("g001")])
+    openbench = _OpenBenchStub()
+    store = TournamentSessionStateStore()
+    store.save_run_state(_build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench))
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"schema_version": 2, "status": "inputs_only", "hashes": {"resume_hash": None}}),
+        encoding="utf-8",
+    )
+
+    ctx = TournamentStateSetupContext(
+        run_dir=tmp_path,
+        run_options=SimpleNamespace(should_skip_resume=False),
+        config=config,
+        scheduler=cast(TournamentScheduleGeneratorPort, _SchedulerStub([_make_game("g001")])),
+        state=state,
+        openbench=cast(TournamentOpenBenchStatePort, openbench),
+        db_service=cast(Any, _DbStub(["g001"])),
+        reorder_and_shuffle=lambda games: games,
+        reset_schedule_tracking=lambda: None,
+        write_schedule_file=lambda schedule_to_write: None,
+        notify_schedule_available=lambda: None,
+        reset_display_order=lambda: None,
+        apply_assignment_override=_apply_assignment_override,
+        ensure_display_order_for_specs=lambda specs: None,
+        refresh_game_assignments=lambda: None,
+        build_save_context=lambda: _build_save_context(
+            run_dir=tmp_path,
+            config=config,
+            state=state,
+            openbench=openbench,
+        ),
+        schedule_hash="schedule-hash",
+        resume_hash="resume-hash",
+    )
+
+    resumed = await store.try_setup_tournament(ctx)
+
+    assert resumed is False
+    assert state.game_schedule == []

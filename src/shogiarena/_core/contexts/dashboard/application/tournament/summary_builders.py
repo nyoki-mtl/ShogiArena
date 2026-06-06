@@ -122,19 +122,18 @@ def build_progress_payload(
     logger: logging.Logger,
     game_query: DashboardGameQueryPort,
 ) -> ProgressPayload:
-    run_state_path = run_dir / "run_state.json"
+    run_state_path = run_dir / "state.json"
     if run_state_path.exists():
         try:
             raw_state = json.loads(run_state_path.read_text(encoding="utf-8"))
             if not isinstance(raw_state, Mapping):
-                raise ValueError("run_state.json must be an object")
+                raise ValueError("state.json must be an object")
             state = {str(key): value for key, value in raw_state.items()}
         except (OSError, json.JSONDecodeError, ValueError) as exc:
-            logger.warning("Failed to parse run_state.json for progress: %s", exc)
+            logger.warning("Failed to parse state.json for progress: %s", exc)
         else:
             total = coerce_int(state.get("total_games")) or 0
-            completed_game_ids = state.get("completed_game_ids")
-            completed = len(completed_game_ids) if isinstance(completed_game_ids, list) else 0
+            completed = coerce_int(state.get("completed_games_count")) or 0
             pending = total - completed
             estimated_minutes = pending * 1
             return {
@@ -181,7 +180,7 @@ def build_progress_payload(
 
 def _load_summary_engines_meta(run_dir: Path) -> list[JsonObject]:
     engines_meta: list[JsonObject] = []
-    summary_btd_path = run_dir / "summary_btd.json"
+    summary_btd_path = run_dir / "results" / "summary_btd.json"
     if not summary_btd_path.exists():
         return engines_meta
     with open(summary_btd_path, encoding="utf-8") as handle:

@@ -6,9 +6,9 @@ from collections.abc import Sequence
 from datetime import datetime
 
 import rshogi.record
-from rshogi.core import Board, Move, normalize_usi_position
+from rshogi.core import normalize_usi_position
 
-from shogiarena._core.shared.kernel.game_results import STARTING_SFEN, GameResult, game_result_terminal_kind
+from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.time_control import TimeControlLimitsPort
 from shogiarena._core.shared.kernel.time_control_spec import limits_to_record_time_spec
 
@@ -34,42 +34,14 @@ def build_remote_game_info(
     """Construct ``GameRecord`` from remote move_progress streams."""
 
     raw_moves = list(moves)
-    resolved_moves: list[Move] = []
-    board = Board()
     normalized_sfen = normalize_usi_position(start_sfen)
-    if normalized_sfen != "startpos":
-        board.set_sfen(normalized_sfen)
-    for move in raw_moves:
-        try:
-            mv = Move.from_usi(move)
-        except ValueError:
-            resolved_move = None
-        else:
-            resolved_move = mv if board.is_legal_move(mv) else None
-        if resolved_move is None:
-            raise RuntimeError(f"Illegal move in final payload: {move}")
-        resolved_moves.append(resolved_move)
-        board.apply_move(resolved_move)
     if game_result is None:
         raise RuntimeError("Missing game_result in remote move_progress events")
 
-    num_plies = len(resolved_moves)
-
-    def _pad(seq: Sequence[int | None] | None) -> list[int | None] | None:
+    def _to_list(seq: Sequence[int | None] | None) -> list[int | None] | None:
         if seq is None:
             return None
-        data = list(seq)
-        while len(data) < num_plies:
-            data.append(None)
-        return data[:num_plies]
-
-    move_times_core = _pad(move_times)
-    wall_times_core = _pad(wall_times)
-    latency_core = _pad(latency_deltas)
-    nodes_core = _pad(nodes)
-    depth_core = _pad(depth)
-    seldepth_core = _pad(seldepth)
-    eval_core = _pad(evals)
+        return list(seq)
 
     now_iso = datetime.now().isoformat()
     tc_black_str = limits_to_record_time_spec(black_limits)
@@ -90,28 +62,22 @@ def build_remote_game_info(
             "updated_date": now_iso,
         },
     )
-    move_records: list[rshogi.record.MoveRecord] = []
-    for idx, move in enumerate(resolved_moves):
-        wall_time = wall_times_core[idx] if wall_times_core is not None else None
-        latency_delta = latency_core[idx] if latency_core is not None else None
-        engine_info = rshogi.record.MoveEngineInfo(
-            eval=eval_core[idx] if eval_core is not None else None,
-            nodes=nodes_core[idx] if nodes_core is not None else None,
-            depth=depth_core[idx] if depth_core is not None else None,
-            seldepth=seldepth_core[idx] if seldepth_core is not None else None,
-            wall_time_ms=int(wall_time) if wall_time is not None else None,
-            latency_delta_ms=int(latency_delta) if latency_delta is not None else None,
+    try:
+        return rshogi.record.GameRecord.from_usi_main_line(
+            normalized_sfen,
+            raw_moves,
+            result=game_result,
+            move_times_ms=_to_list(move_times),
+            evals=_to_list(evals),
+            nodes=_to_list(nodes),
+            depths=_to_list(depth),
+            seldepths=_to_list(seldepth),
+            wall_times_ms=_to_list(wall_times),
+            latency_deltas_ms=_to_list(latency_deltas),
+            metadata=record_metadata,
         )
-        move_records.append(
-            rshogi.record.MoveRecord(
-                move,
-                time_ms=move_times_core[idx] if move_times_core is not None else None,
-                engine_info=engine_info,
-            )
-        )
-    init_sfen = normalized_sfen if normalized_sfen != "startpos" else STARTING_SFEN
-    terminal = rshogi.record.SpecialMoveRecord(game_result_terminal_kind(game_result), game_result)
-    return rshogi.record.GameRecord.from_main_line(init_sfen, move_records, terminal, record_metadata)
+    except ValueError as exc:
+        raise RuntimeError(f"Illegal move in final payload: {exc}") from exc
 
 
 __all__ = ["build_remote_game_info"]

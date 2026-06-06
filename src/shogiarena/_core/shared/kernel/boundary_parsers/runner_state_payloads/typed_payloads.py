@@ -11,13 +11,6 @@ from shogiarena._core.shared.kernel.json_types import JsonValue
 _AssignmentOverrideWire: TypeAlias = str | dict[str, object] | None
 
 
-class _CompletedGameSummaryType(TypedDict, total=False):
-    game_result: str | None
-    total_plies: int | None
-    start_time: str | None
-    end_time: str | None
-
-
 class _CancelledGameEntryType(TypedDict, total=False):
     game_id: str
     black: str | None
@@ -41,10 +34,8 @@ class _SprtStateSnapshot(TypedDict):
 
 
 class _TournamentRunStateType(TypedDict, total=False):
-    config: dict[str, object] | None
     schedule_hash: str | None
     total_games: int | None
-    completed_game_ids: list[str]
     cancelled_game_ids: list[str]
     completed_games_count: int | None
     cancelled_games_count: int | None
@@ -56,7 +47,6 @@ class _TournamentRunStateType(TypedDict, total=False):
     updated_at: str | None
     sprt_state: _SprtStateSnapshot | None
     openbench_state: dict[str, JsonValue] | None
-    completed_game_summaries: dict[str, _CompletedGameSummaryType]
     game_instance_overrides: dict[str, _AssignmentOverrideWire]
 
 

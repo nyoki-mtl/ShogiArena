@@ -285,7 +285,13 @@ def _construct_participation_record(
     if engine_config is not None:
         build_flags.update({str(key): value for key, value in engine_config.build_options.items()})
 
-    extras: JsonObject = {}
+    extras: JsonObject = {
+        "per_instance_bytes_hash": {
+            "schema_version": 1,
+            "status": "not_collected",
+            "hash_source": "not_collected",
+        }
+    }
     if engine_options:
         extras["engine_options"] = coerce_json_object_serialized(
             engine_options,
@@ -321,7 +327,7 @@ def _construct_participation_record(
         started_at=started_at,
         completed_at=completed_at,
         run_id=orchestrator.session_context.run_id,
-        extra=extras if extras else None,
+        extra=extras,
     )
 
 

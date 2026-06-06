@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping
+from pathlib import Path
 
 from shogiarena._core.contexts.tournament.application.session.state_payload_builder import build_run_state_payload
 from shogiarena._core.contexts.tournament.domain.tournament_models import GameSpec
@@ -15,12 +16,13 @@ from shogiarena._core.contexts.tournament.ports.session_state_runtime import (
     TournamentStateSetupContext,
     normalize_schedule_seed,
 )
+from shogiarena._core.shared.kernel.atomic_json import write_json_atomic
 from shogiarena._core.shared.kernel.boundary_parsers.runner_state_payloads.parsers import (
     parse_tournament_run_state_boundary,
 )
 from shogiarena._core.shared.kernel.exceptions import ContractParseError
-from shogiarena._core.shared.kernel.json_types import JsonObject
-from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_game_result, coerce_int, coerce_str
+from shogiarena._core.shared.kernel.run_manifest_reader import read_sealed_manifest_resume_hash
+from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int, coerce_str
 from shogiarena._core.shared.kernel.serialization import json_serialize
 from shogiarena._core.shared.kernel.service_ports import SprtServicePort
 
@@ -47,7 +49,7 @@ class TournamentSessionStateStore:
         """Setup new tournament or resume existing run state."""
 
         rd = ctx.run_dir
-        run_state_path = rd / "run_state.json"
+        run_state_path = rd / "state.json"
 
         if run_state_path.exists() and not ctx.run_options.should_skip_resume:
             return await self.try_resume_tournament(ctx)
@@ -118,23 +120,30 @@ class TournamentSessionStateStore:
 
         # Load and validate run state
         rd = ctx.run_dir
-        run_state_path = rd / "run_state.json"
+        run_state_path = rd / "state.json"
         try:
             with open(run_state_path, encoding="utf-8") as f:
                 raw = json.load(f)
             saved_state = parse_tournament_run_state_boundary(raw, path=str(run_state_path))
         except (OSError, json.JSONDecodeError, TypeError, ValueError, ContractParseError):
-            logger.warning("Failed to parse run_state.json, cannot resume", exc_info=True)
+            logger.warning("Failed to parse state.json, cannot resume", exc_info=True)
             return False
 
-        # Validate schedule hash
-        current_hash = ctx.config.get_schedule_hash()
-        if saved_state.get("schedule_hash") != current_hash:
+        # Validate resume hash. This includes logical schedule, provenance,
+        # SPRT test definition, and resume contract version.
+        sealed_resume_hash = read_sealed_manifest_resume_hash(ctx.run_dir / "manifest.json", logger=logger)
+        if sealed_resume_hash is None:
+            logger.warning("Run manifest is not provenance sealed, cannot resume. Use --no-resume to start fresh.")
+            return False
+        if ctx.resume_hash is None or ctx.resume_hash != sealed_resume_hash:
+            logger.warning("Current run provenance does not match sealed manifest, cannot resume.")
+            return False
+        if saved_state.get("resume_hash") != sealed_resume_hash:
             logger.warning("Configuration changed, cannot resume. Use --no-resume to start fresh.")
             return False
 
-        # Load completed games
-        ctx.state.completed_game_ids = set(saved_state.get("completed_game_ids", []))
+        # Load completed games from game.db, which is the authoritative source.
+        ctx.state.completed_game_ids = self._load_completed_game_ids(ctx)
         sprt_state = saved_state.get("sprt_state")
         if ctx.state.sprt is not None and sprt_state is not None:
             try:
@@ -146,35 +155,19 @@ class TournamentSessionStateStore:
         if openbench_state is not None:
             ctx.openbench.restore_state(openbench_state)
 
-        # Parse completed game summaries
-        parsed_summaries: dict[str, JsonObject] = {}
-        raw_summaries = saved_state.get("completed_game_summaries", {})
-        if isinstance(raw_summaries, Mapping):
-            for gid, summary in raw_summaries.items():
-                if not isinstance(summary, Mapping):
-                    continue
-                parsed_summary: JsonObject = {}
-                raw_game_result = json_serialize(summary.get("game_result"))
-                game_result = None
-                if raw_game_result is not None:
-                    game_result = coerce_game_result(raw_game_result, is_strict=True)
-                parsed_summary["game_result"] = game_result.name if game_result is not None else None
-                parsed_summary["total_plies"] = coerce_int(json_serialize(summary.get("total_plies")))
-                parsed_summary["start_time"] = coerce_str(json_serialize(summary.get("start_time")))
-                parsed_summary["end_time"] = coerce_str(json_serialize(summary.get("end_time")))
-                parsed_summaries[str(gid)] = parsed_summary
-        ctx.state.completed_game_summaries = {
-            gid: parsed_summaries[gid] for gid in ctx.state.completed_game_ids if gid in parsed_summaries
-        }
+        ctx.state.completed_game_summaries = {}
 
-        # Regenerate schedule (deterministic with same seed)
-        ctx.state.game_schedule = ctx.scheduler.generate_schedule(
-            engines=list(ctx.config.engines),
-            games_per_pair=ctx.config.tournament.games_per_pair,
-            seed=normalize_schedule_seed(ctx.config.tournament.seed),
-            initial_positions=ctx.config.rules.initial_positions,
-        )
-        ctx.state.game_schedule = ctx.reorder_and_shuffle(ctx.state.game_schedule)
+        persisted_schedule = self._load_persisted_schedule(ctx.run_dir / "schedule.json")
+        if persisted_schedule is not None:
+            ctx.state.game_schedule = persisted_schedule
+        else:
+            ctx.state.game_schedule = ctx.scheduler.generate_schedule(
+                engines=list(ctx.config.engines),
+                games_per_pair=ctx.config.tournament.games_per_pair,
+                seed=normalize_schedule_seed(ctx.config.tournament.seed),
+                initial_positions=ctx.config.rules.initial_positions,
+            )
+            ctx.state.game_schedule = ctx.reorder_and_shuffle(ctx.state.game_schedule)
 
         if saved_state.get("game_display_order"):
             ctx.state.game_display_order = saved_state["game_display_order"]
@@ -248,9 +241,56 @@ class TournamentSessionStateStore:
         """Persist current run-state payload."""
 
         run_state = build_run_state_payload(ctx, is_finished=is_finished)
-        run_state_path = ctx.run_dir / "run_state.json"
-        with open(run_state_path, "w", encoding="utf-8") as f:
-            json.dump(run_state, f, indent=2)
+        run_state_path = ctx.run_dir / "state.json"
+        write_json_atomic(run_state_path, run_state)
+
+    @staticmethod
+    def _load_completed_game_ids(ctx: TournamentStateSetupContext) -> set[str]:
+        db_service = ctx.db_service
+        if db_service is None:
+            return set()
+        game_type = "generate" if ctx.build_save_context().is_generate_run() else "arena"
+        try:
+            return {
+                str(game.get("game_name"))
+                for game in db_service.get_games_with_players(game_type=game_type)
+                if game.get("game_name")
+            }
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            logger.warning("Failed to load completed games from game.db: %s", exc)
+            return set()
+
+    @staticmethod
+    def _load_persisted_schedule(path: Path) -> list[GameSpec] | None:
+        if not path.exists():
+            return None
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Failed to read schedule.json: %s", exc)
+            return None
+        if not isinstance(raw, Mapping):
+            return None
+        games = raw.get("games")
+        if not isinstance(games, list):
+            return None
+        schedule: list[GameSpec] = []
+        for item in games:
+            if not isinstance(item, Mapping):
+                continue
+            game_id = coerce_str(item.get("game_id"))
+            if game_id is None:
+                continue
+            schedule.append(
+                GameSpec(
+                    black_engine=coerce_str(item.get("black")) or "",
+                    white_engine=coerce_str(item.get("white")) or "",
+                    initial_sfen=coerce_str(item.get("sfen")) or "startpos",
+                    game_id=game_id,
+                    round_num=coerce_int(item.get("round")) or 0,
+                )
+            )
+        return schedule
 
 
 __all__ = ["TournamentSessionStateStore"]

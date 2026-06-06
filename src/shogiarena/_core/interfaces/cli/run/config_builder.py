@@ -4,13 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
-
 from shogiarena._core.interfaces.cli.main import CliArgumentError
 from shogiarena._core.platform.settings import project_dirs
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.paths import resolve_path_like
-from shogiarena._core.shared.kernel.run_paths import timestamp_slug
 from shogiarena._core.shared.kernel.serialization import json_serialize
 
 from .config_overrides import apply_override, apply_section_overrides, parse_scalar
@@ -75,10 +72,7 @@ def materialize_engine_configs(
     label: str,
     output_dir: Path | None = None,
 ) -> None:
-    base_dir = output_dir or project_dirs.output_dir
-    stamp = timestamp_slug()
-    config_dir = base_dir / "cli" / "engines" / f"{label}-{stamp}"
-    config_dir.mkdir(parents=True, exist_ok=True)
+    _ = (label, output_dir)
 
     for idx, engine in enumerate(engines, 1):
         if isinstance(engine.get("artifact"), str) and str(engine["artifact"]).strip():
@@ -104,9 +98,14 @@ def materialize_engine_configs(
             "engine_path": str(resolved_path),
             "working_directory": str(Path(resolve_path_like(str(working_directory_raw))).resolve()),
         }
+        _merge_if_present(payload, engine, "options")
+        _merge_if_present(payload, engine, "options_overlays")
+        _merge_if_present(payload, engine, "path_options")
         _merge_if_present(payload, engine, "engine_args")
         _merge_if_present(payload, engine, "environment")
         _merge_if_present(payload, engine, "go_options")
+        _merge_if_present(payload, engine, "time_control")
+        _merge_if_present(payload, engine, "build_options")
         _merge_if_present(payload, engine, "enable_early_ponder")
         _merge_if_present(payload, engine, "mate_default_ply_limit")
         _merge_if_present(payload, engine, "mate_default_node_limit")
@@ -114,18 +113,8 @@ def materialize_engine_configs(
         _merge_if_present(payload, engine, "mate_wait_for_bestmove")
         _merge_if_present(payload, engine, "isready_sync_strategy")
 
-        config_path = config_dir / f"{name}.yaml"
-        config_path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=False), encoding="utf-8")
-        engine["engine_path"] = str(config_path)
-
-
-def write_temp_config(payload: ConfigPayload, *, label: str) -> Path:
-    output_dir = _resolve_output_dir(payload.get("output_dir"))
-    config_dir = output_dir / "cli" / "configs"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    path = config_dir / f"{label}-{timestamp_slug()}.yaml"
-    path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=False), encoding="utf-8")
-    return path
+        engine.clear()
+        engine.update(payload)
 
 
 def _resolve_output_dir(raw: JsonValue | Path | None) -> Path:

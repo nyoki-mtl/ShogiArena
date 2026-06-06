@@ -17,6 +17,7 @@ from shogiarena._core.platform.engine_runtime.usi_engine_session import (
     PonderHitTimings,
     UsiEngineState,
 )
+from shogiarena._core.platform.engine_runtime.usi_engine_session_models import UsiEngineStartError
 from shogiarena._core.platform.engine_runtime.usi_protocol_types import AsyncUsiProcessBridgePort
 from shogiarena._core.shared.kernel.game_results import GameResult
 
@@ -193,6 +194,32 @@ async def test_engine_think_progresses_while_sync_io_log_handler_is_blocked(tmp_
 
         assert result.bestmove == Move.from_usi("7g7f")
         assert result.ponder == Move.from_usi("3c3d")
+
+
+@pytest.mark.asyncio
+async def test_engine_start_failure_phase_is_isready_on_ready_timeout(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+            "handshake_timeout": 0.05,
+        }
+    )
+    bridge = DummyBridge()
+
+    async def silent_isready(command: str) -> None:
+        # Never emit readyok so the isready handshake times out.
+        await asyncio.sleep(0)
+
+    bridge.set_handler("isready", silent_isready)
+
+    # Regression: the failure phase must be captured before close() rewinds the
+    # state machine, otherwise an isready timeout is misreported as engine_start.
+    with pytest.raises(UsiEngineStartError) as exc_info:
+        async with AsyncUsiEngine(config=config, bridge=bridge):
+            pass
+
+    assert exc_info.value.failure_phase == "isready"
 
 
 @pytest.mark.asyncio

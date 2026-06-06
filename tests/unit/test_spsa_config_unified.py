@@ -23,6 +23,32 @@ def write(tmp: Path, rel: str, content: str) -> Path:
     return p
 
 
+def write_space(tmp: Path) -> Path:
+    return write(
+        tmp,
+        "cfg/space.yaml",
+        """
+        schema_version: shogiarena.spsa.space.v1
+        target:
+          protocol: usi_options
+          required_options_policy: strict
+        parameters:
+          - id: param1
+            target:
+              option: Tune.Param1
+              value_encoding: decimal
+            value_type: float
+            initial: 10.0
+            bounds:
+              min: 0.0
+              max: 20.0
+            schedule:
+              c_end: 2.0
+              r_end: 0.5
+        """,
+    )
+
+
 def test_spsa_engine_initializes_with_global_time_control(tmp_path: Path) -> None:
     """Engine YAML lacks per-engine time_control but global rules.time_control exists."""
     eng_yaml = write(
@@ -34,6 +60,7 @@ def test_spsa_engine_initializes_with_global_time_control(tmp_path: Path) -> Non
           Threads: 1
         """,
     )
+    space = write_space(tmp_path)
     cfg_yaml = write(
         tmp_path,
         "cfg/spsa.yaml",
@@ -49,13 +76,12 @@ def test_spsa_engine_initializes_with_global_time_control(tmp_path: Path) -> Non
           time_control:
             node_limit: 100
         spsa:
-          parameters_path: {tmp_path}/params.txt
+          space: {space}
           num_updates: 1
           num_parallel: 1
         """,
     )
     write(tmp_path, "sfens.txt", "startpos\n")
-    write(tmp_path, "params.txt", "# empty\n")
 
     cfg = load_spsa_run_config(cfg_yaml)
     # Ensure orchestrator initializes with global time_control only
@@ -80,6 +106,7 @@ def test_spsa_engine_with_time_control_initializes(tmp_path: Path) -> None:
           node_limit: 100
         """,
     )
+    space = write_space(tmp_path)
     cfg_yaml = write(
         tmp_path,
         "cfg/spsa.yaml",
@@ -93,13 +120,12 @@ def test_spsa_engine_with_time_control_initializes(tmp_path: Path) -> None:
             type: file
             source: {tmp_path}/sfens.txt
         spsa:
-          parameters_path: {tmp_path}/params.txt
+          space: {space}
           num_updates: 1
           num_parallel: 1
         """,
     )
     write(tmp_path, "sfens.txt", "startpos\n")
-    write(tmp_path, "params.txt", "# empty\n")
 
     cfg = load_spsa_run_config(cfg_yaml)
     storage = FilesystemRunStorage(tmp_path)
@@ -120,6 +146,7 @@ def test_spsa_ltc_regression_config(tmp_path: Path) -> None:
           Threads: 1
         """,
     )
+    space = write_space(tmp_path)
     cfg_yaml = write(
         tmp_path,
         "cfg/spsa.yaml",
@@ -133,7 +160,7 @@ def test_spsa_ltc_regression_config(tmp_path: Path) -> None:
             type: file
             source: {tmp_path}/sfens.txt
         spsa:
-          parameters_path: {tmp_path}/params.txt
+          space: {space}
           num_updates: 100
           num_parallel: 2
           ltc_regression:
@@ -149,7 +176,6 @@ def test_spsa_ltc_regression_config(tmp_path: Path) -> None:
         """,
     )
     write(tmp_path, "sfens.txt", "startpos\n")
-    write(tmp_path, "params.txt", "# empty\n")
 
     cfg = load_spsa_run_config(cfg_yaml)
     assert cfg.ltc_regression is not None
@@ -168,8 +194,7 @@ def test_spsa_ltc_regression_config(tmp_path: Path) -> None:
 def test_ltc_regression_rejects_removed_fail_action(tmp_path):
     sfens = tmp_path / "sfens.txt"
     sfens.write_text("startpos\n", encoding="utf-8")
-    params = tmp_path / "params.txt"
-    params.write_text("# empty\n", encoding="utf-8")
+    space = write_space(tmp_path)
     engine_yaml = write(
         tmp_path,
         "engine.yaml",
@@ -193,7 +218,7 @@ def test_ltc_regression_rejects_removed_fail_action(tmp_path):
             type: file
             source: {sfens}
         spsa:
-          parameters_path: {params}
+          space: {space}
           num_updates: 10
           ltc_regression:
             enabled: true

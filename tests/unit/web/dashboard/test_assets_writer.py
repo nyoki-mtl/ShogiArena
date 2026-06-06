@@ -52,9 +52,12 @@ def test_write_dashboard_assets_materializes_runtime_files(tmp_path: Path, monke
 
     monkeypatch.setattr(assets_writer, "_resolve_dashboard_asset_dirs", lambda: (static_dir, template_root))
 
-    write_dashboard_assets(run_dir, num_workers=2, should_overwrite_data=True, profiles=("tournament",))
+    write_dashboard_assets(run_dir / "dashboard", num_workers=2, should_overwrite_data=True, profiles=("tournament",))
 
-    assert (run_dir / "index.html").exists()
-    assert (run_dir / "data" / "workers" / "worker_0.js").exists()
-    assert (run_dir / "data" / "arena_port.js").exists()
-    assert (run_dir / "static" / "dist").exists()
+    assert (run_dir / "dashboard" / "index.html").exists()
+    assert (run_dir / "dashboard" / "data" / "workers" / "worker_0.js").exists()
+    assert (run_dir / "dashboard" / "data" / "arena_port.js").exists()
+    assert (run_dir / "dashboard" / "static" / "dist").exists()
+    assert not (run_dir / "index.html").exists()
+    assert not (run_dir / "data").exists()
+    assert not (run_dir / "static").exists()

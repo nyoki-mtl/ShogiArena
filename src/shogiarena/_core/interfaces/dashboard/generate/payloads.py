@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -31,15 +31,17 @@ class GenerateSummary(TypedDict, total=False):
     outputDir: str | None
     filePrefix: str | None
     rules: JsonObject | None
+    runStatus: str | None
+    isResumable: bool
 
 
 # ---------------------------------------------------------------------------
-# I/O 境界モデル – run_state.json / records_manifest.json のパース用
+# I/O 境界モデル – state.json / records_manifest.json のパース用
 # ---------------------------------------------------------------------------
 
 
 class RecordsOutputState(BaseModel):
-    """``run_state.json`` の ``config.records_output`` セクション。"""
+    """``state.json`` の ``config.records_output`` セクション。"""
 
     output_dir: str | None = None
     format: str | None = None
@@ -49,23 +51,23 @@ class RecordsOutputState(BaseModel):
 
 
 class RunStateConfig(BaseModel):
-    """``run_state.json`` の ``config`` セクション。"""
+    """``state.json`` の ``config`` セクション。"""
 
     records_output: RecordsOutputState = Field(default_factory=RecordsOutputState)
-    rules: JsonObject | None = None
+    rules: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="ignore")
 
     @field_validator("rules", mode="before")
     @classmethod
-    def _coerce_rules(cls, v: _RuleValue | None) -> JsonObject | None:
+    def _coerce_rules(cls, v: _RuleValue | None) -> dict[str, Any] | None:
         if not isinstance(v, dict):
             return None
         return {str(key): json_serialize(value) for key, value in v.items()}
 
 
 class RunState(BaseModel):
-    """``run_state.json`` のトップレベル構造。"""
+    """``state.json`` のトップレベル構造。"""
 
     config: RunStateConfig = Field(default_factory=RunStateConfig)
 
@@ -75,16 +77,16 @@ class RunState(BaseModel):
 class RecordsManifest(BaseModel):
     """``records_manifest.json`` の構造。"""
 
-    files: list[JsonObject] = Field(default_factory=list)
+    files: list[dict[str, Any]] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="ignore")
 
     @field_validator("files", mode="before")
     @classmethod
-    def _coerce_files(cls, v: _RuleValue | list[object] | None) -> list[JsonObject]:
+    def _coerce_files(cls, v: _RuleValue | list[object] | None) -> list[dict[str, Any]]:
         if not isinstance(v, list):
             return []
-        normalized: list[JsonObject] = []
+        normalized: list[dict[str, Any]] = []
         for item in v:
             if not isinstance(item, dict):
                 continue

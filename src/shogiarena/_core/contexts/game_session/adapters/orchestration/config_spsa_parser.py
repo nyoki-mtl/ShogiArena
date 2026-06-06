@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Literal
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -11,7 +12,7 @@ from shogiarena._core.platform.settings import project_dirs
 from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_serialized
 from shogiarena._core.shared.kernel.json_types import JsonValue
 from shogiarena._core.shared.kernel.paths import resolve_path_like
-from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_bool, coerce_int, coerce_str
+from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_bool, coerce_float, coerce_int, coerce_str
 
 from .config_core import (
     _coerce_instance_sources_input,
@@ -21,17 +22,18 @@ from .config_engine import DashboardConfig, SystemConfig
 from .config_spsa_models import (
     EarlyStopConfig,
     LtcRegressionConfig,
+    SpsaAlgorithmAConfig,
+    SpsaAlgorithmBlock,
     SpsaRunConfig,
+    SpsaVariantApplyConfig,
+    SpsaVariantsConfig,
     _DashboardPayload,
 )
 from .config_spsa_support import (
     _build_rules_config,
     _get_spsa_float,
     _get_spsa_int,
-    _get_spsa_optional_int,
     _map_engine,
-    _parse_int_rounding,
-    _parse_update_mode,
     _warn_unknown_keys,
 )
 from .config_tournament import TournamentRunConfig
@@ -81,19 +83,13 @@ def parse_spsa_config_mapping(
     _warn_unknown_keys(
         spsa_node_map,
         allowed={
-            "parameters_path",
+            "space",
             "num_updates",
-            "mobility",
-            "scale",
+            "pairs_per_update",
+            "algorithm",
+            "variants",
             "inflight_factor",
-            "update_batch_size",
-            "a0",
-            "A",
-            "alpha",
-            "gamma",
             "snap_float_to_step",
-            "crn_enabled",
-            "int_rounding",
             "int_ck_floor",
             "update_mode",
             "early_stop",
@@ -104,12 +100,15 @@ def parse_spsa_config_mapping(
     )
 
     # Required params
-    raw_params_path = coerce_str(spsa_node_map.get("parameters_path"))
-    if raw_params_path is None:
-        raise ValueError("spsa.parameters_path is required")
+    raw_space_path = coerce_str(spsa_node_map.get("space"))
+    if raw_space_path is None:
+        raise ValueError("spsa.space is required")
     num_updates_val = coerce_int(spsa_node_map.get("num_updates"))
     if num_updates_val is None or num_updates_val <= 0:
         raise ValueError("spsa.num_updates must be a positive integer")
+    pairs_per_update = _get_spsa_int(spsa_node_map, "pairs_per_update", 1)
+    if pairs_per_update <= 0:
+        raise ValueError("spsa.pairs_per_update must be a positive integer")
 
     # Initial positions (file only) under rules
     raw_rules_node = config_payload.get("rules")
@@ -154,16 +153,6 @@ def parse_spsa_config_mapping(
     baseline = [engine_spec]
     tuned = [engine_spec]
 
-    # Require tune_file only when using artifact-based engine
-    if baseline[0].artifact or tuned[0].artifact:
-        bo = engine_entry.get("build_options")
-        tune_file = coerce_str(bo.get("tune_file") if isinstance(bo, Mapping) else None)
-        if tune_file is None:
-            raise ValueError("SPSA requires engines[0].build_options.tune_file when using artifacts")
-        tune_tag = Path(resolve_path_like(tune_file)).stem
-        baseline[0].build_options["tune_tag"] = tune_tag
-        tuned[0].build_options["tune_tag"] = tune_tag
-
     # Dashboard and workers
     raw_dash = config_payload.get("dashboard")
     dash = coerce_json_object_serialized(raw_dash, field_name="dashboard") if isinstance(raw_dash, Mapping) else None
@@ -197,20 +186,8 @@ def parse_spsa_config_mapping(
 
     rules_obj = _build_rules_config(rules_node)
 
-    int_rounding = _parse_int_rounding(spsa_node_map.get("int_rounding"))
-    update_mode = _parse_update_mode(spsa_node_map.get("update_mode"))
-
-    has_a_key = "A" in spsa_node_map
-    if has_a_key:
-        raw_a = spsa_node_map.get("A")
-        if raw_a is None:
-            a_value: float | None = None
-        elif isinstance(raw_a, int | float):
-            a_value = float(raw_a)
-        else:
-            raise TypeError("spsa.A must be a number or null")
-    else:
-        a_value = 0.0
+    algorithm = _parse_algorithm_block(spsa_node_map.get("algorithm"))
+    variants = _parse_variants_block(spsa_node_map.get("variants"))
 
     ltc_config: LtcRegressionConfig | None = None
     ltc_node = spsa_node_map.get("ltc_regression")
@@ -236,19 +213,13 @@ def parse_spsa_config_mapping(
     else:
         raise TypeError("spsa.early_stop must be a mapping or null")
 
-    mobility = _get_spsa_float(spsa_node_map, "mobility", 1.0)
-    scale = _get_spsa_float(spsa_node_map, "scale", 1.0)
     inflight_factor = _get_spsa_int(spsa_node_map, "inflight_factor", 4)
-    update_batch_size = _get_spsa_optional_int(spsa_node_map, "update_batch_size")
-    a0 = _get_spsa_float(spsa_node_map, "a0", mobility)
-    alpha = _get_spsa_float(spsa_node_map, "alpha", 0.0)
-    gamma = _get_spsa_float(spsa_node_map, "gamma", 0.0)
     int_ck_floor = _get_spsa_float(spsa_node_map, "int_ck_floor", 0.5)
 
     return SpsaRunConfig(
         start_sfens_path=start_sfens_path,
-        parameters_path=resolve_path_like(
-            str(raw_params_path),
+        space_path=resolve_path_like(
+            str(raw_space_path),
             output_dir=project_dirs.output_dir,
             engine_dir=project_dirs.engine_dir,
         ),
@@ -256,20 +227,18 @@ def parse_spsa_config_mapping(
         tuned=tuned,
         rules=rules_obj,
         num_updates=num_updates_val,
-        mobility=mobility,
-        scale=scale,
+        pairs_per_update=pairs_per_update,
+        algorithm=algorithm,
+        variants=variants,
+        mobility=1.0,
+        scale=1.0,
         experiment_name=exp_name,
         inflight_factor=inflight_factor,
-        update_batch_size=update_batch_size,
-        a0=a0,
-        A=a_value,
-        alpha=alpha,
-        gamma=gamma,
+        update_batch_size=pairs_per_update,
+        a0=1.0,
         is_snap_float_to_step=coerce_bool(spsa_node_map.get("snap_float_to_step", False)),
-        is_crn_enabled=coerce_bool(spsa_node_map.get("crn_enabled", True)),
-        int_rounding=int_rounding,
         int_ck_floor=int_ck_floor,
-        update_mode=update_mode,
+        update_mode="barrier",
         early_stop=early_stop,
         dashboard=DashboardConfig(**dashboard_payload) if dashboard_payload else DashboardConfig(),
         system=system,
@@ -277,3 +246,97 @@ def parse_spsa_config_mapping(
         instances=resolved_instances,
         ltc_regression=ltc_config,
     )
+
+
+def _parse_algorithm_block(raw: object) -> SpsaAlgorithmBlock:
+    if raw is None:
+        return SpsaAlgorithmBlock()
+    if not isinstance(raw, Mapping):
+        raise TypeError("spsa.algorithm must be a mapping")
+    payload = coerce_json_object_serialized(raw, field_name="spsa.algorithm")
+    _warn_unknown_keys(payload, allowed={"name", "alpha", "gamma", "A"}, label="spsa.algorithm")
+    a_payload: object = payload.get("A", {})
+    if isinstance(a_payload, int | float):
+        a_config = SpsaAlgorithmAConfig(mode="absolute", value=float(a_payload))
+    elif isinstance(a_payload, Mapping):
+        a_config = SpsaAlgorithmAConfig.model_validate(dict(a_payload))
+    else:
+        raise TypeError("spsa.algorithm.A must be a number or mapping")
+    return SpsaAlgorithmBlock(
+        name=_parse_algorithm_name(payload.get("name")),
+        alpha=_parse_float_field(payload.get("alpha"), field="spsa.algorithm.alpha", default=0.602),
+        gamma=_parse_float_field(payload.get("gamma"), field="spsa.algorithm.gamma", default=0.101),
+        A=a_config,
+    )
+
+
+def _parse_variants_block(raw: object) -> SpsaVariantsConfig:
+    if raw is None:
+        return SpsaVariantsConfig()
+    if not isinstance(raw, Mapping):
+        raise TypeError("spsa.variants must be a mapping")
+    payload = coerce_json_object_serialized(raw, field_name="spsa.variants")
+    _warn_unknown_keys(
+        payload,
+        allowed={"pairing", "crn", "integer_rounding", "instance_affinity", "apply"},
+        label="spsa.variants",
+    )
+    apply_raw = payload.get("apply")
+    apply_config = SpsaVariantApplyConfig()
+    if isinstance(apply_raw, Mapping):
+        apply_config = SpsaVariantApplyConfig.model_validate(dict(apply_raw))
+    elif apply_raw is not None:
+        raise TypeError("spsa.variants.apply must be a mapping")
+    return SpsaVariantsConfig(
+        pairing=_parse_pairing(payload.get("pairing")),
+        is_crn_enabled=_parse_bool_field(payload.get("crn"), field="spsa.variants.crn", default=True),
+        integer_rounding=_parse_integer_rounding(payload.get("integer_rounding")),
+        instance_affinity=_parse_instance_affinity(payload.get("instance_affinity")),
+        apply=apply_config,
+    )
+
+
+def _parse_float_field(value: JsonValue | None, *, field: str, default: float) -> float:
+    parsed = default if value is None else coerce_float(value)
+    if parsed is None:
+        raise ValueError(f"{field} must be a finite number")
+    return float(parsed)
+
+
+def _parse_bool_field(value: JsonValue | None, *, field: str, default: bool) -> bool:
+    parsed = default if value is None else coerce_bool(value)
+    if parsed is None:
+        raise ValueError(f"{field} must be a boolean")
+    return bool(parsed)
+
+
+def _parse_algorithm_name(value: JsonValue | None) -> Literal["classic"]:
+    parsed = coerce_str(value) or "classic"
+    if parsed != "classic":
+        raise ValueError("spsa.algorithm.name must be 'classic'")
+    return "classic"
+
+
+def _parse_pairing(value: JsonValue | None) -> Literal["plus_minus"]:
+    parsed = coerce_str(value) or "plus_minus"
+    if parsed != "plus_minus":
+        raise ValueError("spsa.variants.pairing must be 'plus_minus'")
+    return "plus_minus"
+
+
+def _parse_integer_rounding(value: JsonValue | None) -> Literal["none", "stochastic"]:
+    parsed = coerce_str(value) or "stochastic"
+    if parsed == "none":
+        return "none"
+    if parsed == "stochastic":
+        return "stochastic"
+    raise ValueError("spsa.variants.integer_rounding must be 'none' or 'stochastic'")
+
+
+def _parse_instance_affinity(value: JsonValue | None) -> Literal["update", "none"]:
+    parsed = coerce_str(value) or "update"
+    if parsed == "update":
+        return "update"
+    if parsed == "none":
+        return "none"
+    raise ValueError("spsa.variants.instance_affinity must be 'update' or 'none'")

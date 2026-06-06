@@ -1,5 +1,8 @@
 """Tests for SPSA gradient update logic and quantization behavior."""
 
+import pytest
+
+from shogiarena._core.contexts.spsa.application.classic_schedule import compute_classic_schedule_point
 from shogiarena._core.contexts.spsa.application.param_io import quantize_value
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
 
@@ -125,6 +128,60 @@ def test_spsa_gain_schedule():
     # Test specific values match expected SPSA behavior
     assert abs(a1 - a0 / (A + 1) ** alpha) < 1e-10
     assert abs(c1 - c0) < 1e-10  # c_k at k=1 should equal c0
+
+
+def test_pair_based_schedule_matches_openbench_golden_values_when_p_is_one():
+    param = ParamEntry("p", "float", 1.0, 0.0, 10.0, 0.05, 0.002, "", False)
+    point = compute_classic_schedule_point(
+        params=[param],
+        num_updates=1000,
+        pairs_per_update=1,
+        update_idx=17,
+        alpha=0.602,
+        gamma=0.101,
+        a_mode="ratio",
+        a_value=0.10,
+        int_ck_floor=0.5,
+    )
+    k = 17
+    k_total = 1000
+    a_abs = 0.10 * k_total
+    expected_c = 0.05 * (k_total**0.101) / (k**0.101)
+    expected_r = 0.002 * (0.05**2) * ((a_abs + k_total) ** 0.602) / (((a_abs + k) ** 0.602) * (expected_c**2))
+    assert point.k_pair == 17
+    assert point.k_total == 1000
+    assert point.c["p"] == pytest.approx(expected_c)
+    assert point.r["p"] == pytest.approx(expected_r)
+
+
+def test_pair_based_schedule_is_independent_of_pairs_per_update_for_same_update():
+    param = ParamEntry("p", "float", 1.0, 0.0, 10.0, 0.05, 0.002, "", False)
+    p1 = compute_classic_schedule_point(
+        params=[param],
+        num_updates=1000,
+        pairs_per_update=1,
+        update_idx=17,
+        alpha=0.602,
+        gamma=0.101,
+        a_mode="ratio",
+        a_value=0.10,
+        int_ck_floor=0.5,
+    )
+    p4 = compute_classic_schedule_point(
+        params=[param],
+        num_updates=1000,
+        pairs_per_update=4,
+        update_idx=17,
+        alpha=0.602,
+        gamma=0.101,
+        a_mode="ratio",
+        a_value=0.10,
+        int_ck_floor=0.5,
+    )
+    assert p4.k_pair == 68
+    assert p4.k_total == 4000
+    assert p4.c["p"] == pytest.approx(p1.c["p"])
+    assert p4.r["p"] == pytest.approx(p1.r["p"])
 
 
 def test_spsa_gradient_sign_effect():

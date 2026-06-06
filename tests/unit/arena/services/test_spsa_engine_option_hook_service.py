@@ -16,9 +16,17 @@ from shogiarena._core.shared.kernel.json_types import JsonValue
 @dataclass(eq=False)
 class _Engine:
     applied_options: list[Mapping[str, JsonValue]] = field(default_factory=list)
+    apply_flags: list[tuple[bool, str]] = field(default_factory=list)
 
-    async def apply_engine_options(self, options: Mapping[str, JsonValue]) -> None:
+    async def apply_engine_options(
+        self,
+        options: Mapping[str, JsonValue],
+        *,
+        clear_hash: bool = True,
+        after_setoption: str = "isready",
+    ) -> None:
         self.applied_options.append(dict(options))
+        self.apply_flags.append((clear_hash, after_setoption))
 
 
 @pytest.mark.asyncio
@@ -45,6 +53,8 @@ async def test_apply_and_collect_names_applies_options_for_both_roles() -> None:
 
     assert tuned.applied_options == [{"P": 1}]
     assert baseline.applied_options == [{"Q": 2}]
+    assert tuned.apply_flags == [(True, "isready")]
+    assert baseline.apply_flags == [(True, "isready")]
     assert names[tuned_key] == "tuned-label"
     assert names[baseline_key] == "base-label"
 
@@ -73,4 +83,27 @@ async def test_apply_and_collect_names_skips_empty_baseline_options() -> None:
 
     assert tuned.applied_options == [{"P": 1}]
     assert baseline.applied_options == []
+    assert tuned.apply_flags == [(True, "isready")]
     assert names[baseline_key] == "base-label"
+
+
+@pytest.mark.asyncio
+async def test_apply_and_collect_names_forwards_apply_policy() -> None:
+    tuned = _Engine()
+    tuned_key = make_role_pool_key("tuned", "tuned")
+
+    await apply_engine_option_hooks(
+        engines_by_key={tuned_key: tuned},
+        request=SpsaEngineOptionHookRequest(
+            tuned_pool_key=tuned_key,
+            baseline_pool_key=make_role_pool_key("base", "baseline"),
+            tuned_options={"P": 1},
+            baseline_options={},
+            tuned_label="tuned-label",
+            baseline_label="base-label",
+            clear_hash=False,
+            after_setoption="none",
+        ),
+    )
+
+    assert tuned.apply_flags == [(False, "none")]

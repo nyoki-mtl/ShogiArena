@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 from datetime import UTC
-from typing import cast
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
+import pytest
+import rshogi.record
+
+from shogiarena._core.contexts.game_session.application.session.run_metadata_persistence_service import (
+    RunManifestSealError,
+)
+from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import RunOptions
 from shogiarena._core.contexts.spsa.adapters.runner import SpsaRunner
 from shogiarena._core.contexts.spsa.application.runner_state import SpsaRunnerState
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
@@ -16,11 +25,29 @@ from shogiarena._core.contexts.spsa.ports.spsa_store_port import (
 from shogiarena._core.contexts.tournament.adapters.runner import TournamentRunner
 from shogiarena._core.contexts.tournament.application.runner_state import TournamentRunnerState
 from shogiarena._core.contexts.tournament.domain.tournament_models import GameSpec
+from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.service_ports import DatabaseServicePort
+
+_STARTPOS = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1"
 
 
 def _sample_game_spec() -> GameSpec:
     return GameSpec(black_engine="A", white_engine="B", initial_sfen="startpos", game_id="g1")
+
+
+def _sample_record(game_id: str = "g1") -> rshogi.record.GameRecord:
+    return rshogi.record.GameRecord.from_dict(
+        {
+            "metadata": {
+                "black_player": "A",
+                "white_player": "B",
+                "attributes": {"game_name": game_id, "game_type": "generate"},
+            },
+            "init_position_sfen": _STARTPOS,
+            "moves": [],
+            "result": {"result": GameResult.DRAW_BY_REPETITION.name, "ply_count": 0},
+        }
+    )
 
 
 def _sample_param() -> ParamEntry:
@@ -69,6 +96,109 @@ def test_tournament_runner_state_directly_accessible() -> None:
     assert runner._state.completed_game_ids == {"g1"}
     assert runner._state.cancelled_game_ids == {"g2"}
     assert runner._state.original_total_games == 7
+
+
+@pytest.mark.asyncio
+async def test_tournament_prepare_domain_routes_seal_mismatch_to_resume_setup(tmp_path: Path) -> None:
+    class _ConfigStub:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"experiment_name": "changed"}
+
+    class _RunMetadataStub:
+        def seal_provenance_manifest(self, **_kwargs: object) -> object:
+            raise RunManifestSealError("manifest inputs_hash changed")
+
+        def build_sealed_hashes(self, **_kwargs: object) -> object:
+            return SimpleNamespace(schedule_hash="current-schedule", resume_hash="current-resume")
+
+    runner = object.__new__(TournamentRunner)
+    runner.run_dir = tmp_path
+    runner.config = _ConfigStub()
+    runner._state = TournamentRunnerState()
+    runner._run_options = RunOptions(should_skip_resume=False)
+    runner._run_metadata_service = _RunMetadataStub()
+    runner._frozen_run_config_payload = {"experiment_name": "original"}
+    runner._seal_artifact_engine_configs = lambda: None
+    runner._ensure_db_service = lambda: None
+    (tmp_path / "state.json").write_text("{}", encoding="utf-8")
+    calls = 0
+
+    async def _try_setup_tournament() -> bool:
+        nonlocal calls
+        calls += 1
+        return False
+
+    runner._try_setup_tournament = _try_setup_tournament
+
+    await runner.prepare_domain()
+
+    assert calls == 1
+    assert runner._state.sealed_schedule_hash == "current-schedule"
+    assert runner._state.sealed_resume_hash == "current-resume"
+
+
+def test_tournament_cleanup_existing_run_removes_default_records_dir(tmp_path: Path) -> None:
+    runner = object.__new__(TournamentRunner)
+    runner.run_dir = tmp_path
+    runner.config = SimpleNamespace(records_output=None)
+
+    records_dir = tmp_path / "records"
+    records_dir.mkdir()
+    (records_dir / "records_manifest.json").write_text("{}", encoding="utf-8")
+
+    runner._cleanup_existing_run()
+
+    assert not records_dir.exists()
+
+
+def test_tournament_records_output_rejects_existing_external_output_for_new_run(tmp_path: Path) -> None:
+    runner = object.__new__(TournamentRunner)
+    runner.run_dir = tmp_path / "run"
+    runner._run_options = RunOptions(should_skip_resume=False)
+
+    output_dir = tmp_path / "shared-records"
+    output_dir.mkdir()
+    (output_dir / "records_manifest.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="already contains files"):
+        runner._validate_records_output_dir(output_dir)
+
+
+def test_tournament_backfills_missing_records_output_from_game_db(tmp_path: Path) -> None:
+    class _DbStub:
+        def load_record(self, *, game_id: int | None = None, game_name: str | None = None) -> rshogi.record.GameRecord:
+            assert game_id is None
+            assert game_name == "g1"
+            return _sample_record(str(game_name))
+
+    class _WriterStub:
+        def __init__(self) -> None:
+            self.appended: list[tuple[str | None, str | None]] = []
+
+        def written_game_ids(self) -> set[str]:
+            return set()
+
+        def append_record(
+            self,
+            record: rshogi.record.GameRecord,
+            *,
+            game_id: str | None = None,
+            game_type: str | None = None,
+        ) -> None:
+            del record
+            self.appended.append((game_id, game_type))
+
+    writer = _WriterStub()
+    runner = object.__new__(TournamentRunner)
+    runner.run_dir = tmp_path
+    runner._state = TournamentRunnerState(completed_game_ids={"g1"}, db_service=cast(Any, _DbStub()))
+    runner._record_writer = writer
+    runner._mode_strategy = SimpleNamespace(is_generate_run=lambda: True)
+
+    runner._backfill_records_output()
+
+    assert writer.appended == [("g1", "generate")]
 
 
 def test_spsa_runner_state_defaults_are_isolated_and_typed() -> None:

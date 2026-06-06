@@ -9,7 +9,6 @@ from shogiarena._core.shared.kernel.boundary_parsers.runner_state_payloads.match
     _SpsaRunStatePayload,
 )
 from shogiarena._core.shared.kernel.boundary_parsers.runner_state_payloads.tournament_payloads import (
-    _CompletedGameSummaryPayload,
     _RunStatePayload,
 )
 from shogiarena._core.shared.kernel.boundary_parsers.runner_state_payloads.typed_payloads import (
@@ -22,7 +21,6 @@ __all__ = [
     "_BOUNDARY_ID_SPSA",
     "_BOUNDARY_ID_SPSA_INDEX",
     "_BOUNDARY_ID_TOURNAMENT",
-    "_CompletedGameSummaryPayload",
     "_RunStatePayload",
     "_SpsaIndexPayload",
     "_SpsaRunStatePayload",

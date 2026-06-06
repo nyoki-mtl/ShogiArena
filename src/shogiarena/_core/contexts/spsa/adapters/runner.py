@@ -52,6 +52,7 @@ from shogiarena._core.contexts.spsa.adapters.runner_session_lifecycle import (
     build_spsa_session_context,
     create_spsa_orchestrator,
     init_spsa_dashboard_services,
+    materialize_spsa_engine_configs,
     persist_spsa_game_completion,
     prepare_spsa_domain_inputs,
     prepare_spsa_run_directory,
@@ -132,6 +133,7 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         self._run_metadata_service = RunMetadataPersistenceService()
         self._session_context_factory = SessionContextFactory()
         self._engine_factory_service = engine_factory_service
+        self._frozen_run_config_payload: JsonObject | None = None
 
         # -- Typed mutable state -------------------------------------------
         self._state = SpsaRunnerState()
@@ -211,7 +213,7 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
             self._state.db_service = None
 
     async def prepare_run_dir(self) -> None:
-        self.run_dir = prepare_spsa_run_directory(
+        self.run_dir, self._frozen_run_config_payload = prepare_spsa_run_directory(
             run_dir=self.run_dir,
             should_skip_resume=bool(self._run_options.should_skip_resume),
             config_payload=self.config.model_dump(mode="json"),
@@ -303,7 +305,28 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
 
     async def prepare_domain(self) -> None:
         assert self.run_dir is not None
-        params, sfens, update_items = prepare_spsa_domain_inputs(config=self.config, run_dir=self.run_dir)
+        frozen_payload = self._frozen_run_config_payload
+        if frozen_payload is None:
+            raise RuntimeError("inputs-only manifest must be written before prepare_domain")
+        materialize_spsa_engine_configs(
+            config=self.config,
+            run_dir=self.run_dir,
+            artifact_resolver=self._engine_factory_service.artifact_resolver,
+        )
+        sealed = self._run_metadata_service.seal_provenance_manifest(
+            run_dir=self.run_dir,
+            inputs_config_payload=frozen_payload,
+            resolved_config_payload=self.config.model_dump(mode="json"),
+            package_name="shogiarena",
+        )
+        self._state.sealed_schedule_hash = sealed.hashes.schedule_hash
+        self._state.sealed_resume_hash = sealed.hashes.resume_hash
+        params, sfens, update_items = prepare_spsa_domain_inputs(
+            config=self.config,
+            run_dir=self.run_dir,
+            schedule_hash=self._state.sealed_schedule_hash,
+            resume_hash=self._state.sealed_resume_hash,
+        )
         self._state.params = params
         self._state.sfens = sfens
         self._state.update_items = update_items

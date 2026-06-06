@@ -28,6 +28,12 @@ class StaticAssetsHandler:
     def __init__(self, run_dir: Path) -> None:
         self._run_dir = run_dir
 
+    def asset_root(self) -> Path:
+        """Return the run-local dashboard asset root."""
+
+        dashboard_dir = self._run_dir / "dashboard"
+        return dashboard_dir if dashboard_dir.exists() else self._run_dir
+
     @staticmethod
     def dashboard_static_dir() -> Path:
         """Return the built-in dashboard static directory."""
@@ -39,8 +45,9 @@ class StaticAssetsHandler:
         Returns:
             The html subdirectory if it exists, otherwise the run directory.
         """
-        html_dir = self._run_dir / "html"
-        return html_dir if html_dir.exists() else self._run_dir
+        asset_root = self.asset_root()
+        html_dir = asset_root / "html"
+        return html_dir if html_dir.exists() else asset_root
 
     @staticmethod
     def _check_build_integrity(run_static: Path, builtin_static: Path) -> bool:
@@ -89,14 +96,15 @@ class StaticAssetsHandler:
         """
         dashboard_static_dir = self.dashboard_static_dir()
 
-        run_static_dir = self._run_dir / "static"
+        asset_root = self.asset_root()
+        run_static_dir = asset_root / "static"
         build_integrity_ok = True
 
         # Integrity check: if build-meta.json mismatches, treat run_dir/static as invalid
         if run_static_dir.exists() and dashboard_static_dir.exists():
             if not self._check_build_integrity(run_static_dir, dashboard_static_dir):
                 logger.info("Disabling stale run_dir/static, serving builtin assets only")
-                run_static_dir = self._run_dir / "static_disabled"  # non-existent sentinel
+                run_static_dir = asset_root / "static_disabled"  # non-existent sentinel
                 build_integrity_ok = False
 
         if run_static_dir.exists() and dashboard_static_dir.exists():
@@ -137,7 +145,7 @@ class StaticAssetsHandler:
                 name="assets",
             )
 
-        data_dir = self._run_dir / "data"
+        data_dir = asset_root / "data"
         self._register_directory(app, "/data", data_dir, name="data")
 
         # When build integrity failed, skip run_dir HTML root so that stale

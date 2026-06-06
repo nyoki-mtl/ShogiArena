@@ -1,6 +1,6 @@
 """SPSA run-state I/O helpers.
 
-Provides load/init logic for ``run_state.json`` used by the SPSA runner.
+Provides load/init logic for ``state.json`` used by the SPSA runner.
 Moved from the interfaces layer so adapters and interfaces can both reach it
 without introducing reverse dependencies.
 """
@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
+from shogiarena._core.shared.kernel.atomic_json import write_json_atomic
 from shogiarena._core.shared.kernel.boundary_parsers.runner_state_payloads.parsers import (
     parse_spsa_run_state_boundary,
 )
@@ -23,9 +24,11 @@ def load_or_init_spsa_run_state(
     state_path: Path,
     *,
     total_updates: int,
+    schedule_hash: str | None = None,
+    resume_hash: str | None = None,
     now: str | None = None,
 ) -> JsonObject:
-    """Load and normalize SPSA run_state.json.
+    """Load and normalize SPSA state.json.
 
     If the file is absent, initialize a fresh state.
     Always updates ``type``, ``updated_at``, ``is_finished``, and ``total_updates``
@@ -45,7 +48,7 @@ def load_or_init_spsa_run_state(
     else:
         raw = json.loads(state_path.read_text(encoding="utf-8"))
         if not isinstance(raw, Mapping):
-            raise TypeError("run_state.json must be an object")
+            raise TypeError("state.json must be an object")
         state = parse_spsa_run_state_boundary(raw, path=str(state_path))
 
     normalized_time = now if now is not None else datetime.now(UTC).isoformat()
@@ -54,8 +57,12 @@ def load_or_init_spsa_run_state(
     state["is_finished"] = False
     state["completed_updates"] = coerce_int(state.get("completed_updates")) or 0
     state["total_updates"] = int(total_updates)
+    if schedule_hash is not None:
+        state["schedule_hash"] = schedule_hash
+    if resume_hash is not None:
+        state["resume_hash"] = resume_hash
 
-    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(state_path, state)
     return state
 
 

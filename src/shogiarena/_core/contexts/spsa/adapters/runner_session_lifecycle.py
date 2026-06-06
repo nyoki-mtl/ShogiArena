@@ -14,6 +14,9 @@ from shogiarena._core.contexts.game_session.adapters.orchestration.config_spsa_m
     LtcRegressionConfig,
     SpsaRunConfig,
 )
+from shogiarena._core.contexts.game_session.adapters.orchestration.engine_config_artifacts import (
+    resolve_engine_config_entry,
+)
 from shogiarena._core.contexts.game_session.adapters.results.run_result_models import (
     SpsaRunResult,
     serialize_rules_config,
@@ -28,8 +31,8 @@ from shogiarena._core.contexts.game_session.ports.session_context import Session
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
 from shogiarena._core.contexts.spsa.adapters.orchestrator import SpsaOrchestrator
-from shogiarena._core.contexts.spsa.application.param_io import read_params
 from shogiarena._core.contexts.spsa.application.session_state_io import load_or_init_spsa_run_state
+from shogiarena._core.contexts.spsa.application.space_spec import load_spsa_space_spec, persist_normalized_space
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry, SpsaAlgorithmConfig
 from shogiarena._core.contexts.spsa.ports.dashboard_factory import DashboardSpsaServicesFactory
 from shogiarena._core.contexts.spsa.ports.spsa_store_port import (
@@ -40,6 +43,7 @@ from shogiarena._core.contexts.spsa.ports.spsa_store_port import (
     SpsaUpdateQueryPort,
 )
 from shogiarena._core.platform.settings import project_dirs
+from shogiarena._core.shared.kernel.atomic_json import write_json_atomic
 from shogiarena._core.shared.kernel.exceptions import ContractParseError
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.json_coercion import to_json_object
@@ -47,7 +51,7 @@ from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.participation_records import extract_participation as _extract_participation
 from shogiarena._core.shared.kernel.run_paths import timestamp_slug
 from shogiarena._core.shared.kernel.serialization import json_serialize
-from shogiarena._core.shared.kernel.service_ports import DatabaseServicePort
+from shogiarena._core.shared.kernel.service_ports import ArtifactResolutionPort, DatabaseServicePort
 from shogiarena._core.shared.kernel.session_hooks import (
     GameCompletionEvent,
     GameCompletionPayload,
@@ -64,10 +68,11 @@ def build_spsa_algorithm_config(config: SpsaRunConfig) -> SpsaAlgorithmConfig:
     """Build a dict of SPSA algorithm parameters for serialization."""
     return {
         "num_updates": config.num_updates,
+        "pairs_per_update": config.pairs_per_update,
         "mobility": config.mobility,
         "scale": config.scale,
         "a0": config.a0,
-        "A": float(config.A) if config.A is not None else None,
+        "A": float(config.algorithm_a) if config.algorithm_a is not None else None,
         "alpha": config.alpha,
         "gamma": config.gamma,
         "is_crn_enabled": config.is_crn_enabled,
@@ -76,7 +81,7 @@ def build_spsa_algorithm_config(config: SpsaRunConfig) -> SpsaAlgorithmConfig:
         "update_mode": config.update_mode,
         "should_snap_float_to_step": config.is_snap_float_to_step,
         "early_stop": _serialize_spsa_early_stop_config(config.early_stop),
-        "update_batch_size": (int(config.update_batch_size) if config.update_batch_size is not None else None),
+        "update_batch_size": int(config.pairs_per_update),
         "inflight_factor": config.inflight_factor,
     }
 
@@ -113,7 +118,7 @@ def prepare_spsa_run_directory(
     should_skip_resume: bool,
     config_payload: JsonObject,
     run_metadata_service: RunMetadataPersistenceService,
-) -> Path:
+) -> tuple[Path, JsonObject]:
     resolved_run_dir = run_dir or (project_dirs.output_dir / "spsa" / "exp" / timestamp_slug())
     resolved_run_dir.mkdir(parents=True, exist_ok=True)
     if should_skip_resume:
@@ -121,44 +126,62 @@ def prepare_spsa_run_directory(
             resolved_run_dir,
             files=[
                 "game.db",
-                "index.html",
-                "data/shogi-board.js",
-                "data/arena_port.js",
+                "state.json",
+                "manifest.json",
             ],
-            dirs=["spsa", "static", "html"],
+            dirs=["spsa", "static", "html", "dashboard", "inputs", "results", "failures", "logs"],
         )
-    run_metadata_service.write_run_metadata_files(
+    inputs = run_metadata_service.write_inputs_only_manifest(
         run_dir=resolved_run_dir,
         config_payload=config_payload,
         package_name="shogiarena",
     )
-    return resolved_run_dir
+    return resolved_run_dir, inputs.config_payload
+
+
+def materialize_spsa_engine_configs(
+    *,
+    config: SpsaRunConfig,
+    run_dir: Path,
+    artifact_resolver: ArtifactResolutionPort | None,
+) -> None:
+    """Materialize SPSA baseline/tuned engine configs before manifest sealing."""
+
+    output_dir = run_dir / "inputs" / "engine_configs"
+    for engine in [*config.baseline, *config.tuned]:
+        resolve_engine_config_entry(
+            engine,
+            output_dir=output_dir,
+            extra_options=None,
+            artifact_resolver=artifact_resolver,
+        )
 
 
 def prepare_spsa_domain_inputs(
     *,
     config: SpsaRunConfig,
     run_dir: Path,
+    schedule_hash: str | None,
+    resume_hash: str | None,
 ) -> tuple[list[ParamEntry], list[str], list[int]]:
-    orig_params_path = Path(config.parameters_path)
-    run_params_dir = run_dir / "spsa" / "params"
-    run_params_dir.mkdir(parents=True, exist_ok=True)
-    run_params_path = run_params_dir / orig_params_path.name
-    if not run_params_path.exists():
-        run_params_path.write_text(Path(orig_params_path).read_text(encoding="utf-8"), encoding="utf-8")
-    config.parameters_path = str(run_params_path)
-    state_path = run_dir / "run_state.json"
+    space = load_spsa_space_spec(config.space_path)
+    persist_normalized_space(run_dir, space)
+    state_path = run_dir / "state.json"
     try:
         load_or_init_spsa_run_state(
             state_path,
             total_updates=config.num_updates,
+            schedule_hash=schedule_hash,
+            resume_hash=resume_hash,
         )
     except (OSError, json.JSONDecodeError, ContractParseError, TypeError) as exc:
-        raise ValueError(f"Invalid SPSA run_state.json: {exc}") from exc
+        raise ValueError(f"Invalid SPSA state.json: {exc}") from exc
 
-    params = read_params(config.parameters_path)
+    params = space.to_param_entries()
     if not params:
-        raise ValueError("SPSA parameters file is empty or unreadable")
+        raise ValueError("SPSA space spec has no parameters")
+    _write_spsa_schedule_contract(run_dir=run_dir, config=config, params=params)
+    _write_spsa_current_artifact(run_dir=run_dir, update_idx=0, pair_index_end=0, params=params)
     with open(config.start_sfens_path, encoding="utf-8") as handle:
         sfens = [line.rstrip() for line in handle if line.strip()]
     if not sfens:
@@ -168,6 +191,37 @@ def prepare_spsa_domain_inputs(
         raise ValueError("SPSA requires a positive 'num_updates'")
     update_items = list(range(1, n + 1))
     return params, sfens, update_items
+
+
+def _write_spsa_schedule_contract(*, run_dir: Path, config: SpsaRunConfig, params: list[ParamEntry]) -> None:
+    payload: JsonObject = {
+        "kind": "spsa",
+        "schema_version": 1,
+        "optimization_contract": {
+            "params": [entry.name for entry in params],
+            "num_updates": config.num_updates,
+            "pairs_per_update": config.pairs_per_update,
+            "crn_enabled": config.is_crn_enabled,
+            "algorithm": build_spsa_algorithm_config(config),
+        },
+    }
+    write_json_atomic(run_dir / "schedule.json", payload)
+
+
+def _write_spsa_current_artifact(
+    *,
+    run_dir: Path,
+    update_idx: int,
+    pair_index_end: int,
+    params: list[ParamEntry],
+) -> None:
+    payload: JsonObject = {
+        "schema_version": "shogiarena.spsa.current.v1",
+        "update_idx": int(update_idx),
+        "pair_index_end": int(pair_index_end),
+        "theta": {entry.name: float(entry.value) for entry in params if not entry.is_not_used},
+    }
+    write_json_atomic(run_dir / "spsa" / "current.json", payload)
 
 
 def persist_spsa_game_completion(
@@ -345,6 +399,7 @@ __all__ = [
     "build_spsa_session_context",
     "create_spsa_orchestrator",
     "init_spsa_dashboard_services",
+    "materialize_spsa_engine_configs",
     "persist_spsa_game_completion",
     "prepare_spsa_domain_inputs",
     "prepare_spsa_run_directory",

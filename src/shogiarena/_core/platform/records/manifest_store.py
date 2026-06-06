@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
+from shogiarena._core.shared.kernel.atomic_json import write_json_atomic
 from shogiarena._core.shared.kernel.json_coercion import to_json_object
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 
@@ -54,6 +55,12 @@ def append_manifest_entry(
     )
 
 
+def write_manifest(path: Path, payload: JsonObject) -> None:
+    """Write the records manifest atomically."""
+
+    write_json_atomic(path, payload)
+
+
 def summarize_manifest_totals(manifest: Mapping[str, JsonValue]) -> tuple[int, int, int, int]:
     files_raw = manifest.get("files")
     if not isinstance(files_raw, list):
@@ -79,4 +86,4 @@ def summarize_manifest_totals(manifest: Mapping[str, JsonValue]) -> tuple[int, i
     return (total_games, total_positions, total_bytes, file_count)
 
 
-__all__ = ["append_manifest_entry", "load_manifest", "summarize_manifest_totals"]
+__all__ = ["append_manifest_entry", "load_manifest", "summarize_manifest_totals", "write_manifest"]

@@ -116,6 +116,13 @@ dashboard:
   enabled: true
   api_port: 8080
 
+logging:
+  # 対局ごとの USI command/output transcript を <run_dir>/transcripts/ に保存
+  usi_transcript: false
+  # commands: 送信コマンド + bestmove + 最終 non-bound info
+  # commands_and_info: すべての info line も保存
+  usi_transcript_detail: "commands"
+
 # ログレベル（デフォルト: INFO）: DEBUG | INFO | WARNING | ERROR
 log_level: "INFO"
 

@@ -10,44 +10,6 @@ from shogiarena._core.contexts.tournament.ports.session_state_runtime import (
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
 
-def _build_summaries_for_state(ctx: TournamentStateSaveContext) -> dict[str, JsonObject]:
-    summaries_for_state: dict[str, JsonObject] = {}
-    for gid in ctx.state.completed_game_ids:
-        summary = ctx.state.completed_game_summaries.get(gid)
-        if not summary:
-            continue
-        summaries_for_state[gid] = {
-            "game_result": summary.get("game_result"),
-            "total_plies": summary.get("total_plies"),
-            "start_time": summary.get("start_time"),
-            "end_time": summary.get("end_time"),
-        }
-    return summaries_for_state
-
-
-def _build_config_payload(ctx: TournamentStateSaveContext) -> JsonObject:
-    config_payload: JsonObject = {
-        "experiment_name": ctx.config.experiment_name,
-        "engines": [str(e.name) for e in ctx.config.engines],
-        "tournament": {
-            "scheduler": ctx.config.tournament.scheduler,
-            "games_per_pair": ctx.config.tournament.games_per_pair,
-            "seed": ctx.config.tournament.seed,
-        },
-        "rules": ctx.build_rules_payload(),
-    }
-    sprt_conf = ctx.config.sprt
-    if sprt_conf is not None:
-        config_payload["sprt"] = sprt_conf.model_dump(mode="json")
-    openbench_conf = ctx.config.openbench
-    if openbench_conf is not None:
-        config_payload["openbench"] = openbench_conf.model_dump(mode="json")
-    records_output = ctx.config.records_output
-    if records_output is not None:
-        config_payload["records_output"] = records_output.model_dump(mode="json")
-    return config_payload
-
-
 def _build_cancelled_entries(ctx: TournamentStateSaveContext) -> list[JsonObject]:
     cancelled_entries: list[JsonObject] = []
     for spec in ctx.state.cancelled_specs.values():
@@ -88,12 +50,13 @@ def build_run_state_payload(
     """Build persisted run-state payload from current runner state."""
 
     now_iso = datetime.now(UTC).isoformat()
-    config_payload = _build_config_payload(ctx)
+    if ctx.schedule_hash is None or ctx.resume_hash is None:
+        raise ValueError("state.json requires sealed manifest hashes")
 
     if ctx.is_generate_run():
         run_state: JsonObject = {
-            "config": config_payload,
-            "schedule_hash": ctx.config.get_schedule_hash(),
+            "schedule_hash": ctx.schedule_hash,
+            "resume_hash": ctx.resume_hash,
             "total_games": len(ctx.state.game_schedule),
             "completed_games_count": len(ctx.state.completed_game_ids),
             "cancelled_games_count": len(ctx.state.cancelled_game_ids),
@@ -107,10 +70,10 @@ def build_run_state_payload(
         return run_state
 
     run_state = {
-        "config": config_payload,
-        "schedule_hash": ctx.config.get_schedule_hash(),
+        "schedule_hash": ctx.schedule_hash,
+        "resume_hash": ctx.resume_hash,
         "total_games": len(ctx.state.game_schedule),
-        "completed_game_ids": list(ctx.state.completed_game_ids),
+        "completed_games_count": len(ctx.state.completed_game_ids),
         "cancelled_game_ids": list(ctx.state.cancelled_game_ids),
         "cancelled_games": [],
         "original_total_games": ctx.state.original_total_games
@@ -127,9 +90,6 @@ def build_run_state_payload(
         run_state["openbench_state"] = openbench_snap2
 
     run_state["cancelled_games"] = _build_cancelled_entries(ctx)
-    summaries_for_state = _build_summaries_for_state(ctx)
-    if summaries_for_state:
-        run_state["completed_game_summaries"] = summaries_for_state
 
     overrides = _build_instance_overrides(ctx)
     if overrides:

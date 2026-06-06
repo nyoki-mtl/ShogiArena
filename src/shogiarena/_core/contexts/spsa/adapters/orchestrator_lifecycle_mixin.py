@@ -127,10 +127,15 @@ class SpsaOrchestratorLifecycleMixin:
         use and attaches a dynamic 'engine_config' attribute to each spec for
         interface parity with TournamentOrchestrator.
         """
-        out_dir = self.run_dir / "spsa"
+        out_dir = self.run_dir / "inputs" / "engine_configs"
         out_dir.mkdir(parents=True, exist_ok=True)
         base_spec = self.config.baseline[0]
         tuned_spec = self.config.tuned[0]
+        if base_spec.engine_path is not None and tuned_spec.engine_path is not None:
+            self.baseline_config = Path(base_spec.engine_path)
+            self.tuned_config = Path(tuned_spec.engine_path)
+            return build_engine_config_map([base_spec, tuned_spec])
+
         # Merge overlay (max-move sync) + overlays/options like local path does
         base_opts = build_usi_options(self.extra_options, base_spec)
         tuned_opts = build_usi_options(self.extra_options, tuned_spec)

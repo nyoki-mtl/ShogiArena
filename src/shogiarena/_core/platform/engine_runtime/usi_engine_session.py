@@ -329,6 +329,18 @@ class AsyncUsiEngine(
             self._io_log_dispatch_task = None
             self._io_log_dispatch_queue = None
 
+    async def flush_io_log_handlers(self, *, timeout: float | None = None) -> None:
+        """Queued USI I/O ログ handler の処理完了を待つ。"""
+
+        queue = self._io_log_dispatch_queue
+        if queue is None:
+            return
+        timeout_value = self.IO_LOG_DRAIN_TIMEOUT_SECONDS if timeout is None else float(timeout)
+        try:
+            await asyncio.wait_for(queue.join(), timeout=timeout_value)
+        except TimeoutError:
+            logger.warning("[%s] timed out flushing io log handlers", self.name)
+
     def _emit_debug_log(self, message: str, *, state: str | None = None) -> None:
         """Emit a non-USI debug line into the engine I/O stream."""
         if not message:

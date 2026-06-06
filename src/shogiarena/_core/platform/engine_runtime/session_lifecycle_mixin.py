@@ -65,6 +65,10 @@ class AsyncUsiEngineLifecycleMixin:
             await self._apply_config_options()
             await self.trigger_isready()
         except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
+            # Capture the failure phase before close() mutates the state machine
+            # to QUIT_COMPLETED; otherwise an isready timeout is misreported as
+            # an engine_start failure.
+            failure_phase = self._startup_failure_phase()
             try:
                 await self.close()
             except (TimeoutError, OSError, RuntimeError) as close_exc:
@@ -74,8 +78,22 @@ class AsyncUsiEngineLifecycleMixin:
                 engine_name=self.name,
                 engine_path=str(self.config.engine_path) if self.config.engine_path else None,
                 reason=exc,
+                working_directory=str(self.config.working_directory) if self.config.working_directory else None,
+                command=self._startup_command(),
+                options=dict(self.config.options),
+                failure_phase=failure_phase,
             ) from exc
         self._is_started = True
+
+    def _startup_command(self) -> tuple[str, ...]:
+        engine_path = str(self.config.engine_path) if self.config.engine_path else ""
+        args = tuple(str(item) for item in getattr(self.config, "engine_args", ()))
+        return (engine_path, *args) if engine_path else args
+
+    def _startup_failure_phase(self) -> str:
+        if self._state == UsiEngineState.WAITING_FOR_READYOK:
+            return "isready"
+        return "engine_start"
 
     async def close(self) -> None:
         if self._is_closing:

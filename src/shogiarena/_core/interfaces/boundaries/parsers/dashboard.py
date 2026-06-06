@@ -63,7 +63,7 @@ def pick_free_port(start: int, attempts: int = 20) -> int:
 
 
 def detect_worker_count(run_dir: Path) -> int:
-    workers_dir = run_dir / "data" / "workers"
+    workers_dir = run_dir / "dashboard" / "data" / "workers"
     if not workers_dir.exists():
         return 0
 
@@ -95,30 +95,28 @@ def _detect_spsa_artifacts(run_dir: Path) -> bool:
 
 
 def infer_run_state_profile(run_dir: Path) -> DashboardProfile | None:
-    run_state_path = run_dir / "run_state.json"
-    if not run_state_path.exists():
+    manifest_path = run_dir / "manifest.json"
+    if not manifest_path.exists():
         return None
 
     try:
-        run_state_raw = json.loads(run_state_path.read_text(encoding="utf-8"))
-        run_state = _DashboardRunState.model_validate(run_state_raw)
+        manifest_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValidationError) as exc:
-        logger.debug("Failed to infer run_state profile from %s: %s", run_state_path, exc)
+        logger.debug("Failed to infer manifest profile from %s: %s", manifest_path, exc)
         return None
 
-    config = run_state.config
-    if config is None:
+    if not isinstance(manifest_raw, Mapping):
         return None
-    if config.sprt is not None:
+    schedule = manifest_raw.get("schedule")
+    if isinstance(schedule, Mapping) and schedule.get("kind") == "generate":
+        return "generate"
+    if manifest_raw.get("sprt") is not None:
         return "sprt"
-
-    exp_name = config.experiment_name
+    exp_name = manifest_raw.get("experiment_name")
     if isinstance(exp_name, str):
         normalized = exp_name.strip().lower()
         if normalized == "match":
             return "match"
-        if normalized == "generate":
-            return "generate"
     return None
 
 

@@ -12,9 +12,9 @@ from shogiarena._core.shared.kernel.json_types import JsonObject
 
 
 def load_run_state_mapping(run_dir: Path, *, logger: logging.Logger | None = None) -> JsonObject:
-    """Load ``run_state.json`` from ``run_dir`` as a JSON object mapping."""
+    """Load ``state.json`` from ``run_dir`` as a JSON object mapping."""
 
-    run_state_path = run_dir / "run_state.json"
+    run_state_path = run_dir / "state.json"
     if not run_state_path.exists():
         return {}
 
@@ -22,7 +22,7 @@ def load_run_state_mapping(run_dir: Path, *, logger: logging.Logger | None = Non
         loaded = json.loads(run_state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         if logger is not None:
-            logger.debug("Failed to read run_state.json: %s", exc, exc_info=True)
+            logger.debug("Failed to read state.json: %s", exc, exc_info=True)
         return {}
 
     if not isinstance(loaded, Mapping):

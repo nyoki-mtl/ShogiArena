@@ -11,7 +11,7 @@ from shogiarena._core.interfaces.boundaries.parsers import dashboard as dashboar
 
 def test_detect_worker_count(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
-    workers_dir = run_dir / "data" / "workers"
+    workers_dir = run_dir / "dashboard" / "data" / "workers"
     workers_dir.mkdir(parents=True)
     (workers_dir / "worker_0.js").write_text("", encoding="utf-8")
     (workers_dir / "worker_2.js").write_text("", encoding="utf-8")
@@ -23,8 +23,8 @@ def test_detect_worker_count(tmp_path: Path) -> None:
 def test_infer_run_state_match_profile(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    (run_dir / "run_state.json").write_text(
-        json.dumps({"config": {"sprt": None, "experiment_name": "match"}}),
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"experiment_name": "match", "schedule": {"kind": "tournament"}}),
         encoding="utf-8",
     )
 
@@ -34,11 +34,13 @@ def test_infer_run_state_match_profile(tmp_path: Path) -> None:
 def test_infer_dashboard_profiles_prefers_metadata(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    (run_dir / "run_state.json").write_text(
-        json.dumps({"config": {"sprt": True}}),
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"sprt": True}),
         encoding="utf-8",
     )
-    (run_dir / ".dashboard_profiles.json").write_text(
+    dashboard_dir = run_dir / "dashboard"
+    dashboard_dir.mkdir()
+    (dashboard_dir / ".dashboard_profiles.json").write_text(
         json.dumps({"profiles": ["generate", "tournament", "generate"]}),
         encoding="utf-8",
     )

@@ -48,7 +48,7 @@ class ArenaDBAdapter:
     def _coerce_game_result(raw: GameResult | JsonValue | None) -> GameResult:
         return coerce_game_result(raw, is_strict=True)
 
-    def get_games_with_players(self, game_type: str = "arena") -> list[GameRecordPlayers]:
+    def get_games_with_players(self, *, game_type: str) -> list[GameRecordPlayers]:
         db = self._get_db()
         black_player = aliased(Player)
         white_player = aliased(Player)
@@ -92,6 +92,14 @@ class ArenaDBAdapter:
         db = self._get_db()
         stmt = select(Game.id).where(Game.game_name == game_name)
         return db.session.execute(stmt).scalar_one_or_none()
+
+    def load_record(
+        self,
+        *,
+        game_id: int | None = None,
+        game_name: str | None = None,
+    ) -> rshogi.record.GameRecord | None:
+        return self._get_record_store().load(game_id=game_id, game_name=game_name)
 
     def append_record_list(
         self,

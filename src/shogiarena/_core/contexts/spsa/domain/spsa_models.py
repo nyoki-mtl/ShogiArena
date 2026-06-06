@@ -12,7 +12,13 @@ PhaseLiteral: TypeAlias = Literal["plus", "minus", "ltc"]
 
 @dataclass(slots=True)
 class ParamEntry:
-    """Single SPSA parameter definition parsed from disk."""
+    """Single SPSA runtime parameter definition.
+
+    ``name`` is the ShogiArena parameter id. ``option_name`` is the USI option
+    sent to the engine; when omitted, ``name`` is used for older in-memory
+    callers. ``step`` stores ``c_end`` and ``delta`` stores ``r_end`` for the
+    classic SPSA schedule.
+    """
 
     name: str
     type: str
@@ -23,6 +29,15 @@ class ParamEntry:
     delta: float
     comment: str
     is_not_used: bool
+    option_name: str | None = None
+    value_encoding: Literal["integer", "decimal", "scaled_integer"] = "decimal"
+    scale: float | None = None
+    significant_digits: int = 9
+
+    @property
+    def engine_option_name(self) -> str:
+        """Return the USI option name used for this parameter."""
+        return self.option_name or self.name
 
 
 @dataclass(frozen=True)
@@ -55,6 +70,7 @@ class SpsaAlgorithmConfig(TypedDict):
     should_snap_float_to_step: bool
     early_stop: JsonObject | None
     update_batch_size: int | None
+    pairs_per_update: int
     inflight_factor: int
 
 

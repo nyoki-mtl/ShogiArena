@@ -56,6 +56,12 @@ def add_tournament_common_args(
         default="strict",
         help="Control git worktree handling before builds",
     )
+    parser.add_argument(
+        "--path-preflight",
+        choices=["off", "warn", "error"],
+        default="off",
+        help="Validate configured path-like USI options before launching engines",
+    )
     if should_include_sections:
         parser.add_argument(
             "--engine",
@@ -101,6 +107,13 @@ def add_tournament_common_args(
             nargs="+",
             metavar="KEY=VALUE",
             help="Override dashboard.* using YAML-style KEY=VALUE tokens",
+        )
+        parser.add_argument(
+            "--logging",
+            action="append",
+            nargs="+",
+            metavar="KEY=VALUE",
+            help="Override logging.* using YAML-style KEY=VALUE tokens",
         )
         parser.add_argument(
             "--system",

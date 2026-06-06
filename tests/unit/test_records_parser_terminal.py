@@ -6,7 +6,7 @@ from shogiarena._core.shared.kernel.game_results import GameResult
 
 
 def test_csa_parser_extracts_terminal_time_and_comment() -> None:
-    csa = "V2.2\nN+Black\nN-White\nPI\n+\n+7776FU,T1\n-3334FU,T2\n%TORYO,T3,'terminal comment\n"
+    csa = "V2.2\nN+Black\nN-White\nPI\n+\n+7776FU,T1\n-3334FU,T2\n%TORYO,T3,'*terminal comment\n"
 
     record = rshogi.record.GameRecord.from_csa_str(csa)
     payload = record.to_dict()

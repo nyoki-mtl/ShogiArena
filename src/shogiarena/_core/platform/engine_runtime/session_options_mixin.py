@@ -23,6 +23,7 @@ class AsyncUsiEngineOptionsMixin:
     start: Any
     _send_command: Any
     _maybe_log_handshake_command: Any
+    trigger_isready: Any
 
     async def _apply_config_options(self) -> None:
         if not self.config.options:
@@ -30,7 +31,13 @@ class AsyncUsiEngineOptionsMixin:
         for name, value in self.config.options.items():
             await self._set_option(name, value)
 
-    async def apply_engine_options(self, options: Mapping[str, JsonValue] | None) -> None:
+    async def apply_engine_options(
+        self,
+        options: Mapping[str, JsonValue] | None,
+        *,
+        clear_hash: bool = True,
+        after_setoption: str = "isready",
+    ) -> None:
         """Apply additional engine options on top of the static configuration."""
         if not options:
             return
@@ -38,6 +45,11 @@ class AsyncUsiEngineOptionsMixin:
             await self.start()
         for name, value in options.items():
             await self._set_option(name, value)
+        clear_hash_option = self._options.get("Clear Hash")
+        if clear_hash and clear_hash_option is not None and clear_hash_option.option_type == "button":
+            await self._apply_option(clear_hash_option.name, None, clear_hash_option)
+        if after_setoption == "isready":
+            await self.trigger_isready()
 
     async def _set_option(self, name: str, value: JsonValue | None) -> None:
         candidates = self._normalize_option_candidates(name)

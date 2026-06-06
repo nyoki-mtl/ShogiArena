@@ -5,17 +5,23 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol
 
+from shogiarena._core.contexts.game_session.application.session.run_metadata_persistence_service import (
+    RunManifestSealError,
+)
 from shogiarena._core.contexts.tournament.application.entrypoints import (
     create_tournament_run_storage,
     run_tournament_session,
 )
-from shogiarena._core.interfaces.cli.config_loader import load_tournament_run_config
+from shogiarena._core.interfaces.cli.config_loader import load_tournament_run_config, load_tournament_run_config_payload
+from shogiarena._core.interfaces.cli.main import CliError
 from shogiarena._core.interfaces.composition_root.default_root import build_default_root
 from shogiarena._core.platform.settings.facade import current_settings
 from shogiarena._core.platform.settings.loader import validate_overlays
+from shogiarena._core.shared.kernel.run_manifest_reader import read_sealed_manifest_resume_hash
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_bool, coerce_int, coerce_optional_text
 from shogiarena._core.shared.kernel.serialization import json_serialize
 
@@ -46,23 +52,32 @@ async def run_tournament_command(
     git_worktree: str,
     experiment_name: str | None,
     run_dir_override: str | None,
+    config_payload: Mapping[str, object] | None = None,
     base_cmd: BaseRunCommand | None = None,
 ) -> None:
     # Helper to allow standalone usage if needed (though discouraged now)
     cmd = base_cmd or BaseRunCommand(argparse.Namespace())
 
-    config = load_tournament_run_config(config_file)
+    config = (
+        load_tournament_run_config_payload(config_payload, base_dir=Path.cwd(), source_path=None)
+        if config_payload is not None
+        else load_tournament_run_config(config_file)
+    )
     validate_overlays(current_settings())
 
     if should_validate_only:
         LOGGER.info("Validated tournament config: %s", config_file)
         return
 
+    cmd.apply_git_worktree(config.engines, git_worktree)
+    cmd.clear_hash_cache(config)
+
     run_dir = cmd.resolve_run_dir_path(
         config_file,
         config.output_dir / "tournament",
         experiment_name,
         run_dir_override,
+        schedule_hash=config.get_schedule_hash(),
     )
 
     resume_dir = cmd.prompt_resume(
@@ -73,14 +88,13 @@ async def run_tournament_command(
         should_skip_resume=should_skip_resume,
         is_dry_run=is_dry_run,
         scan_candidates_fn=_scan_tournament_candidates,
-        match_hash=config.get_schedule_hash(),
+        match_hash=None if config.has_unresolved_artifacts() else config.get_resume_hash(),
+        group_hash=config.get_schedule_hash(),
     )
     if resume_dir is not None:
         run_dir = resume_dir
 
     instance_pool = cmd.resolve_instance_pool(config.instances)
-
-    cmd.apply_git_worktree(config.engines, git_worktree)
 
     if instance_pool and provision_mode == "force" and not is_dry_run:
         await cmd.provision_engines(config.engines, instance_pool)
@@ -92,13 +106,17 @@ async def run_tournament_command(
         _dry_run_schedule(config)
         return
 
-    await run_tournament_session(
-        config,
-        storage=storage,
-        should_skip_resume=should_skip_resume,
-        instance_pool=instance_pool,
-        runtime=root.tournament_runtime,
-    )
+    try:
+        await run_tournament_session(
+            config,
+            storage=storage,
+            should_skip_resume=should_skip_resume,
+            instance_pool=instance_pool,
+            runtime=root.tournament_runtime,
+        )
+    except RunManifestSealError as exc:
+        message = "Run manifest is not compatible with current config/provenance. Use --no-resume to start fresh."
+        raise CliError(message) from exc
 
 
 async def run_generate_command(
@@ -122,20 +140,32 @@ async def run_generate_command(
         LOGGER.info("Validated generate config: %s", config_file)
         return
 
+    cmd.apply_git_worktree(config.engines, git_worktree)
+    cmd.clear_hash_cache(config)
+
     run_dir = cmd.resolve_run_dir_path(
         config_file,
         config.output_dir / "generate",
         experiment_name,
         run_dir_override,
+        schedule_hash=config.get_schedule_hash(),
     )
 
-    if not should_skip_resume:
-        LOGGER.warning("Generate runs do not support resume; starting a new run")
-        should_skip_resume = True
+    resume_dir = cmd.prompt_resume(
+        config_file=config_file,
+        output_dir=config.output_dir / "generate",
+        experiment_name=experiment_name,
+        run_dir_override=run_dir_override,
+        should_skip_resume=should_skip_resume,
+        is_dry_run=is_dry_run,
+        scan_candidates_fn=_scan_tournament_candidates,
+        match_hash=None if config.has_unresolved_artifacts() else config.get_resume_hash(),
+        group_hash=config.get_schedule_hash(),
+    )
+    if resume_dir is not None:
+        run_dir = resume_dir
 
     instance_pool = cmd.resolve_instance_pool(config.instances)
-
-    cmd.apply_git_worktree(config.engines, git_worktree)
 
     if instance_pool and provision_mode == "force" and not is_dry_run:
         await cmd.provision_engines(config.engines, instance_pool)
@@ -147,13 +177,17 @@ async def run_generate_command(
         _dry_run_schedule(config)
         return
 
-    await run_tournament_session(
-        config,
-        storage=storage,
-        should_skip_resume=should_skip_resume,
-        instance_pool=instance_pool,
-        runtime=root.tournament_runtime,
-    )
+    try:
+        await run_tournament_session(
+            config,
+            storage=storage,
+            should_skip_resume=should_skip_resume,
+            instance_pool=instance_pool,
+            runtime=root.tournament_runtime,
+        )
+    except RunManifestSealError as exc:
+        message = "Run manifest is not compatible with current config/provenance. Use --no-resume to start fresh."
+        raise CliError(message) from exc
 
 
 def _scan_tournament_candidates(group_dir: Path) -> list[ResumeCandidate]:
@@ -163,7 +197,7 @@ def _scan_tournament_candidates(group_dir: Path) -> list[ResumeCandidate]:
             continue
         if not (entry.name.isdigit() and len(entry.name) == 14):
             continue
-        state_path = entry / "run_state.json"
+        state_path = entry / "state.json"
         if not state_path.exists():
             continue
         try:
@@ -173,21 +207,23 @@ def _scan_tournament_candidates(group_dir: Path) -> list[ResumeCandidate]:
         if not isinstance(raw, dict):
             raw = {}
         raw_map = {str(key): json_serialize(value) for key, value in raw.items()}
-        completed = raw_map.get("completed_game_ids") or []
+        completed_count = coerce_int(raw_map.get("completed_games_count")) or 0
         total = raw_map.get("original_total_games") or raw_map.get("total_games") or 0
         updated_at = raw_map.get("updated_at") or raw_map.get("created_at") or "-"
         is_finished = coerce_bool(raw_map.get("is_finished"))
-        schedule_hash_raw = raw_map.get("schedule_hash")
-        schedule_hash = coerce_optional_text(schedule_hash_raw)
+        resume_hash = read_sealed_manifest_resume_hash(entry / "manifest.json", logger=LOGGER)
+        if resume_hash is None or coerce_optional_text(raw_map.get("resume_hash")) != resume_hash:
+            LOGGER.info("Skipping resume candidate without matching sealed manifest: %s", entry)
+            continue
         candidates.append(
             {
                 "path": entry,
                 "slug": entry.name,
-                "completed": len(completed) if isinstance(completed, list) else 0,
+                "completed": completed_count,
                 "total": coerce_int(total) or 0,
                 "updated_at": coerce_optional_text(updated_at) or "-",
                 "is_finished": is_finished,
-                "schedule_hash": schedule_hash,
+                "match_hash": resume_hash,
             }
         )
     return candidates

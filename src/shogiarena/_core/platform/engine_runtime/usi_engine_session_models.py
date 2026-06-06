@@ -17,6 +17,8 @@ from shogiarena._core.platform.engine_runtime.usi_protocol_types import (
     UsiThinkResult,
     find_last_pv,
 )
+from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.serialization import json_serialize
 
 _HANDSHAKE_COMMANDS = {"usi", "isready", "usinewgame", "setoption"}
 _HANDSHAKE_LOG_LIMIT = 200
@@ -177,13 +179,47 @@ _HANDSHAKE_COMMAND_STATE: dict[str, str] = {
 class UsiEngineStartError(RuntimeError):
     """Raised when a USI engine fails to start cleanly."""
 
-    def __init__(self, *, engine_name: str, engine_path: str | None, reason: BaseException) -> None:
+    def __init__(
+        self,
+        *,
+        engine_name: str,
+        engine_path: str | None,
+        reason: BaseException,
+        working_directory: str | None = None,
+        command: tuple[str, ...] = (),
+        options: JsonObject | None = None,
+        failure_phase: str = "engine_start",
+    ) -> None:
         detail = f"{reason.__class__.__name__}: {reason}"
         path_hint = f" ({engine_path})" if engine_path else ""
         super().__init__(f"Failed to start USI engine '{engine_name}'{path_hint}: {detail}")
         self.engine_name = engine_name
         self.engine_path = engine_path
         self.reason = reason
+        self.working_directory = working_directory
+        self.command = command
+        self.options = dict(options or {})
+        self.failure_phase = _normalize_start_failure_phase(failure_phase)
+
+    def diagnostic_payload(self) -> JsonObject:
+        """Return a JSON-serializable startup diagnostic payload."""
+
+        return {
+            "engine": self.engine_name,
+            "executable": self.engine_path,
+            "working_directory": self.working_directory,
+            "command": list(self.command),
+            "options": {str(key): json_serialize(value) for key, value in self.options.items()},
+            "failure_phase": self.failure_phase,
+            "exception_class": type(self.reason).__name__,
+            "message": str(self.reason),
+        }
+
+
+def _normalize_start_failure_phase(raw: str) -> Literal["engine_start", "isready"]:
+    if raw == "isready":
+        return "isready"
+    return "engine_start"
 
 
 __all__ = [

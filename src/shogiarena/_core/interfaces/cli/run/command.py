@@ -17,7 +17,7 @@ from . import mate as mate_cmd
 from . import sprt as sprt_cmd
 from . import spsa as spsa_cmd
 from . import tournament as tournament_cmd
-from .config_builder import build_cli_config_payload, write_temp_config
+from .config_builder import build_cli_config_payload
 from .tournament_cli_options import add_tournament_common_args, flatten_block_tokens
 from .tournament_command_support import run_tournament_like
 
@@ -200,12 +200,11 @@ async def _run_spsa(args: argparse.Namespace) -> None:
             default_experiment="spsa",
             label="spsa",
         )
-        config_path = write_temp_config(payload, label="spsa")
     elif config_path is None:
         raise CliArgumentError("configuration file is required when no CLI overrides are provided")
 
     await spsa_cmd.run_spsa_command(
-        config_file=config_path,
+        config_file=config_path or Path("spsa"),
         should_trace_engine=args.should_trace_engine,
         is_dry_run=args.dry_run,
         should_validate_only=args.validate_only,
@@ -214,6 +213,7 @@ async def _run_spsa(args: argparse.Namespace) -> None:
         git_worktree=args.git_worktree,
         experiment_name=args.experiment_name,
         run_dir_override=args.run_dir,
+        config_payload=payload if has_cli_overrides else None,
     )
 
 
@@ -229,6 +229,7 @@ async def _run_generate(args: argparse.Namespace) -> None:
         "rules": flatten_block_tokens(args.rules),
         "generate": flatten_block_tokens(args.generate),
         "dashboard": flatten_block_tokens(args.dashboard),
+        "logging": flatten_block_tokens(args.logging),
         "system": flatten_block_tokens(args.system),
     }
     await run_tournament_like(

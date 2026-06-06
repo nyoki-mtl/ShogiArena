@@ -12,7 +12,6 @@ from shogiarena._core.interfaces.dashboard.match.payloads import (
     WdlGamesCount,
 )
 from shogiarena._core.interfaces.dashboard.sprt.payloads import (
-    SprtConfig,
     SprtTimelineEntry,
 )
 
@@ -88,21 +87,6 @@ class TestMatchTimelineEntry:
 # ---------------------------------------------------------------------------
 # SPRT types
 # ---------------------------------------------------------------------------
-
-
-class TestSprtConfig:
-    def test_required_keys(self) -> None:
-        assert _required_keys(SprtConfig) == {
-            "elo0",
-            "elo1",
-            "alpha",
-            "beta",
-            "minGames",
-            "maxGames",
-        }
-
-    def test_no_optional_keys(self) -> None:
-        assert _optional_keys(SprtConfig) == set()
 
 
 class TestSprtTimelineEntry:

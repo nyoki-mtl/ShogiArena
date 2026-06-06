@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
+from typing import Protocol
+
+import rshogi.record
 
 from shogiarena._core.contexts.dashboard.adapters.game_repository import (
     build_games_list_raw_payload,
@@ -26,6 +29,7 @@ from shogiarena._core.contexts.dashboard.adapters.interface_dependency_services 
     DashboardRuntimeSupportAdapter,
     DashboardSpsaSupportAdapter,
 )
+from shogiarena._core.contexts.dashboard.adapters.result_summary_reader import SQLiteResultSummaryReader
 from shogiarena._core.contexts.dashboard.adapters.run_state_loader import load_run_state_mapping
 from shogiarena._core.contexts.dashboard.adapters.snapshot_storage import SnapshotStorage as SnapshotStorageAdapter
 from shogiarena._core.contexts.dashboard.adapters.spsa.ltc_service import SpsaLtcService
@@ -46,6 +50,10 @@ from shogiarena._core.contexts.dashboard.ports.snapshot_storage import SnapshotS
 from shogiarena._core.contexts.game_session.adapters.engine.artifact_resolver import ArtifactResolver
 from shogiarena._core.contexts.game_session.application.progress.snapshot_payload_builders import (
     normalize_worker_snapshot_dto,
+)
+from shogiarena._core.contexts.game_session.application.summary.offline_result_summary_service import (
+    OfflineResultSummaryRequest,
+    OfflineResultSummaryService,
 )
 from shogiarena._core.contexts.game_session.ports.dashboard_lifecycle_factory import (
     DashboardApiServerFactory,
@@ -85,6 +93,19 @@ class DefaultRoot:
     init_dashboard_html: InitDashboardHtmlFn
     api_server_factory: DashboardApiServerFactory
     dashboard_service_factory: DashboardSpsaServicesFactory
+    game_record_loader: GameRecordLoaderFn
+
+
+class GameRecordLoaderFn(Protocol):
+    """run DB から GameRecord を読む callable 契約。"""
+
+    def __call__(
+        self,
+        db_path: Path,
+        *,
+        game_name: str | None = None,
+        game_id: int | None = None,
+    ) -> rshogi.record.GameRecord | None: ...
 
 
 def _create_snapshot_storage(state: object, run_dir: Path) -> SnapshotStoragePort:
@@ -255,9 +276,24 @@ def build_default_root() -> DefaultRoot:
         init_dashboard_html=dashboard_html_fn,
         api_server_factory=api_server_factory,
         dashboard_service_factory=spsa_dashboard_factory,
+        game_record_loader=load_game_record,
+    )
+
+
+def build_offline_result_summary(
+    *,
+    db_path: Path,
+    request: OfflineResultSummaryRequest,
+) -> object:
+    """Build an offline result summary from a SQLite game database."""
+
+    return OfflineResultSummaryService().build_summary(
+        SQLiteResultSummaryReader(db_path),
+        request,
     )
 
 
 __all__ = [
     "build_default_root",
+    "build_offline_result_summary",
 ]

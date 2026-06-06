@@ -23,6 +23,7 @@ LOGGER = logging.getLogger("shogiarena.cli")
 
 _DOTTED_OVERRIDE_FLAGS = {
     "--dashboard",
+    "--logging",
     "--rating",
     "--rules",
     "--openbench",

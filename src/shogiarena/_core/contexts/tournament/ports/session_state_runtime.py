@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, TypeAlias, TypedDict
 
 from shogiarena._core.contexts.tournament.domain.tournament_models import GameSpec
+from shogiarena._core.shared.kernel.database_types import DatabaseServicePort
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.service_ports import SprtServicePort
 
@@ -175,6 +176,8 @@ class TournamentStateSaveContext:
     is_generate_run: Callable[[], bool]
     serialize_assignment_override: Callable[[GameSpec], JsonObject | None]
     shared_override_label: Callable[[GameSpec], str | None]
+    schedule_hash: str | None = None
+    resume_hash: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +201,7 @@ class TournamentStateSetupContext:
     scheduler: TournamentScheduleGeneratorPort
     state: TournamentMutableStatePort
     openbench: TournamentOpenBenchStatePort
+    db_service: DatabaseServicePort | None
     reorder_and_shuffle: Callable[[list[GameSpec]], list[GameSpec]]
     reset_schedule_tracking: Callable[[], None]
     write_schedule_file: Callable[[list[GameSpec]], None]
@@ -207,6 +211,8 @@ class TournamentStateSetupContext:
     ensure_display_order_for_specs: Callable[[Iterable[GameSpec]], None]
     refresh_game_assignments: Callable[[], None]
     build_save_context: Callable[[], TournamentStateSaveContext]
+    schedule_hash: str | None = None
+    resume_hash: str | None = None
 
 
 __all__ = [

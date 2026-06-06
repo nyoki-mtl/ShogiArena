@@ -1,14 +1,13 @@
 ## Equivalent: shogiarena run spsa configs/run/spsa/example.yaml
 
-# SPSA example
+# SPSA example targeting the generic ShogiArena SPSA space protocol.
 
 engines:
-  - artifact: "yaneuraou/3570416"
-    build_options:
-      target_cpu: ZEN3
-    options_overlays:
-      - "./evals/example.yaml"
-    # Single engine is enough; SPSA applies tuned params only on tuned side
+  - artifact: "rshogi-az/local"
+    options:
+      Threads: 1
+      USI_Hash: 256
+    # Single descriptor is enough; SPSA creates plus/minus variants from it.
 
 dashboard:
   enabled: true
@@ -24,8 +23,22 @@ rules:
 
 # SPSA loop and required inputs
 spsa:
-  parameters_path: "./data/YaneuraOu-params/suisho10.params"
+  space: "./configs/resources/spsa/rshogi-az-mcts.yaml"
   num_updates: 50
+  pairs_per_update: 2
   inflight_factor: 4
-  update_batch_size: 1
   num_parallel: 4
+  algorithm:
+    name: classic
+    alpha: 0.602
+    gamma: 0.101
+    A:
+      mode: ratio
+      value: 0.1
+  variants:
+    pairing: plus_minus
+    crn: true
+    integer_rounding: stochastic
+    apply:
+      clear_hash: true
+      after_setoption: isready

@@ -5,7 +5,7 @@ import logging
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Protocol, TypedDict
+from typing import Protocol, TypedDict, runtime_checkable
 
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.instances.application.provisioner import Provisioner, ProvisionError
@@ -16,8 +16,10 @@ from shogiarena._core.shared.kernel.exceptions import ContractParseError
 from shogiarena._core.shared.kernel.paths import resolve_path_like
 from shogiarena._core.shared.kernel.run_paths import (
     default_run_dir,
+    run_dir_for_key,
     run_dir_for_name,
     run_group_dir,
+    run_group_dir_for_key,
     run_group_dir_for_name,
 )
 
@@ -31,7 +33,7 @@ class ResumeCandidate(TypedDict, total=False):
     total: int
     updated_at: str
     is_finished: bool
-    schedule_hash: str | None
+    match_hash: str | None
     idx: int
 
 
@@ -40,6 +42,11 @@ class _EngineSpecPort(Protocol):
     instance_id: str | None
     engine_path: Path | None
     name: str | None
+
+
+@runtime_checkable
+class _HashCacheOwnerPort(Protocol):
+    def clear_run_artifact_hash_cache(self) -> None: ...
 
 
 class BaseRunCommand:
@@ -69,9 +76,12 @@ class BaseRunCommand:
         output_dir: Path,
         experiment_name: str | None,
         run_dir_override: str | None,
+        schedule_hash: str | None = None,
     ) -> Path:
         if run_dir_override:
             return Path(resolve_path_like(run_dir_override))
+        if schedule_hash:
+            return run_dir_for_key(output_dir, experiment_name or config_file.stem, schedule_hash)
         if experiment_name:
             try:
                 return run_dir_for_name(config_file, output_dir, experiment_name)
@@ -89,6 +99,7 @@ class BaseRunCommand:
         is_dry_run: bool,
         scan_candidates_fn: Callable[[Path], list[ResumeCandidate]],
         match_hash: str | None = None,
+        group_hash: str | None = None,
     ) -> Path | None:
         """Interactive prompt to resume previous runs if applicable."""
         if run_dir_override or should_skip_resume or is_dry_run:
@@ -97,11 +108,14 @@ class BaseRunCommand:
             return None
 
         try:
-            group_dir = (
-                run_group_dir_for_name(config_file, output_dir, experiment_name)
-                if experiment_name
-                else run_group_dir(config_file, output_dir)
-            )
+            if group_hash:
+                group_dir = run_group_dir_for_key(output_dir, experiment_name or config_file.stem, group_hash)
+            else:
+                group_dir = (
+                    run_group_dir_for_name(config_file, output_dir, experiment_name)
+                    if experiment_name
+                    else run_group_dir(config_file, output_dir)
+                )
         except ValueError:
             return None
         if not group_dir.exists():
@@ -116,7 +130,7 @@ class BaseRunCommand:
         for item in candidates:
             status = "finished" if item["is_finished"] else "incomplete"
             mismatch = ""
-            if match_hash and item.get("schedule_hash") and item["schedule_hash"] != match_hash:
+            if match_hash and item.get("match_hash") != match_hash:
                 mismatch = " (config mismatch)"
 
             # SPSA specific check or generic check
@@ -191,6 +205,11 @@ class BaseRunCommand:
             self.logger.info(
                 "git-worktree=allow-dirty: permitting dirty sources; binaries will be suffixed with '-dirty'"
             )
+
+    @staticmethod
+    def clear_hash_cache(config: object) -> None:
+        if isinstance(config, _HashCacheOwnerPort):
+            config.clear_run_artifact_hash_cache()
 
     async def provision_engines(self, engine_specs: Sequence[_EngineSpecPort], instance_pool: InstancePool) -> None:
         async def _provision(engine_spec: _EngineSpecPort) -> None:

@@ -29,6 +29,15 @@ dashboard:
   enabled: true
   api_port: 8080
 
+# USI transcript artifact
+# ------------------------------------------------------------
+logging:
+  # true にすると <run_dir>/transcripts/game-<game_id>-black.log などを保存
+  usi_transcript: false
+  # commands は送信コマンド、bestmove、最後の non-bound info を保存
+  # commands_and_info は全 info line も保存
+  usi_transcript_detail: commands
+
 # トーナメントスケジュール設定
 # ------------------------------------------------------------
 tournament:

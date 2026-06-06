@@ -41,11 +41,8 @@ class ScheduleMutationService:
     ) -> None:
         """Persist the provided schedule to the run directory for inspection."""
 
-        if ctx.is_generate_run():
-            return
-
         rd = ctx.run_dir
-        schedule_path = rd / "game_schedule.json"
+        schedule_path = rd / "schedule.json"
         active_instances: dict[str, str] = {}
         if ctx.instance_pool is not None:
             for instance in ctx.instance_pool.list_instances():
@@ -73,10 +70,10 @@ class ScheduleMutationService:
                 return entry.get("black"), entry.get("white")
             return (None, None)
 
-        payload: list[JsonObject] = []
+        games: list[JsonObject] = []
         for spec in schedule:
             resolved_black, resolved_white = _resolved_assignment(spec.game_id)
-            payload.append(
+            games.append(
                 {
                     "game_id": spec.game_id,
                     "black": spec.black_engine,
@@ -97,7 +94,7 @@ class ScheduleMutationService:
         if state.cancelled_specs:
             for spec in state.cancelled_specs.values():
                 resolved_black, resolved_white = _resolved_assignment(spec.game_id)
-                payload.append(
+                games.append(
                     {
                         "game_id": spec.game_id,
                         "black": spec.black_engine,
@@ -114,6 +111,11 @@ class ScheduleMutationService:
                         "resolved_instance_white": resolved_white,
                     }
                 )
+        payload: JsonObject = {
+            "kind": "generate" if ctx.is_generate_run() else "tournament",
+            "schema_version": 1,
+            "games": games,
+        }
         schedule_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     async def has_applied_pending_reschedule(

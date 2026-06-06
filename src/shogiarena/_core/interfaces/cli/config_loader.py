@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace as dataclass_replace
 from pathlib import Path
 from typing import Any
@@ -39,6 +39,28 @@ def load_tournament_run_config(
         )
     except (ContractParseError, TypeError, ValueError, OSError) as exc:
         raise CliError(f"Invalid tournament config: {config_path}: {exc}") from exc
+
+
+def load_tournament_run_config_payload(
+    payload: Mapping[str, object],
+    *,
+    base_dir: Path,
+    source_path: Path | None = None,
+    runtime: TournamentRuntimePort | None = None,
+) -> Any:
+    """Build tournament-like config from an already-materialized CLI payload."""
+
+    if runtime is None:
+        runtime = build_default_root().tournament_runtime
+    try:
+        return build_tournament_run_config(
+            payload,
+            base_dir=base_dir,
+            source_path=source_path,
+            runtime=runtime,
+        )
+    except (ContractParseError, TypeError, ValueError, OSError) as exc:
+        raise CliError(f"Invalid tournament config payload: {exc}") from exc
 
 
 def load_instance_pool_from_sources(sources: Sequence[Path]) -> InstancePool | None:
@@ -86,4 +108,4 @@ def load_instance_pool_from_sources(sources: Sequence[Path]) -> InstancePool | N
     return merged_pool if merged_pool.list_instances() else None
 
 
-__all__ = ["load_instance_pool_from_sources", "load_tournament_run_config"]
+__all__ = ["load_instance_pool_from_sources", "load_tournament_run_config", "load_tournament_run_config_payload"]

@@ -12,7 +12,13 @@ from shogiarena._core.shared.kernel.json_types import JsonObject
 class SpsaEngineOptionHookPort(Protocol):
     """Minimal engine contract for SPSA option hook application."""
 
-    async def apply_engine_options(self, options: JsonObject) -> None: ...
+    async def apply_engine_options(
+        self,
+        options: JsonObject,
+        *,
+        clear_hash: bool = True,
+        after_setoption: str = "isready",
+    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -25,6 +31,8 @@ class SpsaEngineOptionHookRequest:
     baseline_options: JsonObject
     tuned_label: str
     baseline_label: str
+    clear_hash: bool = True
+    after_setoption: str = "isready"
 
 
 async def apply_engine_option_hooks(
@@ -38,11 +46,19 @@ async def apply_engine_option_hooks(
     baseline_engine = engines_by_key.get(request.baseline_pool_key)
     names: dict[str, str] = {}
     if tuned_engine is not None:
-        await tuned_engine.apply_engine_options(request.tuned_options)
+        await tuned_engine.apply_engine_options(
+            request.tuned_options,
+            clear_hash=request.clear_hash,
+            after_setoption=request.after_setoption,
+        )
         names[request.tuned_pool_key] = request.tuned_label
     if baseline_engine is not None:
         if request.baseline_options:
-            await baseline_engine.apply_engine_options(request.baseline_options)
+            await baseline_engine.apply_engine_options(
+                request.baseline_options,
+                clear_hash=request.clear_hash,
+                after_setoption=request.after_setoption,
+            )
         names[request.baseline_pool_key] = request.baseline_label
     return names
 

@@ -19,7 +19,8 @@ class TournamentSummaryResultsService:
 
         db = runtime.dependencies.db_service
         assert db is not None
-        games = db.get_games_with_players()
+        game_type = "generate" if runtime.actions.is_generate_run() else "arena"
+        games = db.get_games_with_players(game_type=game_type)
 
         engine_stats: dict[str, EngineWdlCounts] = {}
         for engine in runtime.request.config.engines:

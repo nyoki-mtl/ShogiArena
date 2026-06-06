@@ -19,7 +19,7 @@ from shogiarena._core.shared.kernel.paths import resolve_path_like
 from shogiarena._core.shared.kernel.serialization import json_serialize
 
 from . import tournament as tournament_cmd
-from .config_builder import build_cli_config_payload, write_temp_config
+from .config_builder import build_cli_config_payload
 from .tournament_cli_options import flatten_block_tokens
 
 
@@ -59,10 +59,16 @@ async def run_tournament_like(
             "tournament": flatten_block_tokens(args.tournament),
             "rating": flatten_block_tokens(args.rating),
             "dashboard": flatten_block_tokens(args.dashboard),
+            "logging": flatten_block_tokens(getattr(args, "logging", None)),
             "system": flatten_block_tokens(args.system),
             "sprt": flatten_block_tokens(args.sprt),
             "openbench": flatten_block_tokens(getattr(args, "openbench", None)),
         }
+    path_preflight = getattr(args, "path_preflight", "off")
+    if path_preflight != "off":
+        system_tokens = list(sections.get("system") or [])
+        system_tokens.append(f"path_preflight={path_preflight}")
+        sections["system"] = system_tokens
     has_cli_overrides = bool(args.engine) or any(sections.values()) or config_path is None
 
     payload: JsonObject
@@ -97,14 +103,11 @@ async def run_tournament_like(
     if should_require_sprt and cfg.sprt is None:
         raise CliArgumentError("SPRT mode requires sprt in the tournament config")
 
-    if has_cli_overrides:
-        config_path = write_temp_config(payload, label=label)
-    elif config_path is None:  # Defensive: for type checking, keep explicit invariant.
-        raise CliError("configuration path is missing after parsing tournament config")
+    identity_path = config_path or Path(label)
 
     runner = run_command or tournament_cmd.run_tournament_command
     await runner(
-        config_file=config_path,
+        config_file=identity_path,
         should_skip_resume=args.should_skip_resume,
         is_dry_run=args.dry_run,
         should_validate_only=args.validate_only,
@@ -112,6 +115,7 @@ async def run_tournament_like(
         git_worktree=args.git_worktree,
         experiment_name=args.experiment_name,
         run_dir_override=args.run_dir,
+        config_payload=payload if has_cli_overrides else None,
     )
 
 

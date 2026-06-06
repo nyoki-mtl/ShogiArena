@@ -142,6 +142,26 @@ Elo レーティング計算の設定です。
 - `enabled`: ダッシュボードを有効にするか。
 - `api_port`: ポート番号。
 
+### USI Transcript (`logging`)
+
+対局中の USI command/output を game/side ごとに保存できます。デバッグ用なので、必要な run だけで有効にしてください。
+
+```yaml
+logging:
+  usi_transcript: true
+  usi_transcript_detail: commands  # commands | commands_and_info
+```
+
+出力先は `<run_dir>/transcripts/game-<game_id>-black.log` と `...-white.log` です。`commands` は送信コマンド、`bestmove`、最後の non-bound `info` を保存し、`commands_and_info` は全 `info` 行も保存します。
+
+保存済み局面は `replay-position` で再検索できます。
+
+```bash
+shogiarena replay-position --run-dir path/to/run --game-id g0001-abc --ply 80 --engine EngineA --nodes 100000
+```
+
+`--fresh` は対象局面だけを clean state で検索します。`--replay-history` は transcript がある場合に、同じ side の過去 search を対象 ply 手前まで再実行してから検索します。
+
 ### Instances (`instances`)
 
 インスタンス設定ファイルのパスを指定します。1 ファイルでも複数ファイルでも指定できます。
@@ -189,7 +209,8 @@ output_dir/
         └── <config_stemまたはexperiment_name>-<hash8>/
             └── YYYYMMDDHHmmSS/
                 ├── game.db         # 結果データベース
-                ├── run_state.json  # 進行状態
+                ├── state.json      # 進行状態（レジューム用）
+                ├── manifest.json   # run マニフェスト（provenance シール）
                 ├── data/           # ダッシュボード用データ
                 ├── logs/           # 実行ログ
                 └── records/        # records_output を使う場合

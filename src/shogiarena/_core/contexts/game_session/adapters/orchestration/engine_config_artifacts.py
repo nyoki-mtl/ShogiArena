@@ -13,6 +13,7 @@ import yaml
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_builders import build_usi_options
 from shogiarena._core.shared.kernel.hash_normalization import normalize_for_hash
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
+from shogiarena._core.shared.kernel.service_ports import ArtifactResolutionPort
 
 from .config_engine import EngineConfig
 
@@ -37,10 +38,19 @@ def _build_artifact_config_payload(
     *,
     artifact: str,
     build_options: Mapping[str, JsonValue],
+    resolved_engine_path: Path | None = None,
 ) -> JsonObject:
     payload: JsonObject = {"artifact": artifact, "build_options": dict(build_options)}
+    if resolved_engine_path is not None:
+        payload["engine_path"] = str(resolved_engine_path)
     if engine.name:
         payload["name"] = engine.name
+    if engine.options:
+        payload["options"] = dict(engine.options)
+    if engine.path_options:
+        payload["path_options"] = list(engine.path_options)
+    if engine.options_overlays:
+        payload["options_overlays"] = [str(path) for path in engine.options_overlays]
     if engine.mate_default_ply_limit is not None and engine.mate_default_ply_limit > 0:
         payload["mate_default_ply_limit"] = engine.mate_default_ply_limit
     if engine.mate_default_node_limit is not None and engine.mate_default_node_limit > 0:
@@ -69,6 +79,7 @@ def _materialize_engine_config_from_artifact(
     engine: EngineConfig,
     *,
     output_dir: Path,
+    artifact_resolver: ArtifactResolutionPort | None = None,
 ) -> Path | None:
     """Write artifact-based engine config YAML and return its path.
 
@@ -81,7 +92,13 @@ def _materialize_engine_config_from_artifact(
 
     build_options = engine.build_options or {}
     filename = _build_artifact_config_filename(artifact, build_options)
-    payload = _build_artifact_config_payload(engine, artifact=artifact, build_options=build_options)
+    resolved_engine_path = Path(artifact_resolver(artifact, build_options)) if artifact_resolver is not None else None
+    payload = _build_artifact_config_payload(
+        engine,
+        artifact=artifact,
+        build_options=build_options,
+        resolved_engine_path=resolved_engine_path,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / filename
     out_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
@@ -93,6 +110,7 @@ def resolve_engine_config_entry(
     *,
     output_dir: Path,
     extra_options: JsonObject | None,
+    artifact_resolver: ArtifactResolutionPort | None = None,
 ) -> EngineConfig:
     """Resolve a concrete engine config path from existing file or artifact."""
 
@@ -102,7 +120,11 @@ def resolve_engine_config_entry(
     if engine.engine_path is not None and engine.engine_path.exists():
         return engine
 
-    materialized = _materialize_engine_config_from_artifact(engine, output_dir=output_dir)
+    materialized = _materialize_engine_config_from_artifact(
+        engine,
+        output_dir=output_dir,
+        artifact_resolver=artifact_resolver,
+    )
     if materialized is not None:
         engine.engine_path = materialized
         return engine

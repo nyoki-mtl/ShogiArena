@@ -217,12 +217,13 @@ class TournamentOrchestrator(BaseOrchestrator):
     def _prepare_engine_configs(self) -> dict[str, EngineConfig]:
         """Ensure each engine has a concrete YAML; synthesize from artifact if needed."""
         out_entries: list[EngineConfig] = []
-        cfg_out_dir = self.run_dir / "engine_configs"
+        cfg_out_dir = self.run_dir / "inputs" / "engine_configs"
         for e in self.config.engines:
             resolved = resolve_engine_config_entry(
                 e,
                 output_dir=cfg_out_dir,
                 extra_options=self.extra_options,
+                artifact_resolver=self._engine_factory_service.artifact_resolver,
             )
             out_entries.append(resolved)
         return build_engine_config_map(out_entries)

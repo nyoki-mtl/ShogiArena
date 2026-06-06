@@ -1,0 +1,41 @@
+schema_version: shogiarena.spsa.space.v1
+
+target:
+  engine_family: rshogi-az
+  protocol: usi_options
+  required_options_policy: strict
+  tunable_manifest:
+    required: false
+    command: usi_tunables
+
+parameters:
+  - id: cpuct
+    label: Cpuct
+    target:
+      option: Tune.Cpuct
+      value_encoding: decimal
+    value_type: float
+    initial: 1.745
+    bounds:
+      min: 0.5
+      max: 4.0
+    schedule:
+      c_end: 0.05
+      r_end: 0.002
+    significant_digits: 6
+
+  - id: max_collision_visits
+    label: Max collision visits
+    target:
+      option: Tune.MaxCollisionVisits
+      value_encoding: integer
+    value_type: int
+    initial: 8
+    bounds:
+      min: 1
+      max: 64
+    schedule:
+      c_end: 2
+      r_end: 0.002
+    rounding:
+      mode: stochastic

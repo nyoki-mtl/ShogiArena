@@ -113,7 +113,8 @@ shogiarena run tournament tournament.yaml
 ├── logs/                          # グローバルログディレクトリ
 └── runs/<config名またはexperiment_name>-<hash8>/YYYYMMDDHHMMSS/
     ├── game.db
-    ├── run_state.json
+    ├── state.json
+    ├── manifest.json
     ├── data/
     └── records/
 ```

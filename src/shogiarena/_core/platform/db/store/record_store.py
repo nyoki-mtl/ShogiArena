@@ -7,13 +7,21 @@ import rshogi
 from rshogi.core import Board, Move, Move32
 from sqlalchemy import delete, select
 
-from shogiarena._core.shared.kernel.game_results import game_result_name, game_result_terminal_kind
+from shogiarena._core.shared.kernel.game_results import game_result_name
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_game_result, coerce_iso_datetime
 
 from .entities import Game, Kifu, Player
 from .repository import ShogiRepositoryPort
 
 logger = logging.getLogger(__name__)
+
+
+def _push_record_move(board: Board, move_obj: Move | Move32) -> Move:
+    if isinstance(move_obj, Move):
+        return board.push_move(move_obj).to_move()
+    if isinstance(move_obj, Move32):
+        return board.push_move32(move_obj).to_move()
+    raise TypeError(f"db storage requires Move/Move32 payload, got {type(move_obj)!r}")
 
 
 class DBRecordStore:
@@ -105,19 +113,16 @@ class DBRecordStore:
             board.set_sfen(init_sfen)
             for move_record in move_records:
                 move_obj = move_record.move
-                if isinstance(move_obj, Move):
-                    mv = move_obj
-                elif isinstance(move_obj, Move32):
-                    mv = move_obj.to_move()
-                else:
-                    raise TypeError(f"db storage requires Move/Move32 payload, got {type(move_obj)!r}")
-                if not board.is_legal_move(mv):
-                    raise ValueError(f"db storage requires legal move payload: {move_obj!r}")
+                ply = int(board.game_ply) - 1
+                try:
+                    mv = _push_record_move(board, move_obj)
+                except ValueError as exc:
+                    raise ValueError(f"db storage requires legal move payload: {move_obj!r}") from exc
                 engine_info = move_record.engine_info
                 wall_time_ms = engine_info.wall_time_ms if engine_info is not None else None
                 latency_delta_ms = engine_info.latency_delta_ms if engine_info is not None else None
                 kifu = Kifu(
-                    ply=int(board.game_ply) - 1,
+                    ply=ply,
                     next_move=int(mv),
                     next_move_time_ms=move_record.time_ms,
                     wall_time_ms=wall_time_ms,
@@ -130,7 +135,6 @@ class DBRecordStore:
                     nodes=engine_info.nodes if engine_info is not None else None,
                 )
                 session.add(kifu)
-                board.apply_move(mv)
 
             end_kifu = Kifu(
                 ply=int(board.game_ply) - 1,
@@ -184,8 +188,10 @@ class DBRecordStore:
                 mv = Move(kifu.next_move)
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"Invalid move in db record: {kifu.next_move}") from exc
-            if not board.is_legal_move(mv):
-                raise ValueError(f"Illegal move in db record: {kifu.next_move}")
+            try:
+                pushed_move = board.push_move(mv).to_move()
+            except ValueError as exc:
+                raise ValueError(f"Illegal move in db record: {kifu.next_move}") from exc
             wall_time = kifu.wall_time_ms
             latency_delta = kifu.latency_delta_ms
             engine_info = rshogi.record.MoveEngineInfo(
@@ -198,13 +204,12 @@ class DBRecordStore:
             )
             move_records.append(
                 rshogi.record.MoveRecord(
-                    mv,
+                    pushed_move,
                     time_ms=kifu.next_move_time_ms,
                     comment=kifu.next_move_comment,
                     engine_info=engine_info,
                 )
             )
-            board.apply_move(mv)
 
         tc_black = (
             rshogi.record.TimeControl.from_spec(game.time_control_black)
@@ -234,8 +239,7 @@ class DBRecordStore:
             },
         )
         game_result = coerce_game_result(game.game_result, is_strict=True)
-        terminal = rshogi.record.SpecialMoveRecord(
-            game_result_terminal_kind(game_result),
+        terminal = rshogi.record.SpecialMoveRecord.from_result(
             game_result,
             time_ms=end_time_ms,
             comment=end_comment,

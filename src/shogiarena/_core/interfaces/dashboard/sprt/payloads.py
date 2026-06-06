@@ -9,17 +9,6 @@ from typing import TypedDict
 # ---------------------------------------------------------------------------
 
 
-class SprtConfig(TypedDict):
-    """SPRT 設定。"""
-
-    elo0: float
-    elo1: float
-    alpha: float
-    beta: float
-    minGames: int
-    maxGames: int
-
-
 class SprtTimelineEntry(TypedDict):
     """SPRT タイムラインの各エントリ。"""
 
@@ -36,4 +25,4 @@ class SprtTimelineEntry(TypedDict):
     eloEstimate: float | None
 
 
-__all__ = ["SprtConfig", "SprtTimelineEntry"]
+__all__ = ["SprtTimelineEntry"]

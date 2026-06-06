@@ -19,7 +19,9 @@ from shogiarena._core.interfaces.dashboard.generate.payloads import (
 )
 from shogiarena._core.interfaces.dashboard.http_response_builder import json_error_response
 from shogiarena._core.shared.kernel.json_types import JsonObject
-from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int
+from shogiarena._core.shared.kernel.run_manifest_reader import is_resumable_manifest
+from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int, coerce_optional_text
+from shogiarena._core.shared.kernel.serialization import json_serialize
 
 
 class _GenerateGamesQuery(BaseModel):
@@ -41,8 +43,11 @@ class GenerateAPI:
     ) -> None:
         self._db_path = db_path
         self._run_dir = run_dir
-        dependencies = load_dashboard_interface_dependencies()
-        self._runtime_support = runtime_support or dependencies.runtime_support
+        if runtime_support is None:
+            dependencies = load_dashboard_interface_dependencies()
+            self._runtime_support = dependencies.runtime_support
+        else:
+            self._runtime_support = runtime_support
 
     def register_routes(self, app: web.Application) -> None:
         app.router.add_get("/api/generate/summary", self.get_summary)
@@ -55,14 +60,34 @@ class GenerateAPI:
         except ValidationError:
             return RunState()
 
-    def _resolve_manifest_path(self, run_state: RunState) -> Path | None:
-        output_dir = run_state.config.records_output.output_dir
+    def _load_run_manifest(self) -> JsonObject:
+        manifest_path = self._run_dir / "manifest.json"
+        try:
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        return {str(key): json_serialize(value) for key, value in raw.items()}
+
+    @staticmethod
+    def _manifest_records_output(manifest: JsonObject) -> JsonObject:
+        raw = manifest.get("records_output")
+        if not isinstance(raw, dict):
+            return {}
+        return {str(key): json_serialize(value) for key, value in raw.items()}
+
+    def _resolve_manifest_path(self, run_state: RunState, run_manifest: JsonObject) -> Path | None:
+        manifest_records = self._manifest_records_output(run_manifest)
+        output_dir = manifest_records.get("output_dir") or run_state.config.records_output.output_dir
+        if not isinstance(output_dir, str):
+            return None
         if not output_dir or not output_dir.strip():
             return None
         return Path(output_dir) / "records_manifest.json"
 
-    def _load_manifest(self, run_state: RunState) -> RecordsManifest:
-        manifest_path = self._resolve_manifest_path(run_state)
+    def _load_manifest(self, run_state: RunState, run_manifest: JsonObject) -> RecordsManifest:
+        manifest_path = self._resolve_manifest_path(run_state, run_manifest)
         if manifest_path is None or not manifest_path.exists():
             return RecordsManifest()
         try:
@@ -83,21 +108,36 @@ class GenerateAPI:
 
     async def get_summary(self, _request: web.Request) -> web.Response:
         run_state = self._load_run_state()
-        manifest = self._load_manifest(run_state)
+        run_manifest = self._load_run_manifest()
+        records_manifest = self._load_manifest(run_state, run_manifest)
 
         ro = run_state.config.records_output
+        manifest_records = self._manifest_records_output(run_manifest)
+        rules_raw = run_manifest.get("rules")
+        rules = (
+            {str(key): json_serialize(value) for key, value in rules_raw.items()}
+            if isinstance(rules_raw, dict)
+            else run_state.config.rules
+        )
+        manifest_status = coerce_optional_text(run_manifest.get("status"))
         payload: GenerateSummary = {
-            "totalGames": sum(self._manifest_entry_int(e, "games") for e in manifest.files),
-            "totalPositions": sum(self._manifest_entry_int(e, "positions") for e in manifest.files),
-            "totalBytes": sum(self._manifest_entry_int(e, "byte_count", alias="bytes") for e in manifest.files),
-            "fileCount": len(manifest.files),
+            "totalGames": sum(self._manifest_entry_int(e, "games") for e in records_manifest.files),
+            "totalPositions": sum(self._manifest_entry_int(e, "positions") for e in records_manifest.files),
+            "totalBytes": sum(self._manifest_entry_int(e, "byte_count", alias="bytes") for e in records_manifest.files),
+            "fileCount": len(records_manifest.files),
             "runDir": str(self._run_dir),
             "tournamentType": "generate",
             "mode": "generate",
-            "recordFormat": ro.format,
-            "outputDir": ro.output_dir,
-            "filePrefix": ro.file_prefix,
-            "rules": run_state.config.rules,
+            "recordFormat": coerce_optional_text(manifest_records.get("format")) if manifest_records else ro.format,
+            "outputDir": coerce_optional_text(manifest_records.get("output_dir"))
+            if manifest_records
+            else ro.output_dir,
+            "filePrefix": coerce_optional_text(manifest_records.get("file_prefix"))
+            if manifest_records
+            else ro.file_prefix,
+            "rules": rules,
+            "runStatus": manifest_status,
+            "isResumable": is_resumable_manifest(run_manifest),
         }
         return web.json_response(payload)
 

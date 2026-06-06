@@ -1,0 +1,8 @@
+This release introduces the new run artifact contract, SPSA space protocol, offline result summaries, USI transcripts, and safer generate resume behavior.
+
+- Added the SPSA `space` spec workflow with deterministic plus/minus pairing, immutable runtime artifacts, and reproducible stochastic rounding.
+- Reworked run artifacts around two-phase `manifest.json` sealing, canonical JSON hashing, provenance verification, and atomic JSON writes.
+- Added `shogiarena results summary` and `results verify-provenance` for offline WDL, confidence interval, failure, and manifest checks.
+- Added per-game USI transcripts and the `replay-position` CLI for fresh, transcript-aware, and comparison searches.
+- Made `run generate` resumable from `game.db` with indexed records output, duplicate-write prevention, tail truncation, and orphan detection.
+- Updated record output schema and `rshogi-py-avx2` integration; this release contains breaking changes for old SPSA configs and run artifacts.

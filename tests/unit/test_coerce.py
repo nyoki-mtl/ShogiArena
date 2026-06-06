@@ -335,6 +335,9 @@ class TestCoerceGameResult:
         result = coerce_game_result(" 1 ")
         assert isinstance(result, GameResult)
 
+    def test_from_lowercase_name_with_whitespace(self) -> None:
+        assert coerce_game_result(" black_win ") == GameResult.BLACK_WIN
+
     def test_from_str_empty_after_strip(self) -> None:
         assert coerce_game_result("   ") is None
 
@@ -377,6 +380,9 @@ class TestCoerceGameResult:
     def test_strict_valid_from_str(self) -> None:
         result = coerce_game_result("1", is_strict=True)
         assert isinstance(result, GameResult)
+
+    def test_strict_valid_from_lowercase_name(self) -> None:
+        assert coerce_game_result("draw_by_repetition", is_strict=True) == GameResult.DRAW_BY_REPETITION
 
     def test_invalid_int(self) -> None:
         # Very large int unlikely to be a valid GameResult

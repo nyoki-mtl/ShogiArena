@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import sys
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 import rshogi.record
@@ -22,14 +26,25 @@ from shogiarena._core.contexts.game_session.adapters.orchestration.resource_cont
 from shogiarena._core.contexts.game_session.adapters.orchestration.resource_control import (
     collect_instance_usage as _collect_instance_usage_service,
 )
+from shogiarena._core.contexts.game_session.adapters.orchestration.usi_transcript import (
+    GameUsiTranscriptContext,
+    TranscriptDetail,
+)
+from shogiarena._core.contexts.game_session.application.session.run_failure_record_service import (
+    RunFailureRecordService,
+)
+from shogiarena._core.contexts.game_session.domain.failure_records import coerce_failure_phase
 from shogiarena._core.contexts.game_session.ports.session_runner_ports import BeforeGameHookPort, BeforeGameHookRequest
 from shogiarena._core.contexts.instances.application.instance_models import InstanceActiveGameSide
 from shogiarena._core.contexts.instances.application.instance_pool import ResourceRequest
 from shogiarena._core.contexts.match.application.engine_participant import EngineParticipant
 from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine
+from shogiarena._core.platform.engine_runtime.usi_engine_session_models import UsiEngineStartError
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
 from .config_engine import EngineConfig
+
+logger = logging.getLogger(__name__)
 
 
 class _EngineItemPort(Protocol):
@@ -93,15 +108,42 @@ async def execute_game(orchestrator: Any, spec: Any) -> rshogi.record.GameRecord
             black_engine_spec=resource_context.black_engine_spec,
             white_engine_spec=resource_context.white_engine_spec,
         )
-    finally:
-        await _cleanup_execution(
+    except asyncio.CancelledError as exc:
+        _record_run_failure(owner, game_spec, exc, fallback_phase="user_interruption")
+        raise
+    except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
+        _record_run_failure(
             owner,
             game_spec,
-            engine_pool=ep,
-            black_engine=black_engine,
-            white_engine=white_engine,
-            resource_context=resource_context,
+            exc,
+            fallback_phase=_classify_execution_failure(exc),
         )
+        raise
+    finally:
+        # An exception may already be propagating from the body (including
+        # CancelledError). Capture it before cleanup so a cleanup failure does
+        # not mask the original error / break cancellation propagation.
+        pending_exc = sys.exc_info()[1]
+        try:
+            await _cleanup_execution(
+                owner,
+                game_spec,
+                engine_pool=ep,
+                black_engine=black_engine,
+                white_engine=white_engine,
+                resource_context=resource_context,
+            )
+        except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
+            _record_run_failure(owner, game_spec, exc, fallback_phase="shutdown")
+            if pending_exc is None:
+                raise
+            logger.warning(
+                "Cleanup failed for game %s but preserving original %s: %s",
+                game_spec.game_id,
+                type(pending_exc).__name__,
+                exc,
+                exc_info=True,
+            )
 
 
 def _build_engine_tuple(item: _EngineItemPort) -> tuple[str, object, object, str | None]:
@@ -111,6 +153,46 @@ def _build_engine_tuple(item: _EngineItemPort) -> tuple[str, object, object, str
         item.extra_options,
         item.instance_override,
     )
+
+
+def _record_run_failure(owner: Any, game_spec: _GameSpecPort, exc: BaseException, *, fallback_phase: str) -> None:
+    run_dir = getattr(owner, "run_dir", None)
+    if not isinstance(run_dir, Path):
+        logger.debug(
+            "Skipping run failure record for game %s because owner %s has no Path run_dir",
+            game_spec.game_id,
+            type(owner).__name__,
+        )
+        return
+    record = RunFailureRecordService.build_record_from_exception(
+        exc=exc,
+        game_id=game_spec.game_id,
+        scheduled_black_engine=game_spec.black_item.pool_key,
+        scheduled_white_engine=game_spec.white_item.pool_key,
+        fallback_phase=coerce_failure_phase(fallback_phase),
+        log_artifact_path=str(run_dir / "failures" / "run_failures.json"),
+    )
+    try:
+        RunFailureRecordService().append_failure(run_dir=run_dir, record=record)
+    except (OSError, RuntimeError, ValueError) as record_exc:
+        # Persisting the diagnostic must never mask the original failure that we
+        # are in the middle of propagating.
+        logger.warning(
+            "Failed to persist run failure record for game %s: %s",
+            game_spec.game_id,
+            record_exc,
+            exc_info=True,
+        )
+
+
+def _classify_execution_failure(exc: BaseException) -> str:
+    if isinstance(exc, UsiEngineStartError):
+        return exc.failure_phase
+    if isinstance(exc, TimeoutError):
+        return "think"
+    if isinstance(exc, ValueError):
+        return "move_validation"
+    return "think"
 
 
 async def _prepare_resource_context(owner: Any, game_spec: _GameSpecPort) -> _ResourceContext:
@@ -289,14 +371,34 @@ async def _run_game_with_engines(
     if game_spec.on_game_start is not None:
         await game_spec.on_game_start()
 
-    game_info = await game_runner.run_game(
-        black_participant,
-        white_participant,
-        game_spec.initial_sfen,
-        game_spec.game_id,
-        black_time_control_limits=game_spec.black_limits,
-        white_time_control_limits=game_spec.white_limits,
+    transcript_context = _build_transcript_context(
+        owner,
+        game_spec,
+        black_engine=black_engine,
+        white_engine=white_engine,
+        black_name=black_participant.name,
+        white_name=white_participant.name,
     )
+
+    if transcript_context is None:
+        game_info = await game_runner.run_game(
+            black_participant,
+            white_participant,
+            game_spec.initial_sfen,
+            game_spec.game_id,
+            black_time_control_limits=game_spec.black_limits,
+            white_time_control_limits=game_spec.white_limits,
+        )
+    else:
+        async with transcript_context:
+            game_info = await game_runner.run_game(
+                black_participant,
+                white_participant,
+                game_spec.initial_sfen,
+                game_spec.game_id,
+                black_time_control_limits=game_spec.black_limits,
+                white_time_control_limits=game_spec.white_limits,
+            )
 
     completed_at = datetime.now(UTC)
     participation_records = _collect_participation_records_local_service(
@@ -317,6 +419,37 @@ async def _run_game_with_engines(
         participation_records=participation_records,
     )
     return game_info
+
+
+def _build_transcript_context(
+    owner: Any,
+    game_spec: _GameSpecPort,
+    *,
+    black_engine: AsyncUsiEngine,
+    white_engine: AsyncUsiEngine,
+    black_name: str,
+    white_name: str,
+) -> GameUsiTranscriptContext | None:
+    config = getattr(owner, "config", None)
+    logging_config = getattr(config, "logging", None)
+    is_enabled = bool(getattr(logging_config, "is_usi_transcript_enabled", False))
+    if not is_enabled:
+        return None
+    detail_raw = getattr(logging_config, "usi_transcript_detail", "commands")
+    detail: TranscriptDetail = "commands_and_info" if detail_raw == "commands_and_info" else "commands"
+    run_dir = getattr(owner, "run_dir", None)
+    if not isinstance(run_dir, Path):
+        raise RuntimeError("USI transcript mode requires a Path run_dir")
+    return GameUsiTranscriptContext(
+        run_dir=run_dir,
+        game_id=game_spec.game_id,
+        initial_sfen=game_spec.initial_sfen,
+        black_engine=black_engine,
+        white_engine=white_engine,
+        black_name=black_name,
+        white_name=white_name,
+        detail=detail,
+    )
 
 
 def _pick_display_name(spec_model: EngineConfig | None, pool_key: str, engine: AsyncUsiEngine) -> str:

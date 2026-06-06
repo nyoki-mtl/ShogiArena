@@ -30,7 +30,10 @@ class TournamentSummaryDashboardUpdateService:
     async def update(self, runtime: TournamentSummaryRuntimeContext) -> None:
         results: TournamentResults = self._results_service.calculate_results(runtime)
         db_service = runtime.dependencies.db_service
-        games: list[GameRecordPlayers] = list(db_service.get_games_with_players()) if db_service else []
+        game_type = "generate" if runtime.actions.is_generate_run() else "arena"
+        games: list[GameRecordPlayers] = (
+            list(db_service.get_games_with_players(game_type=game_type)) if db_service else []
+        )
         summary_data = self._update_payload_service.build(runtime, results=results, games=games).to_json_object()
 
         api_server = runtime.dependencies.api_server

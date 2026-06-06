@@ -37,9 +37,34 @@ def _minimal_tournament_payload(tmp_path: Path) -> dict[str, object]:
 
 def _minimal_spsa_payload(tmp_path: Path) -> dict[str, object]:
     start_file = tmp_path / "startpos.txt"
-    params_file = tmp_path / "params.txt"
     start_file.write_text("startpos\n", encoding="utf-8")
-    params_file.write_text("p1, float, 1.0, 0.0, 10.0\n", encoding="utf-8")
+    space_file = tmp_path / "space.yaml"
+    space_file.write_text(
+        """
+        schema_version: shogiarena.spsa.space.v1
+        target:
+          engine_family: test
+          protocol: usi_options
+          required_options_policy: strict
+          tunable_manifest:
+            required: false
+            command: usi_tunables
+        parameters:
+          - id: p1
+            target:
+              option: p1
+              value_encoding: decimal
+            value_type: float
+            initial: 1.0
+            bounds:
+              min: 0.0
+              max: 10.0
+            schedule:
+              c_end: 1.0
+              r_end: 0.1
+        """,
+        encoding="utf-8",
+    )
     engine_file = _engine_yaml(tmp_path, path_suffix="spsa-engine.yaml")
     return {
         "engines": [{"engine_path": str(engine_file)}],
@@ -50,7 +75,7 @@ def _minimal_spsa_payload(tmp_path: Path) -> dict[str, object]:
             }
         },
         "spsa": {
-            "parameters_path": str(params_file),
+            "space": str(space_file),
             "num_updates": 1,
         },
     }

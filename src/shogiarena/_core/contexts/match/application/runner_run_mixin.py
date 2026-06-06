@@ -14,9 +14,7 @@ from rshogi.core import Board, Move, normalize_usi_position
 from shogiarena._core.contexts.match.domain.adjudication import Adjudicator
 from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort
 from shogiarena._core.shared.kernel.game_results import (
-    STARTING_SFEN,
     GameResult,
-    game_result_terminal_kind,
 )
 from shogiarena._core.shared.kernel.json_coercion import to_json_object
 from shogiarena._core.shared.kernel.time_control import (
@@ -214,30 +212,20 @@ class GameRunnerRunMixin:
                 "updated_date": end_time.isoformat(),
             },
         )
-        move_records: list[rshogi.record.MoveRecord] = []
-        for idx, move in enumerate(moves):
-            wall_time = wall_times_ms[idx] if idx < len(wall_times_ms) else None
-            latency_delta = latency_deltas_ms[idx] if idx < len(latency_deltas_ms) else None
-            engine_info = rshogi.record.MoveEngineInfo(
-                eval=eval_values[idx] if idx < len(eval_values) else None,
-                nodes=nodes_values[idx] if idx < len(nodes_values) else None,
-                depth=depth_values[idx] if idx < len(depth_values) else None,
-                seldepth=seldepth_values[idx] if idx < len(seldepth_values) else None,
-                wall_time_ms=int(wall_time) if wall_time is not None else None,
-                latency_delta_ms=int(latency_delta) if latency_delta is not None else None,
-            )
-            move_records.append(
-                rshogi.record.MoveRecord(
-                    move,
-                    time_ms=move_times_ms[idx] if idx < len(move_times_ms) else None,
-                    engine_info=engine_info,
-                )
-            )
-        init_sfen = normalized_sfen if normalized_sfen != "startpos" else STARTING_SFEN
-        terminal = rshogi.record.SpecialMoveRecord(game_result_terminal_kind(game_result), game_result)
-
         logger.debug(f"Game {game_id} completed: {game_result}")
-        return rshogi.record.GameRecord.from_main_line(init_sfen, move_records, terminal, record_metadata)
+        return rshogi.record.GameRecord.from_usi_main_line(
+            normalized_sfen,
+            [move.to_usi() for move in moves],
+            result=game_result,
+            move_times_ms=move_times_ms,
+            evals=eval_values,
+            nodes=nodes_values,
+            depths=depth_values,
+            seldepths=seldepth_values,
+            wall_times_ms=wall_times_ms,
+            latency_deltas_ms=latency_deltas_ms,
+            metadata=record_metadata,
+        )
 
     async def _prepare_engines_for_game(
         self,

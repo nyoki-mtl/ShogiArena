@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import rshogi
@@ -127,12 +128,21 @@ def test_sbinpack_binary_writer_rotates_by_max_games(tmp_path: Path) -> None:
     )
 
     rec = _sample_record()
-    writer.append_record(rec)
-    writer.append_record(rec)
+    writer.append_record(rec, game_id="g1")
+    writer.append_record(rec, game_id="g2")
     writer.close()
 
     files = sorted(out_dir.glob("*.sbinpack"))
     assert len(files) == 2
+    index_entries = [
+        json.loads(line)
+        for line in (out_dir / "records_index.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [entry["game_id"] for entry in index_entries] == ["g1", "g2"]
+    manifest = json.loads((out_dir / "records_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 2
+    assert manifest["totals"]["games"] == 2
 
 
 def test_sfen_serializer_is_not_registered() -> None:
@@ -174,3 +184,70 @@ def test_psv_binary_writer_appends_record(tmp_path: Path) -> None:
     assert len(files) == 1
     assert files[0].stat().st_size > 0
     assert files[0].read_bytes() == expected_payload
+
+
+def test_binary_writer_skips_already_indexed_game_id(tmp_path: Path) -> None:
+    out_dir = tmp_path / "records"
+    record = _sample_record()
+    writer = RecordBinaryWriter(
+        RecordBinaryWriterConfig(
+            format_id="sbinpack",
+            output_dir=out_dir,
+            max_positions_per_file=999999,
+            max_games_per_file=None,
+            file_prefix="games",
+        )
+    )
+    writer.append_record(record, game_id="game-1", game_type="generate")
+    writer.close()
+
+    resumed = RecordBinaryWriter(
+        RecordBinaryWriterConfig(
+            format_id="sbinpack",
+            output_dir=out_dir,
+            max_positions_per_file=999999,
+            max_games_per_file=None,
+            file_prefix="games",
+        )
+    )
+    resumed.append_record(record, game_id="game-1", game_type="generate")
+    resumed.close()
+
+    index_lines = [line for line in (out_dir / "records_index.jsonl").read_text(encoding="utf-8").splitlines() if line]
+    assert len(index_lines) == 1
+    assert resumed.get_records_summary()["totalGames"] == 1
+
+
+def test_binary_writer_truncates_unindexed_tail_bytes_on_resume(tmp_path: Path) -> None:
+    out_dir = tmp_path / "records"
+    record = _sample_record()
+    writer = RecordBinaryWriter(
+        RecordBinaryWriterConfig(
+            format_id="sbinpack",
+            output_dir=out_dir,
+            max_positions_per_file=999999,
+            max_games_per_file=None,
+            file_prefix="games",
+        )
+    )
+    writer.append_record(record, game_id="game-1", game_type="generate")
+    writer.close()
+
+    data_file = next(out_dir.glob("*.sbinpack"))
+    indexed_size = data_file.stat().st_size
+    with data_file.open("ab") as handle:
+        handle.write(b"unindexed-tail")
+    assert data_file.stat().st_size > indexed_size
+
+    resumed = RecordBinaryWriter(
+        RecordBinaryWriterConfig(
+            format_id="sbinpack",
+            output_dir=out_dir,
+            max_positions_per_file=999999,
+            max_games_per_file=None,
+            file_prefix="games",
+        )
+    )
+    resumed.close()
+
+    assert data_file.stat().st_size == indexed_size

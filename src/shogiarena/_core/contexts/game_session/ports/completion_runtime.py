@@ -18,7 +18,13 @@ from shogiarena._core.shared.kernel.service_ports import (
 class CompletionRecordWriterPort(Protocol):
     """Minimal record-writer contract used by completion service."""
 
-    def append_record(self, record: rshogi.record.GameRecord) -> None: ...
+    def append_record(
+        self,
+        record: rshogi.record.GameRecord,
+        *,
+        game_id: str | None = None,
+        game_type: str | None = None,
+    ) -> None: ...
 
 
 class CompletionStopControllerPort(Protocol):

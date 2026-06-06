@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
+
 from shogiarena._core.interfaces.cli.main import CliArgumentError, CliError
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.serialization import json_serialize
@@ -11,9 +14,35 @@ from .config_builder import (
     build_cli_config_payload,
     ensure_engine_names,
     parse_engine_tokens,
-    write_temp_config,
 )
 from .tournament_cli_options import flatten_block_tokens
+
+
+@dataclass(frozen=True, slots=True)
+class SprtCliDefaults:
+    """Default SPRT contract used by the quick CLI entry point."""
+
+    elo0: float = 0.0
+    elo1: float = 5.0
+    alpha: float = 0.05
+    beta: float = 0.05
+    min_games: int = 0
+    num_parallel: int = 1
+
+    def to_payload(self) -> JsonObject:
+        """Return JSON-ready SPRT defaults."""
+
+        return {
+            "elo0": self.elo0,
+            "elo1": self.elo1,
+            "alpha": self.alpha,
+            "beta": self.beta,
+            "min_games": self.min_games,
+            "num_parallel": self.num_parallel,
+        }
+
+
+SPRT_CLI_DEFAULTS = SprtCliDefaults()
 
 
 def register_sprt_args(parser) -> None:
@@ -61,22 +90,16 @@ async def run_sprt_command(args) -> None:
     sprt_payload = payload.get("sprt")
     if not isinstance(sprt_payload, dict):
         sprt_payload = {}
-    normalized_sprt: JsonObject = {str(key): json_serialize(value) for key, value in sprt_payload.items()}
-    normalized_sprt.setdefault("elo0", 0.0)
-    normalized_sprt.setdefault("elo1", 5.0)
-    normalized_sprt.setdefault("alpha", 0.05)
-    normalized_sprt.setdefault("beta", 0.05)
-    normalized_sprt.setdefault("min_games", 0)
+    normalized_sprt: JsonObject = SPRT_CLI_DEFAULTS.to_payload()
+    normalized_sprt.update({str(key): json_serialize(value) for key, value in sprt_payload.items()})
     normalized_sprt["max_games"] = args.games
-    normalized_sprt.setdefault("num_parallel", 1)
     payload["sprt"] = normalized_sprt
 
     if not _has_time_control(payload):
         raise CliError("time control (rules or engine-specific) is required")
 
-    config_path = write_temp_config(payload, label="sprt")
     await tournament_cmd.run_tournament_command(
-        config_file=config_path,
+        config_file=Path("sprt"),
         should_skip_resume=args.should_skip_resume,
         is_dry_run=args.dry_run,
         should_validate_only=args.validate_only,
@@ -84,6 +107,7 @@ async def run_sprt_command(args) -> None:
         git_worktree=args.git_worktree,
         experiment_name=args.experiment_name,
         run_dir_override=args.run_dir,
+        config_payload=payload,
     )
 
 

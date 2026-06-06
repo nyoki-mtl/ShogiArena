@@ -49,5 +49,9 @@ class SpsaRunnerState:
     engine_metadata_cache: list[JsonObject] | None = None
     engine_metadata_runtime_sig: str | None = None
 
+    # -- Sealed run-artifact contract --------------------------------------
+    sealed_schedule_hash: str | None = None
+    sealed_resume_hash: str | None = None
+
 
 __all__ = ["SpsaRunnerState"]

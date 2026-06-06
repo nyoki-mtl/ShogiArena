@@ -52,7 +52,7 @@ class DummySpsaOrchestrator(SpsaOrchestrator):
         self._session_uuid = "session"
         self.num_workers = 1
         self._sfens = ["startpos"]
-        self.config = SimpleNamespace(parameters_path="params.txt")
+        self.config = SimpleNamespace(space_path="space.yaml")
         self._stop_event = asyncio.Event()
         self._params_lock = asyncio.Lock()
         self.run_dir = tmp_path

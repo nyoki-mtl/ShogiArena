@@ -93,7 +93,7 @@ async def _serve_dashboard(args: argparse.Namespace) -> None:
         num_workers = detected
 
     profiles = infer_dashboard_profiles(run_dir, config_mode)
-    write_dashboard_assets(run_dir, num_workers, should_overwrite_data=False, profiles=profiles)
+    write_dashboard_assets(run_dir / "dashboard", num_workers, should_overwrite_data=False, profiles=profiles)
 
     requested_port = int(args.port or 8080)
     try:
@@ -111,7 +111,7 @@ async def _serve_dashboard(args: argparse.Namespace) -> None:
     )
     await server.start()
 
-    port_js = run_dir / "data" / "arena_port.js"
+    port_js = run_dir / "dashboard" / "data" / "arena_port.js"
     port_js.parent.mkdir(parents=True, exist_ok=True)
     port_js.write_text(f"window.ARENA_API_PORT = {port};\n", encoding="utf-8")
 
