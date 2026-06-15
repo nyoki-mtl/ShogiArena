@@ -235,6 +235,11 @@ if [[ "${HAS_PUBLIC_BASE}" -eq 1 ]]; then
   done < <(git diff --name-only --diff-filter=D "${PUBLIC_BASE}..${SOURCE_REF}")
 fi
 
+while IFS= read -r path; do
+  [[ -z "${path}" ]] && continue
+  git rm --ignore-unmatch -- "${path}" >/dev/null 2>&1 || true
+done < <(comm -23 <(git ls-files | sort) <(git ls-tree -r --name-only "${SOURCE_REF}" | sort))
+
 git add -A
 
 if git diff --cached --quiet; then
