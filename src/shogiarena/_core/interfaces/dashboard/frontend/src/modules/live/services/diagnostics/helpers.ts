@@ -16,22 +16,22 @@ export interface LiveDiagnosticsWatchExtra {
 }
 
 export interface LiveDiagnosticsAutoSnapshot {
-    intervalSeconds: number;
+    interval_seconds: number;
     mode: 'console' | 'clipboard';
     destination: 'console' | 'clipboard' | 'api';
-    retentionMinutes: number;
+    retention_minutes: number;
 }
 
 export interface LiveDiagnosticsGuidelines {
     hydrator: {
-        triggerPerHour: { warning: number; critical: number };
-        failureRate: { warning: number; critical: number };
+        trigger_per_hour: { warning: number; critical: number };
+        failure_rate: { warning: number; critical: number };
     };
     watchlist: {
         extras: readonly LiveDiagnosticsWatchExtra[];
         limit: number;
     };
-    autoSnapshot?: LiveDiagnosticsAutoSnapshot;
+    auto_snapshot?: LiveDiagnosticsAutoSnapshot;
 }
 
 export interface HydratorAlertRow {
@@ -61,28 +61,28 @@ const WINDOW_LABEL_MINUTES = Math.round(LIVE_DIAGNOSTICS_WINDOW_MS / 60000);
 export const WINDOW_LABEL = `${WINDOW_LABEL_MINUTES}m`;
 
 const DEFAULT_WATCHLIST_EXTRAS = Object.freeze<readonly LiveDiagnosticsWatchExtra[]>([
-    { key: 'payloadKb', label: 'Payload (KB)', unit: 'KB', warning: 200, critical: 320, should_notify: false },
-    { key: 'latencyMs', label: 'Latency (ms)', unit: 'ms', warning: 500, critical: 1500, should_notify: false },
+    { key: 'payload_kb', label: 'Payload (KB)', unit: 'KB', warning: 200, critical: 320, should_notify: false },
+    { key: 'latency_ms', label: 'Latency (ms)', unit: 'ms', warning: 500, critical: 1500, should_notify: false },
     { key: 'retries', label: 'Retries', unit: '', warning: 1, critical: 3, should_notify: false },
 ]);
 
 const DEFAULT_AUTO_SNAPSHOT: LiveDiagnosticsAutoSnapshot = Object.freeze({
-    intervalSeconds: 0,
+    interval_seconds: 0,
     mode: 'console' as const,
     destination: 'console' as const,
-    retentionMinutes: 0,
+    retention_minutes: 0,
 });
 
 const DEFAULT_GUIDELINES: LiveDiagnosticsGuidelines = Object.freeze({
     hydrator: {
-        triggerPerHour: { warning: 45, critical: 60 },
-        failureRate: { warning: 0.03, critical: 0.05 },
+        trigger_per_hour: { warning: 45, critical: 60 },
+        failure_rate: { warning: 0.03, critical: 0.05 },
     },
     watchlist: {
         extras: DEFAULT_WATCHLIST_EXTRAS,
         limit: 6,
     },
-    autoSnapshot: DEFAULT_AUTO_SNAPSHOT,
+    auto_snapshot: DEFAULT_AUTO_SNAPSHOT,
 });
 
 export function formatTimestamp(ms: number): string {
@@ -113,7 +113,7 @@ function normalizeWatchExtras(entries: unknown): readonly LiveDiagnosticsWatchEx
             if (typeof entry === 'string') {
                 const key = entry.trim();
                 if (!key) return null;
-                if (key === 'payloadKb') {
+                if (key === 'payload_kb') {
                     return DEFAULT_GUIDELINES.watchlist.extras[0];
                 }
                 return { key, label: key, unit: '', warning: 0, critical: 0, should_notify: false };
@@ -122,8 +122,8 @@ function normalizeWatchExtras(entries: unknown): readonly LiveDiagnosticsWatchEx
                 const key =
                     typeof (entry as { key?: unknown }).key === 'string' && (entry as { key: string }).key
                         ? (entry as { key: string }).key
-                        : 'payloadKb';
-                const base = key === 'payloadKb' ? DEFAULT_GUIDELINES.watchlist.extras[0] : undefined;
+                        : 'payload_kb';
+                const base = key === 'payload_kb' ? DEFAULT_GUIDELINES.watchlist.extras[0] : undefined;
                 const warning =
                     typeof (entry as { warning?: unknown }).warning === 'number'
                         ? (entry as { warning: number }).warning
@@ -166,16 +166,11 @@ export function resolveGuidelines(doc: Document): LiveDiagnosticsGuidelines {
         return DEFAULT_GUIDELINES;
     }
     try {
-        const parsed = JSON.parse(attr) as Partial<LiveDiagnosticsGuidelines> &
-            Partial<{ watchlistExtras: Array<string | LiveDiagnosticsWatchExtra>; watchlistLimit: number }>;
-        const extrasSource = parsed?.watchlist?.extras?.length ? parsed.watchlist.extras : parsed.watchlistExtras;
-        const watchlistExtras = normalizeWatchExtras(extrasSource);
-        const watchlistLimit = Math.max(
-            1,
-            parsed?.watchlist?.limit ?? parsed.watchlistLimit ?? DEFAULT_GUIDELINES.watchlist.limit,
-        );
-        const autoSnapshotConfig = parsed?.autoSnapshot;
-        const intervalSeconds = Math.max(0, Number(autoSnapshotConfig?.intervalSeconds ?? 0));
+        const parsed = JSON.parse(attr) as Partial<LiveDiagnosticsGuidelines>;
+        const watchlistExtras = normalizeWatchExtras(parsed?.watchlist?.extras);
+        const watchlistLimit = Math.max(1, parsed?.watchlist?.limit ?? DEFAULT_GUIDELINES.watchlist.limit);
+        const autoSnapshotConfig = parsed?.auto_snapshot;
+        const intervalSeconds = Math.max(0, Number(autoSnapshotConfig?.interval_seconds ?? 0));
         const mode = autoSnapshotConfig?.mode === 'clipboard' ? 'clipboard' : 'console';
         const destinationRaw = (autoSnapshotConfig?.destination ?? '').toLowerCase();
         const destination: 'console' | 'clipboard' | 'api' =
@@ -188,34 +183,36 @@ export function resolveGuidelines(doc: Document): LiveDiagnosticsGuidelines {
                     : mode === 'clipboard'
                       ? 'clipboard'
                       : 'console';
-        const retentionMinutes = Math.max(0, Number(autoSnapshotConfig?.retentionMinutes ?? 0));
+        const retentionMinutes = Math.max(0, Number(autoSnapshotConfig?.retention_minutes ?? 0));
         return {
             hydrator: {
-                triggerPerHour: {
+                trigger_per_hour: {
                     warning:
-                        parsed?.hydrator?.triggerPerHour?.warning ?? DEFAULT_GUIDELINES.hydrator.triggerPerHour.warning,
+                        parsed?.hydrator?.trigger_per_hour?.warning ??
+                        DEFAULT_GUIDELINES.hydrator.trigger_per_hour.warning,
                     critical:
-                        parsed?.hydrator?.triggerPerHour?.critical ??
-                        DEFAULT_GUIDELINES.hydrator.triggerPerHour.critical,
+                        parsed?.hydrator?.trigger_per_hour?.critical ??
+                        DEFAULT_GUIDELINES.hydrator.trigger_per_hour.critical,
                 },
-                failureRate: {
-                    warning: parsed?.hydrator?.failureRate?.warning ?? DEFAULT_GUIDELINES.hydrator.failureRate.warning,
+                failure_rate: {
+                    warning:
+                        parsed?.hydrator?.failure_rate?.warning ?? DEFAULT_GUIDELINES.hydrator.failure_rate.warning,
                     critical:
-                        parsed?.hydrator?.failureRate?.critical ?? DEFAULT_GUIDELINES.hydrator.failureRate.critical,
+                        parsed?.hydrator?.failure_rate?.critical ?? DEFAULT_GUIDELINES.hydrator.failure_rate.critical,
                 },
             },
             watchlist: {
                 extras: watchlistExtras,
                 limit: watchlistLimit,
             },
-            autoSnapshot: autoSnapshotConfig
+            auto_snapshot: autoSnapshotConfig
                 ? {
-                      intervalSeconds,
+                      interval_seconds: intervalSeconds,
                       mode,
                       destination,
-                      retentionMinutes,
+                      retention_minutes: retentionMinutes,
                   }
-                : DEFAULT_GUIDELINES.autoSnapshot,
+                : DEFAULT_GUIDELINES.auto_snapshot,
         } satisfies LiveDiagnosticsGuidelines;
     } catch {
         return DEFAULT_GUIDELINES;
@@ -238,20 +235,20 @@ function maxSeverity(a: AlertSeverity, b: AlertSeverity): AlertSeverity {
 }
 
 function evaluateHydratorLoad(perHour: number, guidelines: LiveDiagnosticsGuidelines): AlertSeverity {
-    if (perHour >= guidelines.hydrator.triggerPerHour.critical) {
+    if (perHour >= guidelines.hydrator.trigger_per_hour.critical) {
         return 'critical';
     }
-    if (perHour >= guidelines.hydrator.triggerPerHour.warning) {
+    if (perHour >= guidelines.hydrator.trigger_per_hour.warning) {
         return 'warning';
     }
     return 'ok';
 }
 
 function evaluateHydratorFailure(rate: number, guidelines: LiveDiagnosticsGuidelines): AlertSeverity {
-    if (rate >= guidelines.hydrator.failureRate.critical) {
+    if (rate >= guidelines.hydrator.failure_rate.critical) {
         return 'critical';
     }
-    if (rate >= guidelines.hydrator.failureRate.warning) {
+    if (rate >= guidelines.hydrator.failure_rate.warning) {
         return 'warning';
     }
     return 'ok';

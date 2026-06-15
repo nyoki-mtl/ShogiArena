@@ -1,4 +1,4 @@
-import { createLiveCardsApi, type CardsWindow } from './cardsApi';
+import { createLiveCardsApi, type CardsWindow } from './cards-api';
 import type { LiveCardsApi } from '@/types/live';
 import { ensureLiveNamespace, registerLiveApi } from '@/modules/live/utils/liveNamespace';
 

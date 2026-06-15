@@ -34,12 +34,12 @@ export interface SpsaSummaryResponse {
     delta_norm_last?: number | null;
     eta_seconds?: number | null;
     ltc_regression?: SpsaLtcSummary | null;
-    engineTimeControls?: Record<string, string>;
-    defaultTimeControl?: string | null;
+    engine_time_controls?: Record<string, string>;
+    default_time_control?: string | null;
     engines?: string[];
-    engineStats?: Record<string, { wins?: number; losses?: number; draws?: number; games?: number }>;
-    engineInstances?: Record<string, string | null | undefined>;
-    engineMeta?: Record<string, JsonObject>;
+    engine_stats?: Record<string, { wins?: number; losses?: number; draws?: number; games?: number }>;
+    engine_instances?: Record<string, string | null | undefined>;
+    engine_meta?: Record<string, JsonObject>;
     [key: string]: unknown;
 }
 

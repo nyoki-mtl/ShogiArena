@@ -37,6 +37,10 @@ def json_serialize(value: object) -> JsonValue:
         case Sequence() as sequence_value:
             return [json_serialize(item) for item in sequence_value]
         case _:
+            # Best-effort stringify for governed display/snapshot/log payloads: this serializer
+            # is intentionally lenient so an unexpected value never aborts a snapshot or log line.
+            # Hash inputs must NOT rely on this — `normalize_for_hash` fails fast on unknown types
+            # to keep hashes deterministic.
             return str(value)
 
 

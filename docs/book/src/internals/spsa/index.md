@@ -166,28 +166,25 @@ LMRBase, float, 1.5, 0.5, 3.0, 0.1, 0.003, // Late Move Reduction の基本値
 
 ```python
 async def _run_one_spsa_update(self, update_idx, params, sfens):
-    # 1. Rademacher 摂動の生成
-    rng = self._make_rng(int(update_idx))
-    C = [p.step * (1.0 if rng.randint(0, 1) else -1.0)
-         for p in params]
+    # 1. パラメータ単位のゲイン c_i / r_i を算出（step/delta/A/alpha/gamma から）
+    schedule = compute_classic_schedule_point(
+        params=params, num_updates=N, pairs_per_update=m, update_idx=update_idx,
+        alpha=alpha, gamma=gamma, a_mode=A.mode, a_value=A.value, int_ck_floor=...,
+    )
+    # c_i = step_i · (k_total / k_pair)^γ  (int は int_ck_floor で下限クランプ)
 
-    # 2. ゲインの計算
-    a_k = a0 / ((A + k) ** alpha)
-    c_k = c0 / (k ** gamma)
+    # 2. Rademacher の向き flip ∈ {+1, -1} と摂動（[min, max] にクランプ）
+    flips = [0 if p.is_not_used else (1 if rng.randint(0, 1) else -1) for p in params]
+    tuned_plus  = [p.value + flip * schedule.c[p.name] for p, flip in ...]
+    tuned_minus = [p.value - flip * schedule.c[p.name] for p, flip in ...]
 
-    # 3. パラメータの摂動
-    tuned_plus  = [p.v + c_k * c for p, c in zip(params, C)]
-    tuned_minus = [p.v - c_k * c for p, c in zip(params, C)]
+    # 3. バッチ（m ペア）を実行し、スコアを集計（CRN あり/なし）
+    step = score_sum - s_minus          # = Σ s⁺ − Σ s⁻
 
-    # 4. ゲームペアの実行（CRN あり/なし）
-    s_plus  = await self._run_game_pair(sfen, tuned_plus, ...)
-    s_minus = await self._run_game_pair(sfen, tuned_minus, ...)
-
-    # 5. パラメータ更新
-    step_factor = (s_plus - s_minus) / 2.0
+    # 4. パラメータ更新（グローバル学習率スカラは無い）
     for i, p in enumerate(params):
-        delta_theta = mobility * p.delta * step_factor * C[i]
-        p.v = quantize_value(p, p.v + delta_theta)
+        delta_theta = schedule.r[p.name] * schedule.c[p.name] * step * flips[i]
+        p.value = quantize_value(p, p.value + delta_theta)
 ```
 
 ## 設定例
@@ -197,7 +194,7 @@ async def _run_one_spsa_update(self, update_idx, params, sfens):
 
 ```yaml
 spsa:
-  space: "./configs/resources/spsa/rshogi-az-mcts.yaml"  # チューニング対象パラメータの定義
+  space: "examples/configs/resources/spsa/rshogi-az-mcts.yaml"  # チューニング対象パラメータの定義
   num_updates: 1000        # 更新回数
   pairs_per_update: 4      # 1 更新あたりの対局ペア数（バッチサイズ）
   inflight_factor: 8       # 先行投入する更新バッチ数

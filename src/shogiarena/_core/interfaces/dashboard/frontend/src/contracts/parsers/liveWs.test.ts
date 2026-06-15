@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseGamesPayload, parseLiveGamesEnvelope, parseLiveSummaryEnvelope, parseSummaryPayload } from './liveWs';
+import { parseGamesPayload, parseLiveGamesEnvelope, parseLiveSummaryEnvelope, parseSummaryPayload } from './live-ws';
 
 describe('liveWs parsers', () => {
     it('parses a summary envelope', () => {
@@ -8,15 +8,15 @@ describe('liveWs parsers', () => {
             seq: 7,
             payload: {
                 games: { completed: 10, total: 20 },
-                gamesCompleted: 10,
-                gamesScheduled: 20,
-                liveView: null,
+                games_completed: 10,
+                games_scheduled: 20,
+                live_view: null,
             },
         });
 
         expect(envelope.topic).toBe('live.summary.snapshot.tournament');
         expect(envelope.seq).toBe(7);
-        expect(envelope.payload.gamesCompleted).toBe(10);
+        expect(envelope.payload.games_completed).toBe(10);
     });
 
     it('parses a games envelope', () => {
@@ -28,7 +28,7 @@ describe('liveWs parsers', () => {
                 revision: 3,
                 base_revision: null,
                 rows: [{ game_id: 'g1' }],
-                snapshotMeta: {},
+                snapshot_meta: {},
             },
         });
 

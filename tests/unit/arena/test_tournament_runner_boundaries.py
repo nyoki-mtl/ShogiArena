@@ -29,6 +29,7 @@ def test_parse_tournament_run_state_boundary_accepts_valid_payload_with_nested_o
         "created_at": "2026-01-01T00:00:00Z",
         "updated_at": "2026-01-01T00:01:00Z",
         "sprt_state": {
+            "model": "gsprt-trinomial-v1",
             "elo0": 0.0,
             "elo1": 0.0,
             "alpha": -1.0,
@@ -38,6 +39,9 @@ def test_parse_tournament_run_state_boundary_accepts_valid_payload_with_nested_o
             "losses": 0,
             "games_played": 1,
             "llr": 0.1,
+            "min_pairs": 2,
+            "penta_bins": [0, 0, 0, 0, 0],
+            "pending": [],
         },
         "openbench_state": {
             "submitted": {

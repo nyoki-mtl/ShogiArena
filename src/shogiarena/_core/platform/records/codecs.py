@@ -84,9 +84,33 @@ register_reader(
 # ── PSV (stream export only) ────────────────────────────────────────────
 
 
+def _require_move_evals(record: rshogi.record.GameRecord, *, format_label: str) -> None:
+    """Validate that every move carries an evaluation (required by psv/sbinpack)."""
+    payload = record.to_dict()
+    raw_moves = payload.get("moves")
+    if not isinstance(raw_moves, list):
+        raise ValueError(f"{format_label} serialization requires moves payload")
+    missing_eval_index = next(
+        (
+            idx
+            for idx, move in enumerate(raw_moves)
+            if not isinstance(move, dict)
+            or not isinstance(move.get("engine_info"), dict)
+            or move.get("engine_info", {}).get("eval") is None
+        ),
+        None,
+    )
+    if missing_eval_index is not None:
+        raise ValueError(f"{format_label} serialization requires eval on move index {missing_eval_index}")
+
+
 def iter_psv_entries(record: rshogi.record.GameRecord) -> Iterator[bytes]:
     """Return PSV entry iterator generated from GameRecord."""
-    return iter(record.to_psv())
+    _require_move_evals(record, format_label="psv")
+    try:
+        return iter(record.to_psv())
+    except ValueError as exc:
+        raise ValueError(f"psv serialization failed: {exc}") from exc
 
 
 register_stream_exporter(
@@ -101,23 +125,7 @@ register_stream_exporter(
 
 
 def _serialize_sbinpack(record: rshogi.record.GameRecord) -> bytes:
-    payload = record.to_dict()
-    raw_moves = payload.get("moves")
-    if not isinstance(raw_moves, list):
-        raise ValueError("sbinpack serialization requires moves payload")
-    missing_eval_index = next(
-        (
-            idx
-            for idx, move in enumerate(raw_moves)
-            if not isinstance(move, dict)
-            or not isinstance(move.get("engine_info"), dict)
-            or move.get("engine_info", {}).get("eval") is None
-        ),
-        None,
-    )
-    if missing_eval_index is not None:
-        raise ValueError(f"sbinpack serialization requires eval on move index {missing_eval_index}")
-
+    _require_move_evals(record, format_label="sbinpack")
     try:
         return bytes(record.to_sbinpack(stem_score=0, include_main=True, include_variations=False))
     except ValueError as exc:

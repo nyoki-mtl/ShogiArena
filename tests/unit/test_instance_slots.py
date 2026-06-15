@@ -1,5 +1,9 @@
 import pytest
 
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_engine import EngineConfig
+from shogiarena._core.contexts.game_session.adapters.orchestration.resource_control import (
+    preflight_parallel_resource_capacity,
+)
 from shogiarena._core.contexts.instances.application.instance_models import (
     Instance,
     InstanceConfig,
@@ -8,11 +12,31 @@ from shogiarena._core.contexts.instances.application.instance_models import (
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool, ResourceRequest
 from shogiarena._core.contexts.instances.application.instance_runtime_serialization import serialize_instance
 from shogiarena._core.contexts.instances.application.slot_policy import estimate_required_slots
+from shogiarena._core.contexts.tournament.domain.tournament_models import GameSpec
 
 
 class DummySpec:
     def __init__(self, options: dict[str, object] | None = None) -> None:
         self.options = options or {}
+
+
+class DummyOwner:
+    def __init__(self, engine_configs: dict[str, EngineConfig]) -> None:
+        self.engine_configs = engine_configs
+        self.extra_options = None
+
+
+def _parallel_owner() -> DummyOwner:
+    return DummyOwner(
+        {
+            "dev": EngineConfig(name="dev", options={"Threads": 4, "USI_Ponder": "false"}),
+            "base": EngineConfig(name="base", options={"Threads": 4, "USI_Ponder": "false"}),
+        }
+    )
+
+
+def _game_specs(count: int) -> list[GameSpec]:
+    return [GameSpec.create("dev", "base", "startpos", index, "seed") for index in range(count)]
 
 
 def test_estimate_required_slots_uses_threads_and_ponder_flag() -> None:
@@ -141,3 +165,38 @@ def test_slot_limit_enforced_when_max_engines_unlimited() -> None:
     instance = Instance(config=cfg)
     assert instance.try_acquire_resources(slots=2, engines=2)
     assert not instance.try_acquire_resources(slots=2, engines=1)
+
+
+def test_parallel_resource_preflight_rejects_silent_slot_throttling() -> None:
+    pool = InstancePool()
+    pool.add_instance(InstanceConfig(name="local", type=InstanceType.LOCAL, engine_dir="", slots=8, max_engines=8))
+
+    with pytest.raises(RuntimeError, match="would require 12 slot"):
+        preflight_parallel_resource_capacity(_parallel_owner(), pool, _game_specs(3), 3, mode="error")
+
+
+def test_parallel_resource_preflight_warn_mode_allows_throttling(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pool = InstancePool()
+    pool.add_instance(InstanceConfig(name="local", type=InstanceType.LOCAL, engine_dir="", slots=8, max_engines=8))
+
+    with caplog.at_level("WARNING"):
+        preflight_parallel_resource_capacity(_parallel_owner(), pool, _game_specs(3), 3, mode="warn")
+
+    assert "tournament.num_parallel=3 cannot be satisfied" in caplog.text
+
+
+def test_parallel_resource_preflight_passes_when_capacity_matches_parallelism() -> None:
+    pool = InstancePool()
+    pool.add_instance(InstanceConfig(name="local", type=InstanceType.LOCAL, engine_dir="", slots=12, max_engines=8))
+
+    preflight_parallel_resource_capacity(_parallel_owner(), pool, _game_specs(3), 3, mode="error")
+
+
+def test_parallel_resource_preflight_rejects_engine_capacity() -> None:
+    pool = InstancePool()
+    pool.add_instance(InstanceConfig(name="local", type=InstanceType.LOCAL, engine_dir="", slots=16, max_engines=3))
+
+    with pytest.raises(RuntimeError, match="would require 4 engine"):
+        preflight_parallel_resource_capacity(_parallel_owner(), pool, _game_specs(2), 2, mode="error")

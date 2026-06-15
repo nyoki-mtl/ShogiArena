@@ -26,7 +26,7 @@ def test_store_games_preserves_snapshot_meta_fields(tmp_path: Path) -> None:
             "revision": 1,
             "base_revision": None,
             "rows": [{"game_id": "g-1"}],
-            "snapshotMeta": {
+            "snapshot_meta": {
                 "total_games": 10,
                 "completed_games": 3,
                 "running_games": 2,
@@ -38,7 +38,7 @@ def test_store_games_preserves_snapshot_meta_fields(tmp_path: Path) -> None:
     )
 
     assert stored is not None
-    meta = stored["snapshotMeta"]
+    meta = stored["snapshot_meta"]
     assert meta.get("total_games") == 10
     assert meta.get("completed_games") == 3
     assert meta.get("running_games") == 2
@@ -68,7 +68,7 @@ def test_compute_games_delta_preserves_snapshot_meta_fields(tmp_path: Path) -> N
     assert delta["kind"] == "delta"
     assert delta["revision"] == 4
     assert delta["base_revision"] == 3
-    meta = delta["snapshotMeta"]
+    meta = delta["snapshot_meta"]
     assert meta.get("total_games") == 12
     assert meta.get("completed_games") == 4
     assert meta.get("running_games") == 1

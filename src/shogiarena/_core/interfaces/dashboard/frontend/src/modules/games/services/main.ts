@@ -2,8 +2,8 @@ import type { DashboardGamesApi, LiveViewOptions } from '@/modules/games/types';
 import { createAssignmentController } from './assignments';
 import type { GamesServiceContext, GamesWindow } from './context';
 import { createGamesServiceContext } from './context';
-import { createDomBindings } from './domBindings';
-import { createGameDialogController } from './gameDialog';
+import { createDomBindings } from './dom-bindings';
+import { createGameDialogController } from './game-dialog';
 import { createScheduleController } from './schedule';
 
 const defaultWindow = window as GamesWindow;

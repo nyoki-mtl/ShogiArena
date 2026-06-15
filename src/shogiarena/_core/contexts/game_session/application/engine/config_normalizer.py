@@ -7,6 +7,7 @@ from typing import Literal
 import yaml
 
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
+from shogiarena._core.shared.kernel.overlay_options import select_overlay_options
 from shogiarena._core.shared.kernel.paths import resolve_path_like
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int, coerce_optional_text, coerce_str_list
 from shogiarena._core.shared.kernel.serialization import json_serialize
@@ -31,9 +32,8 @@ def load_overlays(overlays: list[Path]) -> JsonObject:
         raw = yaml.safe_load(overlay.read_text(encoding="utf-8")) or {}
         if not isinstance(raw, Mapping):
             raise TypeError("options_overlays YAML must be a mapping")
-        opts = raw.get("options") if "options" in raw else raw
-        if isinstance(opts, Mapping):
-            merged.update({str(key): json_serialize(value) for key, value in opts.items()})
+        opts = select_overlay_options(raw, source=str(overlay))
+        merged.update({str(key): json_serialize(value) for key, value in opts.items()})
     return merged
 
 

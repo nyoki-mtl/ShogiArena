@@ -127,21 +127,21 @@ def _build_default_summary_snapshot(*, source: str = "tournament") -> JsonObject
     timestamp = datetime.now(tz=UTC).isoformat()
     return {
         "is_summary_ready": False,
-        "summarySource": source,
+        "summary_source": source,
         "mode": source,
-        "tournamentType": None,
-        "flipPolicy": None,
-        "numEngines": 0,
-        "runDir": None,
+        "tournament_type": None,
+        "flip_policy": None,
+        "num_engines": 0,
+        "run_dir": None,
         "leaderboard": [],
-        "ratingInitial": None,
+        "rating_initial": None,
         "engines": [],
-        "enginesMeta": [],
-        "engineTimeControls": {},
-        "defaultTimeControl": None,
-        "engineInstances": {},
-        "engineStats": {},
-        "pairResults": {},
+        "engines_meta": [],
+        "engine_time_controls": {},
+        "default_time_control": None,
+        "engine_instances": {},
+        "engine_stats": {},
+        "pair_results": {},
         "timestamp": timestamp,
         "games": {
             "completed": 0,
@@ -164,12 +164,12 @@ def _create_dashboard_state(run_dir: Path) -> DashboardState:
     state = DashboardState()
 
     default_summary = _build_default_summary_snapshot(source="tournament")
-    default_summary["runDir"] = str(run_dir)
-    default_summary["liveView"] = json_serialize(build_live_view_snapshot(default_summary))
+    default_summary["run_dir"] = str(run_dir)
+    default_summary["live_view"] = json_serialize(build_live_view_snapshot(default_summary))
     state.set_summary_snapshot("tournament", default_summary)
 
     generate_summary = _build_default_summary_snapshot(source="generate")
-    generate_summary["runDir"] = str(run_dir)
+    generate_summary["run_dir"] = str(run_dir)
     state.set_summary_snapshot("generate", generate_summary)
     return state
 
@@ -183,6 +183,9 @@ def _create_api_server(
     schedule_boundary: DashboardScheduleBoundaryPort | None = None,
 ) -> ArenaAPIServer:
     resolved_run_dir = run_dir or db_path.parent
+    # On-demand replay engines need a real local instance; guarantee a pool so the
+    # runtime factory never has to synthesize a placeholder.
+    resolved_instance_pool = instance_pool if instance_pool is not None else InstancePool.ensure_default_local_pool()
     interface_dependencies = load_dashboard_interface_dependencies()
     state = _create_dashboard_state(resolved_run_dir)
     game_state = GameStateUpdater(
@@ -195,7 +198,7 @@ def _create_api_server(
         db_path=db_path,
         port=port,
         run_dir=resolved_run_dir,
-        instance_pool=instance_pool,
+        instance_pool=resolved_instance_pool,
         schedule_boundary=schedule_boundary,
         state=state,
         game_state=game_state,

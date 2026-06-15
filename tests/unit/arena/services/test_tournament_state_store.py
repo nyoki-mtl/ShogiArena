@@ -497,3 +497,18 @@ async def test_try_setup_tournament_rejects_unsealed_manifest(tmp_path: Path) ->
 
     assert resumed is False
     assert state.game_schedule == []
+
+
+def test_load_completed_game_ids_fails_fast_on_db_error() -> None:
+    # game.db is the authoritative source of completed games on resume; a read failure must fail
+    # closed rather than be treated as "zero completed" (which would re-run every game).
+    class _RaisingDb:
+        def get_games_with_players(self, *, game_type: str) -> list[dict[str, object]]:
+            raise RuntimeError("database is locked")
+
+    ctx = SimpleNamespace(
+        db_service=cast(Any, _RaisingDb()),
+        build_save_context=lambda: SimpleNamespace(is_generate_run=lambda: False),
+    )
+    with pytest.raises(RuntimeError, match="no-resume"):
+        TournamentSessionStateStore._load_completed_game_ids(cast(Any, ctx))

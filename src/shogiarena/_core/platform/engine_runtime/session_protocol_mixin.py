@@ -174,7 +174,11 @@ class AsyncUsiEngineProtocolMixin:
             self._options[parsed.name] = parsed
 
     async def _handle_info(self, line: str) -> None:
-        pv = self._parser.parse_info(line)
+        try:
+            pv = self._parser.parse_info(line)
+        except ValueError as exc:
+            logger.debug("Ignoring invalid info line from %s: %s (%s)", self.name, line, exc)
+            return
         if pv is None:
             return
         is_string_only = (
@@ -206,7 +210,11 @@ class AsyncUsiEngineProtocolMixin:
     def _handle_bestmove(self, line: str) -> None:
         sorted_pvs = self._collect_sorted_pvs()
         info_strings = self._collect_info_strings_snapshot()
-        result = self._parser.parse_bestmove(line, pvs=sorted_pvs)
+        try:
+            result = self._parser.parse_bestmove(line, pvs=sorted_pvs)
+        except ValueError as exc:
+            logger.debug("Ignoring invalid bestmove line from %s: %s (%s)", self.name, line, exc)
+            return
         if result is None:
             return
         result.info_strings = info_strings
@@ -242,10 +250,22 @@ class AsyncUsiEngineProtocolMixin:
             self._set_state(UsiEngineState.READY, reason="received bestmove during mate search")
             self._clear_ponder_handle()
             return
+        if self._state == UsiEngineState.PONDER:
+            logger.debug("[%s] dropping early ponder bestmove before ponderhit/stop: %s", self.name, line)
+            if self._bestmove_future is not None and not self._bestmove_future.done():
+                self._set_future_exception(
+                    self._bestmove_future,
+                    RuntimeError("Ponder bestmove arrived before ponderhit/stop"),
+                )
+            self._bestmove_future = None
+            self._reset_current_info()
+            self._info_handler = None
+            self._set_state(UsiEngineState.READY, reason="dropped early ponder bestmove")
+            self._clear_ponder_handle()
+            return
         expected_states = {
             UsiEngineState.WAITING_FOR_BESTMOVE,
             UsiEngineState.WAITING_FOR_PONDER_BESTMOVE,
-            UsiEngineState.PONDER,
         }
         if self._state not in expected_states:
             if self._state == UsiEngineState.WAITING_FOR_READYOK:

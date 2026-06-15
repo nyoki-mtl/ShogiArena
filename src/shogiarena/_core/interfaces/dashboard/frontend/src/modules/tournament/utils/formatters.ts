@@ -3,7 +3,7 @@ import {
     formatNodesCountDetail,
     formatNodesCountShort,
     parseTimeControlSpec,
-} from '@/modules/shared/utils/timeControl';
+} from '@/modules/shared/utils/time-control';
 
 export function formatOptionValue(value: unknown): string {
     if (value === null || value === undefined) return '-';

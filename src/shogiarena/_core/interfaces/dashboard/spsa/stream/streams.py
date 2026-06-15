@@ -127,11 +127,11 @@ class SpsaStreams(SpsaStreamHandlersMixin):
         metric = {
             "metric": self._detail_metric_name,
             "view": view,
-            "includeCount": include_count,
-            "payloadKb": round(size_kb, 2),
+            "include_count": include_count,
+            "payload_kb": round(size_kb, 2),
         }
         if view == "slim":
-            metric["detailPayloadKbSlim"] = metric["payloadKb"]
+            metric["detail_payload_kb_slim"] = metric["payload_kb"]
         else:
-            metric["detailPayloadKbFull"] = metric["payloadKb"]
+            metric["detail_payload_kb_full"] = metric["payload_kb"]
         logger.debug("[detail-stream] %s", metric)

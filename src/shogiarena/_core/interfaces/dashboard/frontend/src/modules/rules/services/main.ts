@@ -134,8 +134,6 @@ function createRulesModule(owner: RulesWindow): DashboardRulesApi {
         'beta',
         'min_games',
         'max_games',
-        'minGames',
-        'maxGames',
         'engines',
         'num_parallel',
     ] as const;
@@ -157,11 +155,15 @@ function createRulesModule(owner: RulesWindow): DashboardRulesApi {
     function buildRulesSignature(summarySource: JsonObject | NormalizedTournamentSummary): string {
         const keys = [
             'rules',
+            // wire (snake_case) and ViewModel (camelCase) variants: summarySource may be a raw
+            // wire JsonObject or a NormalizedTournamentSummary, so both forms are introspected.
+            'default_time_control',
             'defaultTimeControl',
+            'engine_time_controls',
             'engineTimeControls',
-            'spsaConfig',
+            'spsa_config',
             'adjudication',
-            'initialPositions',
+            'initial_positions',
             'repetition',
         ] as const;
         const parts: string[] = [];
@@ -188,12 +190,15 @@ function createRulesModule(owner: RulesWindow): DashboardRulesApi {
 
         const rulesKeys = [
             'rules',
+            // wire (snake_case) and ViewModel (camelCase) variants; see buildRulesSignature.
+            'default_time_control',
             'defaultTimeControl',
+            'engine_time_controls',
             'engineTimeControls',
             'sprt',
-            'spsaConfig',
+            'spsa_config',
             'adjudication',
-            'initialPositions',
+            'initial_positions',
             'repetition',
         ] as const;
         const hasRulesData = (obj: unknown): boolean => {

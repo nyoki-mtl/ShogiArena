@@ -74,3 +74,35 @@ def test_parse_bestmove_with_pv() -> None:
 
 def test_parse_bestmove_unrelated_line() -> None:
     assert UsiProtocolParser.parse_bestmove("info depth 12") is None
+
+
+def test_parse_info_mate_minus_zero_is_mated() -> None:
+    # YaneuraOu emits "mate -0" for "being mated, distance unknown"; int("-0") == 0 must not
+    # flip it into a winning mate (regression for the eval sign-reversal bug).
+    pv = UsiProtocolParser.parse_info("info depth 5 score mate -0 pv 7g7f")
+    assert pv is not None
+    assert pv.eval is not None
+    assert pv.eval.is_mated_score()
+    assert not pv.eval.is_mate_score()
+
+
+def test_parse_info_mate_positive_is_winning() -> None:
+    pv = UsiProtocolParser.parse_info("info depth 5 score mate 3 pv 7g7f")
+    assert pv is not None
+    assert pv.eval is not None
+    assert pv.eval.is_mate_score()
+    assert not pv.eval.is_mated_score()
+
+
+def test_parse_info_mate_negative_is_mated() -> None:
+    pv = UsiProtocolParser.parse_info("info depth 5 score mate -3 pv 7g7f")
+    assert pv is not None
+    assert pv.eval is not None
+    assert pv.eval.is_mated_score()
+
+
+def test_parse_info_invalid_numeric_token_raises() -> None:
+    # A malformed numeric token raises ValueError; the session info handler guards against this
+    # so a single broken line cannot tear down the read loop.
+    with pytest.raises(ValueError):
+        UsiProtocolParser.parse_info("info depth x")

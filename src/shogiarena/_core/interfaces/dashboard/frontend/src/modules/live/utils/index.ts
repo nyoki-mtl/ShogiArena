@@ -1,5 +1,5 @@
 import type { WorkerSnapshot } from '@/types/live';
-import { gameResultLabel } from '@/modules/shared/utils/gameResult';
+import { gameResultLabel } from '@/modules/shared/utils/game-result';
 
 export const DEFAULT_INITIAL_SFEN = 'startpos';
 export const INCREMENT_PLACEHOLDER = '\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0';

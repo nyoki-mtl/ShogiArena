@@ -1,146 +1,65 @@
-# Shogi Arena ドキュメント
+# ShogiArena ドキュメント
 
-**Shogi Arena** は、将棋エンジンの対局・評価・チューニングを行うための高性能なプラットフォームです。
+ShogiArena は、USI 将棋エンジンの自動対局、トーナメント管理、SPRT 検定、SPSA チューニングを実行するためのプラットフォームです。
 
-## 主な機能
+## 主な用途
 
-### トーナメント実行モード
+- 複数エンジンの `round_robin` / `gauntlet` トーナメントを実行する
+- 2 エンジンの強さ差を SPRT で検定する
+- SPSA でエンジンパラメータを自動調整する
+- 実行中の対局、棋譜、順位表、チューニング状況をダッシュボードで監視する
+- Python から USI エンジン操作やトーナメント実行を自動化する
 
-- **Tournament** (`shogiarena run tournament`): ラウンドロビン、ガントレット方式による包括的なエンジン比較
-- **SPRT** (`shogiarena run sprt`): 統計的仮説検定による効率的なバージョン比較（早期停止機能付き）
-- **SPSA** (`shogiarena run spsa`): 勾配ベースのエンジンパラメータ最適化
+## 最短ルート
 
-### その他の機能
+```bash
+pip install shogiarena
+shogiarena config init
+cp examples/configs/run/tournament/example.yaml tournament.yaml
+# tournament.yaml の engines を自分の環境に合わせて編集
+shogiarena run tournament tournament.yaml --dry-run
+```
 
-- **リアルタイムダッシュボード**: Web ブラウザでの対局監視、Live View によるリアルタイム更新
-- **USI プロトコル完全準拠**: 任意の USI エンジンをサポート
-- **Python ライブラリ**: `shogiarena.engine` / `shogiarena.tournament` を使った自動化
-- **リモート実行**: SSH 経由での分散トーナメント実行
+実際に動かすには USI エンジン設定が必要です。初めての場合は [クイックスタート](getting-started/quick-start.md) から進めてください。
 
-## 公開 API と内部実装
+## 公開 API
 
-利用者向けの公開 import は次を基準にしています。
+利用者向けに互換性を意識している import は次のモジュールです。
 
 - `shogiarena.engine`
 - `shogiarena.tournament`
 - `shogiarena.cli`
 - `shogiarena.composition`
 
-実装本体は `shogiarena._core` にあります。これは内部実装であり、import できても公開 API ではありません。
+`shogiarena._core` 配下は内部実装です。ドキュメント内で開発者向けに触れることはありますが、通常の利用では直接 import しないでください。
 
-## はじめに
+## 読み方
 
-### インストールと初期設定
+- 初めて使う: [インストール](getting-started/installation.md) → [クイックスタート](getting-started/quick-start.md)
+- 設定を書く: [エンジン設定](user-guide/engine-configuration.md) と [トーナメント](user-guide/tournaments.md)
+- 実行を監視する: [ダッシュボード](user-guide/dashboard.md)
+- 自動化する: [Python ライブラリ](user-guide/python-library.md)
+- コマンドを確認する: [CLI](api/cli.md)
+- 統計の背景を知る: [内部技術](internals/index.md)
 
-```bash
-# インストール（pip または uv）
-pip install shogiarena
-# または
-uv pip install shogiarena
-
-# 環境の初期化（対話的）
-shogiarena config init
-```
-
-詳細は [インストールガイド](getting-started/installation.md) を参照してください。
-
-### 最初のトーナメント
+## 基本コマンド
 
 ```bash
-# トーナメント実行
-shogiarena run tournament my-tournament.yaml
-```
-
-ステップバイステップのチュートリアルは [クイックスタート](getting-started/quick-start.md) を参照してください。
-
-## ユーザーガイド
-
-### 主要機能
-
-- **[Tournaments](user-guide/tournaments.md)**: トーナメント設定、スケジューラー、時間制御、判定ルール
-- **[SPSA Tuning](user-guide/spsa.md)**: パラメータチューニングの設定と実行
-- **[Python Library](user-guide/python-library.md)**: Python API の使用方法（エンジン操作、カスタムランナー）
-- **[Dashboard](user-guide/dashboard.md)**: リアルタイムダッシュボードの使い方
-
-### 設定ガイド
-
-- **[Engine Configuration](user-guide/engine-configuration.md)**: エンジン設定ファイルの詳細
-- **[Configuration System](user-guide/configuration.md)**: 環境設定とプレースホルダー
-- **[Build System](user-guide/build-system.md)**: アーティファクト参照とビルド管理
-- **[Opening Books](user-guide/opening-books.md)**: 開局集の作成と管理
-
-### 高度な機能
-
-- **[Remote Execution](user-guide/remote-execution.md)**: SSH 経由のリモート実行
-- **[Utility Tools](user-guide/tools.md)**: 追加ツール（mate, generate など）
-
-## 技術ドキュメント
-
-開発者やアーキテクチャに興味がある方向け：
-
-- **[Architecture](technical/architecture.md)**: システム全体のアーキテクチャ
-- **[Project Structure](development/project-structure.md)**: ディレクトリ構成とモジュール詳細
-- **[Engine Layers](technical/engine-layers.md)**: `shogiarena.engine` と `_core` の関係
-- **[USI Engine](technical/usi-engine.md)**: USI プロトコル実装の詳細
-- **[Services](technical/services.md)**: Rating, SPRT, Statistics などのサービス
-- **[API Reference](api/index.md)**: Python API リファレンス
-
-## その他
-
-- **[Troubleshooting](troubleshooting.md)**: よくある問題と解決方法
-
-## 開発への参加
-
-- **[Contributing](development/contributing.md)**: 開発への参加方法（ビルド、テスト、コーディング規約）
-
-## クイックリファレンス
-
-### 基本コマンド
-
-```bash
-# 環境初期化
-shogiarena config init
-
-# トーナメント実行
+# トーナメント
 shogiarena run tournament config.yaml
 
-# SPRT テスト
+# SPRT
 shogiarena run sprt config.yaml
 
-# SPSA チューニング
+# SPSA
 shogiarena run spsa config.yaml
 
-# ダッシュボードサーブ（完了後の結果確認）
+# 自己対局による棋譜生成
+shogiarena run generate config.yaml
+
+# 保存済み run のダッシュボード表示
 shogiarena dashboard serve --run-dir /path/to/run
+
+# 結果集計
+shogiarena results summary /path/to/run --format text
 ```
-
-### Python ライブラリ
-
-```python
-import asyncio
-
-from shogiarena.engine import UsiThinkRequest, create_engine
-
-
-async def main() -> None:
-    async with await create_engine("engine.yaml") as engine:
-        result = await engine.think(
-            sfen="startpos",
-            request=UsiThinkRequest(movetime=5_000),
-        )
-        print(result.bestmove)
-
-
-asyncio.run(main())
-```
-
-```python
-import asyncio
-
-from shogiarena.tournament import run_tournament
-
-
-asyncio.run(run_tournament("tournament.yaml", run_dir="runs/example"))
-```
-
-詳細は [Python Library Guide](user-guide/python-library.md) を参照してください。

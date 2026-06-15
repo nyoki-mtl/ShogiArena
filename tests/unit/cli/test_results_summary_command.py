@@ -29,7 +29,7 @@ def _create_result_db(db_path: Path) -> None:
                     num_moves=1,
                     black_player_id=engine_a.id,
                     white_player_id=engine_b.id,
-                    init_position_sfen="startpos",
+                    initial_position_sfen="startpos",
                     updated_date=datetime(2026, 6, 5, 0, 0, 0),
                 ),
                 Game(
@@ -39,7 +39,7 @@ def _create_result_db(db_path: Path) -> None:
                     num_moves=1,
                     black_player_id=engine_b.id,
                     white_player_id=engine_a.id,
-                    init_position_sfen="startpos",
+                    initial_position_sfen="startpos",
                     updated_date=datetime(2026, 6, 5, 0, 0, 1),
                 ),
             ]
@@ -146,7 +146,7 @@ def test_results_summary_command_handles_corrupted_game_result(tmp_path: Path) -
                 num_moves=1,
                 black_player_id=engine_a.id,
                 white_player_id=engine_b.id,
-                init_position_sfen="startpos",
+                initial_position_sfen="startpos",
                 updated_date=datetime(2026, 6, 5, 0, 0, 0),
             )
         )

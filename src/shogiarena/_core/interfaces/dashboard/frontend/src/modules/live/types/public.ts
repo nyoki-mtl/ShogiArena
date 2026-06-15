@@ -1,6 +1,6 @@
 import type { LiveGameNavigationOptions } from '@/types/globals';
 import type { LiveCardId, LiveCardState, LiveClockState, WorkerSnapshotSummary } from './internal';
-import type { EngineStatusSnapshot } from '@/modules/live/utils/engineStatus';
+import type { EngineStatusSnapshot } from '@/modules/live/utils/engine-status';
 import type { IndexedPayload, JsonObject } from '@/types/shared';
 
 export type GameResultName =
@@ -100,13 +100,13 @@ export type LiveViewProgressState = 'normal' | 'paused' | 'draining' | 'finished
 
 export interface LiveViewProgressSnapshot extends JsonObject {
     kind: LiveViewProgressKind;
-    unitLabel: string;
+    unit_label: string;
     completed: number | null;
     total: number | null;
     cancelled?: number | null;
-    isFinal?: boolean;
+    is_final?: boolean;
     state?: LiveViewProgressState;
-    updatedAt?: string | null;
+    updated_at?: string | null;
 }
 
 export interface LiveViewSnapshot extends JsonObject {
@@ -118,12 +118,12 @@ export interface LiveViewSnapshot extends JsonObject {
 export type SseWorkerUpdatePayload = IndexedPayload<WorkerSnapshotUpdate>;
 
 export interface SseSummaryPayload extends JsonObject {
-    defaultTimeControl?: string | null;
-    engineTimeControls?: Record<string, string>;
-    gamesCompleted?: number;
-    gamesScheduled?: number;
-    liveView?: LiveViewSnapshot | null;
-    summarySource?: string;
+    default_time_control?: string | null;
+    engine_time_controls?: Record<string, string>;
+    games_completed?: number;
+    games_scheduled?: number;
+    live_view?: LiveViewSnapshot | null;
+    summary_source?: string;
 }
 
 export type LiveTimeControlMode = 'time' | 'fixed' | 'search';

@@ -9,14 +9,14 @@ import {
     getCorrelationContainer,
     PARAMETER_DETAIL_CONTAINER_ID,
     PARAMETER_DETAIL_TITLE_ID,
-} from './correlation.layout';
+} from './correlation-layout';
 import {
     applyParameterSort,
     buildParameterTable,
     isParameterSortKey,
     sortParameterInsights,
-} from './correlation.table';
-import { buildChartData, renderParameterChart } from './correlation.charts';
+} from './correlation-table';
+import { buildChartData, renderParameterChart } from './correlation-charts';
 import {
     buildParameterInsights,
     getParameterInsight,
@@ -30,8 +30,8 @@ import {
     setPendingParameterSelection,
     setSelectedParameter,
     updateParameterSortState,
-} from './correlation.state';
-import type { ParameterCorrelationEntry, ParameterInsight } from './parameterShared';
+} from './correlation-state';
+import type { ParameterCorrelationEntry, ParameterInsight } from './parameter-shared';
 
 let tableInteractionController: AbortController | null = null;
 let parameterTableHost: HTMLElement | null = null;
@@ -174,7 +174,7 @@ function getCorrelationWorker(): Worker | null {
         return null;
     }
     try {
-        const worker = new Worker(new URL('../../workers/correlationWorker.ts', import.meta.url), { type: 'module' });
+        const worker = new Worker(new URL('../../workers/correlation-worker.ts', import.meta.url), { type: 'module' });
         let resolveReady: ((value: Worker | null) => void) | null = null;
         let rejectReady: ((reason?: unknown) => void) | null = null;
         correlationWorkerReady = new Promise((resolve, reject) => {
@@ -263,8 +263,10 @@ function computeParameterInsightsWithWorker(
                 if (correlationWorker) {
                     correlationWorker.terminate();
                 }
+                // A single slow computation must not permanently disable the worker for the whole
+                // session (unlike a ready-timeout/onerror). Drop the instance so the next request
+                // recreates a fresh worker; leave correlationWorkerDisabled untouched.
                 correlationWorker = null;
-                correlationWorkerDisabled = true;
                 correlationWorkerReady = null;
                 reject(new Error('Correlation worker timeout'));
             }, CORRELATION_WORKER_TIMEOUT_MS);

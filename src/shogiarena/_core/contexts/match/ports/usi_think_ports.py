@@ -94,6 +94,8 @@ class UsiThinkRequest:
         ensure_positive("binc", self.binc, should_allow_zero=True)
         ensure_positive("winc", self.winc, should_allow_zero=True)
         ensure_positive("byoyomi", self.byoyomi, should_allow_zero=True)
+        ensure_positive("depth", self.depth)
+        ensure_positive("nodes", self.nodes)
 
     def to_command(self) -> str:
         parts: list[str] = ["go"]

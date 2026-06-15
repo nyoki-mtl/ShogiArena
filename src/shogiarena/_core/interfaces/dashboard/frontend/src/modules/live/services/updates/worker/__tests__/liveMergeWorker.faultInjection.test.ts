@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { __testGetMoveSeq, __testGetRecoveryState, __testHandleEnvelope, __testResetState } from '../liveMergeWorker';
+import { __testGetMoveSeq, __testGetRecoveryState, __testHandleEnvelope, __testResetState } from '../live-merge-worker';
 
 type Envelope = {
     topic: string;
@@ -109,7 +109,7 @@ describe('liveMergeWorker fault injection', () => {
                 assignments: { '0': 'g1' },
                 gids: ['g1'],
                 assignment_rev: 1,
-                updatedAt: 0,
+                updated_at: 0,
             },
         });
         __testHandleEnvelope(snapshotEnvelope(2, 1, 1));

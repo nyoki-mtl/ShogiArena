@@ -37,7 +37,7 @@ ShogiArena は SSH 経由でリモートサーバー上でエンジンを実行�
 ### 基本的な SSH 設定
 
 ```yaml
-# configs/resources/instances/ssh_remote.yaml
+# examples/configs/resources/instances/ssh_example.yaml
 name: "remote1"
 type: "ssh"
 hosts:
@@ -46,7 +46,7 @@ user: "username"
 identity_file: "~/.ssh/id_rsa"
 project_root: "$HOME/ShogiArena-remote"
 slots: 4
-is_strict_host_key_checking: true
+strict_host_key_checking: true
 ```
 
 #### 主なフィールド
@@ -61,7 +61,7 @@ is_strict_host_key_checking: true
 | `port` | SSH ポート。省略時は 22 |
 | `project_root` | リモート側の作業ディレクトリ（省略時は `~/ShogiArena-remote`） |
 | `slots` | 同時実行可能な対局数 |
-| `is_strict_host_key_checking` | host key 検証を厳格に行うか（デフォルト: true） |
+| `strict_host_key_checking` | host key 検証を厳格に行うか |
 | `tags` | インスタンスのタグ（任意） |
 
 ### 同じ設定を複数ホストへ展開する
@@ -99,20 +99,20 @@ CLI に `--instances` オプションはありません。run 設定ファイル
 experiment_name: "remote_tournament"
 
 instances:
-  - configs/resources/instances/local.yaml
-  - configs/resources/instances/ssh_remote.yaml
+  - examples/configs/resources/instances/local_example.yaml
+  - examples/configs/resources/instances/ssh_example.yaml
 
 engines:
   - name: "EngineA"
-    engine_path: "configs/engine/engine_a.yaml"
+    engine_path: "engine_a.yaml"
     instance_id: "remote1"
   
   - name: "EngineB"
-    engine_path: "configs/engine/engine_b.yaml"
+    engine_path: "engine_b.yaml"
     instance_id: "local"
   
   - name: "EngineC"
-    engine_path: "configs/engine/engine_c.yaml"
+    engine_path: "engine_c.yaml"
     instance_id: "remote1"
 
 tournament:
@@ -154,10 +154,6 @@ shogiarena run tournament tournament.yaml \
 - エンジンバイナリ（`engine_path` で指定されたファイル）
 - 設定ファイル（YAML）
 - 開局集（`initial_positions.source` で指定されたファイル）
-
-### 同期対象の除外
-
-`.gitignore` スタイルで同期対象を制御できます（将来実装予定）。
 
 ## SSH 認証の設定
 
@@ -277,4 +273,3 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 
 - [トーナメントガイド](tournaments.md): トーナメント設定の詳細
 - [エンジン設定](engine-configuration.md): エンジン設定ファイルの書き方
-- [技術ドキュメント - Instances](../technical/instances.md): インスタンスシステムの設計詳細

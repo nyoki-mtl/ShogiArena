@@ -59,7 +59,7 @@ class TestColorTimelineEntry:
             "losses",
             "draws",
             "games",
-            "winRate",
+            "win_rate",
         }
 
     def test_no_optional_keys(self) -> None:
@@ -69,13 +69,13 @@ class TestColorTimelineEntry:
 class TestMatchTimelineEntry:
     def test_required_keys(self) -> None:
         assert _required_keys(MatchTimelineEntry) == {
-            "gameIndex",
+            "game_index",
             "wins",
             "losses",
             "draws",
             "games",
-            "winRate",
-            "eloEstimate",
+            "win_rate",
+            "elo_estimate",
             "black",
             "white",
         }
@@ -92,7 +92,7 @@ class TestMatchTimelineEntry:
 class TestSprtTimelineEntry:
     def test_required_keys(self) -> None:
         assert _required_keys(SprtTimelineEntry) == {
-            "gameIndex",
+            "game_index",
             "llr",
             "lower",
             "upper",
@@ -101,8 +101,10 @@ class TestSprtTimelineEntry:
             "draws",
             "losses",
             "games",
-            "winRate",
-            "eloEstimate",
+            "win_rate",
+            "elo_estimate",
+            "pending_pairs",
+            "pending_games",
         }
 
     def test_no_optional_keys(self) -> None:

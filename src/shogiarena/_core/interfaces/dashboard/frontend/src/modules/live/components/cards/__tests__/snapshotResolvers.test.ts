@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { resolveSnapshotForWorkerCard } from '@/modules/live/components/cards/snapshotResolvers';
+import { resolveSnapshotForWorkerCard } from '@/modules/live/components/cards/snapshot-resolvers';
 import type { WorkerSnapshotRecord } from '@/modules/live/components/cards/types';
 
 function createSnapshot(overrides: Partial<WorkerSnapshotRecord> = {}): WorkerSnapshotRecord {

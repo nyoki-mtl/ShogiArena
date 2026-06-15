@@ -55,7 +55,7 @@ class WorkerStreamMediator:
 
     @staticmethod
     def _extract_gid(payload: Mapping[str, object] | GameSnapshot) -> str | None:
-        for key in ("gid", "game_id", "gameId"):
+        for key in ("gid", "game_id", "game_id"):
             value = json_serialize(payload.get(key))
             if s := coerce_str(value):
                 return s

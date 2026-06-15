@@ -84,7 +84,17 @@ function resolveStorage(owner: Window & typeof globalThis): Storage | undefined 
     return undefined;
 }
 
+// Keyed by owner so distinct windows (tests, HMR, embedded views) each get their own theme binding;
+// re-installing the same owner reuses its instance to avoid duplicate matchMedia/toggle listeners.
+const themeRegistry = new WeakMap<Window, ThemeAPI>();
+
 export function installDashboardTheme(owner: Window & typeof globalThis = window): ThemeAPI {
+    if (owner?.document) {
+        const existing = themeRegistry.get(owner);
+        if (existing) {
+            return existing;
+        }
+    }
     if (!owner || !owner.document) {
         let theme: DashboardTheme = 'light';
         return {
@@ -174,12 +184,14 @@ export function installDashboardTheme(owner: Window & typeof globalThis = window
         });
     }
 
-    return {
+    const api: ThemeAPI = {
         getTheme: () => currentTheme,
         setTheme,
         toggleTheme,
         clearPreference,
     };
+    themeRegistry.set(owner, api);
+    return api;
 }
 
 export type { DashboardTheme, ThemeAPI };

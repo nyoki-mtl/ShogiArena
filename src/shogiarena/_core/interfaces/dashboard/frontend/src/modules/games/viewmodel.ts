@@ -1,11 +1,11 @@
 import { evaluateOutcome } from '@/modules/games/utils';
 import type { GameOutcomeInfo, NormalizedGameRow } from '@/modules/games/types';
-import { MOVES_PLACEHOLDER, TIME_PLACEHOLDER } from './viewmodel.constants';
-import { formatTimestamp } from './viewmodel.format';
-import { buildResultViewModel, type GameResultViewModel } from './viewmodel.result';
+import { MOVES_PLACEHOLDER, TIME_PLACEHOLDER } from './viewmodel-constants';
+import { formatTimestamp } from './viewmodel-format';
+import { buildResultViewModel, type GameResultViewModel } from './viewmodel-result';
 
-export { sortRows } from './viewmodel.sort';
-export type { GameResultViewModel, ResultBadgeVariant } from './viewmodel.result';
+export { sortRows } from './viewmodel-sort';
+export type { GameResultViewModel, ResultBadgeVariant } from './viewmodel-result';
 
 export type StatusIndicatorVariant = 'pending' | 'running' | 'completed' | 'cancelled';
 

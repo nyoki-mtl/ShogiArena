@@ -161,7 +161,7 @@ def _resolve_available_includes(detail: Mapping[str, JsonValue]) -> set[str]:
     payload_map = _as_json_object(payload) or {}
     if payload_map:
         available.add("raw_payload")
-        if "score_history" in payload_map or "scoreHistory" in payload_map:
+        if "score_history" in payload_map:
             available.add("score_history")
 
     return available
@@ -194,7 +194,6 @@ PAYLOAD_HEAVY_KEYS = {
     "ltc_games_meta",
     "raw_events",
     "score_history",
-    "scoreHistory",
 }
 
 
@@ -236,11 +235,11 @@ def _prune_payload(response: JsonObject, requested: set[str], loaded: set[str], 
 
 
 def _contains_score_history(payload: Mapping[str, JsonValue]) -> bool:
-    return "score_history" in payload or "scoreHistory" in payload
+    return "score_history" in payload
 
 
 def _build_score_history_digest(payload: Mapping[str, JsonValue], window: str) -> JsonObject:
-    history_obj = payload.get("score_history") or payload.get("scoreHistory")
+    history_obj = payload.get("score_history")
     history_map = _as_json_object(history_obj)
     if history_map is not None and history_map.get("view") == "digest" and history_map.get("window") == window:
         return dict(history_map)

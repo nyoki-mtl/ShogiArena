@@ -14,7 +14,7 @@ import type {
 } from '@/modules/tournament/types';
 import { deriveSprtBanner, renderApiErrorBanner } from '@/modules/tournament/components/data';
 import { normalizeTournamentSummary } from './normalizers';
-import { buildTournamentStoreSummaryPayload } from './summaryStorePayload';
+import { buildTournamentStoreSummaryPayload } from './summary-store-payload';
 import type { JsonObject, MutableJsonObject } from '@/types/shared';
 import { summaryStore } from '@/store';
 
@@ -115,7 +115,7 @@ export function installTournamentData(owner: TournamentWindow = defaultWindow): 
     }
 
     const hasSummarySnapshot = (payload: MutableJsonObject): boolean =>
-        Object.hasOwn(payload, 'standings') || Object.hasOwn(payload, 'enginesMeta');
+        Object.hasOwn(payload, 'standings') || Object.hasOwn(payload, 'engines_meta');
 
     const clearSummaryFallback = (): void => {
         if (tournamentSummaryFallbackTimer !== null) {
@@ -291,7 +291,7 @@ export function installTournamentData(owner: TournamentWindow = defaultWindow): 
                 ? liveView.progress
                 : null;
         const isFinal =
-            typeof liveProgress?.isFinal === 'boolean' ? liveProgress.isFinal : normalized.tournamentFinished;
+            typeof liveProgress?.is_final === 'boolean' ? liveProgress.is_final : normalized.tournamentFinished;
         const sprtConclusion = normalized.sprt?.decision ?? normalized.sprtConclusion ?? null;
         const isSprt = sprtConclusion !== null && sprtConclusion !== undefined;
 
@@ -379,10 +379,10 @@ export function installTournamentData(owner: TournamentWindow = defaultWindow): 
         const summary = normalized.raw as TournamentSummary;
 
         const candidateOrder: unknown[] = [
-            summary?.maxMovesToDraw,
-            summary?.rules?.maxMovesToDraw,
-            summary?.rules?.adjudication?.maxMovesToDraw,
-            summary?.tournamentConfig?.rules?.maxMovesToDraw,
+            summary?.max_moves_to_draw,
+            summary?.rules?.max_moves_to_draw,
+            summary?.rules?.adjudication?.max_moves_to_draw,
+            summary?.tournament_config?.rules?.max_moves_to_draw,
         ];
 
         const normalizeCandidate = (value: unknown): number | null => {

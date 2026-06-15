@@ -54,7 +54,7 @@ async def test_get_schedule_uses_games_snapshot_payload_when_supplier_is_valid()
             "revision": 9,
             "base_revision": 8,
             "rows": [{"game_id": "supplier"}],
-            "snapshotMeta": {"total_games": 7, "pending_games": 2},
+            "snapshot_meta": {"total_games": 7, "pending_games": 2},
         },
     )
 

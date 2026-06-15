@@ -125,9 +125,9 @@ def test_seed_spsa_initial_summary_uses_canonical_engine_catalog_helpers(tmp_pat
     meta_payload = json.loads((tmp_path / "spsa" / "meta.json").read_text(encoding="utf-8"))
 
     assert source == "spsa"
-    assert summary_payload["engineTimeControls"] == expected_time_controls
-    assert summary_payload["defaultTimeControl"] == expected_default_time_control
-    assert summary_payload["engineInstances"] == expected_instances
+    assert summary_payload["engine_time_controls"] == expected_time_controls
+    assert summary_payload["default_time_control"] == expected_default_time_control
+    assert summary_payload["engine_instances"] == expected_instances
     assert meta_payload["engine_time_controls"] == expected_time_controls
     assert meta_payload["default_time_control"] == expected_default_time_control
     assert meta_payload["engine_instances"] == expected_instances

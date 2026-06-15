@@ -7,9 +7,9 @@ import {
     renderConvergenceError as renderConvergenceErrorLayout,
     renderConvergenceLoading as renderConvergenceLoadingLayout,
     resetConvergenceCharts,
-} from './convergence.layout';
-import { renderDeltaNormHistoryChartNumeric } from './convergence.deltaChart';
-import { renderLtcEloChart, renderLtcEloChartProcessed } from './convergence.ltcChart';
+} from './convergence-layout';
+import { renderDeltaNormHistoryChartNumeric } from './convergence-delta-chart';
+import { renderLtcEloChart, renderLtcEloChartProcessed } from './convergence-ltc-chart';
 import {
     buildDeltaMetaLabel,
     computeConvergenceDomainSize,
@@ -17,7 +17,7 @@ import {
     normalizeDirectionalSeries,
     normalizeLtcResults,
     resolveLtcYAxis,
-} from './convergence.compute';
+} from './convergence-compute';
 
 let lastConvergenceDomainSize: number | null = null;
 let convergenceComputeSeq = 0;
@@ -136,7 +136,7 @@ function getConvergenceWorker(): Worker | null {
         return null;
     }
     try {
-        const worker = new Worker(new URL('../../workers/convergenceWorker.ts', import.meta.url), { type: 'module' });
+        const worker = new Worker(new URL('../../workers/convergence-worker.ts', import.meta.url), { type: 'module' });
         let resolveReady: ((value: Worker | null) => void) | null = null;
         let rejectReady: ((reason?: unknown) => void) | null = null;
         convergenceWorkerReady = new Promise((resolve, reject) => {
@@ -233,8 +233,9 @@ function computeConvergencePayload(
                 if (convergenceWorker) {
                     convergenceWorker.terminate();
                 }
+                // Recreate on next call instead of permanently disabling: a single slow compute
+                // must not degrade the whole session to main-thread fallback.
                 convergenceWorker = null;
-                convergenceWorkerDisabled = true;
                 convergenceWorkerReady = null;
                 reject(new Error('Convergence worker timeout'));
             }, CONVERGENCE_WORKER_TIMEOUT_MS);

@@ -40,6 +40,9 @@ logger = logging.getLogger(__name__)
 class SpawnerBackedUSIBridge:
     """Thin USI bridge backed by EngineProcessSpawner (local or SSH)."""
 
+    GRACEFUL_STOP_TIMEOUT_SECONDS = 5.0
+    KILL_WAIT_TIMEOUT_SECONDS = 5.0
+
     def __init__(
         self,
         *,
@@ -109,20 +112,24 @@ class SpawnerBackedUSIBridge:
             self._stderr_task = None
 
         proc = self.process
-        if proc and proc.returncode is None:
-            writer = proc.stdin
-            if writer is not None and not writer.is_closing():
-                with contextlib.suppress(RuntimeError):
-                    await self.send_line("quit")
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5.0)
-            except TimeoutError:
-                logger.warning("Process %s did not terminate gracefully, killing", self.name)
-                proc.kill()
-                await proc.wait()
-
-        self.process = None
-        self._is_stopping = False
+        try:
+            if proc and proc.returncode is None:
+                writer = proc.stdin
+                if writer is not None and not writer.is_closing():
+                    with contextlib.suppress(RuntimeError):
+                        await self.send_line("quit")
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=self.GRACEFUL_STOP_TIMEOUT_SECONDS)
+                except TimeoutError:
+                    logger.warning("Process %s did not terminate gracefully, killing", self.name)
+                    proc.kill()
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=self.KILL_WAIT_TIMEOUT_SECONDS)
+                    except TimeoutError:
+                        logger.warning("Process %s did not exit after kill; giving up wait", self.name)
+        finally:
+            self.process = None
+            self._is_stopping = False
         logger.debug("Engine process %s stop procedure finished", self.name)
 
     async def send_line(self, command: str) -> None:
@@ -173,7 +180,14 @@ class SpawnerBackedUSIBridge:
             raise RuntimeError(msg)
         try:
             while True:
-                line_bytes = await proc.stdout.readline()
+                try:
+                    line_bytes = await proc.stdout.readline()
+                except ValueError as exc:
+                    # readline() raises ValueError when a single line exceeds the stream buffer
+                    # limit; it discards that line from the buffer, so skip it and keep reading
+                    # instead of tearing down the engine session.
+                    logger.warning("Skipping oversized line from %s: %s", self.name, exc)
+                    continue
                 if not line_bytes:
                     break
                 yield line_bytes.decode("utf-8", errors="replace").rstrip("\r\n")

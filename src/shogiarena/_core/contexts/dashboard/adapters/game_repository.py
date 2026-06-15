@@ -38,7 +38,7 @@ def load_games_for_dashboard(db_path: Path, *, game_type: str = "arena") -> list
                 black_player.player_name.label("black"),
                 white_player.player_name.label("white"),
                 Game.game_result,
-                Game.init_position_sfen,
+                Game.initial_position_sfen,
             )
             .join(black_player, Game.black_player_id == black_player.id)
             .join(white_player, Game.white_player_id == white_player.id)
@@ -123,7 +123,7 @@ def build_games_list_raw_payload(
                 Game.game_result,
                 Game.num_moves,
                 Game.end_date,
-                Game.init_position_sfen,
+                Game.initial_position_sfen,
                 Game.time_control_black,
                 Game.time_control_white,
             )
@@ -211,7 +211,7 @@ def build_match_history_raw_payload(
                     Game.game_result,
                     Game.num_moves.label("total_plies"),
                     Game.end_date.label("end_time"),
-                    Game.init_position_sfen.label("initial_sfen"),
+                    Game.initial_position_sfen.label("initial_sfen"),
                     Game.time_control_black,
                     Game.time_control_white,
                 )

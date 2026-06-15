@@ -27,7 +27,6 @@ class SpsaOrchestratorUpdateMixin:
     _ltc_baseline_snapshot: list[ParamEntry] | None
     _ltc_baseline_update_idx: int | None
     _update_batch_execution_service: Any
-    _update_delta_service: Any
     _update_recording_service: Any
     _ltc_post_update_service: Any
 

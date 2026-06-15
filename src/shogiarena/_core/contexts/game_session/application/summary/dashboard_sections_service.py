@@ -47,14 +47,17 @@ class TournamentSummaryDashboardSectionsService:
 
         btd_section: JsonObject = {
             "ratings": {
-                name: {"elo": float(btd.ratings[name]), "se": float(btd.rating_se.get(name, 0.0))}
+                name: {
+                    "elo": float(btd.ratings[name]),
+                    "se": float(se) if (se := btd.rating_se.get(name)) is not None else None,
+                }
                 for name in btd.ratings.keys()
             },
             "anchor": btd.anchor,
             "gamma_elo": float(btd.gamma_elo),
-            "gamma_elo_se": float(btd.gamma_elo_se or 0.0),
+            "gamma_elo_se": float(btd.gamma_elo_se) if btd.gamma_elo_se is not None else None,
             "draw_eq": float(btd.draw_eq),
-            "draw_eq_se": float(btd.draw_eq_se or 0.0),
+            "draw_eq_se": float(btd.draw_eq_se) if btd.draw_eq_se is not None else None,
             "rating_cov": cov_map,
         }
 

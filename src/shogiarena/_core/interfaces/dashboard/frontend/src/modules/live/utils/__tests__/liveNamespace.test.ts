@@ -155,8 +155,8 @@ describe('Live namespace diagnostics', () => {
         const diagnostics = getLiveNamespaceDiagnostics(owner);
         const metric = diagnostics.metrics['hydrator:test'];
         expect(metric).toBeDefined();
-        expect(metric?.extras?.latencyMs?.samples).toBe(1);
-        expect(metric?.extras?.latencyMs?.last).toBeGreaterThanOrEqual(0);
+        expect(metric?.extras?.latency_ms?.samples).toBe(1);
+        expect(metric?.extras?.latency_ms?.last).toBeGreaterThanOrEqual(0);
         expect(metric?.extras?.retries?.last).toBe(2);
     });
 

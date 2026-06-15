@@ -4,6 +4,7 @@ import type { DashboardGamesApi, DashboardGamesRender, DashboardGamesUtils } fro
 import type { DashboardRulesApi } from './rules';
 import type { DashboardSpsaApi, DashboardSpsaPublicApi, SpsaTabId } from './spsa';
 import type { LiveDashboardNamespace } from './live';
+import type { DashboardBookApi } from '@/modules/book/types';
 import type { DashboardMatchApi } from '@/modules/match/types';
 import type { DashboardSprtApi } from '@/modules/sprt/types';
 import type { TournamentDashboardAPI } from './tournament';
@@ -21,7 +22,8 @@ export type DashboardTabId =
     | 'spsa'
     | 'engines'
     | 'instances'
-    | 'games';
+    | 'games'
+    | 'book';
 
 export interface DashboardTabsApi {
     setActive: (tabId: DashboardTabId) => void;
@@ -87,6 +89,7 @@ export type ArenaDashboardWindow = Window &
         DashboardSpsa?: DashboardSpsaPublicApi | DashboardSpsaApi;
         DashboardMatch?: DashboardMatchApi;
         DashboardSprt?: DashboardSprtApi;
+        DashboardBook?: DashboardBookApi;
         DashboardTournament?: TournamentDashboardAPI;
         DashboardTabs?: DashboardTabsApi;
         DashboardNavigation?: DashboardNavigationApi;
@@ -116,6 +119,7 @@ declare global {
         DashboardSpsa?: DashboardSpsaPublicApi | DashboardSpsaApi;
         DashboardMatch?: DashboardMatchApi;
         DashboardSprt?: DashboardSprtApi;
+        DashboardBook?: DashboardBookApi;
         DashboardTournament?: TournamentDashboardAPI;
         DashboardTabs?: DashboardTabsApi;
         DashboardNavigation?: DashboardNavigationApi;

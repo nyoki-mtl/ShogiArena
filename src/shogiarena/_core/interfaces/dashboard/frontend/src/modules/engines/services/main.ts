@@ -32,7 +32,7 @@ import type { OptionsRenderDeps, TimeControlRenderDeps } from '../components/vie
 import type { NormalizedTournamentEngineMeta } from '@/modules/tournament/types';
 import type { JsonObject } from '@/types/shared';
 import { escapeHtml } from '@/modules/shared/utils/html';
-import { formatDuration, formatNodesCountShort, parseTimeControlSpec } from '@/modules/shared/utils/timeControl';
+import { formatDuration, formatNodesCountShort, parseTimeControlSpec } from '@/modules/shared/utils/time-control';
 import {
     renderInstanceDetail,
     renderInstanceInfo,
@@ -481,6 +481,12 @@ export function installEnginesModule(owner: EnginesWindow = defaultWindow): Dash
         const button = container.querySelector<HTMLButtonElement>('.js-engines-full-options');
         const fullArea = container.querySelector<HTMLElement>('.engine-options-full');
         if (!button || !fullArea) return;
+
+        // setupOptionsDetail runs on every re-render. When the detail signature is unchanged the
+        // button element is reused, so binding again would stack duplicate click listeners on the
+        // same node (each click toggling multiple times). Bind once per button element.
+        if (button.dataset.fullOptionsBound === '1') return;
+        button.dataset.fullOptionsBound = '1';
 
         const renderFullOptions = (element: Element, payload: unknown, meta: EngineMetaDetail | undefined): void => {
             const normalizedMeta = meta as NormalizedTournamentEngineMeta | undefined;

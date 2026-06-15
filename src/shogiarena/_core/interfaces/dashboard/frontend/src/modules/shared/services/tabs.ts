@@ -84,6 +84,7 @@ function notifyModules(owner: TabsWindow, tabId: DashboardTabId): void {
     owner.DashboardSpsa?.setActive?.(tabId === 'spsa');
     owner.DashboardMatch?.setActive?.(tabId === 'match');
     owner.DashboardSprt?.setActive?.(tabId === 'sprt');
+    owner.DashboardBook?.setActive?.(tabId === 'book');
     owner.DashboardGenerate?.setActive?.(tabId === 'generate');
     owner.DashboardTournament?.setOpeningsActive?.(tabId === 'openings');
     owner.DashboardTournament?.notifyTabChange?.(tabId);
@@ -95,6 +96,7 @@ function notifyModules(owner: TabsWindow, tabId: DashboardTabId): void {
         tabId === 'openings' ||
         tabId === 'match' ||
         tabId === 'sprt' ||
+        tabId === 'book' ||
         tabId === 'generate'
     ) {
         summaryStore.setActiveSource('tournament');
@@ -118,9 +120,61 @@ function createTabsApi(
     let buttons = Array.from(initialButtons);
     const buttonMap = new Map<DashboardTabId, TabButton>();
     buttons.forEach((button) => {
+        // Complete the ARIA tablist pattern the markup declares: each control inside a role="tablist"
+        // must be a role="tab" with a roving tabindex (the active tab is the only Tab-stop).
+        button.setAttribute('role', 'tab');
+        button.tabIndex = -1;
         const tabId = toDashboardTabId(button.dataset.dashboardTab);
         if (tabId) {
             buttonMap.set(tabId, button);
+        }
+    });
+
+    // Complete the tab <-> panel association the markup only half-declares. The dashboard uses a
+    // many-to-many model (a section's data-tab-content lists every tab it serves), so wire it
+    // dynamically: each per-tab section becomes role="tabpanel" + aria-labelledby (its tab buttons),
+    // and each tab button gets aria-controls (the panels it activates). Shared chrome is excluded:
+    // elements that already carry a role (e.g. role="progressbar") or that span *every* tab (the
+    // cross-tab stats banner) are not per-tab panels.
+    const allTabIds = new Set<DashboardTabId>(buttonMap.keys());
+    const controlsByTab = new Map<DashboardTabId, string[]>();
+    let generatedPanelId = 0;
+    contents.forEach((element) => {
+        if (element.getAttribute('role')) {
+            return;
+        }
+        const tokens = parseContentTokens(element);
+        if (tokens.length === 0) {
+            return;
+        }
+        const coversEveryTab = tokens.length >= allTabIds.size && tokens.every((tabId) => allTabIds.has(tabId));
+        if (coversEveryTab) {
+            return;
+        }
+        if (!element.id) {
+            element.id = `tabpanel-${generatedPanelId}`;
+            generatedPanelId += 1;
+        }
+        element.setAttribute('role', 'tabpanel');
+        const labelIds: string[] = [];
+        for (const tabId of tokens) {
+            const button = buttonMap.get(tabId);
+            if (!button?.id) {
+                continue;
+            }
+            labelIds.push(button.id);
+            const panels = controlsByTab.get(tabId) ?? [];
+            panels.push(element.id);
+            controlsByTab.set(tabId, panels);
+        }
+        if (labelIds.length > 0) {
+            element.setAttribute('aria-labelledby', labelIds.join(' '));
+        }
+    });
+    buttonMap.forEach((button, tabId) => {
+        const panels = controlsByTab.get(tabId);
+        if (panels && panels.length > 0) {
+            button.setAttribute('aria-controls', panels.join(' '));
         }
     });
 
@@ -170,6 +224,8 @@ function createTabsApi(
             const isActive = toDashboardTabId(button.dataset.dashboardTab) === tabId;
             button.classList.toggle('active', isActive);
             button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            // Roving tabindex: only the active tab is reachable via Tab; arrows move between tabs.
+            button.tabIndex = isActive ? 0 : -1;
         });
 
         contents.forEach((element) => {
@@ -192,6 +248,48 @@ function createTabsApi(
             applyTabState(tabId);
         });
     });
+
+    // Standard ARIA tablist keyboard support (automatic activation): Left/Right cycle through the
+    // visible tabs, Home/End jump to the first/last. Native <button> handles Enter/Space already.
+    if (buttonsParent) {
+        buttonsParent.addEventListener('keydown', (event) => {
+            if (!(event instanceof KeyboardEvent)) {
+                return;
+            }
+            const navKeys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+            if (!navKeys.includes(event.key)) {
+                return;
+            }
+            const visible = buttons.filter((button) => !button.hidden);
+            if (visible.length === 0) {
+                return;
+            }
+            const currentIndex = visible.findIndex(
+                (button) => toDashboardTabId(button.dataset.dashboardTab) === activeTab,
+            );
+            const base = currentIndex < 0 ? 0 : currentIndex;
+            let nextIndex = base;
+            if (event.key === 'ArrowLeft') {
+                nextIndex = (base - 1 + visible.length) % visible.length;
+            } else if (event.key === 'ArrowRight') {
+                nextIndex = (base + 1) % visible.length;
+            } else if (event.key === 'Home') {
+                nextIndex = 0;
+            } else if (event.key === 'End') {
+                nextIndex = visible.length - 1;
+            }
+            const nextButton = visible[nextIndex];
+            const nextTabId = nextButton ? toDashboardTabId(nextButton.dataset.dashboardTab) : null;
+            if (!nextButton || !nextTabId) {
+                return;
+            }
+            event.preventDefault();
+            if (nextTabId !== activeTab) {
+                applyTabState(nextTabId);
+            }
+            nextButton.focus();
+        });
+    }
 
     function reorderButtons(order: readonly DashboardTabId[]): void {
         if (!buttonsParent || order.length === 0) {

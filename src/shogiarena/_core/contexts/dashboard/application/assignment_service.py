@@ -42,7 +42,7 @@ class AssignmentService:
             {
                 "assignments": snapshot_assignments,
                 "gids": gids,
-                "updatedAt": int(time.time() * 1000),
+                "updated_at": int(time.time() * 1000),
                 "assignment_rev": self.current_revision(),
             }
         )

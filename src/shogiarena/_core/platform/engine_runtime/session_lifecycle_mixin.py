@@ -120,8 +120,14 @@ class AsyncUsiEngineLifecycleMixin:
             except (TimeoutError, OSError, RuntimeError) as exc:
                 logger.exception("Error stopping ponder for %s during close: %s", self.name, exc)
             self._set_state(UsiEngineState.WILL_QUIT, reason="closing engine")
+            try:
+                await self._process.stop()
+            except RuntimeError as exc:
+                if "not running" not in str(exc):
+                    raise
             if self._monitor_task:
-                self._monitor_task.cancel()
+                if not self._monitor_task.done():
+                    self._monitor_task.cancel()
                 try:
                     await self._monitor_task
                 except asyncio.CancelledError:
@@ -129,11 +135,6 @@ class AsyncUsiEngineLifecycleMixin:
                 except (OSError, RuntimeError) as exc:
                     logger.exception("Monitor task error while closing %s: %s", self.name, exc)
             self._monitor_task = None
-            try:
-                await self._process.stop()
-            except RuntimeError as exc:
-                if "not running" not in str(exc):
-                    raise
             await self._shutdown_io_log_dispatcher()
         finally:
             self._is_started = False
@@ -294,7 +295,10 @@ class AsyncUsiEngineLifecycleMixin:
             if remaining <= 0:
                 break
             try:
-                await asyncio.wait_for(future, timeout=min(remaining, 1.0))
+                # Shield the future so the per-slice timeout does not cancel it (matching the
+                # readyok path); otherwise a usiok arriving after the first 1s slice is lost and
+                # the next wait raises CancelledError, breaking slow-engine startup.
+                await asyncio.wait_for(asyncio.shield(future), timeout=min(remaining, 1.0))
                 self._usiok_future = None
                 return
             except TimeoutError:

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DashboardCore } from '@/types/dashboard';
-import { getLiveViewSnapshotStore, LIVE_VIEW_UPDATE_EVENT } from '../liveViewSnapshot';
+import { getLiveViewSnapshotStore, LIVE_VIEW_UPDATE_EVENT } from '../live-view-snapshot';
 
 type Listener = (payload?: unknown) => void;
 
@@ -72,7 +72,7 @@ describe('getLiveViewSnapshotStore', () => {
                 mode: 'spsa',
                 progress: {
                     kind: 'updates',
-                    unitLabel: 'updates',
+                    unit_label: 'updates',
                     completed: 4,
                     total: 16,
                 },

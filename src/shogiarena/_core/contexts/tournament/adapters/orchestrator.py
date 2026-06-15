@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 import rshogi
+from rshogi.core import parse_usi_position_parts
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_builders import (
     build_engine_config_map,
@@ -31,6 +33,9 @@ from shogiarena._core.contexts.game_session.adapters.orchestration.remote_contro
 )
 from shogiarena._core.contexts.game_session.adapters.orchestration.remote_control import (
     get_remote_executor as _get_remote_executor_service,
+)
+from shogiarena._core.contexts.game_session.adapters.orchestration.resource_control import (
+    preflight_parallel_resource_capacity,
 )
 from shogiarena._core.contexts.game_session.application.orchestration.completion_emission_service import (
     OrchestratorCompletionEmissionRequest,
@@ -77,6 +82,7 @@ from shogiarena._core.contexts.game_session.ports.session_context import Session
 from shogiarena._core.contexts.instances.application.instance_models import Instance
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
 from shogiarena._core.contexts.tournament.domain.tournament_models import GameSpec
+from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.service_ports import DatabaseServicePort
 from shogiarena._core.shared.kernel.session_hooks import GameLifecycleHooks
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
@@ -126,6 +132,7 @@ class TournamentOrchestrator(BaseOrchestrator):
             resource_poll_interval=config.system.resource_poll_interval,
             resource_poll_max_interval=config.system.resource_poll_max_interval,
             default_engine_handshake_timeout=config.system.engine_handshake_timeout,
+            engine_lifecycle=config.tournament.engine_lifecycle,
         )
         self.config = config
         self.run_dir = session.storage.run_dir
@@ -185,6 +192,17 @@ class TournamentOrchestrator(BaseOrchestrator):
             logger.debug("No pending games to run")
             return
 
+        instance_pool = self.instance_pool
+        if instance_pool is None:
+            raise RuntimeError("Tournament orchestrator requires an instance pool")
+        preflight_parallel_resource_capacity(
+            self,
+            instance_pool,
+            pending,
+            self.num_workers,
+            mode=self.config.system.resource_capacity_preflight,
+        )
+
         logger.debug(f"Running {len(pending)} pending games with {self.num_workers} parallel slots")
 
         await self._pending_runtime_service.execute_pending_items(
@@ -212,7 +230,55 @@ class TournamentOrchestrator(BaseOrchestrator):
         return item.game_id in cancelled_now
 
     async def run_pending_item(self, item: GameSpec) -> None:
-        await self._run_game(item)
+        try:
+            await self._run_game(item)
+        except Exception as exc:
+            # SPRT / OpenBench runs fail-fast: an unexpected game error can invalidate the
+            # statistical test, so propagate and abort. Plain tournament / generate runs isolate
+            # the failure by recording an ERROR completion, so the game is terminal (the run loop
+            # will not retry it) and the rest of the schedule keeps running.
+            if self.config.sprt is not None or self.config.openbench is not None:
+                raise
+            logger.error(
+                "Game %s failed: %s: %s; recording as ERROR and continuing",
+                item.game_id,
+                type(exc).__name__,
+                exc,
+            )
+            await self._emit_game_completion(
+                game_id=item.game_id,
+                game_info=self._build_error_game_record(item),
+                payload=item,
+                worker_idx=None,
+            )
+
+    @staticmethod
+    def _build_error_game_record(game_spec: GameSpec) -> rshogi.record.GameRecord:
+        # Expand "startpos" / USI position notation to a full board SFEN (from_dict rejects
+        # "startpos"), and stamp the date fields the DB persistence path requires.
+        initial_sfen = parse_usi_position_parts(game_spec.initial_sfen).initial_sfen
+        now = datetime.now(UTC).isoformat()
+        return rshogi.record.GameRecord.from_dict(
+            {
+                "metadata": {
+                    "game_name": str(game_spec.game_id),
+                    "game_type": "arena",
+                    "black_player": str(game_spec.black_engine),
+                    "white_player": str(game_spec.white_engine),
+                    "start_date": now,
+                    "end_date": now,
+                    "updated_date": now,
+                    "attributes": {
+                        "game_name": str(game_spec.game_id),
+                        "game_type": "arena",
+                        "updated_date": now,
+                    },
+                },
+                "init_position_sfen": initial_sfen,
+                "moves": [],
+                "result": {"result": GameResult.ERROR.name, "ply_count": 0},
+            }
+        )
 
     def _prepare_engine_configs(self) -> dict[str, EngineConfig]:
         """Ensure each engine has a concrete YAML; synthesize from artifact if needed."""

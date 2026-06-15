@@ -357,6 +357,10 @@ def _parse_parameter(raw_param: dict[str, JsonValue], *, index: int) -> SpsaPara
         raise ValueError(f"space.parameters[{index}].bounds.min must be less than bounds.max")
     if not minimum <= initial <= maximum:
         raise ValueError(f"space.parameters[{index}].initial must be within bounds")
+    if value_type == "int" and math.floor(maximum) < math.ceil(minimum):
+        # An int parameter whose bounds enclose no integer (e.g. min=2.2, max=2.8) would let the
+        # quantizer return a value outside [min, max].
+        raise ValueError(f"space.parameters[{index}].bounds contain no integer value for an int parameter")
     schedule = _mapping(param.get("schedule"), field=f"space.parameters[{index}].schedule")
     c_end = _finite_float(schedule.get("c_end"), field=f"space.parameters[{index}].schedule.c_end")
     r_end = _finite_float(schedule.get("r_end"), field=f"space.parameters[{index}].schedule.r_end")

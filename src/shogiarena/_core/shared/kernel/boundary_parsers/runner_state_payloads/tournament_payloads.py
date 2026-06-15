@@ -72,9 +72,19 @@ class _CancelledGameEntryPayload(BaseModel):
         return _coerce_assignment_override(value)
 
 
+class _SprtPendingHalfPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sfen: str
+    pair_slot: int
+    is_tested_black: bool
+    score: float
+
+
 class _SprtStatePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    model: str
     elo0: float
     elo1: float
     alpha: float
@@ -84,6 +94,9 @@ class _SprtStatePayload(BaseModel):
     losses: int
     games_played: int
     llr: float
+    min_pairs: int
+    penta_bins: list[int]
+    pending: list[_SprtPendingHalfPayload]
 
 
 class _RunStatePayload(BaseModel):

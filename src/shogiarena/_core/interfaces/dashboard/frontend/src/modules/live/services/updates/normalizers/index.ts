@@ -1,5 +1,5 @@
 export * from './common';
-export * from './liveGame';
-export * from './liveView';
+export * from './live-game';
+export * from './live-view';
 export * from './worker';
 export * from './summary';

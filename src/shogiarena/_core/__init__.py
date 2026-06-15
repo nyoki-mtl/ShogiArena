@@ -1,10 +1,8 @@
-"""Shogi Arena core package.
+"""Internal implementation package for ShogiArena.
 
-This package provides the N-engine tournament components under
-`shogiarena.arena` and the dashboard utilities under
-`shogiarena._core.interfaces.dashboard`.
+Public users should import from the facade modules under `shogiarena.*`.
 """
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__: list[str] = []

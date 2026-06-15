@@ -19,8 +19,8 @@ class _ThresholdConfig(TypedDict):
 
 
 class _HydratorConfig(TypedDict):
-    triggerPerHour: _ThresholdConfig
-    failureRate: _ThresholdConfig
+    trigger_per_hour: _ThresholdConfig
+    failure_rate: _ThresholdConfig
 
 
 class WatchlistExtra(TypedDict):
@@ -38,16 +38,16 @@ class _WatchlistConfig(TypedDict):
 
 
 class _AutoSnapshotConfig(TypedDict):
-    intervalSeconds: int
+    interval_seconds: int
     mode: str
     destination: str
-    retentionMinutes: int
+    retention_minutes: int
 
 
 class _GuidelinesConfig(TypedDict):
     hydrator: _HydratorConfig
     watchlist: _WatchlistConfig
-    autoSnapshot: _AutoSnapshotConfig
+    auto_snapshot: _AutoSnapshotConfig
 
 
 class _ThresholdModel(BaseModel):
@@ -60,8 +60,8 @@ class _ThresholdModel(BaseModel):
 class _HydratorModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    triggerPerHour: _ThresholdModel
-    failureRate: _ThresholdModel
+    trigger_per_hour: _ThresholdModel
+    failure_rate: _ThresholdModel
 
 
 class _WatchlistExtraModel(BaseModel):
@@ -91,10 +91,10 @@ class _WatchlistModel(BaseModel):
 class _AutoSnapshotModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    intervalSeconds: int = Field(ge=0)
+    interval_seconds: int = Field(ge=0)
     mode: str
     destination: str
-    retentionMinutes: int = Field(ge=0)
+    retention_minutes: int = Field(ge=0)
 
     @field_validator("mode", mode="before")
     @classmethod
@@ -116,19 +116,19 @@ class _GuidelinesModel(BaseModel):
 
     hydrator: _HydratorModel
     watchlist: _WatchlistModel
-    autoSnapshot: _AutoSnapshotModel
+    auto_snapshot: _AutoSnapshotModel
 
 
 DEFAULT_GUIDELINES: _GuidelinesConfig = {
     "hydrator": {
-        "triggerPerHour": {"warning": 45, "critical": 60},
-        "failureRate": {"warning": 0.03, "critical": 0.05},
+        "trigger_per_hour": {"warning": 45, "critical": 60},
+        "failure_rate": {"warning": 0.03, "critical": 0.05},
     },
     "watchlist": {
         "limit": 6,
         "extras": [
             {
-                "key": "payloadKb",
+                "key": "payload_kb",
                 "label": "Payload (KB)",
                 "unit": "KB",
                 "warning": 200,
@@ -136,7 +136,7 @@ DEFAULT_GUIDELINES: _GuidelinesConfig = {
                 "should_notify": False,
             },
             {
-                "key": "latencyMs",
+                "key": "latency_ms",
                 "label": "Latency (ms)",
                 "unit": "ms",
                 "warning": 500,
@@ -152,7 +152,7 @@ DEFAULT_GUIDELINES: _GuidelinesConfig = {
                 "should_notify": False,
             },
             {
-                "key": "detailPayloadKbSlim",
+                "key": "detail_payload_kb_slim",
                 "label": "Detail slim payload (KB)",
                 "unit": "KB",
                 "warning": 180,
@@ -160,7 +160,7 @@ DEFAULT_GUIDELINES: _GuidelinesConfig = {
                 "should_notify": False,
             },
             {
-                "key": "detailPayloadKbFull",
+                "key": "detail_payload_kb_full",
                 "label": "Detail full payload (KB)",
                 "unit": "KB",
                 "warning": 220,
@@ -168,7 +168,7 @@ DEFAULT_GUIDELINES: _GuidelinesConfig = {
                 "should_notify": False,
             },
             {
-                "key": "detailIncludeCount",
+                "key": "detail_include_count",
                 "label": "Detail include count",
                 "unit": "fields",
                 "warning": 4,
@@ -177,11 +177,11 @@ DEFAULT_GUIDELINES: _GuidelinesConfig = {
             },
         ],
     },
-    "autoSnapshot": {
-        "intervalSeconds": 0,
+    "auto_snapshot": {
+        "interval_seconds": 0,
         "mode": "console",
         "destination": "console",
-        "retentionMinutes": 0,
+        "retention_minutes": 0,
     },
 }
 
@@ -201,13 +201,13 @@ def _guidelines_from_model(model: _GuidelinesModel) -> _GuidelinesConfig:
         )
 
     hydrator: _HydratorConfig = {
-        "triggerPerHour": {
-            "warning": model.hydrator.triggerPerHour.warning,
-            "critical": model.hydrator.triggerPerHour.critical,
+        "trigger_per_hour": {
+            "warning": model.hydrator.trigger_per_hour.warning,
+            "critical": model.hydrator.trigger_per_hour.critical,
         },
-        "failureRate": {
-            "warning": model.hydrator.failureRate.warning,
-            "critical": model.hydrator.failureRate.critical,
+        "failure_rate": {
+            "warning": model.hydrator.failure_rate.warning,
+            "critical": model.hydrator.failure_rate.critical,
         },
     }
     watchlist: _WatchlistConfig = {
@@ -215,15 +215,15 @@ def _guidelines_from_model(model: _GuidelinesModel) -> _GuidelinesConfig:
         "extras": extras,
     }
     auto_snapshot: _AutoSnapshotConfig = {
-        "intervalSeconds": model.autoSnapshot.intervalSeconds,
-        "mode": model.autoSnapshot.mode,
-        "destination": model.autoSnapshot.destination,
-        "retentionMinutes": model.autoSnapshot.retentionMinutes,
+        "interval_seconds": model.auto_snapshot.interval_seconds,
+        "mode": model.auto_snapshot.mode,
+        "destination": model.auto_snapshot.destination,
+        "retention_minutes": model.auto_snapshot.retention_minutes,
     }
     return {
         "hydrator": hydrator,
         "watchlist": watchlist,
-        "autoSnapshot": auto_snapshot,
+        "auto_snapshot": auto_snapshot,
     }
 
 

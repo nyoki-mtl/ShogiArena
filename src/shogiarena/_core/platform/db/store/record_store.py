@@ -10,7 +10,7 @@ from sqlalchemy import delete, select
 from shogiarena._core.shared.kernel.game_results import game_result_name
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_game_result, coerce_iso_datetime
 
-from .entities import Game, Kifu, Player
+from .entities import Game, GameMove, Player
 from .repository import ShogiRepositoryPort
 
 logger = logging.getLogger(__name__)
@@ -101,7 +101,7 @@ class DBRecordStore:
                 num_moves=num_moves,
                 time_control_black=tc_black,
                 time_control_white=tc_white,
-                init_position_sfen=init_sfen,
+                initial_position_sfen=init_sfen,
                 end_time_ms=end_time_ms,
                 end_comment=end_comment,
                 updated_date=updated_date_new,
@@ -121,7 +121,7 @@ class DBRecordStore:
                 engine_info = move_record.engine_info
                 wall_time_ms = engine_info.wall_time_ms if engine_info is not None else None
                 latency_delta_ms = engine_info.latency_delta_ms if engine_info is not None else None
-                kifu = Kifu(
+                game_move = GameMove(
                     ply=ply,
                     next_move=int(mv),
                     next_move_time_ms=move_record.time_ms,
@@ -134,9 +134,9 @@ class DBRecordStore:
                     seldepth=engine_info.seldepth if engine_info is not None else None,
                     nodes=engine_info.nodes if engine_info is not None else None,
                 )
-                session.add(kifu)
+                session.add(game_move)
 
-            end_kifu = Kifu(
+            end_game_move = GameMove(
                 ply=int(board.game_ply) - 1,
                 next_move=int(Move.MOVE_END),
                 next_move_time_ms=end_time_ms,
@@ -149,7 +149,7 @@ class DBRecordStore:
                 seldepth=None,
                 nodes=None,
             )
-            session.add(end_kifu)
+            session.add(end_game_move)
 
             session.commit()
 
@@ -165,7 +165,9 @@ class DBRecordStore:
         if game is None:
             return None
 
-        kifus = session.execute(select(Kifu).where(Kifu.game_id == game.id).order_by(Kifu.id.asc())).fetchall()
+        game_moves = session.execute(
+            select(GameMove).where(GameMove.game_id == game.id).order_by(GameMove.id.asc())
+        ).fetchall()
 
         black_player_name = session.execute(
             select(Player.player_name).where(Player.id == game.black_player_id)
@@ -176,37 +178,37 @@ class DBRecordStore:
 
         move_records: list[rshogi.record.MoveRecord] = []
         board = Board()
-        board.set_sfen(game.init_position_sfen)
+        board.set_sfen(game.initial_position_sfen)
         end_time_ms: int | None = game.end_time_ms
         end_comment: str | None = game.end_comment
-        for (kifu,) in kifus:
-            if kifu.next_move == int(Move.MOVE_END):
-                end_time_ms = kifu.next_move_time_ms
-                end_comment = kifu.next_move_comment
+        for (game_move,) in game_moves:
+            if game_move.next_move == int(Move.MOVE_END):
+                end_time_ms = game_move.next_move_time_ms
+                end_comment = game_move.next_move_comment
                 break
             try:
-                mv = Move(kifu.next_move)
+                mv = Move(game_move.next_move)
             except (TypeError, ValueError) as exc:
-                raise ValueError(f"Invalid move in db record: {kifu.next_move}") from exc
+                raise ValueError(f"Invalid move in db record: {game_move.next_move}") from exc
             try:
                 pushed_move = board.push_move(mv).to_move()
             except ValueError as exc:
-                raise ValueError(f"Illegal move in db record: {kifu.next_move}") from exc
-            wall_time = kifu.wall_time_ms
-            latency_delta = kifu.latency_delta_ms
+                raise ValueError(f"Illegal move in db record: {game_move.next_move}") from exc
+            wall_time = game_move.wall_time_ms
+            latency_delta = game_move.latency_delta_ms
             engine_info = rshogi.record.MoveEngineInfo(
-                eval=kifu.eval,
-                depth=kifu.depth,
-                seldepth=kifu.seldepth,
-                nodes=kifu.nodes,
+                eval=game_move.eval,
+                depth=game_move.depth,
+                seldepth=game_move.seldepth,
+                nodes=game_move.nodes,
                 wall_time_ms=int(wall_time) if wall_time is not None else None,
                 latency_delta_ms=int(latency_delta) if latency_delta is not None else None,
             )
             move_records.append(
                 rshogi.record.MoveRecord(
                     pushed_move,
-                    time_ms=kifu.next_move_time_ms,
-                    comment=kifu.next_move_comment,
+                    time_ms=game_move.next_move_time_ms,
+                    comment=game_move.next_move_comment,
                     engine_info=engine_info,
                 )
             )
@@ -245,7 +247,7 @@ class DBRecordStore:
             comment=end_comment,
         )
         return rshogi.record.GameRecord.from_main_line(
-            game.init_position_sfen,
+            game.initial_position_sfen,
             move_records,
             terminal,
             record_metadata,

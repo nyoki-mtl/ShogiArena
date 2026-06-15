@@ -20,6 +20,8 @@ from shogiarena._core.platform.engine_runtime.usi_protocol_types import UsiThink
 
 logger = logging.getLogger(__name__)
 
+_GAMEOVER_STOP_WAIT_TIMEOUT_SECONDS = 1.0
+
 
 class AsyncUsiEngineSearchMixin:
     _thinking_lock: asyncio.Lock
@@ -34,6 +36,7 @@ class AsyncUsiEngineSearchMixin:
     _pending_mate_result: UsiMateResult | None
     _info_handler: InfoHandlerFn | None
     _ignored_bestmove_count: int
+    _handshake_timeout: float
     name: str
     is_running: bool
 
@@ -50,6 +53,7 @@ class AsyncUsiEngineSearchMixin:
     _set_future_exception: Any
     _clear_ponder_handle: Any
     _maybe_log_handshake_command: Any
+    _recover_from_stop_timeout: Any
     trigger_isready: Any
 
     _abandon_future: Any
@@ -101,21 +105,33 @@ class AsyncUsiEngineSearchMixin:
             self._clear_mate_tracking()
 
             if self._bestmove_future and not self._bestmove_future.done():
-                bestmove_future = self._bestmove_future
-                try:
-                    await self._stop_without_wait()
-                except (TimeoutError, OSError, RuntimeError):
-                    logger.debug("[%s] failed to send stop during gameover", self.name, exc_info=True)
-                finally:
-                    self._ignored_bestmove_count += 1
-                    self._set_future_exception(bestmove_future, RuntimeError("Search aborted due to gameover"))
-                    self._bestmove_future = None
+                await self._settle_bestmove_before_gameover(self._bestmove_future)
 
             self._reset_current_info()
             self._info_handler = None
 
             await self._send_command(f"gameover {normalized}")
             self._set_state(UsiEngineState.NOT_READY, reason=f"gameover {normalized} sent")
+
+    async def _settle_bestmove_before_gameover(self, future: asyncio.Future[UsiThinkResult]) -> None:
+        try:
+            await self._stop_without_wait()
+        except (TimeoutError, OSError, RuntimeError):
+            logger.debug("[%s] failed to send stop during gameover", self.name, exc_info=True)
+
+        timeout = min(self._handshake_timeout, _GAMEOVER_STOP_WAIT_TIMEOUT_SECONDS)
+        try:
+            await asyncio.wait_for(asyncio.shield(future), timeout=timeout)
+        except TimeoutError:
+            self._recover_from_stop_timeout(future)
+            return
+        except (OSError, RuntimeError, ValueError):
+            logger.debug("[%s] pending bestmove failed during gameover", self.name, exc_info=True)
+        finally:
+            if self._bestmove_future is future and future.done():
+                self._bestmove_future = None
+            self._info_handler = None
+            self._reset_current_info()
 
     async def think(
         self,

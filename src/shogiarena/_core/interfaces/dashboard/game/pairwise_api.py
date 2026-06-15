@@ -22,6 +22,14 @@ from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_game_result, coerce_int
 
 
+class PairwiseConfigError(Exception):
+    """Raised when pairwise runner configuration is invalid (client-correctable)."""
+
+    def __init__(self, detail: str, *, code: str = "invalid_config") -> None:
+        super().__init__(detail)
+        self.code = code
+
+
 class PairwiseRunnerAPI(ABC):
     """Common behavior for pairwise summary/timeline endpoints."""
 
@@ -112,6 +120,9 @@ class PairwiseRunnerAPI(ABC):
     async def get_summary(self, _request: web.Request) -> web.Response:
         try:
             payload = self._build_payload()
+        except PairwiseConfigError as exc:
+            self._logger.warning("Invalid %s configuration: %s", self._mode, exc)
+            return json_error_response(str(exc), status=400, code=exc.code)
         except Exception as exc:
             self._logger.exception("Failed to build %s summary", self._mode)
             return json_error_response(str(exc), status=500)
@@ -120,6 +131,9 @@ class PairwiseRunnerAPI(ABC):
     async def get_timeline(self, _request: web.Request) -> web.Response:
         try:
             payload = self._build_payload()
+        except PairwiseConfigError as exc:
+            self._logger.warning("Invalid %s configuration: %s", self._mode, exc)
+            return json_error_response(str(exc), status=400, code=exc.code)
         except Exception as exc:
             self._logger.exception("Failed to build %s timeline", self._mode)
             return json_error_response(str(exc), status=500)
@@ -134,4 +148,4 @@ class PairwiseRunnerAPI(ABC):
         )
 
 
-__all__ = ["PairwiseRunnerAPI"]
+__all__ = ["PairwiseConfigError", "PairwiseRunnerAPI"]

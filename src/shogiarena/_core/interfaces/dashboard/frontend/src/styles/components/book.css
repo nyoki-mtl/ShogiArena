@@ -1,0 +1,96 @@
+@layer components {
+    .book-tab-header {
+        @apply mb-3 space-y-1;
+    }
+
+    .book-tab-title {
+        @apply text-lg font-semibold text-white;
+    }
+
+    .book-note {
+        @apply mb-3 text-xs text-dashboard-neutral;
+    }
+
+    .book-cards {
+        @apply grid gap-4;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    }
+
+    .book-card {
+        @apply space-y-3 rounded-2xl border border-white/10 bg-white/5 p-4 shadow-lg shadow-black/10;
+    }
+
+    .book-card-head {
+        @apply flex items-center justify-between gap-2;
+    }
+
+    .book-card-title {
+        @apply break-all text-sm font-semibold text-white;
+    }
+
+    .book-card-validation {
+        @apply text-[10px] uppercase tracking-[0.2em] text-dashboard-neutral;
+    }
+
+    .book-card-path {
+        @apply break-all text-[11px] text-dashboard-neutral;
+    }
+
+    .book-card-grid {
+        @apply grid grid-cols-2 gap-2 text-xs;
+    }
+
+    .book-card-grid > div {
+        @apply flex flex-col;
+    }
+
+    .book-stat-label {
+        @apply text-[10px] uppercase tracking-[0.2em] text-dashboard-neutral;
+    }
+
+    .book-stat-value {
+        @apply text-sm text-white;
+    }
+
+    .book-card-section {
+        @apply space-y-1;
+    }
+
+    .book-oob-summary {
+        @apply text-xs text-dashboard-foreground;
+    }
+
+    .book-oob-hist {
+        @apply space-y-1;
+    }
+
+    .book-oob-row {
+        @apply flex items-center gap-2 text-[11px];
+    }
+
+    .book-oob-ply {
+        @apply w-16 shrink-0 text-dashboard-neutral;
+    }
+
+    .book-oob-bar {
+        @apply h-2 rounded bg-dashboard-accent;
+        min-width: 2px;
+    }
+
+    .book-oob-count {
+        @apply shrink-0 text-dashboard-neutral;
+    }
+
+    .book-oob-empty,
+    .book-empty {
+        @apply text-xs text-dashboard-neutral;
+    }
+
+    .book-engines {
+        @apply w-full text-[11px];
+    }
+
+    .book-engines th {
+        @apply text-left font-normal text-dashboard-neutral;
+    }
+}

@@ -37,19 +37,19 @@ def _build_seed_summary_payload(
     spsa_algorithm_config: JsonObject,
 ) -> JsonObject:
     seed_summary: JsonObject = {
-        "tournamentType": "spsa",
+        "tournament_type": "spsa",
         "mode": "spsa",
-        "flipPolicy": None,
-        "numEngines": len(engines_list),
-        "runDir": str(run_dir),
+        "flip_policy": None,
+        "num_engines": len(engines_list),
+        "run_dir": str(run_dir),
         "leaderboard": [],
         "engines": engines_list,
-        "enginesMeta": engine_metadata,
-        "engineTimeControls": engine_time_controls,
-        "defaultTimeControl": default_time_control,
-        "engineInstances": engine_instances,
-        "engineStats": {name: {"wins": 0, "losses": 0, "draws": 0, "games": 0} for name in engines_list},
-        "pairResults": {},
+        "engines_meta": engine_metadata,
+        "engine_time_controls": engine_time_controls,
+        "default_time_control": default_time_control,
+        "engine_instances": engine_instances,
+        "engine_stats": {name: {"wins": 0, "losses": 0, "draws": 0, "games": 0} for name in engines_list},
+        "pair_results": {},
         "timestamp": datetime.now().isoformat(),
         "games": {
             "completed": 0,
@@ -69,17 +69,17 @@ def _build_seed_summary_payload(
 
     if rules_payload:
         seed_summary["rules"] = rules_payload
-        seed_summary["initialPositions"] = rules_payload.get("initial_positions")
-        seed_summary["repetitionOccurrencesToDraw"] = rules_payload.get("repetition_occurrences_to_draw")
+        seed_summary["initial_positions"] = rules_payload.get("initial_positions")
+        seed_summary["repetition_occurrences_to_draw"] = rules_payload.get("repetition_occurrences_to_draw")
         init_pos = rules_payload.get("initial_positions")
         init_pos_flip = init_pos.get("flip_policy") if isinstance(init_pos, dict) else None
-        seed_summary["flipPolicy"] = rules_payload.get("flip_policy") or init_pos_flip or seed_summary["flipPolicy"]
-        seed_summary["tournamentConfig"] = {"rules": rules_payload}
+        seed_summary["flip_policy"] = rules_payload.get("flip_policy") or init_pos_flip or seed_summary["flip_policy"]
+        seed_summary["tournament_config"] = {"rules": rules_payload}
         sprt_config = rules_payload.get("sprt")
         if sprt_config:
             seed_summary.setdefault("sprt", sprt_config)
 
-    seed_summary["spsaConfig"] = dict(spsa_algorithm_config)
+    seed_summary["spsa_config"] = dict(spsa_algorithm_config)
     return seed_summary
 
 
@@ -119,7 +119,7 @@ def _build_spsa_meta_payload(
     meta["engines"] = engines_list
     meta["engine_instances"] = engine_instances
     meta["engine_stats"] = {name: {"wins": 0, "losses": 0, "draws": 0, "games": 0} for name in engines_list}
-    meta["enginesMeta"] = engine_metadata
+    meta["engines_meta"] = engine_metadata
     return meta
 
 

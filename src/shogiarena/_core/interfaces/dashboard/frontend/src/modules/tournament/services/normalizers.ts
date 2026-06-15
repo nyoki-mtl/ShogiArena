@@ -19,7 +19,7 @@ import {
     gameResultScores,
     gameResultWinner,
     isGameResultName,
-} from '@/modules/shared/utils/gameResult';
+} from '@/modules/shared/utils/game-result';
 
 type LooseObject = MutableJsonObject;
 
@@ -330,14 +330,14 @@ function collectEngines(summary: JsonObject): Set<string> {
             if (normalized) names.add(normalized);
         }
     }
-    const engineStats = summary.engineStats;
+    const engineStats = summary.engine_stats;
     if (engineStats && typeof engineStats === 'object') {
         for (const name of Object.keys(engineStats as JsonObject)) {
             const normalized = coerceString(name) ?? String(name);
             if (normalized) names.add(normalized);
         }
     }
-    const pairResults = summary.pairResults;
+    const pairResults = summary.pair_results;
     if (pairResults && typeof pairResults === 'object') {
         for (const key of Object.keys(pairResults as JsonObject)) {
             const [engineA, engineB] = String(key ?? '').split('_vs_');
@@ -355,16 +355,16 @@ function normalizeTimeControls(
     engines: Iterable<string>,
 ): { engineTimeControls: Record<string, string>; defaultTimeControl: string | null } {
     const engineTimeControls: Record<string, string> = {};
-    const rawControls = summary.engineTimeControls;
+    const rawControls = summary.engine_time_controls;
     if (rawControls && typeof rawControls === 'object') {
         for (const [engine, value] of Object.entries(rawControls as JsonObject)) {
-            const key = assertString(engine, 'engineTimeControls key');
-            const spec = assertString(value, `engineTimeControls.${key}`);
+            const key = assertString(engine, 'engine_time_controls key');
+            const spec = assertString(value, `engine_time_controls.${key}`);
             engineTimeControls[key] = spec;
         }
     }
-    const defaultSpec = summary.defaultTimeControl
-        ? assertString(summary.defaultTimeControl, 'defaultTimeControl')
+    const defaultSpec = summary.default_time_control
+        ? assertString(summary.default_time_control, 'default_time_control')
         : null;
     if (defaultSpec) {
         for (const engine of engines) {
@@ -594,11 +594,11 @@ export function normalizeTournamentSummary(raw: unknown): NormalizedTournamentSu
     const engines = collectEngines(summary);
 
     const { engineTimeControls, defaultTimeControl } = normalizeTimeControls(summary, engines);
-    const engineStats = normalizeEngineStatsMap(summary.engineStats, engines);
-    const engineMeta = normalizeEngineMetaMap(summary.enginesMeta, engines);
-    const engineInstances = normalizeEngineInstances(summary.engineInstances, engines);
+    const engineStats = normalizeEngineStatsMap(summary.engine_stats, engines);
+    const engineMeta = normalizeEngineMetaMap(summary.engines_meta, engines);
+    const engineInstances = normalizeEngineInstances(summary.engine_instances, engines);
 
-    const ratingInitial = expectFiniteNumber(summary.ratingInitial, 'ratingInitial');
+    const ratingInitial = expectFiniteNumber(summary.rating_initial, 'rating_initial');
 
     const games = coerceObject(summary.games);
     const completedGames = expectNonNegativeInteger(games.completed, 'games.completed');
@@ -613,15 +613,15 @@ export function normalizeTournamentSummary(raw: unknown): NormalizedTournamentSu
     if (totalGames === 0 && originalTotal > 0) {
         totalGames = originalTotal;
     }
-    const runDir = summary.runDir ? assertString(summary.runDir, 'runDir') : null;
+    const runDir = summary.run_dir ? assertString(summary.run_dir, 'run_dir') : null;
 
-    const finishedFlag = summary.tournamentFinished;
+    const finishedFlag = summary.tournament_finished;
     const tournamentFinished = finishedFlag === true || (totalGames > 0 && completedGames >= totalGames);
 
-    const pairResults = normalizePairResults(summary.pairResults);
+    const pairResults = normalizePairResults(summary.pair_results);
     const btd = normalizeBtdSummary(summary.btd);
     const sprt = normalizeSprtSummary(summary.sprt);
-    const tournamentType = coerceNullableString(summary.tournamentType);
+    const tournamentType = coerceNullableString(summary.tournament_type);
 
     return {
         raw: summary,
@@ -636,7 +636,7 @@ export function normalizeTournamentSummary(raw: unknown): NormalizedTournamentSu
         cancelledGames,
         runDir,
         tournamentFinished,
-        sprtConclusion: coerceString(summary.sprtConclusion),
+        sprtConclusion: coerceString(summary.sprt_conclusion),
         sprt,
         tournamentType,
         pairResults,

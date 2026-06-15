@@ -59,6 +59,14 @@ class GameRunnerFinalizeMixin:
         """
         bestmove = think_result.bestmove
 
+        # Engine returned no usable bestmove (no response / unparseable). Treat as a loss for the
+        # side to move rather than crashing. This must come before the Move.MOVE_RESIGN/MOVE_WIN
+        # comparisons, since comparing None to a Move raises TypeError.
+        if bestmove is None:
+            logger.warning(f"No bestmove from {engine_name}; treating as loss for the side to move")
+            result = GameResult.WHITE_WIN if board.turn.is_black() else GameResult.BLACK_WIN
+            return _GameOverResult(is_game_over=True, result=result)
+
         # Handle special moves
         if bestmove == Move.MOVE_RESIGN:
             logger.debug(f"Engine {engine_name} resigned")
@@ -73,7 +81,6 @@ class GameRunnerFinalizeMixin:
             return _GameOverResult(is_game_over=True, result=result)
 
         # Validate normal move
-        assert bestmove is not None  # Already handled resign/win above
         if not board.is_legal_move(bestmove):
             logger.warning(f"Illegal move from {engine_name}: {bestmove.to_usi()}")
             result = GameResult.WHITE_WIN if board.turn.is_black() else GameResult.BLACK_WIN

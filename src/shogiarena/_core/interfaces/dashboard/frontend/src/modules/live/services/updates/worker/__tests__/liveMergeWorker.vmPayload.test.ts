@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { __testHandleEnvelope, __testResetState } from '../liveMergeWorker';
+import { __testHandleEnvelope, __testResetState } from '../live-merge-worker';
 
 describe('liveMergeWorker vm payload contract', () => {
     beforeEach(() => {
@@ -25,7 +25,7 @@ describe('liveMergeWorker vm payload contract', () => {
         __testHandleEnvelope({
             topic: 'live.assignment.snapshot',
             seq: 1,
-            payload: { assignments: { '0': 'g1' }, gids: ['g1'], updatedAt: 0 },
+            payload: { assignments: { '0': 'g1' }, gids: ['g1'], updated_at: 0 },
         });
     };
 

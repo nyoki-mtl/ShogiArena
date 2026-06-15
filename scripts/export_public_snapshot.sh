@@ -4,11 +4,12 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/export_public_snapshot.sh [--notes-file PATH] <version> [source_ref] [public_base]
+  scripts/export_public_snapshot.sh [options] <version> [source_ref] [public_base]
 
 Examples:
   scripts/export_public_snapshot.sh v0.8.0
   scripts/export_public_snapshot.sh --notes-file release-notes/v0.8.0.txt v0.8.0
+  scripts/export_public_snapshot.sh --notes-file release-notes/v0.8.0.txt --push --tag v0.8.0
   scripts/export_public_snapshot.sh v0.8.0 develop/main public/main
   # public/main が未作成（空リポ）でも実行可能
 
@@ -22,10 +23,13 @@ This script:
   3) overlays develop/main while excluding internal files
   4) removes excluded paths from snapshot
   5) creates a release snapshot commit
+  6) optionally pushes public/main and creates/pushes the release tag
 
 Notes:
   - 実行前に working tree / index / untracked files が空である必要があります。
   - --notes-file を指定すると、commit message の本文としてそのまま取り込みます。
+  - --tag は作成した public snapshot commit に annotated tag を付けます。
+  - --push と --tag を併用すると public/main と tag の両方を push します。
 EOF
 }
 
@@ -54,7 +58,35 @@ build_commit_message() {
   fi
 }
 
+verify_public_snapshot() {
+  local failed=0
+  local forbidden_paths=(
+    "AGENTS.md"
+    "CLAUDE.md"
+    "GEMINI.md"
+    "agent-docs/"
+    "_refs/"
+    ".github/workflows/develop-ci.yml"
+  )
+
+  while IFS= read -r path; do
+    for forbidden in "${forbidden_paths[@]}"; do
+      if [[ "${path}" == "${forbidden}" || "${path}" == "${forbidden}"* ]]; then
+        printf 'Forbidden path remains in public snapshot: %s\n' "${path}" >&2
+        failed=1
+      fi
+    done
+  done < <(git ls-tree -r --name-only HEAD)
+
+  [[ "${failed}" -eq 0 ]] || die "public snapshot verification failed"
+}
+
 NOTES_FILE=""
+PUSH_SNAPSHOT=0
+CREATE_TAG=0
+PUBLIC_REMOTE="public"
+PUBLIC_BRANCH="main"
+TAG_MESSAGE=""
 POSITIONAL=()
 
 while [[ $# -gt 0 ]]; do
@@ -66,6 +98,29 @@ while [[ $# -gt 0 ]]; do
     --notes-file)
       [[ $# -ge 2 ]] || die "--notes-file にはパスが必要です"
       NOTES_FILE="$2"
+      shift 2
+      ;;
+    --push)
+      PUSH_SNAPSHOT=1
+      shift
+      ;;
+    --tag)
+      CREATE_TAG=1
+      shift
+      ;;
+    --public-remote)
+      [[ $# -ge 2 ]] || die "--public-remote には remote 名が必要です"
+      PUBLIC_REMOTE="$2"
+      shift 2
+      ;;
+    --public-branch)
+      [[ $# -ge 2 ]] || die "--public-branch には branch 名が必要です"
+      PUBLIC_BRANCH="$2"
+      shift 2
+      ;;
+    --tag-message)
+      [[ $# -ge 2 ]] || die "--tag-message にはメッセージが必要です"
+      TAG_MESSAGE="$2"
       shift 2
       ;;
     --)
@@ -94,7 +149,7 @@ fi
 
 VERSION="$1"
 SOURCE_REF="${2:-develop/main}"
-PUBLIC_BASE="${3:-public/main}"
+PUBLIC_BASE="${3:-${PUBLIC_REMOTE}/${PUBLIC_BRANCH}}"
 EXPORT_BRANCH="export-public"
 PUBLIC_GIT_AUTHOR_NAME="${PUBLIC_GIT_AUTHOR_NAME:-nyoki-mtl}"
 PUBLIC_GIT_AUTHOR_EMAIL="${PUBLIC_GIT_AUTHOR_EMAIL:-charmer.popopo@gmail.com}"
@@ -132,7 +187,7 @@ require_clean_tree
 
 echo "[1/5] Fetch remotes"
 git fetch develop
-git fetch public
+git fetch "${PUBLIC_REMOTE}"
 
 git rev-parse --verify --quiet "${SOURCE_REF}" >/dev/null || die "source ref が見つかりません: ${SOURCE_REF}"
 
@@ -197,8 +252,38 @@ GIT_COMMITTER_NAME="${PUBLIC_GIT_AUTHOR_NAME}" \
 GIT_COMMITTER_EMAIL="${PUBLIC_GIT_AUTHOR_EMAIL}" \
 git commit -F "${COMMIT_MESSAGE_FILE}"
 
-cat <<EOF
+verify_public_snapshot
+
+if [[ "${CREATE_TAG}" -eq 1 ]]; then
+  if git rev-parse --verify --quiet "refs/tags/${VERSION}" >/dev/null; then
+    die "tag already exists locally: ${VERSION}"
+  fi
+  if git ls-remote --exit-code --tags "${PUBLIC_REMOTE}" "refs/tags/${VERSION}" >/dev/null 2>&1; then
+    die "tag already exists on ${PUBLIC_REMOTE}: ${VERSION}"
+  fi
+  git tag -a "${VERSION}" -m "${TAG_MESSAGE:-Release version ${VERSION#v}}"
+fi
+
+if [[ "${PUSH_SNAPSHOT}" -eq 1 ]]; then
+  git push "${PUBLIC_REMOTE}" HEAD:"${PUBLIC_BRANCH}"
+  if [[ "${CREATE_TAG}" -eq 1 ]]; then
+    git push "${PUBLIC_REMOTE}" "${VERSION}"
+  fi
+fi
+
+if [[ "${PUSH_SNAPSHOT}" -eq 1 ]]; then
+  cat <<EOF
+Snapshot commit created and pushed on branch '${EXPORT_BRANCH}'.
+Pushed:
+  ${PUBLIC_REMOTE}/${PUBLIC_BRANCH}
+EOF
+  if [[ "${CREATE_TAG}" -eq 1 ]]; then
+    printf '  %s tag %s\n' "${PUBLIC_REMOTE}" "${VERSION}"
+  fi
+else
+  cat <<EOF
 Snapshot commit created on branch '${EXPORT_BRANCH}'.
 Next:
-  git push public HEAD:main
+  git push ${PUBLIC_REMOTE} HEAD:${PUBLIC_BRANCH}
 EOF
+fi

@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol
 
+from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import EngineLifecyclePolicy
 from shogiarena._core.contexts.instances.application.instance_models import Instance
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
@@ -34,8 +35,12 @@ class EnginePool:
         engine_configs: Mapping[str, _EngineSpec] | None = None,
         instance_pool: InstancePool | None = None,
         default_handshake_timeout: float | None = None,
+        lifecycle_policy: EngineLifecyclePolicy = "reuse",
     ) -> None:
+        if lifecycle_policy not in ("reuse", "per_game"):
+            raise ValueError("lifecycle_policy must be 'reuse' or 'per_game'")
         self.max_instances = max_instances_per_engine
+        self.lifecycle_policy = lifecycle_policy
         self._engine_factory_service = engine_factory_service
         self.pools: dict[str, list[AsyncUsiEngine]] = {}
         self.in_use: dict[str, set[AsyncUsiEngine]] = {}
@@ -97,6 +102,16 @@ class EnginePool:
     def _notify_waiters(self) -> None:
         for wait_event in tuple(self._waiters):
             wait_event.set()
+
+    def _log_pool_state(self, slot_key: str, action: str) -> None:
+        logger.debug(
+            "%s for %s (active=%d idle=%d lifecycle=%s)",
+            action,
+            slot_key,
+            len(self.in_use.get(slot_key, set())),
+            len(self.pools.get(slot_key, [])),
+            self.lifecycle_policy,
+        )
 
     async def _evict_idle_engine_for_instance(
         self,
@@ -175,7 +190,7 @@ class EnginePool:
                     engine = pool.pop()
                     if engine.is_running:
                         in_use.add(engine)
-                        logger.debug("Reused engine %s from pool", slot_key)
+                        self._log_pool_state(slot_key, "Reused engine from pool")
                         return engine
                     try:
                         await engine.close()
@@ -211,20 +226,29 @@ class EnginePool:
                             capacity_blocked_instance = instance.name
 
                     if not is_capacity_blocked:
+                        reserved_instance = instance
+                        if reserved_instance is not None:
+                            reserved_instance.add_engine_processes(1)
                         handshake_timeout = self._resolve_handshake_timeout(spec)
-                        engine = await self._engine_factory_service.create_engine(
-                            config_path,
-                            timeout=handshake_timeout,
-                            extra_options=extra_options,
-                            engine_name=engine_name,
-                            instance_id=instance_id,
-                            instance_pool=self._instance_pool,
-                            cpu_affinity=affinity,
-                        )
-                        if instance is not None:
-                            self._engine_instance_ids[engine] = instance.name
-                            instance.add_engine_processes(1)
+                        try:
+                            engine = await self._engine_factory_service.create_engine(
+                                config_path,
+                                timeout=handshake_timeout,
+                                extra_options=extra_options,
+                                engine_name=engine_name,
+                                instance_id=instance_id,
+                                instance_pool=self._instance_pool,
+                                cpu_affinity=affinity,
+                            )
+                        except BaseException:
+                            if reserved_instance is not None:
+                                reserved_instance.remove_engine_processes(1)
+                                self._notify_waiters()
+                            raise
+                        if reserved_instance is not None:
+                            self._engine_instance_ids[engine] = reserved_instance.name
                         in_use.add(engine)
+                        self._log_pool_state(slot_key, "Created engine instance")
                         return engine
 
             if capacity_blocked_instance is not None:
@@ -260,15 +284,18 @@ class EnginePool:
             pool = self.pools.setdefault(slot_key, [])
             in_use.remove(engine)
 
-            if len(pool) < self.max_instances and engine.is_running:
+            if self.lifecycle_policy == "reuse" and len(pool) < self.max_instances and engine.is_running:
                 pool.append(engine)
-                logger.debug("Returned engine %s to pool", slot_key)
+                self._log_pool_state(slot_key, "Returned engine to pool")
             else:
                 try:
                     await engine.close()
                 except (TimeoutError, OSError, RuntimeError) as exc:
                     logger.debug("Error closing engine %s during release: %s", slot_key, exc, exc_info=True)
-                logger.debug("Terminated excess engine instance for %s", slot_key)
+                if self.lifecycle_policy == "per_game":
+                    self._log_pool_state(slot_key, "Closed engine after game")
+                else:
+                    self._log_pool_state(slot_key, "Terminated excess engine instance")
                 self._detach_engine_instance(engine)
 
             self._notify_waiters()
@@ -310,8 +337,11 @@ class EnginePool:
                 )
             else:
                 second_engine = await self.acquire(second[0], second[1], second[2], second[3])
-        except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
-            logger.debug("Failed to acquire engine pair (%s): %s", second[0], exc, exc_info=True)
+        except BaseException as exc:
+            # Release the first engine on ANY failure, including cancellation (CancelledError is
+            # a BaseException), so a cancelled second acquire never leaks the first slot.
+            if not isinstance(exc, asyncio.CancelledError):
+                logger.debug("Failed to acquire engine pair (%s): %s", second[0], exc, exc_info=True)
             await self.release(first[0], first_engine, first[3])
             raise
 

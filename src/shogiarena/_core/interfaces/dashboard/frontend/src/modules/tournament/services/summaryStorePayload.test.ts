@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { NormalizedTournamentSummary, TournamentSummary } from '@/modules/tournament/types';
-import { buildTournamentStoreSummaryPayload } from './summaryStorePayload';
+import { buildTournamentStoreSummaryPayload } from './summary-store-payload';
 
 describe('buildTournamentStoreSummaryPayload', () => {
     it('preserves liveView and games from the raw summary while replacing normalized engine fields', () => {
         const rawSummary: TournamentSummary = {
-            liveView: {
+            live_view: {
                 mode: 'tournament',
                 progress: {
                     kind: 'games',
@@ -20,16 +20,16 @@ describe('buildTournamentStoreSummaryPayload', () => {
                 cancelled: 0,
             },
             engines: ['old-a'],
-            engineMeta: {
+            engine_meta: {
                 'old-a': { name: 'old-a' },
             },
-            engineTimeControls: {
+            engine_time_controls: {
                 'old-a': '10+0',
             },
-            engineInstances: {
+            engine_instances: {
                 'old-a': 'inst-old',
             },
-            defaultTimeControl: '10+0',
+            default_time_control: '10+0',
         };
         const normalized: NormalizedTournamentSummary = {
             engines: ['new-a', 'new-b'],
@@ -49,12 +49,12 @@ describe('buildTournamentStoreSummaryPayload', () => {
 
         const payload = buildTournamentStoreSummaryPayload(rawSummary, normalized);
 
-        expect(payload.liveView).toEqual(rawSummary.liveView);
+        expect(payload.live_view).toEqual(rawSummary.live_view);
         expect(payload.games).toEqual(rawSummary.games);
         expect(payload.engines).toEqual(['new-a', 'new-b']);
-        expect(payload.engineMeta).toEqual(normalized.engineMeta);
-        expect(payload.engineTimeControls).toEqual(normalized.engineTimeControls);
-        expect(payload.engineInstances).toEqual(normalized.engineInstances);
-        expect(payload.defaultTimeControl).toBe('30+0');
+        expect(payload.engine_meta).toEqual(normalized.engineMeta);
+        expect(payload.engine_time_controls).toEqual(normalized.engineTimeControls);
+        expect(payload.engine_instances).toEqual(normalized.engineInstances);
+        expect(payload.default_time_control).toBe('30+0');
     });
 });

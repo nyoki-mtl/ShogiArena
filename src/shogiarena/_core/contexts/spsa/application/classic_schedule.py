@@ -52,6 +52,10 @@ def compute_classic_schedule_point(
         c_i = float(param.step) * (float(k_total) ** gamma) / (float(k_pair) ** gamma)
         if param.type == "int":
             c_i = max(c_i, float(int_ck_floor))
+        if c_i <= 0.0:
+            # SPSA requires c_k > 0; guard against a divide-by-zero in r_i for a misconfigured
+            # (e.g. step == 0) float parameter rather than raising an opaque ZeroDivisionError.
+            raise ValueError(f"SPSA c_k must be > 0 for parameter {param.name!r} (step={param.step})")
         r_i = (
             float(param.delta)
             * (float(param.step) ** 2)

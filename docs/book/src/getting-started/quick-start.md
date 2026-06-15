@@ -1,36 +1,8 @@
 # クイックスタート
 
-このガイドでは、インストール直後に最初のトーナメントを 1 本動かすところまでを説明します。
+このページでは、ローカルにある USI エンジン 2 つで最小構成のトーナメントを動かします。
 
-## 前提条件
-
-- Python 3.11 以上
-- USI 対応の将棋エンジン 2 つ以上
-
-インストール自体は [インストール](installation.md) を参照してください。
-
-## 1. 環境の初期化
-
-標準の `output_dir` と `engine_dir` を使いたい場合は最初に設定します。
-
-```bash
-shogiarena config init
-```
-
-`config init` をしない場合でも動作はします。このときは次のデフォルト値が使われます。
-
-- `output_dir`: `./shogiarena_output`
-- `engine_dir`: システム一時ディレクトリ配下の `shogiarena-engines`
-
-設定内容の確認:
-
-```bash
-shogiarena config show
-```
-
-## 2. エンジン設定ファイルの作成
-
-ShogiArena のエンジン YAML では `path` ではなく `engine_path` を使います。
+## 1. エンジン設定を作る
 
 `engine_a.yaml`:
 
@@ -39,7 +11,7 @@ name: "EngineA"
 engine_path: "/path/to/engine_a"
 options:
   Threads: 2
-  Hash: 256
+  USI_Hash: 256
 ```
 
 `engine_b.yaml`:
@@ -49,20 +21,12 @@ name: "EngineB"
 engine_path: "/path/to/engine_b"
 options:
   Threads: 2
-  Hash: 256
+  USI_Hash: 256
 ```
 
-`config init` 済みなら `{engine_dir}` プレースホルダーも使えます。
+`engine_path` には USI エンジンの実行ファイルを指定します。`options` は USI の `setoption` として送られます。
 
-```yaml
-name: "YaneuraOu"
-engine_path: "{engine_dir}/yaneuraou/YaneuraOu"
-options:
-  Threads: 4
-  Hash: 1024
-```
-
-## 3. トーナメント設定ファイルの作成
+## 2. トーナメント設定を作る
 
 `tournament.yaml`:
 
@@ -88,53 +52,59 @@ dashboard:
   api_port: 8080
 ```
 
-## 4. 実行
+現在のスケジューラは `round_robin` と `gauntlet` です。最初は `round_robin` が扱いやすいです。
 
-まずは設定だけ検証したいなら:
+## 3. 検証して実行する
 
 ```bash
 shogiarena run tournament tournament.yaml --dry-run
-```
-
-問題なければそのまま実行します。
-
-```bash
 shogiarena run tournament tournament.yaml
 ```
 
-`dashboard.enabled: true` の場合は `http://localhost:8080` にダッシュボードが立ち上がります。
+`dashboard.enabled: true` の場合は `http://localhost:8080` で実行状況を確認できます。
 
-## 5. 結果の保存先
+## 4. 結果を見る
 
-`--run-dir` を指定しない場合、結果は次のようなディレクトリに保存されます。
+`--run-dir` を指定しない場合、結果は標準出力先の run ディレクトリに保存されます。
 
 ```text
-{output_dir}/
-├── logs/                          # グローバルログディレクトリ
-└── runs/<config名またはexperiment_name>-<hash8>/YYYYMMDDHHMMSS/
-    ├── game.db
-    ├── state.json
-    ├── manifest.json
-    ├── data/
-    └── records/
+{output_dir}/runs/<experiment>-<hash8>/YYYYMMDDHHMMSS/
+├── game.db
+├── manifest.json
+├── state.json
+├── data/
+├── records/
+└── transcripts/
 ```
 
-`--run-dir` を指定した場合は、そのパスがそのまま run ディレクトリになります。
-
-## 6. 過去 run のダッシュボード表示
+保存済み run のダッシュボード:
 
 ```bash
-# 設定ファイルから最新 run を解決
-shogiarena dashboard serve --config tournament.yaml
-
-# または run ディレクトリを直接指定
 shogiarena dashboard serve --run-dir /path/to/run
 ```
 
+結果集計:
+
+```bash
+shogiarena results summary /path/to/run
+shogiarena results summary /path/to/run --format json
+```
+
+## サンプル設定
+
+リポジトリには用途別のテンプレートがあります。
+
+```bash
+cp examples/configs/run/tournament/example.yaml tournament.yaml
+cp examples/configs/run/sprt/example.yaml sprt.yaml
+cp examples/configs/run/spsa/example.yaml spsa.yaml
+```
+
+サンプルには artifact 参照やプレースホルダーが含まれる場合があります。実行前に自分の環境に合わせて `engines`、`instances`、評価関数や定跡のパスを調整してから `--dry-run` で確認してください。
+
 ## 次のステップ
 
-- [初めてのトーナメント](first-tournament.md)
-- [トーナメントの実行](../user-guide/tournaments.md)
-- [エンジン設定ファイル](../user-guide/engine-configuration.md)
-- [設定システム](../user-guide/configuration.md)
-- [リモート実行](../user-guide/remote-execution.md)
+- [最初のトーナメント](first-tournament.md)
+- [トーナメント](../user-guide/tournaments.md)
+- [エンジン設定](../user-guide/engine-configuration.md)
+- [ダッシュボード](../user-guide/dashboard.md)

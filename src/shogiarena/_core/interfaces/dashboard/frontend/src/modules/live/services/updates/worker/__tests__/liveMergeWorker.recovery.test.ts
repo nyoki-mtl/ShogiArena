@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { __testGetMoveSeq, __testGetRecoveryState, __testHandleEnvelope, __testResetState } from '../liveMergeWorker';
+import { __testGetMoveSeq, __testGetRecoveryState, __testHandleEnvelope, __testResetState } from '../live-merge-worker';
 
 describe('liveMergeWorker recovery state machine', () => {
     beforeEach(() => {
@@ -19,7 +19,7 @@ describe('liveMergeWorker recovery state machine', () => {
         __testHandleEnvelope({
             topic: 'live.assignment.snapshot',
             seq: 1,
-            payload: { assignments: { [String(workerIdx)]: gid }, gids: [gid], assignment_rev: rev, updatedAt: 0 },
+            payload: { assignments: { [String(workerIdx)]: gid }, gids: [gid], assignment_rev: rev, updated_at: 0 },
         });
     };
 

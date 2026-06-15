@@ -34,3 +34,18 @@ def test_create_engine_pool_uses_explicit_default_handshake_timeout(tmp_path: Pa
     assert not hasattr(orchestrator, "config")
     assert pool.max_instances == 3
     assert pool._default_handshake_timeout == 12.5  # noqa: SLF001
+
+
+def test_create_engine_pool_passes_engine_lifecycle(tmp_path: Path) -> None:
+    storage = FilesystemRunStorage(tmp_path)
+    session = SessionContext.build(storage=storage, num_workers=2, run_id="run-001")
+    orchestrator = _StubOrchestrator(
+        session_context=session,
+        hooks=NoopGameLifecycleHooks(),
+        engine_factory_service=EngineFactoryService(factory=AsyncMock()),
+        engine_lifecycle="per_game",
+    )
+
+    pool = orchestrator.create_engine_pool(3)
+
+    assert pool.lifecycle_policy == "per_game"

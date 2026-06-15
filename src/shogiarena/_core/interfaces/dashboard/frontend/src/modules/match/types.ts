@@ -9,14 +9,14 @@ export interface MatchCounts {
 }
 
 export interface MatchColorStats extends MatchCounts {
-    winRate?: number | null;
+    win_rate?: number | null;
 }
 
 export interface MatchTimelinePoint extends MatchCounts {
-    gameIndex: number;
-    winRate?: number | null;
-    winRateCi95?: { lower?: number | null; upper?: number | null };
-    eloEstimate?: number | null;
+    game_index: number;
+    win_rate?: number | null;
+    win_rate_ci95?: { lower?: number | null; upper?: number | null };
+    elo_estimate?: number | null;
     black?: MatchColorStats;
     white?: MatchColorStats;
 }
@@ -25,7 +25,7 @@ export interface MatchSummaryPayload {
     mode?: string;
     tested?: string;
     baseline?: string;
-    liveView?: LiveViewSnapshot | null;
+    live_view?: LiveViewSnapshot | null;
     games?: {
         completed?: number;
         total?: number | null;
@@ -33,10 +33,10 @@ export interface MatchSummaryPayload {
         losses?: number;
         draws?: number;
     };
-    winRate?: number | null;
-    winRateCi95?: { lower?: number | null; upper?: number | null };
-    eloEstimate?: number | null;
-    eloCi95?: { lower?: number | null; upper?: number | null };
+    win_rate?: number | null;
+    win_rate_ci95?: { lower?: number | null; upper?: number | null };
+    elo_estimate?: number | null;
+    elo_ci95?: { lower?: number | null; upper?: number | null };
     colors?: { black?: MatchCounts; white?: MatchCounts };
     timeline?: MatchTimelinePoint[];
     timestamp?: string;

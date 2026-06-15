@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -53,6 +54,93 @@ def test_engine_pool_slot_key():
 
 
 @pytest.mark.asyncio
+async def test_engine_pool_reserves_instance_capacity_while_engine_is_starting(tmp_path: Path) -> None:
+    config_path = _write_dummy_config(tmp_path)
+    instance_pool = _local_instance_pool(max_engines=1)
+    local_instance = instance_pool.ensure_local_instance()
+    create_started = asyncio.Event()
+    release_create = asyncio.Event()
+    created: list[_DummyEngine] = []
+    create_calls = 0
+
+    async def _create_engine(*args: Any, **kwargs: Any) -> _DummyEngine:  # noqa: ARG001
+        nonlocal create_calls
+        create_calls += 1
+        if create_calls == 1:
+            create_started.set()
+            await release_create.wait()
+        engine = _DummyEngine(name=f"dummy-{len(created)}")
+        created.append(engine)
+        return engine
+
+    mock_factory = AsyncMock()
+    mock_factory.create_engine = _create_engine
+    service = EngineFactoryService(factory=mock_factory)
+    engine_pool = EnginePool(
+        max_instances_per_engine=2,
+        instance_pool=instance_pool,
+        engine_factory_service=service,
+    )
+
+    first_task = asyncio.create_task(
+        engine_pool.acquire("engine-a#black", config_path, instance_override="local"),
+    )
+    await asyncio.wait_for(create_started.wait(), timeout=1.0)
+
+    second_task = asyncio.create_task(
+        engine_pool.acquire("engine-b#black", config_path, instance_override="local"),
+    )
+    await asyncio.sleep(0.05)
+
+    assert create_calls == 1
+    assert local_instance.metrics.engine_processes == 1
+
+    release_create.set()
+    first = await asyncio.wait_for(first_task, timeout=1.0)
+    second_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await second_task
+
+    await engine_pool.release("engine-a#black", first, instance_override="local")
+    await engine_pool.shutdown_all()
+    assert local_instance.metrics.engine_processes == 0
+
+
+@pytest.mark.asyncio
+async def test_engine_pool_rolls_back_instance_capacity_when_creation_is_cancelled(tmp_path: Path) -> None:
+    config_path = _write_dummy_config(tmp_path)
+    instance_pool = _local_instance_pool(max_engines=1)
+    local_instance = instance_pool.ensure_local_instance()
+    create_started = asyncio.Event()
+    never_release = asyncio.Event()
+
+    async def _create_engine(*args: Any, **kwargs: Any) -> _DummyEngine:  # noqa: ARG001
+        create_started.set()
+        await never_release.wait()
+        raise AssertionError("unreachable")
+
+    mock_factory = AsyncMock()
+    mock_factory.create_engine = _create_engine
+    service = EngineFactoryService(factory=mock_factory)
+    engine_pool = EnginePool(
+        max_instances_per_engine=2,
+        instance_pool=instance_pool,
+        engine_factory_service=service,
+    )
+
+    task = asyncio.create_task(engine_pool.acquire("engine-a#black", config_path, instance_override="local"))
+    await asyncio.wait_for(create_started.wait(), timeout=1.0)
+    assert local_instance.metrics.engine_processes == 1
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert local_instance.metrics.engine_processes == 0
+    await engine_pool.shutdown_all()
+
+
+@pytest.mark.asyncio
 async def test_engine_pool_wakes_waiters_across_slot_keys(tmp_path: Path) -> None:
     config_path = _write_dummy_config(tmp_path)
     instance_pool = _local_instance_pool(max_engines=1)
@@ -79,6 +167,100 @@ async def test_engine_pool_wakes_waiters_across_slot_keys(tmp_path: Path) -> Non
     assert instance_pool.ensure_local_instance().metrics.engine_processes == 1
 
     await engine_pool.release("engine-b#black", second, instance_override="local")
+    await engine_pool.shutdown_all()
+
+
+@pytest.mark.asyncio
+async def test_engine_pool_reuses_released_engine_by_default(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config_path = _write_dummy_config(tmp_path)
+    instance_pool = _local_instance_pool(max_engines=1)
+    created: list[_DummyEngine] = []
+    service = _make_engine_factory_service(created)
+    engine_pool = EnginePool(
+        max_instances_per_engine=1,
+        instance_pool=instance_pool,
+        engine_factory_service=service,
+    )
+
+    first = await engine_pool.acquire("engine-a#black", config_path, instance_override="local")
+    with caplog.at_level(logging.DEBUG):
+        await engine_pool.release("engine-a#black", first, instance_override="local")
+    second = await engine_pool.acquire("engine-a#black", config_path, instance_override="local")
+
+    assert second is first
+    assert created == [first]
+    assert first.close_calls == 0
+    assert "Returned engine to pool for engine-a#black@local (active=0 idle=1 lifecycle=reuse)" in caplog.text
+
+    await engine_pool.release("engine-a#black", second, instance_override="local")
+    await engine_pool.shutdown_all()
+
+
+@pytest.mark.asyncio
+async def test_engine_pool_per_game_closes_released_engine(tmp_path: Path) -> None:
+    config_path = _write_dummy_config(tmp_path)
+    instance_pool = _local_instance_pool(max_engines=1)
+    local_instance = instance_pool.ensure_local_instance()
+    created: list[_DummyEngine] = []
+    service = _make_engine_factory_service(created)
+    engine_pool = EnginePool(
+        max_instances_per_engine=1,
+        instance_pool=instance_pool,
+        engine_factory_service=service,
+        lifecycle_policy="per_game",
+    )
+
+    first = await engine_pool.acquire("engine-a#black", config_path, instance_override="local")
+    await engine_pool.release("engine-a#black", first, instance_override="local")
+
+    assert first.close_calls == 1
+    assert engine_pool.pools["engine-a#black@local"] == []
+    assert local_instance.metrics.engine_processes == 0
+
+    second = await engine_pool.acquire("engine-a#black", config_path, instance_override="local")
+    assert second is not first
+    assert created == [first, second]
+
+    await engine_pool.release("engine-a#black", second, instance_override="local")
+    await engine_pool.shutdown_all()
+
+
+@pytest.mark.asyncio
+async def test_acquire_pair_sorted_releases_first_on_cancel(tmp_path: Path) -> None:
+    config_path = _write_dummy_config(tmp_path)
+    instance_pool = _local_instance_pool(max_engines=1)
+    created: list[_DummyEngine] = []
+    service = _make_engine_factory_service(created)
+    engine_pool = EnginePool(
+        max_instances_per_engine=2,
+        instance_pool=instance_pool,
+        engine_factory_service=service,
+    )
+    local_instance = instance_pool.ensure_local_instance()
+
+    a = ("engine-a#black", config_path, None, "local")
+    b = ("engine-b#black", config_path, None, "local")
+    # The first acquire takes the only slot; the second blocks on capacity. Cancelling the pair
+    # acquire must release the first engine instead of leaking the slot (regression for the
+    # except clause that did not catch CancelledError).
+    task = asyncio.create_task(engine_pool.acquire_pair_sorted(a, b))
+    await asyncio.sleep(0.05)
+    assert local_instance.metrics.engine_processes == 1
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # The first engine is back in the pool, so a fresh acquire succeeds instead of timing out
+    # on a leaked in-use slot.
+    reacquired = await asyncio.wait_for(
+        engine_pool.acquire("engine-a#black", config_path, instance_override="local"),
+        timeout=1.0,
+    )
+    assert reacquired is not None
+    await engine_pool.release("engine-a#black", reacquired, instance_override="local")
     await engine_pool.shutdown_all()
 
 

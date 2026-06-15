@@ -35,6 +35,7 @@ from shogiarena._core.contexts.game_session.application.progress.orchestrator_pr
 )
 from shogiarena._core.contexts.game_session.application.progress.snapshot_models import WorkerSnapshotModel
 from shogiarena._core.contexts.game_session.ports.session_context import SessionContext
+from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import EngineLifecyclePolicy
 from shogiarena._core.contexts.game_session.ports.session_runner_ports import BeforeGameHookPort
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
@@ -74,6 +75,7 @@ class BaseOrchestrator:
         resource_poll_interval: float | None = None,
         resource_poll_max_interval: float | None = None,
         default_engine_handshake_timeout: float | None = None,
+        engine_lifecycle: EngineLifecyclePolicy = "reuse",
     ) -> None:
         self.api_server: DashboardServerPort | None = api_server
         self._summary_updater: SummaryUpdateCallback | None = summary_updater
@@ -92,6 +94,7 @@ class BaseOrchestrator:
         self._resource_poll_interval = resource_poll_interval
         self._resource_poll_max_interval = resource_poll_max_interval
         self._default_engine_handshake_timeout = default_engine_handshake_timeout
+        self._engine_lifecycle = engine_lifecycle
         self.extra_options: JsonObject | None = None
         self.engine_configs = {}
         self._progress_hub = ProgressHub(
@@ -206,6 +209,7 @@ class BaseOrchestrator:
             engine_configs=self.engine_configs,
             instance_pool=self.instance_pool,
             default_handshake_timeout=self._default_engine_handshake_timeout,
+            lifecycle_policy=self._engine_lifecycle,
         )
         return self.engine_pool
 

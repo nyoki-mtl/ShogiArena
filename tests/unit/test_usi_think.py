@@ -51,6 +51,20 @@ def test_time_increment_requires_non_negative() -> None:
         UsiThinkRequest(binc=-1)
 
 
+def test_depth_requires_positive() -> None:
+    with pytest.raises(ValueError):
+        UsiThinkRequest(depth=0)
+    with pytest.raises(ValueError):
+        UsiThinkRequest(depth=-1)
+
+
+def test_nodes_requires_positive() -> None:
+    with pytest.raises(ValueError):
+        UsiThinkRequest(nodes=0)
+    with pytest.raises(ValueError):
+        UsiThinkRequest(nodes=-5)
+
+
 def test_time_increment_handles_none() -> None:
     req = UsiThinkRequest(
         btime=5000,

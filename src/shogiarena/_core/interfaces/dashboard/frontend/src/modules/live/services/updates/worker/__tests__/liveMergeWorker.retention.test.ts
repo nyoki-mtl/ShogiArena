@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { __testHandleEnvelope, __testHasSnapshot, __testResetState } from '../liveMergeWorker';
+import { __testHandleEnvelope, __testHasSnapshot, __testResetState } from '../live-merge-worker';
 
 describe('liveMergeWorker gid retention', () => {
     beforeEach(() => {
@@ -19,7 +19,7 @@ describe('liveMergeWorker gid retention', () => {
             payload: {
                 assignments: { '0': 'g1' },
                 gids: ['g1'],
-                updatedAt: 0,
+                updated_at: 0,
             },
         });
 
@@ -31,7 +31,7 @@ describe('liveMergeWorker gid retention', () => {
             payload: {
                 assignments: { '0': 'g2' },
                 gids: ['g2'],
-                updatedAt: 0,
+                updated_at: 0,
             },
         });
 

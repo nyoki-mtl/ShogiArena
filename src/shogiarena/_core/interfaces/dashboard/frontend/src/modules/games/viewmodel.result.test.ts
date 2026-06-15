@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { NormalizedGameRow } from '@/modules/games/types';
-import { buildResultViewModel } from '@/modules/games/viewmodel.result';
+import { buildResultViewModel } from '@/modules/games/viewmodel-result';
 
 function createNormalizedGameRow(overrides: Partial<NormalizedGameRow> = {}): NormalizedGameRow {
     return {

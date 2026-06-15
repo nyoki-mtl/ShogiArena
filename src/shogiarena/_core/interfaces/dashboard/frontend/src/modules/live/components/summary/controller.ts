@@ -10,12 +10,12 @@ import {
     recordLiveDiagnosticsMetric,
     requireLiveApi,
 } from '@/modules/live/utils/liveNamespace';
-import { getResumeCoordinator } from '@/modules/shared/services/resumeCoordinator';
+import { getResumeCoordinator } from '@/modules/shared/services/resume-coordinator';
 import type { RatingDeltaInfo, TournamentEngineMeta, TournamentSummary } from '@/modules/tournament/types';
 import type { JsonObject } from '@/types/shared';
 import { createSummaryDataAccess, type SummaryWindowBase } from './context';
 import { createPentaController } from './penta';
-import { gameResultWinner } from '@/modules/shared/utils/gameResult';
+import { gameResultWinner } from '@/modules/shared/utils/game-result';
 import { summaryStore } from '@/store';
 import {
     renderOptionsPane,
@@ -24,7 +24,7 @@ import {
     renderStandingsView,
     renderSummaryStats,
 } from './render';
-import { normalizeSummaryEventPayload } from './contractGuard';
+import { normalizeSummaryEventPayload } from './contract-guard';
 import { isExpandedState, type PairwiseCell, type ProgressViewModel, type StandingsRow } from './state';
 
 type SummaryRecord = TournamentSummary;
@@ -351,7 +351,9 @@ function createLiveSummaryApi(owner: SummaryWindow): LiveSummaryApi {
                 ? liveProgress.cancelled
                 : normalized.cancelledGames;
         const progressFinal =
-            typeof liveProgress?.isFinal === 'boolean' ? liveProgress.isFinal : Boolean(normalized.tournamentFinished);
+            typeof liveProgress?.is_final === 'boolean'
+                ? liveProgress.is_final
+                : Boolean(normalized.tournamentFinished);
 
         const sprtRaw = normalized.sprt ?? null;
         const sprt =
@@ -532,8 +534,8 @@ function createLiveSummaryApi(owner: SummaryWindow): LiveSummaryApi {
             .join('||');
         const signature = `${expandedSig}::${rowsSig}`;
 
-        const metaArr: TournamentEngineMeta[] = Array.isArray(summary.enginesMeta)
-            ? (summary.enginesMeta as TournamentEngineMeta[])
+        const metaArr: TournamentEngineMeta[] = Array.isArray(summary.engines_meta)
+            ? (summary.engines_meta as TournamentEngineMeta[])
             : [];
         const metaMap = new Map<string, TournamentEngineMeta>();
         metaArr.forEach((meta) => {
@@ -765,37 +767,37 @@ function createLiveSummaryApi(owner: SummaryWindow): LiveSummaryApi {
             }
             const existing = summaryStore.getRawSummary('tournament') ?? {};
             const mergedLiveView =
-                existing.liveView &&
-                mutable.liveView &&
-                typeof existing.liveView === 'object' &&
-                typeof mutable.liveView === 'object'
-                    ? { ...existing.liveView, ...mutable.liveView }
-                    : (mutable.liveView ?? existing.liveView);
+                existing.live_view &&
+                mutable.live_view &&
+                typeof existing.live_view === 'object' &&
+                typeof mutable.live_view === 'object'
+                    ? { ...existing.live_view, ...mutable.live_view }
+                    : (mutable.live_view ?? existing.live_view);
             // shallow-merge for partial diff
             const merged: SummaryRecord = {
                 ...(existing as SummaryRecord),
                 ...mutable,
-                ...(mergedLiveView ? { liveView: mergedLiveView } : {}),
+                ...(mergedLiveView ? { live_view: mergedLiveView } : {}),
             };
             summaryStore.applyTournamentSummary(merged as JsonObject);
-            const tournamentType = (mutable as { tournamentType?: unknown }).tournamentType;
+            const tournamentType = (mutable as { tournament_type?: unknown }).tournament_type;
             if (typeof tournamentType === 'string' && tournamentType !== 'spsa') {
                 owner.ARENA_DISABLE_SPSA = true;
             }
         }
 
         const progressChanged =
-            !payload || ['games', 'summaryReady', 'liveView', 'timestamp'].some((k) => changedKeys.has(k));
+            !payload || ['games', 'is_summary_ready', 'live_view', 'timestamp'].some((k) => changedKeys.has(k));
         const standingsChanged =
             !payload ||
             [
                 'standings',
                 'engines',
-                'enginesMeta',
-                'engineTimeControls',
-                'defaultTimeControl',
-                'pairResults',
-                'ratingInitial',
+                'engines_meta',
+                'engine_time_controls',
+                'default_time_control',
+                'pair_results',
+                'rating_initial',
                 'btd',
             ].some((k) => changedKeys.has(k));
 

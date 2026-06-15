@@ -33,7 +33,7 @@ import {
     parseSpsaUpdateEntries,
     parseSpsaUpdateDetailResponse,
 } from '@/contracts/parsers/spsa';
-import { isGameResultName } from '@/modules/shared/utils/gameResult';
+import { isGameResultName } from '@/modules/shared/utils/game-result';
 
 const DETAIL_INCLUDE_SET = new Set<string>(SPSA_DETAIL_SUPPORTED_INCLUDES);
 const DETAIL_WINDOW_SET = new Set<string>(SPSA_DETAIL_SUPPORTED_WINDOWS);
@@ -382,14 +382,14 @@ export function normalizeSpsaSummary(raw: unknown): NormalizedSpsaSummary {
     const etaSeconds = toNullableNumber(parsed.eta_seconds);
     const deltaNormLast = toNullableNumber(parsed.delta_norm_last);
 
-    const engineTimeControls = normalizeStringMap(rawRecord.engineTimeControls as unknown);
-    const defaultTimeControl = coerceString(rawRecord.defaultTimeControl as unknown) ?? null;
+    const engineTimeControls = normalizeStringMap(rawRecord.engine_time_controls as unknown);
+    const defaultTimeControl = coerceString(rawRecord.default_time_control as unknown) ?? null;
     const engines =
         Array.isArray(rawRecord.engines) && rawRecord.engines.length
             ? rawRecord.engines.map((name) => String(name ?? '')).filter((name) => name.trim().length > 0)
             : [];
     const engineInstances: Record<string, string | null | undefined> = {};
-    const rawInstances = rawRecord.engineInstances as unknown;
+    const rawInstances = rawRecord.engine_instances as unknown;
     if (rawInstances && typeof rawInstances === 'object' && !Array.isArray(rawInstances)) {
         for (const [key, value] of Object.entries(rawInstances as JsonObject)) {
             if (!key) continue;
@@ -397,7 +397,7 @@ export function normalizeSpsaSummary(raw: unknown): NormalizedSpsaSummary {
         }
     }
     const engineStats: Record<string, { wins?: number; losses?: number; draws?: number; games?: number }> = {};
-    const rawStats = rawRecord.engineStats as unknown;
+    const rawStats = rawRecord.engine_stats as unknown;
     if (rawStats && typeof rawStats === 'object' && !Array.isArray(rawStats)) {
         for (const [key, value] of Object.entries(rawStats as JsonObject)) {
             if (!key || !value || typeof value !== 'object') continue;
@@ -412,7 +412,7 @@ export function normalizeSpsaSummary(raw: unknown): NormalizedSpsaSummary {
     }
 
     const engineMeta: Record<string, JsonObject> = {};
-    const rawMeta = rawRecord.engineMeta as unknown;
+    const rawMeta = rawRecord.engine_meta as unknown;
     if (rawMeta && typeof rawMeta === 'object' && !Array.isArray(rawMeta)) {
         for (const [key, value] of Object.entries(rawMeta as JsonObject)) {
             if (!key || !value || typeof value !== 'object') continue;

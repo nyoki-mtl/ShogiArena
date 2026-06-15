@@ -3,7 +3,7 @@ import { createSafeClone } from './common';
 import { createLiveUpdatesContext } from './context';
 import { createLiveUpdateHandlers } from './handlers';
 import { createWsSetup } from './ws';
-import { installRecoverableFailureNotices } from './recoverableNotices';
+import { installRecoverableFailureNotices } from './recoverable-notices';
 import type { LiveUpdatesWindow } from '@/modules/live/types/updates';
 import { ensureLiveNamespace, registerLiveApi } from '@/modules/live/utils/liveNamespace';
 

@@ -22,6 +22,10 @@ from .query_models import LtcResultsStreamQuery, SpsaSummaryStreamQuery, Updates
 
 logger = logging.getLogger(__name__)
 
+# Retain references to fire-and-forget notify tasks so they are not garbage collected
+# before completion (CPython only holds a weak reference to running tasks otherwise).
+_PENDING_NOTIFY_TASKS: set[asyncio.Task[None]] = set()
+
 
 def publish_summary_snapshot(handler, payload: Mapping[str, JsonValue]) -> None:
     snapshot = to_json_object(payload)
@@ -36,7 +40,9 @@ def publish_summary_snapshot(handler, payload: Mapping[str, JsonValue]) -> None:
     except RuntimeError:
         # No running loop yet; snapshot will be served on next poll/connection
         return
-    loop.create_task(_notify())
+    task = loop.create_task(_notify())
+    _PENDING_NOTIFY_TASKS.add(task)
+    task.add_done_callback(_PENDING_NOTIFY_TASKS.discard)
 
 
 async def sse_summary(handler, request: web.Request) -> web.StreamResponse:

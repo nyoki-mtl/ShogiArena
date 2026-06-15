@@ -12,6 +12,11 @@ from shogiarena._core.shared.kernel.time_control_spec import limits_to_record_ti
 
 logger = logging.getLogger(__name__)
 
+# Default upper bound (ms) on how long to wait for a bestmove. Kept as a module
+# constant so callers can reference the default without touching a Pydantic model
+# class attribute (model fields are not exposed on the class in Pydantic v2).
+DEFAULT_MAX_WAIT_MS = 600_000  # 10 minutes
+
 
 @runtime_checkable
 class TimeControlLimitsPort(Protocol):
@@ -53,7 +58,7 @@ class TimeControlLimits(BaseModel):
     node_limit: int | None = None
     expiry_margin_ms: int = 500
     should_allow_timeout: bool = False
-    max_wait_ms: int = 600_000  # 10 minutes default upper bound
+    max_wait_ms: int = DEFAULT_MAX_WAIT_MS  # 10 minutes default upper bound
 
     # --- Encoding helpers (DB/UI spec string) ----------------------------
     def to_spec_str(self) -> str:
@@ -336,6 +341,7 @@ class GameClock:
 
 
 __all__ = [
+    "DEFAULT_MAX_WAIT_MS",
     "GameClock",
     "TimeControlLimits",
     "TimeControlLimitsPort",

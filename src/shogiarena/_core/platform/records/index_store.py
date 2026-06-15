@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,23 +103,120 @@ def _parse_entry(raw: Mapping[str, object], *, line_number: int) -> RecordIndexE
 
 
 def load_record_index(path: Path) -> list[RecordIndexEntry]:
-    """Load committed record index entries from JSONL."""
+    """Load committed record index entries from JSONL (tolerating a torn final line)."""
 
+    entries, _torn = _read_index_entries(path)
+    return entries
+
+
+def _read_index_entries(path: Path) -> tuple[list[RecordIndexEntry], bool]:
+    """Parse index entries, tolerating a single torn final line from an interrupted append.
+
+    Returns ``(entries, dropped_torn_line)``. A malformed JSON line that is *not* the last line is
+    treated as genuine corruption and raises; only a truncated final line is dropped.
+    """
     if not path.exists():
-        return []
+        return [], False
+    text = path.read_text(encoding="utf-8")
+    # A torn line is one the crash left without its terminating newline; a fully written (newline-
+    # terminated) line that fails to parse is genuine corruption, not an interrupted append.
+    has_trailing_newline = text.endswith("\n")
+    non_empty: list[tuple[int, str]] = [
+        (line_number, line.strip()) for line_number, line in enumerate(text.splitlines(), start=1) if line.strip()
+    ]
     entries: list[RecordIndexEntry] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        stripped = line.strip()
-        if not stripped:
-            continue
+    for position, (line_number, stripped) in enumerate(non_empty):
+        is_last = position == len(non_empty) - 1
         try:
             raw = json.loads(stripped)
         except json.JSONDecodeError as exc:
+            if is_last and not has_trailing_newline:
+                logger.warning("Dropping torn final records index line %d (interrupted append)", line_number)
+                return entries, True
             raise ValueError(f"records index line {line_number} is not valid JSON") from exc
         if not isinstance(raw, Mapping):
             raise ValueError(f"records index line {line_number} must be an object")
         entries.append(_parse_entry(raw, line_number=line_number))
-    return entries
+    return entries, False
+
+
+def rewrite_record_index(path: Path, entries: Iterable[RecordIndexEntry]) -> None:
+    """Atomically rewrite the index file to exactly ``entries`` (used during crash recovery)."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(path.name + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        for entry in entries:
+            handle.write(json.dumps(entry.to_json_object(), ensure_ascii=False, sort_keys=True))
+            handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    tmp_path.replace(path)
+
+
+def _ensure_index_matches_config(entries: Iterable[RecordIndexEntry], *, file_prefix: str, format_id: str) -> None:
+    """Reject an existing index that belongs to a different format or file prefix.
+
+    Because the index is the source of truth for resume, opening an ``sbinpack`` output as ``psv``
+    (or with another file_prefix) would otherwise mix incompatible records and corrupt the manifest.
+    """
+    for entry in entries:
+        if entry.format_id != format_id:
+            raise ValueError(
+                f"Existing records index uses format {entry.format_id!r} but the writer is "
+                f"configured for {format_id!r}; start fresh or choose a matching records_output."
+            )
+        if not (entry.file.startswith(f"{file_prefix}_") and entry.file.endswith(f".{format_id}")):
+            raise ValueError(
+                f"Existing records index entry {entry.file!r} does not match the configured "
+                f"file_prefix {file_prefix!r}; start fresh or choose a matching records_output."
+            )
+
+
+def recover_record_index(
+    *,
+    index_path: Path,
+    output_dir: Path,
+    file_prefix: str,
+    format_id: str,
+) -> list[RecordIndexEntry]:
+    """Load the index and repair it against the on-disk binaries after a possible crash.
+
+    - tolerates a torn final index line (interrupted append),
+    - drops entries whose ``byte_end`` exceeds the actual binary file size (binary tail lost),
+    - truncates binaries to the committed extent / removes uncovered files,
+    - rewrites the index file when anything was dropped.
+    """
+
+    entries, dropped = _read_index_entries(index_path)
+    _ensure_index_matches_config(entries, file_prefix=file_prefix, format_id=format_id)
+    file_size_cache: dict[str, int] = {}
+    survivors: list[RecordIndexEntry] = []
+    for entry in entries:
+        size = file_size_cache.get(entry.file)
+        if size is None:
+            file_path = output_dir / entry.file
+            size = file_path.stat().st_size if file_path.exists() else 0
+            file_size_cache[entry.file] = size
+        if entry.byte_end > size:
+            logger.warning(
+                "Dropping records index entry beyond file extent: %s byte_end=%d file_size=%d",
+                entry.file,
+                entry.byte_end,
+                size,
+            )
+            dropped = True
+            continue
+        survivors.append(entry)
+    if dropped:
+        rewrite_record_index(index_path, survivors)
+    truncate_unindexed_record_bytes(
+        output_dir=output_dir,
+        entries=survivors,
+        file_prefix=file_prefix,
+        format_id=format_id,
+    )
+    return survivors
 
 
 def append_record_index_entry(path: Path, entry: RecordIndexEntry) -> None:
@@ -129,6 +227,7 @@ def append_record_index_entry(path: Path, entry: RecordIndexEntry) -> None:
         handle.write(json.dumps(entry.to_json_object(), ensure_ascii=False, sort_keys=True))
         handle.write("\n")
         handle.flush()
+        os.fsync(handle.fileno())
 
 
 def written_game_ids(entries: Iterable[RecordIndexEntry]) -> set[str]:
@@ -219,6 +318,8 @@ __all__ = [
     "build_records_manifest_payload",
     "load_record_index",
     "next_file_index",
+    "recover_record_index",
+    "rewrite_record_index",
     "truncate_unindexed_record_bytes",
     "written_game_ids",
 ]

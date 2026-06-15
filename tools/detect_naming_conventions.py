@@ -29,9 +29,133 @@ PORT_PROTOCOL_ALLOWED_SUFFIXES: tuple[str, ...] = (
     "Factory",
     "Repository",
     "Policy",
-    "Like",
-    "ServiceLike",
     "Fn",
+)
+
+# Dashboard frontend TypeScript source files live under this path (relative to the
+# scan root's parent package). Only `*.ts` source files are checked for kebab-case;
+# `*.test.ts` and `*.d.ts` are structural-suffix exceptions.
+TS_FRONTEND_RELATIVE = Path("shogiarena/_core/interfaces/dashboard/frontend/src")
+KEBAB_CASE_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+TS_TEST_SUFFIX = ".test.ts"
+TS_DECL_SUFFIX = ".d.ts"
+
+# Project-owned dashboard wire keys must be snake_case (see
+# agent-docs/tasks/0008-project-wide-renaming). The boolean key `summaryReady` is the
+# one non-mechanical migration target (-> is_summary_ready); everything else converts
+# mechanically. This map is the canonical list for the TypeScript-side N010 check and
+# also documents the historical migration targets.
+LEGACY_WIRE_KEY_REPLACEMENTS: dict[str, str] = {
+    "tournamentType": "tournament_type",
+    "summaryReady": "is_summary_ready",
+    "enginesMeta": "engines_meta",
+    "engineTimeControls": "engine_time_controls",
+    "defaultTimeControl": "default_time_control",
+    "engineInstances": "engine_instances",
+    "engineStats": "engine_stats",
+    "engineMeta": "engine_meta",
+    "pairResults": "pair_results",
+    "snapshotMeta": "snapshot_meta",
+    "estimatedTimeRemaining": "estimated_time_remaining",
+    "updatedAt": "updated_at",
+    "inProgress": "in_progress",
+    "completionRate": "completion_rate",
+    "liveView": "live_view",
+    "liveViewMode": "live_view_mode",
+    "liveViewProgressState": "live_view_progress_state",
+    "tournamentFinished": "tournament_finished",
+    "tournamentConfig": "tournament_config",
+    "triggerPerHour": "trigger_per_hour",
+    "failureRate": "failure_rate",
+    "retentionMinutes": "retention_minutes",
+    "intervalSeconds": "interval_seconds",
+    "flipPolicy": "flip_policy",
+    "autoSnapshot": "auto_snapshot",
+    "runDir": "run_dir",
+    "outputDir": "output_dir",
+    "runStatus": "run_status",
+    "runMode": "run_mode",
+    "summarySource": "summary_source",
+    "spsaConfig": "spsa_config",
+    "recordFormat": "record_format",
+    "recordsSummary": "records_summary",
+    "recordsOutput": "records_output",
+    "generateConfig": "generate_config",
+    "experimentName": "experiment_name",
+    "filePrefix": "file_prefix",
+    "fileCount": "file_count",
+    "totalBytes": "total_bytes",
+    "totalGames": "total_games",
+    "totalPositions": "total_positions",
+    "initialPositions": "initial_positions",
+    "numEngines": "num_engines",
+    "unitLabel": "unit_label",
+    "isFinal": "is_final",
+    "isResumable": "is_resumable",
+    "latencyMs": "latency_ms",
+    "payloadKb": "payload_kb",
+    "detailPayloadKbSlim": "detail_payload_kb_slim",
+    "detailPayloadKbFull": "detail_payload_kb_full",
+    "detailIncludeCount": "detail_include_count",
+    "includeCount": "include_count",
+    "includeAnalysis": "include_analysis",
+    "repetitionOccurrencesToDraw": "repetition_occurrences_to_draw",
+    "gameId": "game_id",
+    "gameIndex": "game_index",
+    "ratingInitial": "rating_initial",
+    "winRate": "win_rate",
+    "winRateCi95": "win_rate_ci95",
+    "eloEstimate": "elo_estimate",
+    "eloCi95": "elo_ci95",
+    "minGames": "min_games",
+    "maxGames": "max_games",
+    "pendingPairs": "pending_pairs",
+    "pendingGames": "pending_games",
+    "skippedNonDecisive": "skipped_non_decisive",
+    "receivedAt": "received_at",
+    "fromSeq": "from_seq",
+}
+LEGACY_WIRE_KEY_RE = re.compile(r"\b(" + "|".join(LEGACY_WIRE_KEY_REPLACEMENTS) + r")\b")
+
+# Generic camelCase string-literal detector for Python. Python has no idiomatic
+# camelCase, so any camelCase quoted string inside a wire-producing/parsing path is
+# treated as a stray wire key. This is broader and more future-proof than the explicit
+# list above (which is still used for the TypeScript side, where camelCase identifiers
+# are legitimate outside the wire layer).
+PY_CAMEL_STRING_RE = re.compile(r"""['"]([a-z][a-z0-9]*[A-Z][A-Za-z0-9]*)['"]""")
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def camel_to_snake(name: str) -> str:
+    return _CAMEL_BOUNDARY_RE.sub("_", name).lower()
+
+
+# Python paths whose project-owned string keys must be snake_case. OpenBench endpoint
+# names are an external protocol contract and are intentionally excluded.
+PY_WIRE_PATH_FRAGMENTS: tuple[str, ...] = (
+    "interfaces/dashboard/",
+    "interfaces/boundaries/",
+    "contexts/dashboard/",
+    "contexts/spsa/",
+    "contexts/game_session/application/summary/",
+    "contexts/game_session/application/completion/",
+    "platform/records/",
+)
+PY_WIRE_EXCLUDE_FRAGMENTS: tuple[str, ...] = ("adapters/openbench/", "/openbench/")
+
+# TypeScript wire-layer files: only PURE-wire locations are scanned. `contracts/` holds
+# generated wire types + zod parsers; `services/schemas.ts` and
+# `services/updates/schema.ts` are zod schema definitions. These contain wire keys only.
+#
+# Files like `types/public.ts` / `types.ts` / `store/types.ts` are intentionally NOT
+# scanned: they mix raw wire payload types with API interfaces (camelCase method params)
+# and ViewModel types (idiomatic camelCase), so a token scan there yields false
+# positives. The authoritative gate for those keys is the Python-side generic check on
+# the producers (source of truth), which has no idiomatic camelCase to confuse it.
+TS_WIRE_PATH_FRAGMENTS: tuple[str, ...] = ("dashboard/frontend/src/contracts/",)
+TS_WIRE_FILE_SUFFIXES: tuple[str, ...] = (
+    "/services/schemas.ts",
+    "/services/updates/schema.ts",
 )
 
 
@@ -214,8 +338,8 @@ def _check_python_ast(path: Path, root: Path, module_name: str, violations: list
                             line=node.lineno,
                             rule_id="N007",
                             symbol=class_name,
-                            message="ports Protocol should use role suffix (Port/Factory/Repository/Policy/Like)",
-                            hint="rename protocol with appropriate suffix",
+                            message="ports Protocol should use role suffix (Port/Factory/Repository/Policy/Fn)",
+                            hint="rename protocol with one of Port/Factory/Repository/Policy/Fn",
                         )
                     )
 
@@ -274,6 +398,100 @@ def _check_python_ast(path: Path, root: Path, module_name: str, violations: list
             )
 
 
+def _iter_ts_files(frontend_root: Path) -> Iterable[Path]:
+    for path in frontend_root.rglob("*.ts"):
+        if "node_modules" in path.parts:
+            continue
+        yield path
+
+
+def _ts_subject_stem(path: Path) -> str | None:
+    """Return the kebab-checkable stem, or None for structural-suffix exceptions."""
+    name = path.name
+    if name.endswith(TS_TEST_SUFFIX) or name.endswith(TS_DECL_SUFFIX):
+        return None
+    return path.stem
+
+
+def _check_ts_file_names(frontend_root: Path, root: Path, violations: list[Violation]) -> None:
+    for path in _iter_ts_files(frontend_root):
+        stem = _ts_subject_stem(path)
+        if stem is None:
+            continue
+        if not KEBAB_CASE_RE.match(stem):
+            violations.append(
+                Violation(
+                    source_file=path.relative_to(root),
+                    line=1,
+                    rule_id="N009",
+                    symbol=path.name,
+                    message="TypeScript source file name must be kebab-case",
+                    hint="rename file to kebab-case.ts (exceptions: *.test.ts, *.d.ts)",
+                )
+            )
+
+
+def _is_py_wire_path(path: Path) -> bool:
+    posix = path.as_posix()
+    if any(fragment in posix for fragment in PY_WIRE_EXCLUDE_FRAGMENTS):
+        return False
+    return any(fragment in posix for fragment in PY_WIRE_PATH_FRAGMENTS)
+
+
+def _is_ts_wire_path(path: Path) -> bool:
+    posix = path.as_posix()
+    if any(fragment in posix for fragment in TS_WIRE_PATH_FRAGMENTS):
+        return True
+    return any(posix.endswith(suffix) for suffix in TS_WIRE_FILE_SUFFIXES)
+
+
+def _check_py_wire_keys(path: Path, root: Path, violations: list[Violation]) -> None:
+    """Flag any camelCase quoted string in Python wire-producing paths (N010)."""
+    if not _is_py_wire_path(path):
+        return
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return
+    for lineno, line in enumerate(source.splitlines(), start=1):
+        for match in PY_CAMEL_STRING_RE.finditer(line):
+            legacy = match.group(1)
+            replacement = LEGACY_WIRE_KEY_REPLACEMENTS.get(legacy, camel_to_snake(legacy))
+            violations.append(
+                Violation(
+                    source_file=path.relative_to(root),
+                    line=lineno,
+                    rule_id="N010",
+                    symbol=legacy,
+                    message="project-owned wire key uses camelCase string literal",
+                    hint=f"rename wire key to {replacement}",
+                )
+            )
+
+
+def _check_ts_wire_keys(path: Path, root: Path, violations: list[Violation]) -> None:
+    """Flag known legacy camelCase wire keys in TypeScript wire-layer files (N010)."""
+    if not _is_ts_wire_path(path):
+        return
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return
+    for lineno, line in enumerate(source.splitlines(), start=1):
+        for match in LEGACY_WIRE_KEY_RE.finditer(line):
+            legacy = match.group(1)
+            violations.append(
+                Violation(
+                    source_file=path.relative_to(root),
+                    line=lineno,
+                    rule_id="N010",
+                    symbol=legacy,
+                    message="project-owned dashboard wire key uses legacy camelCase",
+                    hint=f"rename wire key to {LEGACY_WIRE_KEY_REPLACEMENTS[legacy]}",
+                )
+            )
+
+
 def _summarize(violations: Sequence[Violation]) -> dict[str, int]:
     summary: dict[str, int] = {}
     for violation in violations:
@@ -304,6 +522,13 @@ def main() -> int:
         module_name = _build_module_name(path, scan_root)
         _add_file_violations(path, root, module_name, violations)
         _check_python_ast(path, root, module_name, violations)
+        _check_py_wire_keys(path, root, violations)
+
+    frontend_root = root / TS_FRONTEND_RELATIVE
+    if frontend_root.is_dir():
+        _check_ts_file_names(frontend_root, root, violations)
+        for ts_path in _iter_ts_files(frontend_root):
+            _check_ts_wire_keys(ts_path, root, violations)
 
     if not violations:
         print("Naming conventions check: no violations.")

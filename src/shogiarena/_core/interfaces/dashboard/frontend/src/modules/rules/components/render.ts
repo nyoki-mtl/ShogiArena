@@ -102,12 +102,12 @@ interface RenderContext {
 
 function buildTimeControlSection({ doc, summary, options }: RenderContext): HTMLElement | null {
     const rules = summary.rules;
-    const defaultSpec = summary.defaultTimeControl || (rules?.time_control_spec as string | undefined);
+    const defaultSpec = summary.default_time_control || (rules?.time_control_spec as string | undefined);
     const formatSpec = (spec: unknown) => formatTimeControl(spec, options.parseTimeControlSpec);
     const rows: RulesListEntry[] = [{ label: 'Default spec', value: formatSpec(defaultSpec) }];
 
-    if (summary.engineTimeControls && typeof summary.engineTimeControls === 'object') {
-        const overrides = Object.entries(summary.engineTimeControls)
+    if (summary.engine_time_controls && typeof summary.engine_time_controls === 'object') {
+        const overrides = Object.entries(summary.engine_time_controls)
             .filter(([, spec]) => spec && spec !== defaultSpec)
             .sort(([a], [b]) => a.localeCompare(b));
         if (overrides.length) {
@@ -194,9 +194,9 @@ function renderSprt({ doc, summary }: RenderContext): RuleCard[] {
     if (sprtData.elo1 != null) rows.push({ label: 'Elo H1', value: String(sprtData.elo1) });
     if (sprtData.alpha != null) rows.push({ label: 'Alpha', value: String(sprtData.alpha) });
     if (sprtData.beta != null) rows.push({ label: 'Beta', value: String(sprtData.beta) });
-    const minGames = sprtData.min_games ?? sprtData.minGames;
+    const minGames = sprtData.min_games;
     if (minGames != null) rows.push({ label: 'Min games', value: String(minGames) });
-    const maxGames = sprtData.max_games ?? sprtData.maxGames;
+    const maxGames = sprtData.max_games;
     rows.push({ label: 'Max games', value: maxGames != null ? String(maxGames) : '\u221e' });
     if (Array.isArray(sprtData.engines) && sprtData.engines.length) {
         const engines = sprtData.engines.map((engine) => String(engine));
@@ -230,7 +230,6 @@ function buildRepetitionSection({ doc, summary }: RenderContext): HTMLElement | 
 function buildSpsaAlgorithmSection({ doc }: RenderContext, cfg: SpsaAlgorithmConfig): HTMLElement | null {
     const rows: RulesListEntry[] = [];
     if (cfg.num_updates != null) rows.push({ label: 'Num updates', value: String(cfg.num_updates) });
-    if (cfg.mobility != null) rows.push({ label: 'Mobility', value: String(cfg.mobility) });
     if (cfg.scale != null && cfg.scale !== 1.0) rows.push({ label: 'Scale', value: String(cfg.scale) });
     if (cfg.update_mode) rows.push({ label: 'Update mode', value: cfg.update_mode });
     if (cfg.crn_enabled != null) rows.push({ label: 'CRN', value: cfg.crn_enabled ? 'Enabled' : 'Disabled' });
@@ -248,7 +247,6 @@ function buildSpsaAlgorithmSection({ doc }: RenderContext, cfg: SpsaAlgorithmCon
 
 function buildSpsaGainScheduleSection({ doc }: RenderContext, cfg: SpsaAlgorithmConfig): HTMLElement | null {
     const rows: RulesListEntry[] = [];
-    if (cfg.a0 != null) rows.push({ label: 'a\u2080', value: String(cfg.a0) });
     rows.push({ label: 'A', value: cfg.A != null ? String(cfg.A) : 'auto' });
     if (cfg.alpha != null) rows.push({ label: '\u03b1', value: String(cfg.alpha) });
     if (cfg.gamma != null) rows.push({ label: '\u03b3', value: String(cfg.gamma) });
@@ -279,7 +277,7 @@ function buildSpsaLtcSection({ doc }: RenderContext, ltc: SpsaLtcRulesConfig): H
 }
 
 function renderSpsa(context: RenderContext): RuleCard[] {
-    const cfg = context.summary.spsaConfig;
+    const cfg = context.summary.spsa_config;
     if (!cfg || typeof cfg !== 'object') return [];
 
     const sections: HTMLElement[] = [];
@@ -341,8 +339,8 @@ function renderCoreRules(context: RenderContext): RuleCard | null {
 }
 
 function renderGenerateConfig({ doc, summary }: RenderContext): RuleCard[] {
-    const generate = summary.generateConfig;
-    const records = summary.recordsOutput;
+    const generate = summary.generate_config;
+    const records = summary.records_output;
     if (!generate && !records) {
         return [];
     }
@@ -353,7 +351,7 @@ function renderGenerateConfig({ doc, summary }: RenderContext): RuleCard[] {
         const rows: RulesListEntry[] = [];
         const games = generate.games as number | undefined;
         const seed = generate.seed as number | undefined;
-        const numParallel = generate.num_parallel ?? generate.numParallel;
+        const numParallel = generate.num_parallel;
         if (games != null) rows.push({ label: 'Games', value: String(games) });
         if (numParallel != null) rows.push({ label: 'Parallel', value: String(numParallel) });
         if (seed != null) rows.push({ label: 'Seed', value: String(seed) });
@@ -401,7 +399,7 @@ export function renderRuleCards(doc: Document, summary: RulesSummary, options: R
         cards.push(coreRulesCard);
     }
 
-    const mode = summary.tournamentType;
+    const mode = summary.tournament_type;
     if (mode === 'spsa') {
         const spsaCards = renderSpsa(context);
         if (spsaCards?.length) {

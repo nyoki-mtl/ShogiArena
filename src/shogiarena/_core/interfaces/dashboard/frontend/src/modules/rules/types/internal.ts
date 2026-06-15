@@ -62,9 +62,7 @@ export interface SpsaLtcRulesConfig {
 
 export interface SpsaAlgorithmConfig {
     num_updates?: number;
-    mobility?: number;
     scale?: number;
-    a0?: number;
     A?: number | null;
     alpha?: number;
     gamma?: number;
@@ -83,14 +81,14 @@ export interface SpsaAlgorithmConfig {
 export interface RulesSummary extends TournamentSummary {
     rules?: TournamentRulesConfig | JsonObject;
     sprt?: TournamentSprtSummary | JsonObject | null;
-    spsaConfig?: SpsaAlgorithmConfig | null;
-    repetitionOccurrencesToDraw?: number;
-    initialPositions?: JsonObject;
-    engineTimeControls?: Record<string, string>;
-    defaultTimeControl?: string;
-    flipPolicy?: string | null;
-    generateConfig?: JsonObject | null;
-    recordsOutput?: JsonObject | null;
+    spsa_config?: SpsaAlgorithmConfig | null;
+    repetition_occurrences_to_draw?: number;
+    initial_positions?: JsonObject;
+    engine_time_controls?: Record<string, string>;
+    default_time_control?: string;
+    flip_policy?: string | null;
+    generate_config?: JsonObject | null;
+    records_output?: JsonObject | null;
 }
 
 export interface RulesWindow extends Window {

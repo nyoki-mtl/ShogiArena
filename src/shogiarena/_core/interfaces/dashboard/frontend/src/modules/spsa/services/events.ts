@@ -12,6 +12,7 @@ import type {
     NormalizedSpsaGame,
 } from '@/modules/spsa/types';
 import { INITIAL_UPDATE_IDX } from '@/modules/spsa/types';
+import { reportDashboardRecoverableFailure } from '@/modules/shared/utils/errors';
 import type { DashboardNavigationApi } from '@/types/globals';
 import {
     renderConvergenceError,
@@ -34,9 +35,9 @@ import {
     refreshParameterSelection,
 } from '../components/updates';
 import { getCachedUpdateDetail, getUpdateFromCache, setUpdateExpanded, getState } from '../state';
-import { createDetailStreamController, createDetailStreamNotifier } from './detailStream';
-import { getAnalysisPipeline } from './analysisPipeline';
-import { createAnalysisStateMachine } from './analysisStateMachine';
+import { createDetailStreamController, createDetailStreamNotifier } from './detail-stream';
+import { getAnalysisPipeline } from './analysis-pipeline';
+import { createAnalysisStateMachine } from './analysis-state-machine';
 import {
     SPSA_DETAIL_DEFAULT_WINDOW,
     SPSA_DETAIL_REQUIRED_INCLUDES,
@@ -264,6 +265,14 @@ export function setupSpsaEvents({ root, api, state }: EventOptions): SpsaEventBi
             root.removeEventListener('click', onClick);
             detailStream?.updateTargets([]);
             detailStream?.stop();
+            // Stop the analysis state machines and any pending retry so stale timers cannot fire
+            // against a torn-down binding (the machines clear their own warming/error timers).
+            correlationStateMachine.destroy();
+            convergenceStateMachine.destroy();
+            if (correlationRetryTimer !== null) {
+                window.clearTimeout(correlationRetryTimer);
+                correlationRetryTimer = null;
+            }
         },
         focusUpdate: focusUpdateBinding,
         switchTab: switchTabBinding,
@@ -323,7 +332,12 @@ async function handleUpdateRowClick(
             inflightDetailRequests.delete(updateIdx);
             renderUpdateDetailError(updateIdx, 'Failed to load update details');
         }
-        throw new Error('Failed to load SPSA update detail', { cause: error });
+        // The failure is already surfaced in the UI; report it for diagnostics instead of rethrowing,
+        // since callers invoke this via `void` and a rejected promise would become an unhandledrejection.
+        reportDashboardRecoverableFailure(error, {
+            scope: 'Spsa.UpdateDetail',
+            userMessage: 'Failed to load SPSA update detail.',
+        });
     }
 }
 

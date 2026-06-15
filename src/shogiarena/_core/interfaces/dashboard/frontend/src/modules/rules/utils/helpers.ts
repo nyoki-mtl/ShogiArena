@@ -16,6 +16,7 @@ function isNormalizedTournamentSummary(value: unknown): value is NormalizedTourn
     }
     const record = value as Record<string, unknown>;
     return 'raw' in record && 'engineTimeControls' in record;
+    // NOTE: NormalizedTournamentSummary (ViewModel) uses camelCase `engineTimeControls`.
 }
 
 function coerceString(value: unknown): string | null {
@@ -75,10 +76,10 @@ export function getRulesSummary(source: NormalizedTournamentSummary | JsonObject
 
     const summary: RulesSummary = { ...raw };
 
-    if (summary.defaultTimeControl != null) {
-        const coerced = coerceString(summary.defaultTimeControl);
+    if (summary.default_time_control != null) {
+        const coerced = coerceString(summary.default_time_control);
         if (coerced) {
-            summary.defaultTimeControl = coerced;
+            summary.default_time_control = coerced;
         }
     }
 
@@ -88,18 +89,18 @@ export function getRulesSummary(source: NormalizedTournamentSummary | JsonObject
     }
 
     const mergedTimeControls = {
-        ...(summary.engineTimeControls ?? {}),
+        ...(summary.engine_time_controls ?? {}),
         ...(isNormalized
             ? source.engineTimeControls
-            : normalizeStringRecord((source as JsonObject).engineTimeControls)),
+            : normalizeStringRecord((source as JsonObject).engine_time_controls)),
     };
-    summary.engineTimeControls = mergedTimeControls;
+    summary.engine_time_controls = mergedTimeControls;
 
     const defaultTimeControl = isNormalized
         ? coerceString(source.defaultTimeControl)
-        : coerceString((source as JsonObject).defaultTimeControl);
-    if (!summary.defaultTimeControl && defaultTimeControl) {
-        summary.defaultTimeControl = defaultTimeControl;
+        : coerceString((source as JsonObject).default_time_control);
+    if (!summary.default_time_control && defaultTimeControl) {
+        summary.default_time_control = defaultTimeControl;
     }
 
     const sprtRaw = isNormalized
@@ -113,16 +114,16 @@ export function getRulesSummary(source: NormalizedTournamentSummary | JsonObject
 
     const tournamentType = isNormalized
         ? coerceString(source.tournamentType)
-        : coerceString((source as JsonObject).tournamentType);
-    if (!summary.tournamentType && tournamentType) {
-        summary.tournamentType = tournamentType;
+        : coerceString((source as JsonObject).tournament_type);
+    if (!summary.tournament_type && tournamentType) {
+        summary.tournament_type = tournamentType;
     }
 
     const spsaConfigRaw = isNormalized
-        ? (source.raw as Record<string, unknown> | undefined)?.spsaConfig
-        : (source as JsonObject).spsaConfig;
-    if (!summary.spsaConfig && spsaConfigRaw && typeof spsaConfigRaw === 'object') {
-        summary.spsaConfig = spsaConfigRaw as SpsaAlgorithmConfig;
+        ? (source.raw as Record<string, unknown> | undefined)?.spsa_config
+        : (source as JsonObject).spsa_config;
+    if (!summary.spsa_config && spsaConfigRaw && typeof spsaConfigRaw === 'object') {
+        summary.spsa_config = spsaConfigRaw as SpsaAlgorithmConfig;
     }
 
     return summary;
@@ -170,10 +171,12 @@ export function formatTimeControl(spec: unknown, parseSpec: ParseTimeControlSpec
 
     if (mode === 'fixed' && typeof fixedMs === 'number') {
         parts.push(`Fixed ${formatDuration(fixedMs)}`);
-    } else if (mode === 'incremental') {
-        if (typeof initial === 'number') parts.push(`Initial ${formatDuration(initial)}`);
-        if (typeof increment === 'number') parts.push(`Inc ${formatDuration(increment)}`);
-        if (typeof byoyomi === 'number') parts.push(`Byo ${formatDuration(byoyomi)}`);
+    } else {
+        // Standard time controls report mode 'time' (initial + increment/byoyomi).
+        // Skip zero components so a plain "t300000" does not render "Inc 0s · Byo 0s".
+        if (typeof initial === 'number' && initial > 0) parts.push(`Initial ${formatDuration(initial)}`);
+        if (typeof increment === 'number' && increment > 0) parts.push(`Inc ${formatDuration(increment)}`);
+        if (typeof byoyomi === 'number' && byoyomi > 0) parts.push(`Byo ${formatDuration(byoyomi)}`);
     }
 
     if (nodes != null) {
@@ -204,7 +207,7 @@ export function normalizeAdjudication(summary: RulesSummary): AdjudicationConfig
         candidates.push(summary.adjudication);
     }
 
-    const tournamentConfig = summary.tournamentConfig;
+    const tournamentConfig = summary.tournament_config;
     if (tournamentConfig && typeof tournamentConfig === 'object') {
         const configRecord = tournamentConfig as JsonObject;
         if (configRecord.adjudication != null) {
@@ -222,7 +225,7 @@ export function normalizeAdjudication(summary: RulesSummary): AdjudicationConfig
 }
 
 export function normalizeInitialPositions(summary: RulesSummary): InitialPositionsInfo | null {
-    const ipRaw = summary.rules?.initial_positions ?? summary.initialPositions;
+    const ipRaw = summary.rules?.initial_positions ?? summary.initial_positions;
     if (!ipRaw || typeof ipRaw !== 'object') return null;
 
     const ip = ipRaw as JsonObject;
@@ -236,7 +239,7 @@ export function normalizeInitialPositions(summary: RulesSummary): InitialPositio
 
     const flipPolicy = (() => {
         if (typeof ip.flip_policy === 'string') return ip.flip_policy;
-        if (typeof summary.flipPolicy === 'string') return summary.flipPolicy;
+        if (typeof summary.flip_policy === 'string') return summary.flip_policy;
         return null;
     })();
 
@@ -258,7 +261,7 @@ export function normalizeInitialPositions(summary: RulesSummary): InitialPositio
 }
 
 export function getRepetitionValue(summary: RulesSummary): number | null {
-    const valueRaw = summary.rules?.repetition_occurrences_to_draw ?? summary.repetitionOccurrencesToDraw;
+    const valueRaw = summary.rules?.repetition_occurrences_to_draw ?? summary.repetition_occurrences_to_draw;
     const value = Number(valueRaw);
     return Number.isFinite(value) && value > 0 ? value : null;
 }

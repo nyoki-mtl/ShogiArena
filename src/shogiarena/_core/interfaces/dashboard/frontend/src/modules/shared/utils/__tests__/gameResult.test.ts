@@ -7,7 +7,7 @@ import {
     gameResultLabel,
     gameResultScores,
     gameResultWinner,
-} from '@/modules/shared/utils/gameResult';
+} from '@/modules/shared/utils/game-result';
 
 describe('gameResult helpers', () => {
     it('maps canonical names to labels', () => {

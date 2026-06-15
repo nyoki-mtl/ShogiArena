@@ -11,8 +11,10 @@ from shogiarena._core.contexts.engine_catalog.ports.catalog_service import (
     EngineCatalogRequest,
 )
 from shogiarena._core.contexts.engine_catalog.ports.file_loader import EngineCatalogFileLoaderPort
+from shogiarena._core.shared.kernel.book_provenance import build_book_provenance
 from shogiarena._core.shared.kernel.json_coercion import to_json_object
 from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.overlay_options import select_overlay_options
 from shogiarena._core.shared.kernel.paths import maybe_resolve_path_option, resolve_path_like
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_str
 from shogiarena._core.shared.kernel.serialization import json_serialize
@@ -136,6 +138,14 @@ class EngineCatalogService(EngineCatalogPort):
                 request_engine_dir=request.engine_dir,
                 name=entry.name,
             )
+            # 内蔵定跡(A) の provenance サマリ（解決後 path / 軽量 fingerprint / 主要 option）。Task 0015。
+            book_provenance = build_book_provenance(
+                merged_options,
+                output_dir=request.run_dir,
+                engine_dir=request.engine_dir,
+            )
+            if book_provenance is not None:
+                metadata["book"] = book_provenance
 
         runtime_options = request.runtime_options.get(entry.name)
         if runtime_options:
@@ -221,7 +231,7 @@ class EngineCatalogService(EngineCatalogPort):
         if path is None:
             return {}
         payload = self._file_loader.load_yaml_mapping(path)
-        overlay_options = payload.get("options") if "options" in payload else payload
+        overlay_options = select_overlay_options(payload, source=str(path))
         return self._extract_options_mapping(overlay_options, path=path, field_name="options")
 
     def _extract_options_mapping(

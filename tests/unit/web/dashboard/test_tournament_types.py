@@ -50,7 +50,7 @@ class TestStandingEntry:
 
 class TestStandingsPayload:
     def test_all_required(self) -> None:
-        expected = {"standings", "enginesMeta", "updated_at"}
+        expected = {"standings", "engines_meta", "updated_at"}
         assert _required_keys(StandingsPayload) == expected
 
     def test_references_standing_entry(self) -> None:
@@ -72,7 +72,7 @@ class TestGamesCounter:
 
 class TestProgressPayload:
     def test_all_required(self) -> None:
-        expected = {"games", "inProgress", "pending", "completionRate", "estimatedTimeRemaining", "updatedAt"}
+        expected = {"games", "in_progress", "pending", "completion_rate", "estimated_time_remaining", "updated_at"}
         assert _required_keys(ProgressPayload) == expected
 
     def test_references_games_counter(self) -> None:

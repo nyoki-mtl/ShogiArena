@@ -39,6 +39,10 @@ async def load_engine(
     root = build_default_root()
     runtime = root.engine_runtime
 
+    # Guarantee a real local instance for engine creation; the runtime factory no
+    # longer synthesizes a placeholder instance when no pool is supplied.
+    pool = instance_pool if instance_pool is not None else InstancePool.ensure_default_local_pool()
+
     resolved_argument = Path(resolve_path_like(argument))
     if resolved_argument.suffix.lower() in CONFIG_EXTENSIONS:
         if not resolved_argument.exists():
@@ -53,7 +57,7 @@ async def load_engine(
             extra_options=options,
             engine_name=engine_name,
             instance_id=instance_id,
-            instance_pool=instance_pool,
+            instance_pool=pool,
         )
 
     if not resolved_argument.exists():
@@ -74,5 +78,5 @@ async def load_engine(
         extra_options=options,
         engine_name=engine_name,
         instance_id=instance_id,
-        instance_pool=instance_pool,
+        instance_pool=pool,
     )

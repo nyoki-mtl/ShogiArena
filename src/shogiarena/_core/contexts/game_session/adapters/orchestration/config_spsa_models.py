@@ -127,7 +127,6 @@ class SpsaRunConfig(BaseModel):
     pairs_per_update: int = Field(default=1, gt=0)
     algorithm: SpsaAlgorithmBlock = Field(default_factory=SpsaAlgorithmBlock)
     variants: SpsaVariantsConfig = Field(default_factory=SpsaVariantsConfig)
-    mobility: float = 1.0
     scale: float = 1.0
     # Paths and runtime
     experiment_name: str | None = None
@@ -135,8 +134,6 @@ class SpsaRunConfig(BaseModel):
     # Async orchestration
     inflight_factor: int = 4
     update_batch_size: int | None = None
-    # Legacy dashboard knobs retained as derived/default metadata.
-    a0: float = 1.0
     is_snap_float_to_step: bool = Field(default=False, alias="snap_float_to_step")
     # OpenBench alignment options
     int_ck_floor: float = 0.5

@@ -20,12 +20,12 @@ export interface TournamentEngineStats {
 }
 
 export interface TournamentAdjudicationRules {
-    maxMovesToDraw?: number;
+    max_moves_to_draw?: number;
     [key: string]: unknown;
 }
 
 export interface TournamentRulesConfig {
-    maxMovesToDraw?: number;
+    max_moves_to_draw?: number;
     adjudication?: TournamentAdjudicationRules;
     [key: string]: unknown;
 }
@@ -59,16 +59,16 @@ export interface TournamentEngineMeta {
 }
 
 export interface TournamentSummary {
-    ratingInitial?: number;
+    rating_initial?: number;
     engines?: string[];
-    enginesMeta?: TournamentEngineMeta[];
-    engineStats?: Record<string, TournamentEngineStats>;
-    engineTimeControls?: Record<string, string>;
-    defaultTimeControl?: string;
-    maxMovesToDraw?: number;
+    engines_meta?: TournamentEngineMeta[];
+    engine_stats?: Record<string, TournamentEngineStats>;
+    engine_time_controls?: Record<string, string>;
+    default_time_control?: string;
+    max_moves_to_draw?: number;
     rules?: TournamentRulesConfig;
     adjudication?: TournamentAdjudicationRules;
-    tournamentConfig?: TournamentConfig;
+    tournament_config?: TournamentConfig;
     btd?: TournamentBTDSummary;
     sprt?: TournamentSprtSummary | null;
     games?: {
@@ -76,11 +76,11 @@ export interface TournamentSummary {
         total?: number;
         cancelled?: number;
     };
-    runDir?: string;
-    pairResults?: Record<string, JsonObject>;
-    sprtConclusion?: string;
-    tournamentType?: string;
-    tournamentFinished?: boolean;
+    run_dir?: string;
+    pair_results?: Record<string, JsonObject>;
+    sprt_conclusion?: string;
+    tournament_type?: string;
+    tournament_finished?: boolean;
     [key: string]: unknown;
 }
 

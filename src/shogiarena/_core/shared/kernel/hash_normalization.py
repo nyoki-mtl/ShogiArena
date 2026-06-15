@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
+from enum import Enum
 from pathlib import Path
 from typing import TypeAlias
 
 from pydantic import BaseModel
 
 from shogiarena._core.shared.kernel.json_types import JsonValue
-from shogiarena._core.shared.kernel.serialization import json_serialize
 
 HashInput: TypeAlias = (
     JsonValue
@@ -40,8 +40,20 @@ def normalize_for_hash(value: HashInput) -> JsonValue:
         case set() as items:
             normalized_items = [normalize_for_hash(item) for item in items]
             return sorted(normalized_items, key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
+        case Enum() as enum_value:
+            return enum_value.value
+        case None:
+            return None
+        case bool() | int() | float() | str() as scalar:
+            return scalar
         case _:
-            return json_serialize(value)
+            # Fail fast instead of silently str()-ing an unknown type: a value whose
+            # str()/repr() is non-deterministic (e.g. default object repr with an address)
+            # would silently destabilize the hash and break resume/dedup matching.
+            raise TypeError(
+                f"normalize_for_hash cannot deterministically hash a value of type "
+                f"{type(value).__name__}; convert it to a JSON-compatible value first"
+            )
 
 
 __all__ = ["HashInput", "normalize_for_hash"]

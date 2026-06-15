@@ -105,11 +105,11 @@ def test_build_summary_payload_attaches_ltc_and_live_view() -> None:
     payload = service.build_summary_payload()
 
     assert payload["mode"] == "spsa"
-    assert payload["summarySource"] == "spsa"
+    assert payload["summary_source"] == "spsa"
     assert payload["ltc_regression"]["status"] == "passed"
     assert payload["elo"] == 42.0
     assert payload["btd_elo"] == 42.0
-    assert payload["liveView"]["completed"] == 3
+    assert payload["live_view"]["completed"] == 3
 
 
 def test_build_summary_payload_requires_summary_service() -> None:

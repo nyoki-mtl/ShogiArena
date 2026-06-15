@@ -52,7 +52,10 @@ class ArenaApiServerRuntimeMixin:
                 start = time.monotonic()
                 try:
                     await self.instances_api.run_health_checks(should_force=True)
-                except (OSError, RuntimeError):
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # Never let an unexpected error kill the health loop; log and keep going.
                     logger.warning("Instances health check loop iteration failed", exc_info=True)
                 elapsed = time.monotonic() - start
                 await asyncio.sleep(max(0.0, interval - elapsed))
@@ -77,6 +80,10 @@ class ArenaApiServerRuntimeMixin:
             await self._instances_health_task
         except asyncio.CancelledError:
             pass
+        except Exception:
+            # The loop should swallow its own errors, but guard cleanup so shutdown
+            # is never broken by a health task that died with an unexpected exception.
+            logger.warning("Instances health task ended with an error", exc_info=True)
         self._instances_health_task = None
 
     @staticmethod

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from shogiarena._core.shared.kernel.time_control import TimeControlLimits
+from shogiarena._core.shared.kernel.time_control import DEFAULT_MAX_WAIT_MS, TimeControlLimits
 
 
 def build_time_control_limits(
@@ -31,6 +31,7 @@ def build_time_control_limits(
         if base_time_control is not None
         else 500
     )
+    picked_max_wait = _pick_int("max_wait_ms")
     limits = TimeControlLimits(
         time_ms=_pick_int("time_ms"),
         increment_ms=_pick_int("increment_ms"),
@@ -46,7 +47,7 @@ def build_time_control_limits(
             if base_time_control is not None
             else False
         ),
-        max_wait_ms=_pick_int("max_wait_ms") or TimeControlLimits.max_wait_ms,
+        max_wait_ms=picked_max_wait if picked_max_wait is not None else DEFAULT_MAX_WAIT_MS,
     )
 
     increment_ms = int(limits.increment_ms or 0)

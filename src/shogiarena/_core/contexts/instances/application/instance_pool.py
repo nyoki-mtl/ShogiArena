@@ -131,6 +131,16 @@ class InstancePool:
         logger.debug("Loading default local instances from %s", path)
         return cls.load_from_yaml(path)
 
+    @classmethod
+    def ensure_default_local_pool(cls) -> InstancePool:
+        """常にローカル実行に使えるプールを返す。
+
+        既定のローカルインスタンス設定があればそれを読み込み、無ければ空のプールを返す。
+        いずれの場合も ``ensure_local_instance()`` が本物のローカル ``Instance`` を
+        生成できるため、呼び出し側は合成プレースホルダを必要としない。
+        """
+        return cls.load_default_local() or cls()
+
     def _local_instance_locked(self) -> Instance | None:
         for instance in self._instances.values():
             if instance.is_local:

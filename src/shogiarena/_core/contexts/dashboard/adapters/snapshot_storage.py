@@ -107,8 +107,8 @@ class SnapshotStorage:
             logger.warning("Summary games payload missing completed/total for source=%s", source)
             return None
 
-        # Sanitize enginesMeta to ensure each entry has a valid name.
-        engines_meta = snapshot.get("enginesMeta")
+        # Sanitize engines_meta to ensure each entry has a valid name.
+        engines_meta = snapshot.get("engines_meta")
         if engines_meta is not None:
             if isinstance(engines_meta, list):
                 before = len(engines_meta)
@@ -132,21 +132,19 @@ class SnapshotStorage:
                     sanitized.append(coerced)
                 if len(sanitized) != before:
                     logger.warning(
-                        "Sanitized summary enginesMeta entries (before=%s after=%s)",
+                        "Sanitized summary engines_meta entries (before=%s after=%s)",
                         before,
                         len(sanitized),
                     )
-                snapshot["enginesMeta"] = sanitized
+                snapshot["engines_meta"] = sanitized
             else:
                 logger.warning(
-                    "Summary enginesMeta must be an array; dropping invalid value type=%s",
+                    "Summary engines_meta must be an array; dropping invalid value type=%s",
                     type(engines_meta),
                 )
-                snapshot.pop("enginesMeta", None)
+                snapshot.pop("engines_meta", None)
 
-        snapshot.pop("liveView", None)
-        if "is_summary_ready" not in snapshot and "summaryReady" in snapshot:
-            snapshot["is_summary_ready"] = snapshot.pop("summaryReady")
+        snapshot.pop("live_view", None)
         snapshot.setdefault("is_summary_ready", True)
         snapshot = attach_live_view_payload(snapshot)
         try:
@@ -206,7 +204,7 @@ class SnapshotStorage:
         revision_value = parsed_snapshot.get("revision")
         base_revision_value = parsed_snapshot.get("base_revision")
         rows_value = parsed_snapshot.get("rows")
-        snapshot_meta_value = parsed_snapshot.get("snapshotMeta")
+        snapshot_meta_value = parsed_snapshot.get("snapshot_meta")
         if not isinstance(kind_value, str):
             logger.warning("Games snapshot missing kind field")
             return None
@@ -235,7 +233,7 @@ class SnapshotStorage:
             "revision": revision_value,
             "base_revision": base_revision_value,
             "rows": rows,
-            "snapshotMeta": snapshot_meta,
+            "snapshot_meta": snapshot_meta,
         }
         try:
             sanitised = self._serialize_snapshot("games", snapshot, path="games_snapshot")
@@ -246,7 +244,7 @@ class SnapshotStorage:
         sanitized_revision = sanitised.get("revision")
         sanitized_base_revision = sanitised.get("base_revision")
         sanitized_rows = sanitised.get("rows")
-        sanitized_meta = sanitised.get("snapshotMeta")
+        sanitized_meta = sanitised.get("snapshot_meta")
         if not isinstance(sanitized_kind, str):
             logger.warning("Serialized games snapshot missing kind field")
             return None
@@ -273,7 +271,7 @@ class SnapshotStorage:
             "revision": sanitized_revision,
             "base_revision": sanitized_base_revision,
             "rows": normalized_rows,
-            "snapshotMeta": normalized_meta,
+            "snapshot_meta": normalized_meta,
         }
         self._state.set_games_snapshot(normalized_snapshot)
         return normalized_snapshot

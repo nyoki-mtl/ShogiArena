@@ -175,6 +175,8 @@ def parse_spsa_config_mapping(
             "resource_poll_interval",
             "resource_poll_max_interval",
             "engine_handshake_timeout",
+            "path_preflight",
+            "resource_capacity_preflight",
             "extras",
         }
         raw_system = dict(system_raw)
@@ -230,12 +232,10 @@ def parse_spsa_config_mapping(
         pairs_per_update=pairs_per_update,
         algorithm=algorithm,
         variants=variants,
-        mobility=1.0,
         scale=1.0,
         experiment_name=exp_name,
         inflight_factor=inflight_factor,
         update_batch_size=pairs_per_update,
-        a0=1.0,
         is_snap_float_to_step=coerce_bool(spsa_node_map.get("snap_float_to_step", False)),
         int_ck_floor=int_ck_floor,
         update_mode="barrier",

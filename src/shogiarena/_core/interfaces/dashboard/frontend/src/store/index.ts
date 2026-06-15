@@ -5,7 +5,7 @@
  * across Tournament, SPSA, and Runtime sources.
  */
 
-export { summaryStore } from './summaryStore';
+export { summaryStore } from './summary-store';
 export type {
     // Source types
     SummarySource,

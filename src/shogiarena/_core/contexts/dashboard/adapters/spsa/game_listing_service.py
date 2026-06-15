@@ -79,7 +79,7 @@ class SpsaGameListingService:
                             Game.game_result,
                             Game.num_moves,
                             Game.end_date,
-                            Game.init_position_sfen,
+                            Game.initial_position_sfen,
                             Game.time_control_black,
                             Game.time_control_white,
                         )

@@ -69,12 +69,11 @@ class LtcRegressionConfig(BaseModel):
 ```python
 class LtcPassCriteria(BaseModel):
     min_winrate: float | None = None    # 最低勝率（例: 0.55）
-    max_elo_drop: float | None = None   # 最大 Elo 低下（将来拡張）
+    max_elo_drop: float | None = None   # 最大 Elo 低下
     sprt: SprtConfig | None = None      # SPRT による判定
 ```
 
-設計上は 3 種類の基準を組み合わせ可能です。  
-**現行実装（`run_ltc_regression()`）では `min_winrate` と `sprt` を判定に使用し、`max_elo_drop` は予約フィールドです。**
+3 種類の基準を組み合わせ可能です。`max_elo_drop` は正値・負値のどちらでも同じ許容低下量として扱います。
 
 ### 設定例
 
@@ -191,10 +190,9 @@ pass_criteria:
   min_winrate: 0.50   # 最低でも 50% 以上
 ```
 
-### 複合基準（設計拡張）
+### 複合基準
 
 複数の基準を組み合わせることで、より堅牢な判定が可能です。  
-ただし、`max_elo_drop` は現行実装では未適用のため、必要なら今後 `run_ltc_regression()` に判定ロジックを追加します。
 
 ```yaml
 pass_criteria:

@@ -23,6 +23,7 @@ def compute_time_control_from_rules(rules: Any, engines: list[Any]) -> tuple[Tim
             should_allow_timeout=tc.should_allow_timeout,
             depth_limit=tc.depth_limit,
             node_limit=tc.node_limit,
+            max_wait_ms=tc.max_wait_ms,
         )
         is_time_control_enabled = True
     elif has_override:

@@ -181,3 +181,24 @@ def test_search_limits_default_wait_and_cap():
     tc2 = GameClock(limits2)
     t2 = tc2.get_timeout_for_wait()
     assert pytest.approx(t2, rel=1e-3) == 120.0
+
+
+def test_build_time_control_limits_falsy_max_wait_does_not_crash():
+    # Regression: a falsy max_wait_ms (0) previously triggered ``TimeControlLimits.max_wait_ms``,
+    # which raises AttributeError under Pydantic v2 (model fields are not class attributes).
+    from shogiarena._core.shared.kernel.time_control_resolution import build_time_control_limits
+
+    base = TimeControlLimits(time_ms=1000, max_wait_ms=0)
+    resolved = build_time_control_limits(base, None)
+    assert resolved is not None
+    assert resolved.max_wait_ms == 0
+
+
+def test_build_time_control_limits_defaults_max_wait_when_unset():
+    from shogiarena._core.shared.kernel.time_control import DEFAULT_MAX_WAIT_MS
+    from shogiarena._core.shared.kernel.time_control_resolution import build_time_control_limits
+
+    base = TimeControlLimits(time_ms=1000)
+    resolved = build_time_control_limits(base, None)
+    assert resolved is not None
+    assert resolved.max_wait_ms == DEFAULT_MAX_WAIT_MS

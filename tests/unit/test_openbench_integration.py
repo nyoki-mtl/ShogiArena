@@ -153,6 +153,50 @@ def test_compute_totals_for_openbench_payload() -> None:
     assert totals.ww == 0
 
 
+def test_compute_totals_excludes_non_decided_games_crash_only() -> None:
+    # Regression: ERROR/INVALID/PAUSED must not be folded into draws (W/D/L) or into the
+    # pentanomial bins. ERROR/INVALID still count as crashes; PAUSED counts as nothing.
+    class _DummyDB:
+        def get_games_with_players(self, *, game_type: str) -> list[dict[str, object]]:
+            return [
+                # A complete decided pair -> WW.
+                {
+                    "game_name": "g0001-a",
+                    "black_player": "dev",
+                    "white_player": "base",
+                    "result": GameResult.BLACK_WIN,
+                    "initial_sfen": "sfen_a",
+                },
+                {
+                    "game_name": "g0002-b",
+                    "black_player": "base",
+                    "white_player": "dev",
+                    "result": GameResult.WHITE_WIN,
+                    "initial_sfen": "sfen_a",
+                },
+                # A non-decided pair -> excluded entirely (previously scored as DD).
+                {
+                    "game_name": "g0003-c",
+                    "black_player": "dev",
+                    "white_player": "base",
+                    "result": GameResult.ERROR,
+                    "initial_sfen": "sfen_b",
+                },
+                {
+                    "game_name": "g0004-d",
+                    "black_player": "base",
+                    "white_player": "dev",
+                    "result": GameResult.PAUSED,
+                    "initial_sfen": "sfen_b",
+                },
+            ]
+
+    totals = _compute_totals(_DummyDB(), tested_engine="dev", base_engine="base")
+    assert (totals.wins, totals.draws, totals.losses) == (2, 0, 0)
+    assert totals.crashes == 1  # ERROR; PAUSED is not a crash
+    assert [totals.ll, totals.ld, totals.dd, totals.dw, totals.ww] == [0, 0, 0, 0, 1]
+
+
 def test_tournament_config_accepts_openbench_with_sprt(tmp_path: Path) -> None:
     e1 = _engine_config_file(tmp_path, "e1")
     e2 = _engine_config_file(tmp_path, "e2")

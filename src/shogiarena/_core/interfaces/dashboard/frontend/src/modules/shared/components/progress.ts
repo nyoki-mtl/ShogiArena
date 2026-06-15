@@ -118,6 +118,18 @@ export function renderHeaderProgress(doc: Document, payload: HeaderProgressPaylo
         progressBar.classList.toggle('paused', model.isPaused);
         progressBar.classList.toggle('draining', model.isDraining);
         progressBar.classList.toggle('finished', model.isFinished);
+        // Keep the role="progressbar" semantics in sync so assistive tech can announce progress.
+        const totalValue = Number(model.totalLabel);
+        progressBar.setAttribute('aria-valuemin', '0');
+        progressBar.setAttribute('aria-valuetext', displayText);
+        if (Number.isFinite(totalValue) && totalValue > 0) {
+            progressBar.setAttribute('aria-valuemax', model.totalLabel);
+            progressBar.setAttribute('aria-valuenow', model.completedLabel);
+        } else {
+            // Indeterminate (no known total): drop valuenow so AT reports a busy/indeterminate bar.
+            progressBar.removeAttribute('aria-valuemax');
+            progressBar.removeAttribute('aria-valuenow');
+        }
     }
 
     const completedNode = doc.getElementById('completedGames');

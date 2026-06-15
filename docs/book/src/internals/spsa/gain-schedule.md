@@ -4,184 +4,155 @@
 
 ## このページの要点
 
-- ゲインスケジュールは SPSA の収束速度と安定性を制御する **2 つの減衰系列** \\(a_k\\) と \\(c_k\\) で構成される
-- \\(a_k\\) はステップサイズ（学習率）を、\\(c_k\\) は摂動の大きさを制御する
-- Spall の推奨値（\\(\alpha = 0.602, \gamma = 0.101\\)）は漸近的最適だが、ShogiArena では固定ゲイン（\\(\alpha = \gamma = 0\\)）をデフォルトとする
-- \\(A\\) パラメータは初期の不安定性を緩和する「ウォームアップ」として機能する
+- ゲインスケジュールは SPSA の収束速度と安定性を制御する **2 つの系列** \\(c_i\\)（摂動の大きさ）と
+  実効ステップゲイン \\(a_{k,i}\\) で構成される
+- ShogiArena の実装は **パラメータ単位** の系列を `compute_classic_schedule_point`
+  （`_core/contexts/spsa/application/classic_schedule.py`）で算出する。グローバルな学習率スカラ
+  （かつての `mobility` / `a0`）は存在しない
+- 系列は反復番号ではなく **ペア通し番号** \\(k_{\text{pair}}\\)（バッチ境界）で進む
+- 既定値は Spall の推奨減衰（\\(\alpha = 0.602,\ \gamma = 0.101\\)）。\\(A\\) は初期の不安定性を
+  緩和するウォームアップ項
 
-## 2 つのゲイン系列
+## 系列の進み方（ペア通し番号）
 
-SPSA の更新式には 2 つの系列パラメータが登場します。
-
-### ステップサイズゲイン \\(a_k\\)
-
-\\[
-a_k = \frac{a_0}{(A + k)^\alpha}
-\\]
-
-パラメータ更新の「幅」を決めます。大きいと早く収束しますが不安定になります。
-
-### 摂動スケール \\(c_k\\)
+更新は `pairs_per_update`（= \\(m\\)）ペアのバッチ単位で進みます。1-based の更新番号 \\(u\\) と
+総更新回数 \\(N\\) = `num_updates` に対して:
 
 \\[
-c_k = \frac{c_0}{k^\gamma}
+k_{\text{pair}} = u \cdot m \qquad k_{\text{total}} = N \cdot m
 \\]
 
-勾配推定のための摂動の「大きさ」を決めます。小さいとバイアスが減りますが分散が増えます。
+\\(A\\) は `mode` に応じて絶対値かペア総数に対する比率として解釈されます。
+
+\\[
+A_{\text{abs}} =
+\begin{cases}
+A_{\text{value}} \cdot k_{\text{total}} & (\text{mode} = \text{ratio}) \\\\
+A_{\text{value}} & (\text{mode} = \text{absolute})
+\end{cases}
+\\]
+
+## 2 つのゲイン系列（パラメータ単位）
+
+各パラメータ \\(i\\) は、空間定義（space spec）からの摂動基準 \\(\text{step}_i\\) と学習率係数
+\\(\delta_i\\) を持ちます。
+
+### 摂動スケール \\(c_i\\)
+
+\\[
+c_i = \text{step}_i \cdot \left(\frac{k_{\text{total}}}{k_{\text{pair}}}\right)^{\gamma}
+\\]
+
+勾配推定のための摂動の「大きさ」です。\\(k_{\text{pair}}\\) が進む（後半になる）ほど減衰し、
+最終更新（\\(k_{\text{pair}} = k_{\text{total}}\\)）で \\(c_i = \text{step}_i\\) になります。整数パラメータは
+`int_ck_floor` で下限クランプされます（量子化で摂動が消えないようにするため）。
+
+### 更新ゲイン \\(r_i\\)
+
+\\[
+r_i = \frac{\delta_i \cdot \text{step}_i^{2} \cdot (A_{\text{abs}} + k_{\text{total}})^{\alpha}}
+{(A_{\text{abs}} + k_{\text{pair}})^{\alpha} \cdot c_i^{2}}
+\\]
+
+パラメータ更新は次式です（\\(\text{step} = \sum s^{+} - \sum s^{-}\\) はバッチのスコア集計、
+\\(\text{flip}_i \in \{+1, -1\}\\) は摂動の向き）。
+
+\\[
+\Delta\theta_i = r_i \cdot c_i \cdot \text{step} \cdot \text{flip}_i
+\\]
+
+勾配推定 \\(\hat{g}_i = \text{step} / (2 c_i \text{flip}_i)\\) を代入すると、更新は
+\\(\Delta\theta_i = 2\, r_i\, c_i^{2}\, \hat{g}_i\\) と書け、\\(i\\) の **実効ステップゲイン** は
+
+\\[
+a_{k,i} = 2\, r_i\, c_i^{2}
+= \frac{2\, \delta_i \cdot \text{step}_i^{2} \cdot (A_{\text{abs}} + k_{\text{total}})^{\alpha}}
+{(A_{\text{abs}} + k_{\text{pair}})^{\alpha}}
+\\]
+
+すなわち \\(a_{k,i} = a_i / (A_{\text{abs}} + k_{\text{pair}})^{\alpha}\\) という古典 SPSA の形であり、
+グローバルな \\(a_0\\) ではなくパラメータ単位の \\(\delta_i\\) / \\(\text{step}_i\\) が定数項を決めます。
 
 ### パラメータの意味
 
-| パラメータ | 意味 | ShogiArena デフォルト | Spall 推奨 |
+| パラメータ | 意味 | 既定値 | Spall 推奨 |
 |:---:|:---|:---:|:---:|
-| \\(a_0\\) | 初期ステップサイズ（`mobility` に相当） | 1.0 | 問題依存 |
-| \\(A\\) | ウォームアップ定数 | max(1, 0.1·N) | 0.1·N |
-| \\(\alpha\\) | ステップサイズ減衰指数 | 0.0 | 0.602 |
-| \\(c_0\\) | 初期摂動スケール（`scale` に相当） | 1.0 | 問題依存 |
-| \\(\gamma\\) | 摂動スケール減衰指数 | 0.0 | 0.101 |
-
-ここで \\(N\\) は総更新回数（`num_updates`）です。
+| \\(\text{step}_i\\) | パラメータ \\(i\\) の摂動基準（space spec） | パラメータ依存 | 問題依存 |
+| \\(\delta_i\\) | パラメータ \\(i\\) の学習率係数（space spec） | パラメータ依存 | 問題依存 |
+| \\(A\\) | ウォームアップ定数（`absolute` 値または `ratio`） | `absolute` 0.0 | \\(\approx 0.1\,k_{\text{total}}\\) |
+| \\(\alpha\\) | ステップゲイン減衰指数 | 0.602 | 0.602 |
+| \\(\gamma\\) | 摂動スケール減衰指数 | 0.101 | 0.101 |
 
 ## 実装
 
 ```python
-k = int(update_idx)  # 1-based 反復番号
-a0 = float(getattr(self.config, "a0", self.config.mobility))
-A = float(self.config.A or max(1.0, 0.1 * float(self.config.num_updates)))
-alpha = float(self.config.alpha)
-gamma = float(self.config.gamma)
+# _core/contexts/spsa/application/classic_schedule.py
+k_pair  = update_idx * pairs_per_update
+k_total = num_updates * pairs_per_update
+A_abs   = a_value * k_total if a_mode == "ratio" else a_value
 
-a_k = a0 / ((A + k) ** alpha)      # ステップサイズゲイン
-c_k_raw = c0 / (k ** gamma)         # 摂動スケール
-
-# Integer パラメータの下限を適用
-if any(p.type == "int" and not p.not_used for p in params):
-    c_k = max(c_k_raw, self.config.int_ck_floor)
-else:
-    c_k = c_k_raw
+for param in params:                      # is_not_used は除外
+    c_i = param.step * (k_total ** gamma) / (k_pair ** gamma)
+    if param.type == "int":
+        c_i = max(c_i, int_ck_floor)
+    r_i = (
+        param.delta * (param.step ** 2)
+        * ((A_abs + k_total) ** alpha)
+        / (((A_abs + k_pair) ** alpha) * (c_i ** 2))
+    )
 ```
 
-## 固定ゲイン vs 減衰ゲイン
-
-### 固定ゲイン（\\(\alpha = \gamma = 0\\)）
-
-\\[
-a_k = \frac{a_0}{A + k} \cdot (A + k) = a_0 \qquad c_k = c_0
-\\]
-
-- \\(\alpha = 0\\) のとき \\(a_k = a_0 / (A + k)^0 = a_0\\)（定数）
-- \\(\gamma = 0\\) のとき \\(c_k = c_0 / k^0 = c_0\\)（定数）
-
-```text
-ゲイン
-  │
-  │ ━━━━━━━━━━━━━━━━━━━━━━━━  a_k = a_0（固定）
-  │
-  │ ━━━━━━━━━━━━━━━━━━━━━━━━  c_k = c_0（固定）
-  │
-  └──────────────────────────→ 反復 k
+```python
+# _core/contexts/spsa/adapters/orchestrator_update_flow.py（更新ステップ）
+new_value = param.value + r_i * c_i * step * flip
 ```
-
-**利点**: パラメータが少なく調整が容易。非定常環境（目的関数が変化する場合）に適応できる
-
-**欠点**: 厳密な意味での収束は保証されない（振動が残る可能性）
-
-### 減衰ゲイン（Spall 推奨値）
-
-\\(\alpha = 0.602, \gamma = 0.101\\) の場合：
-
-```text
-ゲイン
-  │╲
-  │  ╲
-  │    ╲                        a_k: α=0.602 で急速に減衰
-  │      ╲╲
-  │         ╲╲╲╲
-  │ ─────────────────────────   c_k: γ=0.101 でゆっくり減衰
-  │                ─ ─ ─ ─ ─
-  └──────────────────────────→ 反復 k
-```
-
-**利点**: 漸近的に最適な収束率を達成する（Spall の理論保証）
-
-**欠点**: パラメータ \\(a_0, A\\) の調整が難しい。初期値が不適切だと収束が遅くなる
-
-### ShogiArena でのデフォルト選択
-
-ShogiArena は **固定ゲイン**（\\(\alpha = \gamma = 0\\)）をデフォルトとしています。理由:
-
-1. **エンジンテストのノイズが大きい**: 対局結果の分散が大きく、減衰ゲインの理論的な利点が発揮されにくい
-2. **更新回数が限られる**: 数百〜数千回の更新では、漸近的な性質よりも有限サンプルでの性能が重要
-3. **実践的な調整の容易さ**: `mobility` と `scale` の 2 パラメータだけで制御でき、設定ミスのリスクが低い
 
 ## \\(A\\) パラメータの役割
 
-\\(A\\) は初期の不安定性を緩和するウォームアップ定数です。
+\\(A\\) は初期の不安定性を緩和するウォームアップ定数で、\\(k_{\text{pair}}\\) が小さいうちの実効ステップ
+ゲインを抑えます。
 
 \\[
-a_k = \frac{a_0}{(A + k)^\alpha}
+a_{k,i} = \frac{a_i}{(A_{\text{abs}} + k_{\text{pair}})^{\alpha}}
 \\]
 
-- \\(A = 0\\): \\(k = 1\\) から完全なゲインで開始
-- \\(A = 100\\): \\(k = 1\\) での実効ゲインは \\(a_0 / 101^\alpha\\)
+- \\(A_{\text{abs}} = 0\\): 最初のバッチから完全なゲインで開始
+- \\(A_{\text{abs}}\\) を大きく: 序盤のゲインを抑え、後半に効かせる
 
-```text
-a_k の推移（α=0.602 固定、A を変化）
-
-ゲイン
-  │╲  A=0（急速に減衰）
-  │  ╲╲
-  │  │ ╲╲
-  │  │    ╲╲╲╲
-  │  ╲       ─────
-  │    ╲  A=100（緩やかに減衰）
-  │      ╲╲
-  │         ╲╲╲╲
-  │               ─────
-  └──────────────────────────→ 反復 k
-```
-
-Spall の推奨は \\(A \approx 0.1 \cdot N\\)（総更新回数の 10%）です。
-
-```python
-A = float(self.config.A or max(1.0, 0.1 * float(self.config.num_updates)))
-```
+Spall の推奨は \\(A_{\text{abs}} \approx 0.1 \cdot k_{\text{total}}\\)（ペア総数の 10%）で、これは
+`A.mode = ratio`, `A.value = 0.1` に対応します。
 
 ## 設定ガイド
 
 ### 基本方針
 
-1. **まず固定ゲインで開始**: \\(\alpha = \gamma = 0\\)
-2. **mobility を調整**: 1 回の更新でパラメータが大きく変動しないか確認
-3. **必要に応じて減衰を導入**: 収束近くで振動する場合に \\(\alpha > 0\\)
+1. **既定の減衰から開始**: \\(\alpha = 0.602,\ \gamma = 0.101\\)、`A.mode = absolute`, `A.value = 0`
+2. **`step` / `delta` をパラメータごとに調整**: 1 更新でパラメータが過大に動かないか確認する
+3. **必要に応じてウォームアップを導入**: 序盤が不安定なら `A` を増やす（`ratio` の場合 0.1 程度）
 
 ### 推奨設定パターン
 
-| ケース | \\(a_0\\) | \\(A\\) | \\(\alpha\\) | \\(\gamma\\) | 説明 |
-|:---|:---:|:---:|:---:|:---:|:---|
-| 探索的チューニング | 1.0 | 0 | 0.0 | 0.0 | パラメータ空間を広く探索 |
-| 安定チューニング | 0.5 | 100 | 0.0 | 0.0 | 既知の良い値の近くで微調整 |
-| 理論的最適 | 0.5 | 0.1N | 0.602 | 0.101 | 漸近的に最適な収束率 |
-| 保守的 | 0.1 | 0.1N | 0.602 | 0.101 | 安全だが収束は遅い |
+| ケース | \\(\alpha\\) | \\(\gamma\\) | \\(A\\) | 説明 |
+|:---|:---:|:---:|:---:|:---|
+| 既定（理論的最適） | 0.602 | 0.101 | absolute 0 | Spall の漸近最適レート |
+| 安定（ウォームアップ強め） | 0.602 | 0.101 | ratio 0.1 | 序盤のゲインを抑制 |
+| 探索的（ほぼ固定ゲイン） | 0.0 | 0.0 | absolute 0 | パラメータ空間を広く探索 |
 
-### mobility（全体学習率）の目安
+### `step` / `delta`（パラメータ固有スケール）の目安
 
-`mobility` はすべてのパラメータに共通のスケーリング係数です。
-
-- **mobility = 1.0**: 標準。`delta` パラメータのみで個別調整
-- **mobility = 0.5**: 保守的。振動が気になる場合に
-- **mobility = 2.0**: 積極的。収束が遅い場合に
-
-### delta（パラメータ固有スケール）の目安
-
-各パラメータの `delta` は、そのパラメータの「感度」に応じて設定します。
+更新幅と摂動はパラメータ単位の `step` / `delta` で制御します（グローバルスカラはありません）。
 
 ```text
 高感度パラメータ（小さな変化で勝率に大きく影響）:
-  → delta を小さく（0.001〜0.002）
+  → delta を小さく / step を小さく
 
 低感度パラメータ（大きな変化でも勝率への影響が小さい）:
-  → delta を大きく（0.005〜0.01）
+  → delta を大きく / step を大きく
 ```
+
+> **注**: `scale` は別概念です。`scaled_integer` エンコーディングでチューニング値を USI オプションの
+> 整数値へ変換するための係数（`int(round(value * scale))`）であり、ゲインスケジュールの \\(c_0\\) では
+> ありません。
 
 ## ゲインスケジュールの収束条件
 
@@ -195,21 +166,21 @@ SPSA が確率的に収束するための十分条件（Robbins-Monro 条件）:
 c_k \to 0 \qquad \sum_{k=1}^{\infty} \frac{a_k^2}{c_k^2} < \infty
 \\]
 
-\\(\alpha = 0.602, \gamma = 0.101\\) はこれらの条件を満たす最も効率的な値として Spall が導出しました。
+\\(\alpha = 0.602,\ \gamma = 0.101\\) はこれらの条件を満たす最も効率的な値として Spall が導出しました。
 
-> **注**: 固定ゲイン（\\(\alpha = 0\\)）ではこれらの条件は満たされません。
-> しかし実用上は、有限回の更新で十分な近似解が得られれば問題ありません。
+> **注**: 固定ゲイン（\\(\alpha = \gamma = 0\\)）ではこれらの条件は満たされませんが、有限回の更新で
+> 十分な近似解が得られれば実用上は問題ありません。
 
 ## 実装リファレンス
 
-| ファイル | 設定キー | 役割 |
+| ファイル | 設定キー / 関数 | 役割 |
 |---------|---------|------|
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `a0` | 初期ステップサイズ |
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `A` | ウォームアップ定数 |
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `alpha` | ステップサイズ減衰指数 |
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `gamma` | 摂動スケール減衰指数 |
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `mobility` | 全体学習率スケール |
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `scale` | 摂動スケール |
+| `_core/contexts/spsa/application/classic_schedule.py` | `compute_classic_schedule_point` | パラメータ単位の \\(c_i\\) / \\(r_i\\) 算出 |
+| `_core/contexts/spsa/adapters/orchestrator_update_flow.py` | 更新ステップ | \\(\Delta\theta_i = r_i c_i \cdot \text{step} \cdot \text{flip}_i\\) |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `algorithm.alpha` | ステップゲイン減衰指数（既定 0.602） |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `algorithm.gamma` | 摂動スケール減衰指数（既定 0.101） |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `algorithm.A` | ウォームアップ定数（`mode` / `value`） |
+| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `int_ck_floor` | 整数パラメータの摂動下限（既定 0.5） |
 
 ## 次に読む
 

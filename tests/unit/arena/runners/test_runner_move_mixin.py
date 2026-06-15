@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from rshogi.core import Board, Move
 
+from shogiarena._core.contexts.match.application.runner_finalize_mixin import GameRunnerFinalizeMixin
 from shogiarena._core.contexts.match.application.runner_move_mixin import GameRunnerMoveMixin
 from shogiarena._core.contexts.match.application.runner_types import (
     MoveApplicationDependencies,
@@ -13,6 +14,8 @@ from shogiarena._core.contexts.match.application.runner_types import (
     RecoveredBestmoveRequest,
     RecoveredBestmoveStateRefs,
 )
+from shogiarena._core.contexts.match.domain.adjudication import AdjudicationConfig, Adjudicator
+from shogiarena._core.platform.engine_runtime.usi_protocol_types import UsiEvalValue
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.time_control import GameClock, TimeControlLimits
 
@@ -77,6 +80,88 @@ class _RunnerMoveHarness(GameRunnerMoveMixin):
 
     async def _notify_clock_increment(self, **payload: object) -> None:
         self.notify_calls.append(dict(payload))
+
+
+def _resign_adjudicator() -> Adjudicator:
+    return Adjudicator(
+        AdjudicationConfig(
+            is_resign_enabled=True,
+            resign_score_cp=800,
+            resign_move_count=1,
+            is_resign_two_sided=False,
+            is_max_plies_enabled=False,
+        )
+    )
+
+
+async def _adjudicate_white_move(eval_value: int) -> GameResult | None:
+    """Apply a white move whose engine eval (moving-side perspective) is `eval_value`.
+
+    Accepts a plain ``int`` as well as ``UsiEvalValue`` to exercise both engine-adapter shapes.
+    """
+    board = Board()
+    board.apply_move(_first_legal_move(board))  # black moves -> white to move
+    white_move = _first_legal_move(board)
+    state = _build_move_state(board)
+    harness = _RunnerMoveHarness(move_result={"is_game_over": False, "move": white_move})
+    think_result = SimpleNamespace(pvs=[SimpleNamespace(eval=eval_value)])
+    result = await harness._apply_move_common(
+        request=MoveApplicationRequest(
+            move=white_move,
+            think_result=think_result,
+            elapsed_ms=40,
+            game_id="g1",
+            ply_count=1,
+            is_side_that_moved_black=False,
+            repetition_occurrences_to_draw=4,
+        ),
+        state=state,
+        dependencies=MoveApplicationDependencies(adjudicator=_resign_adjudicator()),
+    )
+    return result.result
+
+
+@pytest.mark.asyncio
+async def test_resign_adjudication_does_not_reverse_winning_white() -> None:
+    # White just moved and is winning by +900cp (moving-side perspective). The winner must NOT
+    # be resigned. Regression for the eval-perspective bug that reversed white-to-move results.
+    result = await _adjudicate_white_move(UsiEvalValue(900))
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_resign_adjudication_resigns_losing_white() -> None:
+    # White just moved and is losing by -900cp (moving-side perspective) -> white resigns.
+    result = await _adjudicate_white_move(UsiEvalValue(-900))
+    assert result == GameResult.BLACK_WIN
+
+
+@pytest.mark.asyncio
+async def test_mate_score_adjudicates_white_mate_immediately() -> None:
+    # White just moved with a mate score (white is mating) -> WHITE_WIN via the mate branch.
+    # Without the score_type="mate" wiring this would fall through the cp path and not fire.
+    result = await _adjudicate_white_move(UsiEvalValue.mate_in_ply(1))
+    assert result == GameResult.WHITE_WIN
+
+
+@pytest.mark.asyncio
+async def test_resign_adjudication_handles_plain_int_eval() -> None:
+    # The port contract types pv.eval as a plain int; adjudication must not crash on a
+    # non-UsiEvalValue value (no is_mate_score method). Plain int is treated as a cp score.
+    result = await _adjudicate_white_move(900)  # white winning -> not resigned
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_process_move_result_treats_missing_bestmove_as_loss() -> None:
+    # An engine that returns no bestmove must lose (side to move), not crash the game task
+    # with an AssertionError.
+    harness = object.__new__(GameRunnerFinalizeMixin)
+    board = Board()  # black to move
+    think_result = SimpleNamespace(bestmove=None)
+    result = await harness._process_move_result(board, think_result, "engine-a")
+    assert result["is_game_over"] is True
+    assert result["result"] == GameResult.WHITE_WIN
 
 
 @pytest.mark.asyncio

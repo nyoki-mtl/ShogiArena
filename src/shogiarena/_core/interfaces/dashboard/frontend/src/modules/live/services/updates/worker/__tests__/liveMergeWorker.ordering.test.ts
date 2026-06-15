@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { __testHandleEnvelope, __testResetState } from '../liveMergeWorker';
+import { __testHandleEnvelope, __testResetState } from '../live-merge-worker';
 
 describe('liveMergeWorker ordering (jitter buffer)', () => {
     beforeEach(() => {
@@ -18,7 +18,7 @@ describe('liveMergeWorker ordering (jitter buffer)', () => {
         __testHandleEnvelope({
             topic: 'live.assignment.snapshot',
             seq,
-            payload: { assignments: { [String(workerIdx)]: gid }, gids: [gid], updatedAt: 0 },
+            payload: { assignments: { [String(workerIdx)]: gid }, gids: [gid], updated_at: 0 },
         });
     };
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SpsaUpdateDetailResponse } from '@/modules/spsa/types';
-import { parseDetailBatchEnvelope } from './detailStream';
+import { parseDetailBatchEnvelope } from './detail-stream';
 
 const sampleDetail: SpsaUpdateDetailResponse = {
     update_idx: 1,

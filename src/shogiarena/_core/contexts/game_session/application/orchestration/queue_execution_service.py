@@ -35,27 +35,31 @@ class PendingQueueExecutionService:
             nonlocal fatal_error
             while True:
                 _priority, _counter, item = await queue.get()
-                if item is None:
-                    queue.task_done()
-                    break
-                if fatal_error is not None:
-                    queue.task_done()
-                    continue
-                if request.runtime.should_skip_pending_item(item):
-                    queue.task_done()
-                    continue
-
-                await semaphore.acquire()
-                task: asyncio.Task[None] = asyncio.create_task(request.runtime.run_pending_item(item))
-                request.running_tasks.add(task)
+                # task_done() must run for every retrieved item, even if skip/acquire/run raise,
+                # otherwise queue.join() below would hang forever.
                 try:
-                    await task
+                    if item is None:
+                        break
+                    if fatal_error is not None:
+                        continue
+                    if request.runtime.should_skip_pending_item(item):
+                        continue
+
+                    await semaphore.acquire()
+                    task: asyncio.Task[None] = asyncio.create_task(request.runtime.run_pending_item(item))
+                    request.running_tasks.add(task)
+                    try:
+                        await task
+                    finally:
+                        request.running_tasks.discard(task)
+                        semaphore.release()
                 except Exception as exc:
+                    # A failure that reaches here is fatal: the runtime decides isolation vs
+                    # fail-fast inside run_pending_item (isolated failures are recorded there and
+                    # never re-raised), so anything still propagating aborts the run.
                     if fatal_error is None:
                         fatal_error = exc
                 finally:
-                    request.running_tasks.discard(task)
-                    semaphore.release()
                     queue.task_done()
 
         workers = [asyncio.create_task(worker()) for _ in range(request.concurrency_limit)]

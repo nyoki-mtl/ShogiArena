@@ -32,16 +32,15 @@ def build_live_view_snapshot(
 
 def attach_live_view_payload(summary_payload: Mapping[str, object]) -> JsonObject:
     payload_obj = to_json_object(summary_payload)
-    payload_obj.pop("liveView", None)
-    payload_obj["liveView"] = json_serialize(build_live_view_snapshot(payload_obj))
+    payload_obj.pop("live_view", None)
+    payload_obj["live_view"] = json_serialize(build_live_view_snapshot(payload_obj))
     return payload_obj
 
 
 def _infer_mode(summary: Mapping[str, JsonValue]) -> LiveViewMode:
     candidates: list[JsonValue | None] = [
-        summary.get("liveViewMode"),
+        summary.get("live_view_mode"),
         summary.get("mode"),
-        summary.get("tournamentType"),
         summary.get("tournament_type"),
     ]
     for candidate in candidates:
@@ -88,10 +87,10 @@ def _derive_progress(summary: Mapping[str, JsonValue], mode: LiveViewMode) -> Li
         kind = mode if mode in {"sprt", "match"} else "games"
 
     timestamp = coerce_str(summary.get("timestamp"))
-    _raw_finished = summary.get("tournamentFinished")
+    _raw_finished = summary.get("tournament_finished")
     _is_finished = coerce_bool(_raw_finished)
     fallback_state = "finished" if _is_finished else "normal"
-    progress_state = _normalize_progress_state(summary.get("liveViewProgressState")) or fallback_state
+    progress_state = _normalize_progress_state(summary.get("live_view_progress_state")) or fallback_state
     is_final = _is_finished
     if mode == "sprt":
         status_raw = summary.get("status")
@@ -112,13 +111,13 @@ def _derive_progress(summary: Mapping[str, JsonValue], mode: LiveViewMode) -> Li
 
     return {
         "kind": kind,
-        "unitLabel": unit_label,
+        "unit_label": unit_label,
         "completed": completed,
         "total": total,
         "cancelled": cancelled,
-        "isFinal": is_final,
+        "is_final": is_final,
         "state": progress_state,
-        "updatedAt": timestamp,
+        "updated_at": timestamp,
     }
 
 

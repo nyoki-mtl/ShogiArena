@@ -51,7 +51,7 @@ def test_publish_games_snapshot_emits_bulk_with_initial_revision(tmp_path: Path)
     assert payload["kind"] == "bulk"
     assert payload["revision"] == 1
     assert payload["base_revision"] is None
-    assert payload["snapshotMeta"]["total_games"] == 1
+    assert payload["snapshot_meta"]["total_games"] == 1
 
     stored = state.get_games_snapshot()
     assert stored is not None

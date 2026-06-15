@@ -119,10 +119,10 @@ export function createEngineSummaryStore(arenaWindow: EnginesWindow): EngineSumm
                 summaryStore.applyTournamentSummary({
                     ...raw,
                     engines: normalized.engines,
-                    engineMeta: normalized.engineMeta as unknown as JsonObject,
-                    engineTimeControls: normalized.engineTimeControls,
-                    engineInstances: normalized.engineInstances,
-                    defaultTimeControl: normalized.defaultTimeControl,
+                    engine_meta: normalized.engineMeta as unknown as JsonObject,
+                    engine_time_controls: normalized.engineTimeControls,
+                    engine_instances: normalized.engineInstances,
+                    default_time_control: normalized.defaultTimeControl,
                 });
                 return;
             }
@@ -137,10 +137,10 @@ export function createEngineSummaryStore(arenaWindow: EnginesWindow): EngineSumm
                 summaryStore.applySpsaSummary({
                     ...raw,
                     engines: normalized.engines,
-                    engineMeta: normalized.engineMeta as unknown as JsonObject,
-                    engineTimeControls: normalized.engineTimeControls,
-                    engineInstances: normalized.engineInstances,
-                    defaultTimeControl: normalized.defaultTimeControl,
+                    engine_meta: normalized.engineMeta as unknown as JsonObject,
+                    engine_time_controls: normalized.engineTimeControls,
+                    engine_instances: normalized.engineInstances,
+                    default_time_control: normalized.defaultTimeControl,
                 });
                 return;
             }

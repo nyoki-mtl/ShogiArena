@@ -8,6 +8,7 @@ from typing import Any, Literal, Protocol
 
 from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
 from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine
+from shogiarena._core.shared.kernel.book_provenance import build_book_provenance
 from shogiarena._core.shared.kernel.json_coercion import (
     coerce_json_object_or_none,
     coerce_json_object_serialized,
@@ -293,10 +294,15 @@ def _construct_participation_record(
         }
     }
     if engine_options:
-        extras["engine_options"] = coerce_json_object_serialized(
+        serialized_options = coerce_json_object_serialized(
             engine_options,
             field_name="engine_options",
         )
+        extras["engine_options"] = serialized_options
+        # per-participation の book provenance（fingerprint は Book タブ集計の集計キー）。Task 0015。
+        book_provenance = build_book_provenance(serialized_options)
+        if book_provenance is not None:
+            extras["book"] = book_provenance
     if go_options:
         extras["go_options"] = coerce_json_object_serialized(
             go_options,

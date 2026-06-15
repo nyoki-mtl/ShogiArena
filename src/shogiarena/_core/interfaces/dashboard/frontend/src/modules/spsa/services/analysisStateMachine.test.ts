@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createAnalysisStateMachine, type AnalysisStateMachineCallbacks } from './analysisStateMachine';
+import { createAnalysisStateMachine, type AnalysisStateMachineCallbacks } from './analysis-state-machine';
 
 describe('AnalysisStateMachine', () => {
     let callbacks: AnalysisStateMachineCallbacks;

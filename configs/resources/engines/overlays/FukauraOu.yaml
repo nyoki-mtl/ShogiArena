@@ -1,9 +1,0 @@
-options:
-  BookFile: "no_book"
-  NetworkDelay: 0
-  NetworkDelay2: 0
-engine:
-  isready_lock_template: "{EvalDir}/{DNN_Model}.{DNN_Batch_Size}.tensorrt"
-  isready_lock_check_templates:
-    - "{EvalDir}/{DNN_Model}.*.{DNN_Batch_Size}.TRT*.serialized"
-  isready_lock_skip_if_exists: true

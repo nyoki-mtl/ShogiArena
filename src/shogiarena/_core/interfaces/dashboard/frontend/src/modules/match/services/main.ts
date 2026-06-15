@@ -1,7 +1,7 @@
 import { requestJson } from '@/modules/shared/services/api';
-import { renderLineChart } from '@/modules/shared/components/lineChart';
+import { renderLineChart } from '@/modules/shared/components/line-chart';
 import { summaryStore } from '@/store';
-import { formatDuration, formatNodesCountShort, parseTimeControlSpec } from '@/modules/shared/utils/timeControl';
+import { formatDuration, formatNodesCountShort, parseTimeControlSpec } from '@/modules/shared/utils/time-control';
 import { getLiveViewSnapshotStore } from '@/modules/shared';
 import type { DashboardMatchApi, MatchSummaryPayload, MatchTimelinePoint, MatchWindow } from '../types';
 
@@ -9,8 +9,8 @@ const defaultWindow = window as MatchWindow;
 
 const MATCH_REFRESH_INTERVAL_MS = 6000;
 const WIN_RATE_COLOR = '#38bdf8';
-const SENTE_COLOR = '#22c55e';
-const GOTE_COLOR = '#f97316';
+const BLACK_COLOR = '#22c55e';
+const WHITE_COLOR = '#f97316';
 
 function formatPercent(value: number | null | undefined, digits: number = 1): string {
     if (value == null || !Number.isFinite(value)) return '-';
@@ -35,7 +35,7 @@ function buildSeriesFromTimeline(
     timeline: MatchTimelinePoint[],
     selector: (point: MatchTimelinePoint) => number | null | undefined,
 ): { x: number; y: number | null }[] {
-    return timeline.map((point) => ({ x: point.gameIndex, y: selector(point) ?? null }));
+    return timeline.map((point) => ({ x: point.game_index, y: selector(point) ?? null }));
 }
 
 function formatTimeControlShort(spec?: string | null): string | null {
@@ -125,8 +125,8 @@ function renderSummaryLines(payload: MatchSummaryPayload): void {
     const hashTested = formatOptionNumber(resolveEngineOption(testedMeta, 'Hash'), 'MB');
     const hashBaseline = formatOptionNumber(resolveEngineOption(baselineMeta, 'Hash'), 'MB');
 
-    const elo = payload.eloEstimate ?? null;
-    const eloCi = payload.eloCi95;
+    const elo = payload.elo_estimate ?? null;
+    const eloCi = payload.elo_ci95;
     let eloLine = 'Elo: -';
     if (elo != null && Number.isFinite(elo)) {
         if (eloCi && eloCi.lower != null && eloCi.upper != null) {
@@ -167,7 +167,7 @@ function renderCharts(payload: MatchSummaryPayload): void {
     const colorContainer = document.getElementById('matchColorChart');
 
     if (timelineContainer) {
-        const winSeries = buildSeriesFromTimeline(timeline, (point) => point.winRate ?? null);
+        const winSeries = buildSeriesFromTimeline(timeline, (point) => point.win_rate ?? null);
         renderLineChart(
             timelineContainer,
             [
@@ -188,13 +188,13 @@ function renderCharts(payload: MatchSummaryPayload): void {
     }
 
     if (colorContainer) {
-        const senteSeries = buildSeriesFromTimeline(timeline, (point) => point.black?.winRate ?? null);
-        const goteSeries = buildSeriesFromTimeline(timeline, (point) => point.white?.winRate ?? null);
+        const blackSeries = buildSeriesFromTimeline(timeline, (point) => point.black?.win_rate ?? null);
+        const whiteSeries = buildSeriesFromTimeline(timeline, (point) => point.white?.win_rate ?? null);
         renderLineChart(
             colorContainer,
             [
-                { id: 'sente', label: 'Sente', color: SENTE_COLOR, points: senteSeries },
-                { id: 'gote', label: 'Gote', color: GOTE_COLOR, points: goteSeries },
+                { id: 'black', label: 'Black', color: BLACK_COLOR, points: blackSeries },
+                { id: 'white', label: 'White', color: WHITE_COLOR, points: whiteSeries },
             ],
             {
                 minY: 0,
@@ -211,10 +211,10 @@ function renderSummary(payload: MatchSummaryPayload, owner: MatchWindow): void {
     if (!core) {
         throw new Error('DashboardCore must be initialized before Match module');
     }
-    if (!payload.liveView) {
-        throw new Error('Match summary payload must include liveView');
+    if (!payload.live_view) {
+        throw new Error('Match summary payload must include live_view');
     }
-    getLiveViewSnapshotStore(core).hydrateFromPayload(payload.liveView, 'match.summary.liveView');
+    getLiveViewSnapshotStore(core).hydrateFromPayload(payload.live_view, 'match.summary.live_view');
 
     core.updateElement('matchTestedName', payload.tested ?? '-');
     core.updateElement('matchBaselineName', payload.baseline ?? '-');
@@ -227,16 +227,16 @@ function renderSummary(payload: MatchSummaryPayload, owner: MatchWindow): void {
     core.updateElement('matchScoreValue', `${wins}-${losses}-${draws}`);
     core.updateElement('matchScoreMeta', `${completed} games`);
 
-    core.updateElement('matchWinRate', formatPercent(payload.winRate ?? null));
-    const rateCi = payload.winRateCi95;
+    core.updateElement('matchWinRate', formatPercent(payload.win_rate ?? null));
+    const rateCi = payload.win_rate_ci95;
     if (rateCi && (rateCi.lower != null || rateCi.upper != null)) {
         core.updateElement('matchWinRateCi', `${formatPercent(rateCi.lower, 1)} .. ${formatPercent(rateCi.upper, 1)}`);
     } else {
         core.updateElement('matchWinRateCi', '-');
     }
 
-    const eloCi = payload.eloCi95;
-    core.updateElement('matchElo', formatElo(payload.eloEstimate ?? null));
+    const eloCi = payload.elo_ci95;
+    core.updateElement('matchElo', formatElo(payload.elo_estimate ?? null));
     if (eloCi && (eloCi.lower != null || eloCi.upper != null)) {
         core.updateElement('matchEloCi', `${formatElo(eloCi.lower)} .. ${formatElo(eloCi.upper)}`);
     } else {

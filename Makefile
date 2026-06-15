@@ -1,4 +1,4 @@
-.PHONY: help test test-cov test-unit test-property test-integration format format-check lint lint-fix python-import-cycle-check ts-import-cycle-check import-cycle-check type-safety-audit-check ty-check frontend-typecheck typecheck typing-audit typing-audit-baseline typing-audit-ci architecture-lint architecture-lint-strict architecture-lint-dynamic architecture-lint-dynamic-strict architecture-lint-final architecture-lint-final-strict convention-lint convention-lint-strict frontend-test check check-full check-all ci ci-develop clean docs docs-build docs-serve
+.PHONY: help test test-cov test-unit test-property test-integration format format-check lint lint-fix python-import-cycle-check ts-import-cycle-check import-cycle-check type-safety-audit-check ty-check frontend-typecheck typecheck typing-audit typing-audit-baseline typing-audit-ci architecture-lint architecture-lint-strict architecture-lint-dynamic architecture-lint-dynamic-strict architecture-lint-final architecture-lint-final-strict convention-lint convention-lint-strict frontend-test check check-full check-all ci ci-public ci-develop ci-private clean docs docs-build docs-serve
 
 MDBOOK ?= $(shell command -v mdbook 2>/dev/null || printf "%s/.cargo/bin/mdbook" "$$HOME")
 
@@ -20,8 +20,8 @@ help:
 	@echo "  typing-audit       - 型逸脱監査（差分計測）"
 	@echo "  typing-audit-ci    - 型逸脱監査（回帰は失敗）"
 	@echo "  typing-audit-baseline - ベースライン更新"
-	@echo "  architecture-lint-final - 0015 最終 legacy 定義で依存違反を計測"
-	@echo "  architecture-lint-final-strict - 0015 最終 legacy 定義で依存違反を失敗扱い"
+	@echo "  architecture-lint-final - final legacy profile で依存違反を計測"
+	@echo "  architecture-lint-final-strict - final legacy profile で依存違反を失敗扱い"
 	@echo "  architecture-lint-dynamic - shogiarena context/runtime 境界での動的import 迂回を検知"
 	@echo "  architecture-lint-dynamic-strict - 動的 import 迂回があれば失敗扱い"
 	@echo "  convention-lint - 命名/構成規約違反を計測（warn-only）"
@@ -30,7 +30,9 @@ help:
 	@echo "  check-full   - check + test + frontend:test"
 	@echo "  check-all    - check-full + pre-commitで全ファイルをチェック"
 	@echo "  ci           - GitHub Actions の public CI と同等の検証"
+	@echo "  ci-public    - public CI と同等の検証（ci の別名）"
 	@echo "  ci-develop   - GitHub Actions の develop CI と同等の検証（typing-audit含む）"
+	@echo "  ci-private   - develop CI と同等の検証（ci-develop の別名）"
 	@echo "  clean        - キャッシュファイルの削除"
 
 sync:
@@ -84,7 +86,7 @@ import-cycle-check:
 type-safety-audit-check:
 	uv run python tools/typing_audit.py \
 		--root src \
-		--baseline-json agent-docs/tasks/0012-type-safety-hardening/logs/typing-audit-baseline.json \
+		--baseline-json agent-docs/rules/typing-audit-baseline.json \
 		--fail-on-regression \
 		--summary
 
@@ -131,21 +133,21 @@ convention-lint-strict:
 typing-audit:
 	uv run python tools/typing_audit.py \
 		--root src \
-		--output agent-docs/tasks/0012-type-safety-hardening/logs/typing-audit-latest.md \
-		--baseline-json agent-docs/tasks/0012-type-safety-hardening/logs/typing-audit-baseline.json
+		--output agent-docs/reports/typing-audit-latest.md \
+		--baseline-json agent-docs/rules/typing-audit-baseline.json
 
 typing-audit-baseline:
 	uv run python tools/typing_audit.py \
 		--root src \
-		--output agent-docs/tasks/0012-type-safety-hardening/logs/20260217000000-typing-audit-baseline.md \
-		--baseline-json agent-docs/tasks/0012-type-safety-hardening/logs/typing-audit-baseline.json \
+		--output agent-docs/reports/typing-audit-baseline.md \
+		--baseline-json agent-docs/rules/typing-audit-baseline.json \
 		--update-baseline
 
 typing-audit-ci:
 	uv run python tools/typing_audit.py \
 		--root src \
-		--output agent-docs/tasks/0012-type-safety-hardening/logs/typing-audit-latest.md \
-		--baseline-json agent-docs/tasks/0012-type-safety-hardening/logs/typing-audit-baseline.json \
+		--output agent-docs/reports/typing-audit-latest.md \
+		--baseline-json agent-docs/rules/typing-audit-baseline.json \
 		--fail-on-regression
 
 frontend-test:
@@ -184,9 +186,13 @@ ci:
 	npm run frontend:build
 	uv build
 
+ci-public: ci
+
 ci-develop:
 	$(MAKE) typing-audit-ci
 	$(MAKE) ci
+
+ci-private: ci-develop
 
 docs-build:
 	$(MDBOOK) build docs/book

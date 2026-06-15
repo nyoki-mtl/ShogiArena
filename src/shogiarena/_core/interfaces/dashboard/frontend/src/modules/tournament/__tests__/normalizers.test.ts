@@ -127,18 +127,18 @@ describe('tournament game normalizers', () => {
     it('normalizes tournament summary meta and pair results', () => {
         const normalized = normalizeTournamentSummary({
             engines: ['Engine A', 'Engine B'],
-            engineStats: {
+            engine_stats: {
                 'Engine A': { wins: 3, draws: 1, losses: 2, rating: 1520 },
                 'Engine B': { wins: 2, draws: 1, losses: 3, rating: 1480 },
             },
-            pairResults: {
+            pair_results: {
                 'Engine A_vs_Engine B': {
                     'Engine A_wins': 3,
                     'Engine B_wins': 2,
                     draws: 1,
                 },
             },
-            enginesMeta: [
+            engines_meta: [
                 {
                     name: 'Engine A',
                     engine_path: '/bin/engine_a',
@@ -174,7 +174,7 @@ describe('tournament game normalizers', () => {
     it('tolerates malformed enginesMeta entries', () => {
         const normalized = normalizeTournamentSummary({
             engines: ['Engine A', 'Engine B'],
-            enginesMeta: [
+            engines_meta: [
                 { name: null, engine_path: '/bin/bad-null' },
                 { name: { bad: 'object' }, engine_path: '/bin/bad-object' },
                 123,

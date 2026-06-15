@@ -8,7 +8,7 @@ export { installDashboardNavigation } from './services/navigation';
 export { installDashboardTabs } from './services/tabs';
 export { installDashboardNotices } from './components/notices';
 export { installShogiBoardGlobals } from './components/shogi-board';
-export { installHeaderProgress } from './services/headerProgress';
+export { installHeaderProgress } from './services/header-progress';
 export { installDashboardTheme } from './services/theme';
 export {
     DASHBOARD_MODE_CHANGED_EVENT,
@@ -17,6 +17,6 @@ export {
     getModeConfig,
     resolveRuntimeModeFromSummary,
     setDashboardMode,
-} from './services/runtimeMode';
-export { getLiveViewSnapshotStore } from './stores/liveViewSnapshot';
+} from './services/runtime-mode';
+export { getLiveViewSnapshotStore } from './stores/live-view-snapshot';
 export { createDeferredHydrator } from './utils/hydration';

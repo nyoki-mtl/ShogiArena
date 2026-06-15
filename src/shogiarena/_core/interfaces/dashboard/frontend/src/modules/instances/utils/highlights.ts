@@ -63,6 +63,16 @@ export function processHighlightQueue(state: InstancesDashboardState): void {
     state.highlightQueue = remaining;
 }
 
+/** 保留中の highlight 解除タイマーをすべて取り消し、ハイライト状態をリセットする。 */
+export function clearHighlightTimers(state: InstancesDashboardState): void {
+    for (const timer of state.highlightTimers.values()) {
+        clearTimeout(timer);
+    }
+    state.highlightTimers.clear();
+    state.activeHighlights.clear();
+    state.highlightQueue.clear();
+}
+
 export function queueInstanceHighlights(state: InstancesDashboardState, ids: readonly string[] | string): void {
     const list = Array.isArray(ids) ? ids : [ids];
     const cleaned = list.filter((value): value is string => typeof value === 'string' && value.length > 0);

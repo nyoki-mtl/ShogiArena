@@ -1,269 +1,184 @@
-# トーナメントの実行
+# トーナメント
 
-Shogi Arena でエンジン同士のトーナメント（対局）を実行する方法を解説します。
-
-## 実行コマンド
-
-トーナメントは `shogiarena run tournament` コマンドで実行します。
+トーナメントは `shogiarena run tournament` で実行します。通常のエンジン比較はこのモードから始めるのが一番分かりやすいです。
 
 ```bash
-shogiarena run tournament <config_path> [options]
+shogiarena run tournament tournament.yaml
 ```
 
-### 主なオプション
+## 主なオプション
 
 | オプション | 説明 |
 | --- | --- |
-| `--dry-run` | 実際に対局を行わず、設定の検証とスケジュール生成のみを行います。 |
-| `--validate-only` | 設定だけ検証して終了します。 |
-| `--no-resume` | 既存ランの再開をせず新規として実行します。`--run-dir` で既存ディレクトリを指定した場合のみ、そのディレクトリ内の既存成果物が上書きされます。 |
-| `--engine KEY=VALUE ...` | エンジンをCLIで定義します（複数指定可）。`instance_id=...` を含めることで割当も可能です。 |
-| `--provision {none,force}` | SSH リモート実行時にファイルを同期するか制御します。`force` は毎回同期します。 |
-| `--git-worktree {strict,clean,allow-dirty}` | ビルド前の Git ワークツリーの状態チェックを制御します。 |
-| `--experiment-name NAME` | 自動生成する run グループ名を上書きします。 |
-| `--run-dir PATH` | run ディレクトリを明示指定します。 |
+| `--dry-run` | 設定を読み込み、実行前に検証する |
+| `--validate-only` | 設定検証のみで終了する |
+| `--experiment-name NAME` | 自動生成される run グループ名を上書きする |
+| `--run-dir PATH` | run ディレクトリを明示指定する |
+| `--no-resume` | 既存状態を再開せず新規実行する |
+| `--provision {none,force}` | SSH インスタンスへのエンジン配置を制御する |
+| `--path-preflight {off,warn,error}` | USI オプション内のパスらしき値を事前検査する |
 
-### 実行ディレクトリの決まり方
+`--rules KEY=VALUE`、`--tournament KEY=VALUE`、`--dashboard KEY=VALUE` などで YAML の一部を CLI から上書きできます。
 
-- `--run-dir` を指定した場合は **そのパスがそのまま使われます**（`<experiment-name>-<hash8>/<timestamp>` は付かない）
-- `--run-dir` を指定しない場合は、`output_dir` 配下に  
-  `runs/<experiment-name>-<hash8>/<timestamp>` が作成されます
-- `--experiment-name` は **run_dir を自動生成する場合のみ** 反映されます
+```bash
+shogiarena run tournament tournament.yaml \
+  --tournament games_per_pair=100 num_parallel=4 \
+  --rules time_control.byoyomi_ms=1000
+```
 
-`--run-dir` は相対パスも指定でき、`{output_dir}` や環境変数を展開できます。
-
-## 設定ファイル (TournamentRunConfig)
-
-トーナメントの設定は YAML ファイルで記述します。
-
-### 基本構造
+## 最小構成
 
 ```yaml
-experiment_name: "my_experiment"  # 実験名（ディレクトリ名などに使用）
+experiment_name: "engine-comparison"
 
 engines:
-  - name: "EngineA"
-    engine_path: "configs/engine/engine_a.yaml"
-  - name: "EngineB"
-    engine_path: "configs/engine/engine_b.yaml"
+  - engine_path: "engine_a.yaml"
+  - engine_path: "engine_b.yaml"
 
 tournament:
   scheduler: round_robin
-  games_per_pair: 100
-  num_parallel: 4
+  games_per_pair: 20
+  num_parallel: 2
 
 rules:
   time_control:
-    time_ms: 60000     # 60秒
-    increment_ms: 1000 # +1秒
-  initial_positions:
-    type: file
-    source: "configs/openings/standard.sfen"
+    time_ms: 60000
+    increment_ms: 1000
 
 dashboard:
   enabled: true
   api_port: 8080
-
-instances:
-  - configs/resources/instances/local.yaml
 ```
 
-### Engines (`engines`)
+## `engines`
 
-参加するエンジンをリストで定義します。
+エンジンは次のどちらかで指定します。
 
-| フィールド | 説明 |
+| 指定方法 | 用途 |
 | --- | --- |
-| `name` | エンジンの表示名（一意である必要があります）。 |
-| `engine_path` | ローカルのエンジン設定 YAML へのパス。[詳細](engine-configuration.md) |
-| `artifact` | `engine_path` の代わりにビルド済みアーティファクト（例: `YaneuraOu/<commit>`）を指定。[詳細](build-system.md) |
-| `build_options` | `artifact` 使用時のビルドオプション（必要なものだけ指定）。 |
-| `options` | USI オプションの上書き設定。 |
-| `time_control` | このエンジン固有の持ち時間設定（`rules` より優先されます）。 |
-| `cpu_affinity` | CPU コアの固定（例: `"0,2-3"`）。 |
-| `instance_id` | 実行先インスタンス名。SSH 分散実行時に使います。 |
+| `engine_path` | ローカルのエンジン YAML を参照する |
+| `artifact` | リポジトリ定義とビルド設定からエンジンを解決する |
 
-### Tournament (`tournament`)
+`engine_path` の例:
 
-対局のスケジュール方法を定義します。
+```yaml
+engines:
+  - engine_path: "examples/configs/resources/engines/local_example.yaml"
+    name: "EngineA"
+    options:
+      Threads: 4
+```
 
-| フィールド | デフォルト | 説明 |
+`artifact` の例:
+
+```yaml
+engines:
+  - artifact: "YaneuraOu/9f89431a"
+    build_options:
+      target_cpu: ZEN3
+    options:
+      Threads: 4
+      USI_Hash: 2048
+```
+
+トーナメント側で `options`、`options_overlays`、`time_control` を指定すると、参照先のエンジン設定に上書きマージされます。
+
+## `tournament`
+
+| フィールド | 既定値 | 説明 |
 | --- | --- | --- |
-| `scheduler` | `round_robin` | `round_robin`（総当たり）または `gauntlet`（勝ち抜き戦）。 |
-| `games_per_pair` | 4 | 1ペアあたりの対局数。 |
-| `num_parallel` | 4 | 同時実行する対局数。 |
-| `game_order` | `auto` | 対局順序。`interleave`（交互）、`pairwise`（連続）、`shuffle`（ランダム）。 |
-| `seed` | 42 | スケジュール生成や局面選択の乱数シード。 |
-| `baseline_count` | 1 | `gauntlet` 時の基準エンジンの数（リストの先頭から）。 |
+| `scheduler` | `round_robin` | `round_robin` または `gauntlet` |
+| `games_per_pair` | 4 | 1 ペアあたりの対局数 |
+| `num_parallel` | 4 | 同時に走らせる対局数 |
+| `seed` | 42 | スケジュールと局面選択の乱数シード |
+| `game_order` | `auto` | `auto`, `pairwise`, `interleave`, `shuffle` |
+| `engine_lifecycle` | `reuse` | `reuse` はエンジンプロセスを再利用、`per_game` は各対局後に終了 |
+| `baseline_count` | 1 | `gauntlet` で先頭から何台を baseline にするか |
 
-### Rules (`rules`)
+`gauntlet` は、先頭側の baseline 群と残りの候補群を重点的に対局させたい場合に使います。
 
-対局のルールを定義します。
+メモリ分離を重視する強さ比較では `engine_lifecycle: per_game` を指定すると、各対局の `gameover` 後に両エンジンプロセスを閉じ、次局で新しい USI プロセスを起動します。既定の `reuse` は長いトーナメントの起動コストを抑えるため、従来どおり idle pool に戻します。
 
-#### Time Control (`time_control`)
+### 並列数とインスタンス容量
 
-- `time_ms`: 基本持ち時間（ミリ秒）
-- `increment_ms`: 1手ごとの加算時間（フィッシャー）
-- `byoyomi_ms`: 秒読み時間
-- `fixed_time_ms`: 1手固定時間
-- `node_limit`: 探索ノード数制限
-- `depth_limit`: 探索深さ制限
+`num_parallel` は「同時に実行したい対局数」として扱われます。ShogiArena は各エンジンの `Threads` / `USI_Threads` と `Ponder` / `USI_Ponder` から必要 slot 数を見積もり、pending schedule の連続 `num_parallel` 局が instance の `slots` / `max_engines` に収まるかを対局開始前に検査します。
 
-#### Initial Positions (`initial_positions`)
+ponder off のエンジンは、片側につき `ceil(Threads / 2)` slot を予約します。たとえば `Threads: 4` のエンジン同士は 1 局で 4 slot を使うため、`num_parallel: 3` には同じ instance 上で 12 slot が必要です。instance が `slots: 8` の場合は既定でエラーになります。
 
-- `type`: `startpos`（平手）または `file`（指定局面）。
-- `source`: `type: file` の場合の SFEN ファイルパス。
-- `flip_policy`: 先後入れ替え設定。`pair_both`（入れ替えて2局）、`random`、`alternate`。
-
-詳細は[開局集の管理](opening-books.md)を参照してください。
-
-#### Adjudication (`adjudication`)
-
-- `enable_max_plies`: 最大手数による引き分け判定を有効化（デフォルト True）。
-- `max_plies`: 最大手数（デフォルト 320）。
-- `sync_max_plies_with_engine`: エンジンの引き分け手数オプションを同期するか（デフォルト True）。
-- `engine_max_ply_option_names`: 同期対象のエンジンオプション名（`"auto"` で自動検出）。
-- `resign_threshold_cp`: 投了判定スコア（例: 800）。`None` で投了無効、非 `None` で有効。
-- `resign_move_count`: 連続何手で投了するか。
-
-#### Repetition (`repetition_occurrences_to_draw`)
-
-同一局面が何回現れたら千日手とみなすか（デフォルト 2、公式ルールは 4）。
-
-### Rating (`rating`)
-
-Elo レーティング計算の設定です。
-
-- `initial`: 初期レーティング（デフォルト 1500）。
-- `k_factor`: K値（デフォルト 16）。
-
-### Dashboard (`dashboard`)
-
-- `enabled`: ダッシュボードを有効にするか。
-- `api_port`: ポート番号。
-
-### USI Transcript (`logging`)
-
-対局中の USI command/output を game/side ごとに保存できます。デバッグ用なので、必要な run だけで有効にしてください。
+意図的に instance resource gate で並列数を絞りたい場合だけ、`system.resource_capacity_preflight` を変更します。
 
 ```yaml
-logging:
-  usi_transcript: true
-  usi_transcript_detail: commands  # commands | commands_and_info
+system:
+  resource_capacity_preflight: error  # default: error, warn, off
 ```
 
-出力先は `<run_dir>/transcripts/game-<game_id>-black.log` と `...-white.log` です。`commands` は送信コマンド、`bestmove`、最後の non-bound `info` を保存し、`commands_and_info` は全 `info` 行も保存します。
+## `rules`
 
-保存済み局面は `replay-position` で再検索できます。
+### 時間制御
 
-```bash
-shogiarena replay-position --run-dir path/to/run --game-id g0001-abc --ply 80 --engine EngineA --nodes 100000
-```
+主な指定:
 
-`--fresh` は対象局面だけを clean state で検索します。`--replay-history` は transcript がある場合に、同じ side の過去 search を対象 ply 手前まで再実行してから検索します。
+- `fixed_time_ms`: 1 手固定時間
+- `time_ms` + `increment_ms`: フィッシャー式
+- `time_ms` + `byoyomi_ms`: 秒読み
+- `node_limit`: ノード数制限
+- `depth_limit`: 深さ制限
 
-### Instances (`instances`)
-
-インスタンス設定ファイルのパスを指定します。1 ファイルでも複数ファイルでも指定できます。
+### 初期局面
 
 ```yaml
-instances:
-  - configs/resources/instances/local.yaml
-  - configs/resources/instances/gpu.yaml
+rules:
+  initial_positions:
+    type: file
+    source: "openings/startpos.sfen"
+    flip_policy: pair_both
 ```
 
-### Records Output (`records_output`)
+`type` は `startpos` または `file` です。`file` の場合は SFEN のリストを `source` に指定します。
 
-自己対局の棋譜を psv/sbinpack 形式でバイナリ保存する設定です。ファイルの切り替えは**対局境界のみ**で行います。
+### adjudication
 
 ```yaml
-records_output:
-  format: sbinpack
-  max_positions_per_file: 1000000
-  max_games_per_file: 2000
-  output_dir: .sandbox/work_dir/records
-  file_prefix: selfplay
+rules:
+  adjudication:
+    enable_max_plies: true
+    max_plies: 320
+    sync_max_plies_with_engine: true
+    resign_threshold_cp: 800
+    resign_move_count: 8
 ```
 
-#### フィールド
+最大手数、投了判定、エンジン側の引き分け手数オプション同期を設定できます。
 
-- `format`: `psv` または `sbinpack`
-- `max_positions_per_file`: 1ファイルあたりの局面数上限
-- `max_games_per_file`: 1ファイルあたりの対局数上限（sbinpackのみ）
-- `output_dir`: 出力先ディレクトリ（省略時は run_dir/records）
-- `file_prefix`: 出力ファイルの接頭辞（省略時は format 名）
+## 実行結果
 
-> **Note: 境界の扱い**
->
-> sbinpack は対局途中でファイルを分割しません。`max_games_per_file` を指定した場合は対局数で固定し、未指定の場合は `max_positions_per_file` を超過した時点の対局まで書き込んでから次ファイルへ切り替えます。psv は1局面=1レコードのため `max_games_per_file` は使用できません。
-
-
-## ディレクトリ構造
-
-実行結果は `output_dir`（デフォルトは `~/.local/share/shogiarena/output` など）以下に保存されます。
+`--run-dir` を指定した場合は、そのパスが run ディレクトリとして使われます。指定しない場合は、標準出力先に次の形で作られます。
 
 ```text
-output_dir/
-└── tournament/
-    └── runs/
-        └── <config_stemまたはexperiment_name>-<hash8>/
-            └── YYYYMMDDHHmmSS/
-                ├── game.db         # 結果データベース
-                ├── state.json      # 進行状態（レジューム用）
-                ├── manifest.json   # run マニフェスト（provenance シール）
-                ├── data/           # ダッシュボード用データ
-                ├── logs/           # 実行ログ
-                └── records/        # records_output を使う場合
+{output_dir}/runs/<experiment>-<hash8>/YYYYMMDDHHMMSS/
+├── game.db
+├── manifest.json
+├── state.json
+├── data/
+├── records/
+└── transcripts/
 ```
 
-`output_dir` の設定については[設定システム](configuration.md)を参照してください。
+結果集計:
 
-## OpenBench/ShogiBench への提出
-
-SPRT 実行時は、`openbench.enabled: true` を設定すると OpenBench/ShogiBench へ進捗を提出できます。
-
-```yaml
-sprt:
-  elo0: 0.0
-  elo1: 5.0
-  alpha: 0.05
-  beta: 0.05
-  max_games: 400
-
-openbench:
-  enabled: true
-  mode: existing_test
-  server: https://your-openbench.example.com
-  username: your-user
-  password_env: OPENBENCH_PASSWORD
-  target_test_id: 1234
-  submit_interval_games: 2
-  strict: true
+```bash
+shogiarena results summary /path/to/run
+shogiarena results summary /path/to/run --format csv
 ```
 
-### 前提条件
+provenance の検証:
 
-- `sprt` 設定が必須です
-- エンジン数は 2 台固定です
-- 1 台目のエンジンを tested、2 台目を base として集計します
-- `target_test_id` で提出先の test を指定します
-- `mode: create_test` を使うと test 作成（CREATE_TEST）から自動化できます
+```bash
+shogiarena results verify-provenance /path/to/run
+```
 
-### 実行時の挙動
+## 関連
 
-- `submit_interval_games` ごとに差分を送信します
-- 実行終了時に最終 flush を行います
-- `strict: true` の場合、提出失敗で run をエラー終了します
-- `strict: false` の場合、提出失敗を警告ログに落として run は継続します
-
-### 認証情報
-
-- `password_env` は環境変数名です（`settings.yaml` に平文パスワードは保存しません）
-- `server` はデフォルトで `https://` 必須です（`allow_insecure_http: true` で `http://` を許可）
-
-## 関連ドキュメント
-
-- [エンジン設定](engine-configuration.md): エンジン設定ファイルの詳細
-- [開局集の管理](opening-books.md): 初期局面の設定
-- [リモート実行](remote-execution.md): SSH 経由の分散実行
-- [設定システム](configuration.md): 環境設定とプレースホルダー
+- [エンジン設定](engine-configuration.md)
+- [ダッシュボード](dashboard.md)
+- [リモート実行](remote-execution.md)

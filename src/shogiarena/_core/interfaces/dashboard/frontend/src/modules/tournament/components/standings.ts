@@ -4,7 +4,7 @@ import type {
     StandingsSortKey,
 } from '@/modules/tournament/types';
 import type { EngineMetaDetail } from '@/modules/engines/types/internal';
-import { resolveOptionSourceLabel } from '@/modules/shared/utils/engineOptionSources';
+import { resolveOptionSourceLabel } from '@/modules/shared/utils/engine-option-sources';
 import type { JsonObject } from '@/types/shared';
 import type { BaseStandingsRow } from '@/modules/shared/types/standings';
 
@@ -211,12 +211,16 @@ export function renderEngineOptionsPane({
                 runtimeEntry && runtimeEntry.default !== undefined && runtimeEntry.default !== null
                     ? runtimeEntry.default
                     : null;
-            const valueStr = escapeHtml(formatOptionValue(resolvedValue ?? currentValue));
+            // Highlight against the same value that is actually displayed, otherwise the diff
+            // marker can disagree with the shown value (display uses resolvedValue, the diff
+            // check previously used runtime currentValue).
+            const displayValue = resolvedValue ?? currentValue;
+            const valueStr = escapeHtml(formatOptionValue(displayValue));
             const defaultStr =
                 defaultValue !== null ? escapeHtml(formatOptionValue(defaultValue)) : '<span class="subtle">-</span>';
             const sourceStr = escapeHtml(resolveOptionSourceLabel(key, sources, sourceDetails));
             const highlight =
-                defaultValue !== null && formatOptionValue(defaultValue) !== formatOptionValue(currentValue);
+                defaultValue !== null && formatOptionValue(defaultValue) !== formatOptionValue(displayValue);
             overridesHtml += `<tr${highlight ? ' class="option-diff"' : ''}>`;
             overridesHtml += `<td>${escapeHtml(key)}</td>`;
             overridesHtml += `<td>${valueStr}</td>`;

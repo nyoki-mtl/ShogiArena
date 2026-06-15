@@ -16,15 +16,15 @@ class PairDelta:
 @dataclass
 class BTDEstimate:
     ratings: dict[str, float]  # Elo
-    rating_se: dict[str, float]  # per-engine standard error in Elo
+    rating_se: dict[str, float | None]  # per-engine SE in Elo; None when SEs are unavailable
     # Optional covariance between engine ratings in Elo space
     rating_cov: dict[tuple[str, str], float] | None
     anchor: str  # engine used as fixed reference (R=0)
-    gamma_elo: float  # Black advantage in Elo
+    gamma_elo: float  # Actual first-move (black) advantage in Elo (= 2 * gamma)
     gamma_elo_se: float | None
-    nu: float  # Draw tendency parameter (p_draw(eq) = nu/(1+nu))
+    nu: float  # Draw tendency parameter
     nu_se: float | None
-    draw_eq: float  # Implied draw rate at equal strength
+    draw_eq: float  # Implied draw rate at equal strength, incl. colour: nu / (nu + cosh(gamma))
     draw_eq_se: float | None
 
     def pair_delta(self, engine_a: str, engine_b: str, cov: dict[tuple[str, str], float] | None = None) -> PairDelta:

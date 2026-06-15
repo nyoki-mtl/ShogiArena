@@ -12,7 +12,7 @@ from typing import TypedDict
 class SprtTimelineEntry(TypedDict):
     """SPRT タイムラインの各エントリ。"""
 
-    gameIndex: int
+    game_index: int
     llr: float
     lower: float
     upper: float
@@ -21,8 +21,10 @@ class SprtTimelineEntry(TypedDict):
     draws: int
     losses: int
     games: int
-    winRate: float | None
-    eloEstimate: float | None
+    win_rate: float | None
+    elo_estimate: float | None
+    pending_pairs: int
+    pending_games: int
 
 
 __all__ = ["SprtTimelineEntry"]

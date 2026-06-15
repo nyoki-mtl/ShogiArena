@@ -30,6 +30,7 @@ def _optional_keys(td: type) -> set[str]:
 class TestSprtStateSnapshot:
     def test_all_required(self) -> None:
         assert _required_keys(SprtStateSnapshot) == {
+            "model",
             "elo0",
             "elo1",
             "alpha",
@@ -39,13 +40,16 @@ class TestSprtStateSnapshot:
             "losses",
             "games_played",
             "llr",
+            "min_pairs",
+            "penta_bins",
+            "pending",
         }
 
     def test_no_optional_keys(self) -> None:
         assert _optional_keys(SprtStateSnapshot) == set()
 
     def test_key_count(self) -> None:
-        assert len(_required_keys(SprtStateSnapshot)) == 9
+        assert len(_required_keys(SprtStateSnapshot)) == 13
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +130,7 @@ class TestGamesSnapshotPayload:
             "revision",
             "base_revision",
             "rows",
-            "snapshotMeta",
+            "snapshot_meta",
         }
 
     def test_no_optional_keys(self) -> None:

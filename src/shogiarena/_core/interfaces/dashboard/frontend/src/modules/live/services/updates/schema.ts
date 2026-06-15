@@ -15,13 +15,13 @@ const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() => jsonObjectValueSchema
 const liveViewProgressSchema = z
     .object({
         kind: z.enum(['games', 'updates', 'match', 'sprt', 'unknown']).optional(),
-        unitLabel: z.string().optional(),
+        unit_label: z.string().optional(),
         completed: z.number().int().nonnegative().nullable().optional(),
         total: z.number().int().nonnegative().nullable().optional(),
         cancelled: z.number().int().nullable().optional(),
-        isFinal: z.boolean().optional(),
+        is_final: z.boolean().optional(),
         state: z.enum(['normal', 'paused', 'draining', 'finished']).optional(),
-        updatedAt: z.string().optional(),
+        updated_at: z.string().optional(),
     })
     .catchall(jsonValueSchema)
     .passthrough();
@@ -57,8 +57,8 @@ const summaryGamesSchema = z
 export const summarySnapshotSchema = z
     .object({
         games: summaryGamesSchema,
-        liveView: liveViewSnapshotSchema.nullish(),
-        summaryReady: z.boolean().optional(),
+        live_view: liveViewSnapshotSchema.nullish(),
+        is_summary_ready: z.boolean().optional(),
         timestamp: z.string().optional(),
     })
     .catchall(jsonValueSchema);
@@ -80,7 +80,7 @@ const gamesDeltaSchema = z.object({
     revision: nonNegativeIntSchema,
     base_revision: nonNegativeIntSchema,
     rows: z.array(gamesDeltaRowSchema),
-    snapshotMeta: jsonObjectSchema,
+    snapshot_meta: jsonObjectSchema,
 });
 
 const gamesSnapshotSchema = z.object({
@@ -88,7 +88,7 @@ const gamesSnapshotSchema = z.object({
     revision: nonNegativeIntSchema,
     base_revision: nonNegativeIntSchema.nullable(),
     rows: z.array(jsonObjectSchema),
-    snapshotMeta: jsonObjectSchema,
+    snapshot_meta: jsonObjectSchema,
 });
 
 export const gamesPayloadSchema = z.union([gamesDeltaSchema, gamesSnapshotSchema]);

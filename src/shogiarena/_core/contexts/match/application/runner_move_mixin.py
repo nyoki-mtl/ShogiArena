@@ -24,6 +24,21 @@ from .runner_types import (
 logger = logging.getLogger(__name__)
 
 
+def _eval_is_mate(eval_value: object) -> bool:
+    """Return True if the evaluation reports a mate score.
+
+    The port contract types pv eval as a plain ``int``; only the platform ``UsiEvalValue``
+    exposes ``is_mate_score``/``is_mated_score``. Duck-type those methods so plain ints (from
+    alternate engine adapters or test doubles) are safely treated as centipawn scores instead
+    of raising ``AttributeError`` when adjudication is enabled.
+    """
+    is_mate = getattr(eval_value, "is_mate_score", None)
+    is_mated = getattr(eval_value, "is_mated_score", None)
+    if callable(is_mate) and callable(is_mated):
+        return bool(is_mate() or is_mated())
+    return False
+
+
 class GameRunnerMoveMixin:
     _clock_notify_log_threshold_ms: float
     _extract_evaluation: Any
@@ -190,10 +205,7 @@ class GameRunnerMoveMixin:
         )
         notify_elapsed_ms = (time.perf_counter() - notify_start) * 1000.0
         if notify_elapsed_ms >= self._clock_notify_log_threshold_ms:
-            print(
-                f"[clock-notify] game={game_id} ply={ply_count} duration_ms={notify_elapsed_ms:.1f}",
-                flush=True,
-            )
+            logger.warning("Slow clock notify: game=%s ply=%s duration_ms=%.1f", game_id, ply_count, notify_elapsed_ms)
         if state.current_time_control.is_expired() and not state.current_time_control.limits.should_allow_timeout:
             logger.debug("Time expired after move; strict timeout -> loss on time")
             winner_color = Color.WHITE if is_side_that_moved_black else Color.BLACK
@@ -208,8 +220,16 @@ class GameRunnerMoveMixin:
         # Adjudication
         if dependencies.adjudicator:
             pv_info = think_result.pvs[0] if think_result.pvs else None
-            eval_cp = pv_info.eval if pv_info else None
-            score_type = "cp" if pv_info and pv_info.eval is not None else None
+            raw_eval = pv_info.eval if pv_info else None
+            if raw_eval is None:
+                eval_cp: int | None = None
+                score_type: str | None = None
+            else:
+                # USI scores are from the moving side's perspective (positive = good for the
+                # engine that just played); the adjudicator expects black's perspective
+                # (positive = black advantage), so flip the sign on white's moves.
+                eval_cp = int(raw_eval) if is_side_that_moved_black else -int(raw_eval)
+                score_type = "mate" if _eval_is_mate(raw_eval) else "cp"
             adjudication_result = dependencies.adjudicator.update(
                 eval_cp=eval_cp,
                 score_type=score_type,

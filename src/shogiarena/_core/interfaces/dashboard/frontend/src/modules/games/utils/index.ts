@@ -1,8 +1,8 @@
 import type { DashboardNoticeOptions, DashboardNoticeVariant } from '@/types/dashboard';
 import type { DashboardGamesUtils, GameOutcomeInfo, GameOutcomeKind } from '@/modules/games/types';
 import { requestJson as sharedRequestJson } from '@/modules/shared/services/api';
-import { assertDashboardCoreGetApiBase, assertDashboardCoreShowNotice } from '@/modules/shared/utils/dashboardCore';
-import { gameResultOutcomeKind } from '@/modules/shared/utils/gameResult';
+import { assertDashboardCoreGetApiBase, assertDashboardCoreShowNotice } from '@/modules/shared/utils/dashboard-core';
+import { gameResultOutcomeKind } from '@/modules/shared/utils/game-result';
 
 interface GamesUtilsWindow extends Window {
     DashboardGamesUtils?: DashboardGamesUtils;

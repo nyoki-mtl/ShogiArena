@@ -45,6 +45,12 @@ class CompletionGameSpecPort(Protocol):
     @property
     def white_engine(self) -> str: ...
 
+    @property
+    def round_num(self) -> int: ...
+
+    @property
+    def initial_sfen(self) -> str: ...
+
 
 class CompletionGameSummary(TypedDict, total=False):
     game_result: str | None

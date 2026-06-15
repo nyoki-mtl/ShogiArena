@@ -1,6 +1,6 @@
 import type { InstancesDashboardState } from '@/modules/instances/state';
 import type { InstanceActionResult, InstanceProvisionMode, ScheduleCancelResult } from '@/modules/instances/types';
-import { assertDashboardCoreGetApiBase } from '@/modules/shared/utils/dashboardCore';
+import { assertDashboardCoreGetApiBase } from '@/modules/shared/utils/dashboard-core';
 import { requestJson as sharedRequestJson } from '@/modules/shared/services/api';
 
 export const requestJson = sharedRequestJson;

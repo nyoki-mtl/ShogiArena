@@ -4,8 +4,13 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta name="google" content="notranslate" />
+        <meta
+            name="description"
+            content="ShogiArena dashboard for monitoring shogi engine tournaments, ratings, and SPSA tuning."
+        />
+        <meta name="color-scheme" content="light dark" />
         <title>Dashboard - ShogiArena</title>
-        <link rel="icon" href="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" type="image/png" />
+        <link rel="icon" href="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" type="image/gif" />
         <!-- DASHBOARD_STYLES -->
     </head>
     <body data-live-diagnostics-guidelines="__LIVE_DIAGNOSTICS_CONFIG__" data-dashboard-profile="__DASHBOARD_PROFILE__">
@@ -22,7 +27,13 @@
                         <h1 id="dashboardTitle" class="sr-only">ShogiArena Dashboard</h1>
                     </div>
                     <div class="dashboard-header-actions">
-                        <button id="themeToggle" class="theme-toggle" type="button" aria-pressed="false">
+                        <button
+                            id="themeToggle"
+                            class="theme-toggle"
+                            type="button"
+                            aria-pressed="false"
+                            aria-label="テーマを切り替え（右クリックでシステム設定に戻す）"
+                        >
                             <span class="theme-toggle__icon" aria-hidden="true">☀️</span>
                         </button>
                     </div>
@@ -36,7 +47,12 @@
                     >
                         Live View
                     </button>
-                    <button class="dashboard-tab __MATCH_TAB_ACTIVE__" data-dashboard-tab="match" id="tabMatch" aria-selected="__MATCH_TAB_SELECTED__">
+                    <button
+                        class="dashboard-tab __MATCH_TAB_ACTIVE__"
+                        data-dashboard-tab="match"
+                        id="tabMatch"
+                        aria-selected="__MATCH_TAB_SELECTED__"
+                    >
                         Match
                     </button>
                     <button
@@ -47,10 +63,20 @@
                     >
                         Generate
                     </button>
-                    <button class="dashboard-tab __SPRT_TAB_ACTIVE__" data-dashboard-tab="sprt" id="tabSprt" aria-selected="__SPRT_TAB_SELECTED__">
+                    <button
+                        class="dashboard-tab __SPRT_TAB_ACTIVE__"
+                        data-dashboard-tab="sprt"
+                        id="tabSprt"
+                        aria-selected="__SPRT_TAB_SELECTED__"
+                    >
                         SPRT
                     </button>
-                    <button class="dashboard-tab" data-dashboard-tab="tournament" id="tabTournament" aria-selected="false">
+                    <button
+                        class="dashboard-tab"
+                        data-dashboard-tab="tournament"
+                        id="tabTournament"
+                        aria-selected="false"
+                    >
                         Tournament
                     </button>
                     <button class="dashboard-tab" data-dashboard-tab="openings" id="tabOpenings" aria-selected="false">
@@ -70,11 +96,19 @@
                     <button class="dashboard-tab" data-dashboard-tab="engines" id="tabEngines" aria-selected="false">
                         Engines
                     </button>
-                    <button class="dashboard-tab" data-dashboard-tab="instances" id="tabInstances" aria-selected="false">
+                    <button
+                        class="dashboard-tab"
+                        data-dashboard-tab="instances"
+                        id="tabInstances"
+                        aria-selected="false"
+                    >
                         Instances
                     </button>
                     <button class="dashboard-tab" data-dashboard-tab="games" id="tabGames" aria-selected="false">
                         Games
+                    </button>
+                    <button class="dashboard-tab" data-dashboard-tab="book" id="tabBook" aria-selected="false">
+                        Book
                     </button>
                 </div>
                 <div
@@ -82,7 +116,7 @@
                     role="progressbar"
                     aria-label="Dashboard progress"
                     class="tab-content active"
-                    data-tab-content="live match generate sprt tournament openings rules engines instances games spsa"
+                    data-tab-content="live match generate sprt tournament openings rules engines instances games book spsa"
                 >
                     <div id="progressFill" aria-hidden="true"></div>
                     <div id="progressText" aria-live="polite">0 / 0</div>
@@ -93,7 +127,7 @@
                 id="extraStats"
                 aria-label="Advanced Stats"
                 class="tab-content active space-y-2 text-sm text-slate-300"
-                data-tab-content="live match generate sprt tournament openings rules engines instances games spsa"
+                data-tab-content="live match generate sprt tournament openings rules engines instances games book spsa"
             >
                 <div id="sprtBox" class="text-xs uppercase tracking-wide text-dashboard-neutral"></div>
                 <div id="pentaBox" class="text-xs uppercase tracking-wide text-dashboard-neutral"></div>
@@ -651,6 +685,22 @@
                     <div id="instancesGrid" class="instances-grid"></div>
                 </section>
 
+                <section class="tab-content space-y-4" id="bookTab" data-tab-content="book" aria-label="Opening Book">
+                    <div class="book-tab-header">
+                        <h2 class="book-tab-title">Opening Book (内蔵定跡)</h2>
+                        <p class="book-tab-subtitle text-xs text-dashboard-neutral">
+                            Win rates and out-of-book ply per engine opening book used in this run.
+                        </p>
+                        <label class="book-oob-toggle text-xs text-dashboard-neutral">
+                            <input type="checkbox" id="bookOutOfBookToggle" />
+                            Compute out-of-book ply (slower; opens book files)
+                        </label>
+                    </div>
+                    <div id="bookSummaryContainer" class="book-summary" aria-live="polite">
+                        <div class="book-empty">Loading…</div>
+                    </div>
+                </section>
+
                 <section class="tab-content space-y-4" id="gamesTab" data-tab-content="games" aria-label="Games">
                     <section class="space-y-3">
                         <div id="gamesTable" class="table-panel">
@@ -670,74 +720,74 @@
                             </div>
                             <div id="gamesTableScroll" class="games-table-scroll">
                                 <table class="games-table">
-                                <thead>
-                                    <tr>
-                                        <th scope="col" aria-sort="none">
-                                            <button type="button" class="games-sort" data-sort="order">
-                                                #
-                                                <span class="games-sort-indicator" aria-hidden="true"></span>
-                                            </button>
-                                        </th>
-                                        <th scope="col" class="games-game-col" aria-sort="none">
-                                            <button type="button" class="games-sort" data-sort="game">
-                                                Game
-                                                <span class="games-sort-indicator" aria-hidden="true"></span>
-                                            </button>
-                                        </th>
-                                        <th
-                                            scope="col"
-                                            class="games-side-header games-side-header--black"
-                                            aria-sort="none"
-                                        >
-                                            <button type="button" class="games-sort" data-sort="black">
-                                                Black
-                                                <span class="games-sort-indicator" aria-hidden="true"></span>
-                                            </button>
-                                        </th>
-                                        <th
-                                            scope="col"
-                                            class="games-side-header games-side-header--white"
-                                            aria-sort="none"
-                                        >
-                                            <button type="button" class="games-sort" data-sort="white">
-                                                White
-                                                <span class="games-sort-indicator" aria-hidden="true"></span>
-                                            </button>
-                                        </th>
-                                        <th scope="col" class="games-result-col" aria-sort="none">
-                                            <button type="button" class="games-sort" data-sort="result">
-                                                Result
-                                                <span class="games-sort-indicator" aria-hidden="true"></span>
-                                            </button>
-                                        </th>
-                                        <th scope="col" class="games-moves-col" aria-sort="none">
-                                            <button type="button" class="games-sort" data-sort="moves">
-                                                Moves
-                                                <span class="games-sort-indicator" aria-hidden="true"></span>
-                                            </button>
-                                        </th>
-                                        <th scope="col" class="games-started-col" aria-sort="none">
-                                            <button type="button" class="games-sort" data-sort="started">
-                                                Start
-                                                <span class="games-sort-indicator" aria-hidden="true"></span>
-                                            </button>
-                                        </th>
-                                        <th scope="col" class="games-ended-col" aria-sort="none">
-                                            <button type="button" class="games-sort" data-sort="ended">
-                                                Finish
-                                                <span class="games-sort-indicator" aria-hidden="true"></span>
-                                            </button>
-                                        </th>
-                                        <th scope="col" class="games-settings-col">
-                                            <span class="sr-only">Settings</span>
-                                        </th>
-                                    </tr>
-                                </thead>
-                                <tbody id="gamesTableBody">
-                                    <tr>
-                                        <td colspan="9" class="loading">Loading games...</td>
-                                    </tr>
-                                </tbody>
+                                    <thead>
+                                        <tr>
+                                            <th scope="col" aria-sort="none">
+                                                <button type="button" class="games-sort" data-sort="order">
+                                                    #
+                                                    <span class="games-sort-indicator" aria-hidden="true"></span>
+                                                </button>
+                                            </th>
+                                            <th scope="col" class="games-game-col" aria-sort="none">
+                                                <button type="button" class="games-sort" data-sort="game">
+                                                    Game
+                                                    <span class="games-sort-indicator" aria-hidden="true"></span>
+                                                </button>
+                                            </th>
+                                            <th
+                                                scope="col"
+                                                class="games-side-header games-side-header--black"
+                                                aria-sort="none"
+                                            >
+                                                <button type="button" class="games-sort" data-sort="black">
+                                                    Black
+                                                    <span class="games-sort-indicator" aria-hidden="true"></span>
+                                                </button>
+                                            </th>
+                                            <th
+                                                scope="col"
+                                                class="games-side-header games-side-header--white"
+                                                aria-sort="none"
+                                            >
+                                                <button type="button" class="games-sort" data-sort="white">
+                                                    White
+                                                    <span class="games-sort-indicator" aria-hidden="true"></span>
+                                                </button>
+                                            </th>
+                                            <th scope="col" class="games-result-col" aria-sort="none">
+                                                <button type="button" class="games-sort" data-sort="result">
+                                                    Result
+                                                    <span class="games-sort-indicator" aria-hidden="true"></span>
+                                                </button>
+                                            </th>
+                                            <th scope="col" class="games-moves-col" aria-sort="none">
+                                                <button type="button" class="games-sort" data-sort="moves">
+                                                    Moves
+                                                    <span class="games-sort-indicator" aria-hidden="true"></span>
+                                                </button>
+                                            </th>
+                                            <th scope="col" class="games-started-col" aria-sort="none">
+                                                <button type="button" class="games-sort" data-sort="started">
+                                                    Start
+                                                    <span class="games-sort-indicator" aria-hidden="true"></span>
+                                                </button>
+                                            </th>
+                                            <th scope="col" class="games-ended-col" aria-sort="none">
+                                                <button type="button" class="games-sort" data-sort="ended">
+                                                    Finish
+                                                    <span class="games-sort-indicator" aria-hidden="true"></span>
+                                                </button>
+                                            </th>
+                                            <th scope="col" class="games-settings-col">
+                                                <span class="sr-only">Settings</span>
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="gamesTableBody">
+                                        <tr>
+                                            <td colspan="9" class="loading">Loading games...</td>
+                                        </tr>
+                                    </tbody>
                                 </table>
                             </div>
                         </div>
@@ -830,10 +880,10 @@
                             <option value="">Auto (default)</option>
                         </select>
                     </label>
-                    <div class="form-field checkbox-field">
+                    <label class="form-field checkbox-field">
                         <input type="checkbox" id="assignInstancePerColorToggle" />
                         <span class="form-label-inline">Assign instances per engine</span>
-                    </div>
+                    </label>
                     <div class="form-field split-field" data-assignment="per_color">
                         <label class="form-field">
                             <span class="form-label">Black Instance</span>
@@ -872,8 +922,8 @@
             <div class="dialog-body">
                 <h2 class="inst-modal-title">Drain Instance</h2>
                 <p class="muted" id="drainConfirmMessage">
-                    This instance will stop accepting new games. Cancel pending items to free the queue; active
-                    games will finish and the runner will stay online waiting for a new schedule.
+                    This instance will stop accepting new games. Cancel pending items to free the queue; active games
+                    will finish and the runner will stay online waiting for a new schedule.
                 </p>
             </div>
             <div class="form-actions">

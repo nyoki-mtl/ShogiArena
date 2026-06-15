@@ -5,8 +5,8 @@ import type {
     WorkerSnapshotUpdate,
     SseSummaryPayload,
 } from '@/modules/live/types/updates';
-import { createWorkerUpdateHandlers } from './workerUpdates';
-import { createSpsaProgressHandler } from './spsaProgress';
+import { createWorkerUpdateHandlers } from './worker-updates';
+import { createSpsaProgressHandler } from './spsa-progress';
 
 export interface LiveUpdateHandlers {
     emitEvent: (eventName: string, payload: unknown) => void;

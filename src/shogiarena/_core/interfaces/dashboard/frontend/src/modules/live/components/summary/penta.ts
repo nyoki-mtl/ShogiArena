@@ -1,5 +1,5 @@
 import { createDetailsPane, createEmptyState } from '@/modules/shared/components/elements';
-import { gameResultWinner } from '@/modules/shared/utils/gameResult';
+import { gameResultWinner } from '@/modules/shared/utils/game-result';
 import type { JsonObject } from '@/types/shared';
 import type { NormalizedTournamentSummary } from '@/modules/tournament/types';
 import type { DashboardCoreState } from '@/types/dashboard';

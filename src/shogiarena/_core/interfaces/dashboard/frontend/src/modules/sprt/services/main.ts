@@ -1,5 +1,5 @@
 import { requestJson } from '@/modules/shared/services/api';
-import { renderLineChart } from '@/modules/shared/components/lineChart';
+import { renderLineChart } from '@/modules/shared/components/line-chart';
 import { getLiveViewSnapshotStore } from '@/modules/shared';
 import type { DashboardSprtApi, SprtSummaryPayload, SprtTimelinePoint, SprtWindow } from '../types';
 
@@ -26,7 +26,7 @@ function formatDecision(value: string | null | undefined): string {
 }
 
 function buildSeries(points: SprtTimelinePoint[], selector: (point: SprtTimelinePoint) => number | null | undefined) {
-    return points.map((point) => ({ x: point.gameIndex, y: selector(point) ?? null }));
+    return points.map((point) => ({ x: point.game_index, y: selector(point) ?? null }));
 }
 
 function renderCharts(payload: SprtSummaryPayload): void {
@@ -63,10 +63,10 @@ function renderSummary(payload: SprtSummaryPayload, owner: SprtWindow): void {
     if (!core) {
         throw new Error('DashboardCore must be initialized before SPRT module');
     }
-    if (!payload.liveView) {
-        throw new Error('SPRT summary payload must include liveView');
+    if (!payload.live_view) {
+        throw new Error('SPRT summary payload must include live_view');
     }
-    getLiveViewSnapshotStore(core).hydrateFromPayload(payload.liveView, 'sprt.summary.liveView');
+    getLiveViewSnapshotStore(core).hydrateFromPayload(payload.live_view, 'sprt.summary.live_view');
 
     core.updateElement('sprtTestedName', payload.tested ?? '-');
     core.updateElement('sprtBaselineName', payload.baseline ?? '-');
@@ -81,14 +81,14 @@ function renderSummary(payload: SprtSummaryPayload, owner: SprtWindow): void {
     core.updateElement('sprtScoreMeta', `Decision: ${formatDecision(status.decision ?? null)}`);
 
     core.updateElement('sprtLlrValue', formatNumber(status.llr ?? null, 3));
-    core.updateElement('sprtLlrMeta', `Win rate ${formatPercent(status.winRate ?? null)}`);
+    core.updateElement('sprtLlrMeta', `Win rate ${formatPercent(status.win_rate ?? null)}`);
 
     const bounds = `${formatNumber(status.lower ?? null, 2)} .. ${formatNumber(status.upper ?? null, 2)}`;
     core.updateElement('sprtBounds', bounds);
     core.updateElement('sprtBoundsMeta', 'LLR bounds');
 
     core.updateElement('sprtGames', `${completed}`);
-    const total = payload.games?.total ?? payload.config?.maxGames ?? null;
+    const total = payload.games?.total ?? payload.config?.max_games ?? null;
     const progress = total ? `${completed} / ${total}` : `${completed}`;
     core.updateElement('sprtProgress', progress);
 

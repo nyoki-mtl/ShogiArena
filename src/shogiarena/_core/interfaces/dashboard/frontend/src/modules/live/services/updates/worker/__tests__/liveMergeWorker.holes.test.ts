@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { __testHandleEnvelope, __testResetState } from '../liveMergeWorker';
+import { __testHandleEnvelope, __testResetState } from '../live-merge-worker';
 
 describe('liveMergeWorker hole detection', () => {
     afterEach(() => {

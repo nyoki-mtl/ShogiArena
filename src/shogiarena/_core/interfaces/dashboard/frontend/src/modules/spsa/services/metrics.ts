@@ -3,7 +3,7 @@ import {
     startDiagnosticsStopwatch,
     type LiveDiagnosticsStopwatch,
 } from '@/modules/live/utils/liveNamespace';
-import { DETAIL_FETCH_HYDRATION_METRIC, DETAIL_PAYLOAD_WARNING_THRESHOLD_KB } from './api.constants';
+import { DETAIL_FETCH_HYDRATION_METRIC, DETAIL_PAYLOAD_WARNING_THRESHOLD_KB } from './api-constants';
 import type { SpsaDetailViewMode, SpsaDetailWindowMode } from '@/modules/spsa/types';
 
 export type DetailPayloadContext = {
@@ -43,14 +43,14 @@ export function createMetricsHelpers(): MetricsApi {
             return;
         }
         const payloadKb = totalBytes / 1024;
-        const metricUpdate: Record<string, number> = { payloadKb };
+        const metricUpdate: Record<string, number> = { payload_kb: payloadKb };
         if (context?.view === 'slim') {
-            metricUpdate.detailPayloadKbSlim = payloadKb;
+            metricUpdate.detail_payload_kb_slim = payloadKb;
         } else if (context?.view === 'full') {
-            metricUpdate.detailPayloadKbFull = payloadKb;
+            metricUpdate.detail_payload_kb_full = payloadKb;
         }
         if (typeof context?.includeCount === 'number' && Number.isFinite(context.includeCount)) {
-            metricUpdate.detailIncludeCount = context.includeCount;
+            metricUpdate.detail_include_count = context.includeCount;
         }
         recordLiveDiagnosticsMetric(DETAIL_FETCH_HYDRATION_METRIC, metricUpdate);
         if (payloadKb >= DETAIL_PAYLOAD_WARNING_THRESHOLD_KB) {

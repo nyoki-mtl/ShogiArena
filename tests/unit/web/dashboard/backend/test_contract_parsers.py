@@ -34,7 +34,7 @@ def test_parse_tournament_stream_payload_rejects_negative_seq() -> None:
 def test_parse_dashboard_games_snapshot_payload_requires_kind() -> None:
     payload = {
         "rows": [],
-        "snapshotMeta": {},
+        "snapshot_meta": {},
     }
     with pytest.raises(ContractParseError):
         parse_dashboard_snapshot_payload("games", payload, path="tests.snapshot.games_missing_kind")
@@ -46,7 +46,7 @@ def test_parse_dashboard_games_snapshot_payload_rejects_non_object_row() -> None
         "revision": 1,
         "base_revision": None,
         "rows": [{"game_id": "g1"}, 42],
-        "snapshotMeta": {},
+        "snapshot_meta": {},
     }
     with pytest.raises(ContractParseError):
         parse_dashboard_snapshot_payload("games", payload, path="tests.snapshot.games_invalid_row")

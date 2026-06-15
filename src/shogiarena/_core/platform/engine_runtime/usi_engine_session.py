@@ -353,6 +353,10 @@ class AsyncUsiEngine(
         stripped = command.strip()
         if not stripped:
             return
+        if "\n" in stripped or "\r" in stripped:
+            # A USI command must be a single line. Embedded newlines (e.g. from an unsanitised
+            # setoption string value) would split into multiple commands -> reject them.
+            raise ValueError("USI command must not contain embedded newline characters")
         self._last_sent_command = stripped
         log_state = state
         if log_state is None:

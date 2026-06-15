@@ -17,8 +17,10 @@ from shogiarena._core.contexts.game_session.application.engine.config_hashing im
 from shogiarena._core.contexts.game_session.application.engine.option_coercion import (
     EngineOptionMap,
 )
+from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import EngineLifecyclePolicy
 from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_serialized
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
+from shogiarena._core.shared.kernel.overlay_options import select_overlay_options
 from shogiarena._core.shared.kernel.paths import resolve_path_like
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_str
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
@@ -198,9 +200,8 @@ class EngineConfig(BaseModel):
                 raw = yaml.safe_load(f) or {}
             if not isinstance(raw, Mapping):
                 raise TypeError("options_overlays YAML must be a mapping")
-            opts = raw.get("options") if "options" in raw else raw
-            if isinstance(opts, Mapping):
-                merged.update(coerce_json_object_serialized(opts, field_name="options"))
+            opts = select_overlay_options(raw, source=str(overlay))
+            merged.update(coerce_json_object_serialized(opts, field_name="options"))
         return merged
 
 
@@ -210,6 +211,7 @@ class TournamentConfig(BaseModel):
     seed: int = 42
     num_parallel: int = 4
     game_order: Literal["auto", "pairwise", "interleave", "shuffle"] = "auto"
+    engine_lifecycle: EngineLifecyclePolicy = "reuse"
     baseline_count: int = 1
 
 
@@ -249,6 +251,7 @@ class SystemConfig(BaseModel):
     resource_poll_max_interval: float = Field(default=1.0, gt=0)
     engine_handshake_timeout: float | None = Field(default=None, gt=0)
     path_preflight: Literal["off", "warn", "error"] = "off"
+    resource_capacity_preflight: Literal["off", "warn", "error"] = "error"
     extras: EngineOptionMap = Field(default_factory=dict)
 
     @model_validator(mode="after")

@@ -76,14 +76,14 @@ async def test_get_summary_returns_default_tournament_contract(tmp_path) -> None
     response = await api_server.get_summary(request)
     payload = json.loads(response.text)
 
-    assert payload["summarySource"] == "tournament"
+    assert payload["summary_source"] == "tournament"
     assert payload["is_summary_ready"] is False
     assert payload["mode"] == "tournament"
     assert payload["games"]["completed"] == 0
     assert payload["games"]["total"] == 0
-    assert payload["liveView"]["mode"] == "tournament"
-    assert payload["liveView"]["progress"]["completed"] == 0
-    assert payload["liveView"]["progress"]["total"] == 0
+    assert payload["live_view"]["mode"] == "tournament"
+    assert payload["live_view"]["progress"]["completed"] == 0
+    assert payload["live_view"]["progress"]["total"] == 0
 
 
 @pytest.mark.asyncio
@@ -92,7 +92,7 @@ async def test_get_summary_rehydrates_missing_live_view_from_snapshot(tmp_path) 
     api_server._state.set_summary_snapshot(  # noqa: SLF001
         "tournament",
         {
-            "summarySource": "tournament",
+            "summary_source": "tournament",
             "mode": "tournament",
             "games": {"completed": 12, "total": 20, "cancelled": 1},
             "timestamp": "2026-03-11T00:00:00+00:00",
@@ -105,9 +105,9 @@ async def test_get_summary_rehydrates_missing_live_view_from_snapshot(tmp_path) 
 
     assert payload["games"]["completed"] == 12
     assert payload["games"]["total"] == 20
-    assert payload["liveView"]["mode"] == "tournament"
-    assert payload["liveView"]["progress"]["completed"] == 12
-    assert payload["liveView"]["progress"]["total"] == 20
+    assert payload["live_view"]["mode"] == "tournament"
+    assert payload["live_view"]["progress"]["completed"] == 12
+    assert payload["live_view"]["progress"]["total"] == 20
 
 
 @pytest.mark.asyncio
@@ -182,7 +182,7 @@ def test_handle_assignment_stream_publish_routes_payload_to_ws(tmp_path) -> None
                 worker_idx=11,
                 payload={
                     "topic": "live.assignment.snapshot",
-                    "payload": {"assignments": {"11": "g11"}, "gids": ["g11"], "assignment_rev": 1, "updatedAt": 123},
+                    "payload": {"assignments": {"11": "g11"}, "gids": ["g11"], "assignment_rev": 1, "updated_at": 123},
                 },
             ),
         )
@@ -191,7 +191,7 @@ def test_handle_assignment_stream_publish_routes_payload_to_ws(tmp_path) -> None
     assert captured == [
         (
             "live.assignment.snapshot",
-            {"assignments": {"11": "g11"}, "gids": ["g11"], "assignment_rev": 1, "updatedAt": 123},
+            {"assignments": {"11": "g11"}, "gids": ["g11"], "assignment_rev": 1, "updated_at": 123},
             11,
         )
     ]

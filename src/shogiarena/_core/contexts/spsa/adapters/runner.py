@@ -149,6 +149,7 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
             existing_metadata=self._state.engine_metadata_cache,
             existing_runtime_sig=self._state.engine_metadata_runtime_sig,
             runtime_options=runtime_options,
+            runtime_info=runtime_info,
             collect_metadata_fn=lambda: collect_engine_metadata(
                 engines=spsa_engine_configs(self.config),
                 rules=self.config.rules,
@@ -223,7 +224,7 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
     async def init_services(self) -> None:
         assert self.run_dir is not None
         db = self.storage.db_service()
-        db.ensure_schema_compatibility()
+        db.ensure_schema()
         self._state.db_service = db
         logger.debug("Services initialized (DB)")
         self._init_dashboard_services()

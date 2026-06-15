@@ -130,13 +130,13 @@ def build_summary_payload(
         "progress": progress,
         "recent_step": recent_step,
         "recent_delta_norm": recent_delta_norm,
-        "engineTimeControls": dict(engine_time_controls),
-        "defaultTimeControl": default_time_control,
+        "engine_time_controls": dict(engine_time_controls),
+        "default_time_control": default_time_control,
         "engines": engines_list,
-        "enginesMeta": [dict(entry) for entry in engines_meta],
-        "engineInstances": dict(engine_instances),
-        "engineStats": engine_stats_payload,
-        "spsaConfig": spsa_config,
+        "engines_meta": [dict(entry) for entry in engines_meta],
+        "engine_instances": dict(engine_instances),
+        "engine_stats": engine_stats_payload,
+        "spsa_config": spsa_config,
     }
 
 

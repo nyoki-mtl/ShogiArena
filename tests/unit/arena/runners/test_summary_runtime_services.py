@@ -122,10 +122,10 @@ async def _noop_async() -> None:
 def test_seed_payload_service_reads_grouped_runtime_context(tmp_path: Path) -> None:
     payload = TournamentSummarySeedPayloadService().build(_build_runtime(tmp_path)).to_json_object()
 
-    assert payload["tournamentType"] == "round_robin"
+    assert payload["tournament_type"] == "round_robin"
     assert payload["mode"] == "tournament"
-    assert payload["runDir"] == str(tmp_path)
-    assert payload["engineInstances"] == {"engine-a": "inst-a"}
+    assert payload["run_dir"] == str(tmp_path)
+    assert payload["engine_instances"] == {"engine-a": "inst-a"}
 
 
 @pytest.mark.asyncio

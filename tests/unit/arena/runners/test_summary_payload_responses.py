@@ -16,7 +16,7 @@ def test_seed_summary_payload_response_applies_optional_sections() -> None:
     response = TournamentSeedSummaryPayloadResponse(
         base_payload={
             "mode": "tournament",
-            "flipPolicy": "",
+            "flip_policy": "",
         },
         optional_sections=TournamentSummaryOptionalSectionsResponse(
             rules={"repetition": 4},
@@ -33,13 +33,13 @@ def test_seed_summary_payload_response_applies_optional_sections() -> None:
     payload = response.to_json_object()
 
     assert payload["rules"] == {"repetition": 4}
-    assert payload["initialPositions"] == ["startpos"]
-    assert payload["repetitionOccurrencesToDraw"] == 4
-    assert payload["flipPolicy"] == "balanced"
-    assert payload["tournamentConfig"] == {"scheduler": "round_robin"}
+    assert payload["initial_positions"] == ["startpos"]
+    assert payload["repetition_occurrences_to_draw"] == 4
+    assert payload["flip_policy"] == "balanced"
+    assert payload["tournament_config"] == {"scheduler": "round_robin"}
     assert payload["sprt"] == {"elo0": 0.0}
-    assert payload["generateConfig"] == {"games": 2}
-    assert payload["recordsOutput"] == {"format": "csa"}
+    assert payload["generate_config"] == {"games": 2}
+    assert payload["records_output"] == {"format": "csa"}
 
 
 def test_dashboard_summary_payload_response_merges_dashboard_sections() -> None:
@@ -67,7 +67,7 @@ def test_dashboard_summary_payload_response_merges_dashboard_sections() -> None:
     payload = response.to_json_object()
 
     assert payload["btd"] == {"ratings": {"e1": {"elo": 1.0}}}
-    assert payload["recordsSummary"] == {"games": 2}
+    assert payload["records_summary"] == {"games": 2}
     assert payload["pentanomial"] == {"pairs": 1}
     assert payload["sprt"] == {"llr": 0.5}
     assert payload["wins_a"] == 1

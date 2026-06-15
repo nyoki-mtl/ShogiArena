@@ -34,13 +34,13 @@ class TestLiveViewProgress:
     def test_optional_keys(self) -> None:
         assert _optional_keys(LiveViewProgress) == {
             "kind",
-            "unitLabel",
+            "unit_label",
             "completed",
             "total",
             "cancelled",
-            "isFinal",
+            "is_final",
             "state",
-            "updatedAt",
+            "updated_at",
         }
 
 
@@ -63,17 +63,17 @@ class TestGenerateSummary:
 
     def test_optional_keys(self) -> None:
         assert _optional_keys(GenerateSummary) == {
-            "totalGames",
-            "totalPositions",
-            "totalBytes",
-            "fileCount",
-            "runDir",
-            "tournamentType",
+            "total_games",
+            "total_positions",
+            "total_bytes",
+            "file_count",
+            "run_dir",
+            "tournament_type",
             "mode",
-            "recordFormat",
-            "outputDir",
-            "filePrefix",
+            "record_format",
+            "output_dir",
+            "file_prefix",
             "rules",
-            "runStatus",
-            "isResumable",
+            "run_status",
+            "is_resumable",
         }

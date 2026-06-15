@@ -188,8 +188,8 @@ class AsyncUsiEngineInternalMixin:
         command = "ponderhit"
         if handle.requires_timings and timings is not None:
             command += timings.to_command_suffix()
+        self._set_state(UsiEngineState.WAITING_FOR_BESTMOVE, reason="sending ponderhit")
         await self._send_command(command)
-        self._set_state(UsiEngineState.WAITING_FOR_BESTMOVE, reason="sent ponderhit")
         try:
             # Keep bestmove future pending on timeout so caller can recover via cancel_ponder().
             result = await asyncio.wait_for(asyncio.shield(future), timeout or self._handshake_timeout)

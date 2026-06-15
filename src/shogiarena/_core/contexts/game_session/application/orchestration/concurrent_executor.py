@@ -23,6 +23,8 @@ async def run_items_concurrently(
 
     if not items:
         return
+    if concurrency_limit < 1:
+        raise ValueError(f"concurrency_limit must be >= 1, got {concurrency_limit}")
     semaphore = asyncio.Semaphore(concurrency_limit)
     lock = asyncio.Lock()
     idx = {"i": 0}
@@ -37,26 +39,37 @@ async def run_items_concurrently(
             idx["i"] += 1
             return it
 
+    async def _invoke(x: _T) -> None:
+        await run_one(x)
+
     async def worker() -> None:
         while not stop_event.is_set():
             it = await next_item()
             if it is None:
                 break
             async with semaphore:
-
-                async def _invoke(x: _T) -> None:
-                    await run_one(x)
-
                 task: asyncio.Task[None] = asyncio.create_task(_invoke(it))
                 running_tasks.add(task)
-                await task
-                running_tasks.discard(task)
+                try:
+                    await task
+                except BaseException:
+                    # Stop siblings from picking up new items so the whole fan-out winds down
+                    # cleanly instead of leaving detached tasks running after the gather re-raises.
+                    stop_event.set()
+                    raise
+                finally:
+                    running_tasks.discard(task)
 
     workers = [asyncio.create_task(worker()) for _ in range(concurrency_limit)]
     worker_tasks.update(workers)
-    await asyncio.gather(*workers)
-    for worker_task in workers:
-        worker_tasks.discard(worker_task)
+    try:
+        results = await asyncio.gather(*workers, return_exceptions=True)
+    finally:
+        for worker_task in workers:
+            worker_tasks.discard(worker_task)
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
 
 
 def numeric_game_id(game_id: str | int) -> int:

@@ -17,12 +17,16 @@ from shogiarena._core.shared.kernel.run_artifact_hashes import (
     build_run_artifact_hash_bundle,
 )
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int, coerce_str
+from shogiarena._core.shared.kernel.schedule_color_policy import COLOR_POLICY_VERSION
 from shogiarena._core.shared.kernel.serialization import json_serialize
 
 logger = logging.getLogger(__name__)
 
 _TOURNAMENT_RUNTIME_KEYS = {"num_parallel"}
-_SPRT_SCHEDULE_EXCLUDED_KEYS = {"elo0", "elo1", "alpha", "beta", "min_games", "max_games", "num_parallel"}
+# `model` is part of the analysis/stopping contract (resume sprt_test_def_hash), not the game
+# plan, so it is excluded here: changing only the SPRT model must not split an otherwise-identical
+# schedule into a different group.
+_SPRT_SCHEDULE_EXCLUDED_KEYS = {"model", "elo0", "elo1", "alpha", "beta", "min_games", "max_games", "num_parallel"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +115,7 @@ def build_engine_manifest_payload(engine: Mapping[str, object]) -> JsonObject:
     physical = _physical_engine_payload(engine_map)
     engine_path_text = coerce_str(physical.get("engine_path"))
     engine_config_text = coerce_str(physical.get("engine_config"))
-    working_dir_text = coerce_str(physical.get("working_directory")) or coerce_str(physical.get("working_dir"))
+    working_dir_text = coerce_str(physical.get("working_directory"))
     if working_dir_text is None and engine_path_text is not None:
         working_dir_text = str(Path(engine_path_text).parent)
     sha256 = _sha256_file(Path(engine_path_text)) if engine_path_text is not None else None
@@ -155,6 +159,11 @@ def _schedule_tournament_payload(tournament: JsonObject, *, is_sprt: bool) -> Js
     payload = {key: value for key, value in tournament.items() if key not in _TOURNAMENT_RUNTIME_KEYS}
     if is_sprt:
         payload.pop("games_per_pair", None)
+    if payload:
+        # Record the colour-assignment policy version so a schedule generated under a different
+        # policy hashes differently and is not treated as resume-compatible. Only a real tournament
+        # schedule carries it (generate / spsa runs have no colour policy).
+        payload["color_policy_version"] = COLOR_POLICY_VERSION
     return payload
 
 
@@ -182,11 +191,9 @@ def _spsa_contract_payload(config: JsonObject) -> JsonObject:
         "is_crn_enabled",
         "int_rounding",
         "update_mode",
-        "a0",
         "A",
         "alpha",
         "gamma",
-        "mobility",
         "scale",
     )
     return {key: config[key] for key in keys if key in config}
@@ -248,7 +255,7 @@ def _physical_engine_payload(engine: JsonObject) -> JsonObject:
         return dict(engine)
     physical = _object_or_empty(raw)
     physical.setdefault("engine_config", engine_path_text)
-    for key in ("name", "artifact", "build_options", "working_directory", "working_dir"):
+    for key in ("name", "artifact", "build_options", "working_directory"):
         if key in engine and key not in physical:
             physical[key] = engine[key]
     return physical

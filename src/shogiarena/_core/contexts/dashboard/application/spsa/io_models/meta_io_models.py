@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from shogiarena._core.contexts.dashboard.application.spsa.io_models._scalar_maps import ScalarMap, coerce_scalar_map
 from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_or_none as _as_json_object
@@ -58,9 +58,7 @@ class SpsaMetaData(BaseModel):
     engine_stats: dict[str, EngineStatEntry] = Field(default_factory=dict)
     engines_meta: list[ScalarMap] = Field(default_factory=list)
 
-    mobility: float | None = None
     scale: float | None = None
-    a0: float | None = None
     spsa_A: float | None = Field(None, alias="A")
     alpha: float | None = None
     gamma: float | None = None
@@ -76,24 +74,6 @@ class SpsaMetaData(BaseModel):
     ltc_regression: LtcRegressionMetaConfig | None = None
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_camel_case_keys(cls, data: JsonValue | None) -> dict[str, JsonValue]:
-        normalized = _as_json_object(data)
-        if normalized is None:
-            return {}
-        mapping = {
-            "engineTimeControls": "engine_time_controls",
-            "defaultTimeControl": "default_time_control",
-            "engineInstances": "engine_instances",
-            "engineStats": "engine_stats",
-            "enginesMeta": "engines_meta",
-        }
-        for camel, snake in mapping.items():
-            if camel in normalized and snake not in normalized:
-                normalized[snake] = normalized[camel]
-        return normalized
 
     @field_validator("session_uuid", mode="before")
     @classmethod
@@ -192,9 +172,7 @@ class SpsaMetaData(BaseModel):
     def resolve_spsa_config(self) -> JsonObject | None:
         keys = (
             "num_updates",
-            "mobility",
             "scale",
-            "a0",
             "alpha",
             "gamma",
             "crn_enabled",

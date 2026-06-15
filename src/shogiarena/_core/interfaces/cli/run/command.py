@@ -131,7 +131,7 @@ def _register_run_sprt(run_sub: argparse._SubParsersAction[argparse.ArgumentPars
 def _register_run_generate(run_sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = run_sub.add_parser(
         "generate",
-        help="Generate kifu via selfplay from a YAML configuration",
+        help="Generate game records via selfplay from a YAML configuration",
     )
     add_tournament_common_args(
         parser,

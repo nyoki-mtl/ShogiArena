@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0]
+
+### Added
+- **GSPRT / pentanomial SPRT**: SPRT の LLR 計算を fishtest-style の GSPRT 実装へ更新し、従来の per-game trinomial に加えて color-reversed pair を使う pentanomial model（`gsprt-pentanomial-v1`）を追加。tournament runner、SPSA LTC regression、dashboard replay が同じ model / min-games gating に従うようにした。
+- **Engine opening book support**: エンジン内蔵定跡（`BookDir` + `BookFile`）を path resource として扱い、YaneuraOu 互換の composite path 解決、起動前 preflight、rshogi diagnostics、book provenance / fingerprint 記録を追加。既定の `BookFile: no_book` 方針は維持。
+- **Dashboard Book tab**: 保存済み対局から book fingerprint / path 単位の使用状況、勝率、先後別集計、engine 別内訳、out-of-book ply 分布を確認できる Book タブと `GET /api/book/summary` を追加。out-of-book は「実着手が指定 book の候補手集合に含まれたか」の観測指標であり、エンジンが book 由来で指した断定ではない。
+- **Remote book resource handling**: remote 実行時に book resource を扱うための配布・書き換え基盤を追加。大型 book は既定で自動転送せず、`SHOGIARENA_REMOTE_BOOK_TRANSFER` による opt-in / preplaced 運用と fingerprint 照合を使えるようにした。
+- **Engine lifecycle policy**: `tournament.engine_lifecycle` を追加。既定の `reuse` は従来どおり pool へ返却し、`per_game` では各対局後に両エンジンプロセスを閉じる。
+- **Parallel resource capacity preflight**: `system.resource_capacity_preflight` を追加。`tournament.num_parallel` 分の pending games が instance の `slots` / `max_engines` に収まらない場合、既定で対局開始前に明示エラーにする（`warn` / `off` で緩和可能）。
+- **Recovery and reproducibility improvements**: binary records index の crash-safe recovery、resume 時の DB からの Elo rebuild、seeded fair color assignment と `color_policy_version` 記録、runtime metadata cache signature の強化を追加。
+
+### Changed
+- **SPRT resume contract（互換影響）**: SPRT model / definition を resume hash に含め、別 model や復元不能な SPRT state での resume は fail closed する。0.4.0 以前の SPRT run を 0.5.0 の統計 model として暗黙再開しない。
+- **Dashboard / artifact contracts（破壊的変更）**: project-owned JSON / dashboard wire key を `snake_case` へ統一し、内部境界の旧 camelCase dual-read を削除。古い dashboard artifact は現在の schema で再生成または再実行が必要になる場合がある。
+- **DB schema terminology（破壊的変更）**: DB table/column を将棋用語の英語正本へ寄せ、`kifu` table を `game_move`、`init_position_sfen` column を `initial_position_sfen` へ rename。既存 DB は schema guard により再生成が必要。
+- **Engine config naming（破壊的変更）**: `working_dir` 系の受け口を `working_directory` へ統一。設定・metadata・docs も `working_directory` を正本にした。
+- **Overlay options format（破壊的変更）**: USI option overlay YAML は `options:` ブロック配下に書く形式へ統一。旧 flat top-level form はサイレント無視せず明示エラーにする。
+- **Opening / book path handling**: `BookFile` は scalar path option ではなく `BookDir + BookFile` の composite resource として解決する。相対 `BookFile` を cwd 基準で誤解決しないよう、engine へ渡す USI option は engine 互換の組表現を維持する。
+- **Docs and examples**: public docs を再編し、設定例を `examples/configs/` 配下へ集約。開発用 task / architecture / rule docs は public export から除外される dev-only 資料として整理した。
+
+### Fixed
+- **USI runtime reliability**: late `bestmove` / `stop()` / `gameover` の順序、ponder / shutdown、cancel / timeout cleanup、runtime metadata cache、EnginePool の instance capacity 予約を修正。
+- **Game result and adjudication correctness**: non-decided result を draw / loss に折り込む誤り、非決着結果の `gameover` token 化、adjudication / result determination の複数不具合を修正。
+- **SPSA safety**: option assignment、draw-aware win rate、`min_games` gated SPRT decision、gain schedule docs と実装説明の不一致、不要な `a0` / mobility knob 表示を整理。
+- **Dashboard correctness and safety**: XSS / lifecycle / accessibility / build 問題、stats 集計、games-listing service failure の HTTP 500 化、corrupt run artifact をゼロ扱いする挙動、Book tab の `out_of_book` UI 反映を修正。
+- **Records / persistence robustness**: binary writer lifecycle、PSV validation、records manifest / index handling、corrupt `state.json` / game.db / SPRT restore error の fail-closed 化を強化。
+- **OpenBench totals**: crash-only / non-decided games を提出 totals から除外。
+
+### Removed
+- `FallbackInstance` と runtime factory fallback を削除し、composition root / CLI から実 local instance を注入する形へ統一。
+- `SpsaUpdateDeltaService`、古い manifest helper、dead `byte_count` manifest alias、dashboard の camelCase clock fallback、旧 flat overlay 受け口など、未使用・重複・互換のためだけの surface を削除。
+- `README_ja.md` と旧 `configs/` 配下の例を削除し、`README.md` と `examples/configs/` に集約。
+
 ## [0.4.0]
 
 ### Added
@@ -61,7 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.5.0
 [0.4.0]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.4.0
 [0.3.1]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.3.1
 [0.3.0]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.3.0

@@ -19,39 +19,48 @@
 \hat{g}_i = \frac{L(\boldsymbol{\theta} + c_k \boldsymbol{\varepsilon}) - L(\boldsymbol{\theta} - c_k \boldsymbol{\varepsilon})}{2 c_k \varepsilon_i}
 \\]
 
-ShogiArena の実装では、\\(\varepsilon_i\\) は `step` でスケーリングされた Rademacher 摂動です。
+ShogiArena の実装では、摂動の向きは Rademacher（\\(\pm 1\\)）の `flip`、大きさはパラメータ単位の
+摂動ゲイン \\(c_i\\) です（[ゲインスケジュール](./gain-schedule.md) を参照）。1 更新ぶんの \\(c_i\\)・\\(r_i\\)
+は `classic_schedule.compute_classic_schedule_point` が算出します。
 
 ```python
-C = [p.step * (1.0 if rng.randint(0, 1) else -1.0)
-     for p in params]
+flips = [0 if p.is_not_used else (1 if rng.randint(0, 1) else -1) for p in params]
+c_values = [schedule.c[p.name] for p in params]   # c_i = step_i · (k_total / k_pair)^γ
+# 摂動後の変種（[min, max] にクランプ）
+tuned_plus  = [p.value + flip * c_i for p, flip, c_i in ...]
+tuned_minus = [p.value - flip * c_i for p, flip, c_i in ...]
 ```
 
-したがって \\(c_i = \text{step}_i \cdot (\pm 1)\\) であり、勾配推定は:
+勾配推定は、バッチ（`pairs_per_update` ペア）のスコア集計 \\(\text{step} = \sum s^+ - \sum s^-\\) を用いて:
 
 \\[
-\hat{g}_i = \frac{s^+ - s^-}{2 \cdot c_k \cdot c_i}
+\hat{g}_i = \frac{\text{step}}{2 \cdot c_i \cdot \text{flip}_i}
 \\]
 
 ### パラメータ更新式
 
-実際の更新では、`delta` パラメータを学習率スケーリングとして使用します。
+更新ゲイン \\(r_i\\)（`delta`・`step`・`A`・`alpha`・`gamma` からパラメータ単位で導出。
+[ゲインスケジュール](./gain-schedule.md) を参照）を用いて:
 
 \\[
-\Delta\theta_i = \text{mobility} \cdot \delta_i \cdot \frac{s^+ - s^-}{2} \cdot c_i
+\Delta\theta_i = r_i \cdot c_i \cdot \text{step} \cdot \text{flip}_i
 \\]
 
 ```python
-step_factor = (s_plus - s_minus) / 2.0
-for i, p in enumerate(params):
-    if p.not_used:
+step = score_sum - s_minus          # = Σ s⁺ − Σ s⁻（バッチ集計）
+for index, param in enumerate(params):
+    if param.is_not_used:
         continue
-    delta_theta = mobility * float(p.delta) * step_factor * C[i]
-    new_v = p.v + delta_theta
-    p.v = quantize_value(p, new_v)
+    flip = float(flips[index])
+    c_i = float(c_values[index])
+    r_i = float(r_values[index])
+    new_value = param.value + r_i * c_i * step * flip
+    param.value = quantize_value(param, new_value, ...)
 ```
 
-> **注**: この更新式は標準的な SPSA 更新と同じ「2 点差分を使う一次更新」という枠組みに属しますが、
-> 実装上は `delta` と `mobility` を明示的に導入し、パラメータごとのスケーリングを直接制御しています。
+> **注**: この更新式は標準的な SPSA の「2 点差分を使う一次更新」です。実装はグローバルな
+> 学習率スカラ（かつての `mobility` / `a0`）を持たず、各パラメータの `delta` / `step` と
+> 共通の `A` / `alpha` / `gamma` から \\(r_i\\) を導出してスケーリングを制御します。
 
 ## スコアの計算
 

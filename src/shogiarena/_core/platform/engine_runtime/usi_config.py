@@ -98,7 +98,7 @@ class UsiEngineConfig:
         if engine_path is None and artifact_str is None:
             raise ValueError("engine config requires either 'engine_path' or 'artifact'")
 
-        working_dir = parsed.working_dir or parsed.working_directory
+        working_dir = parsed.working_directory
 
         engine_args = normalize_engine_args(parsed.engine_args)
 

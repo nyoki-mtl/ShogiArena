@@ -127,7 +127,7 @@ brew install tbb          # macOS
 **解決**:
 1. インスタンス設定ファイルを確認
    ```bash
-   cat configs/resources/instances/example.yaml
+   cat examples/configs/resources/instances/README.md
    ```
 
 2. `slots` と `max_engines` の設定を確認
@@ -161,7 +161,7 @@ brew install tbb          # macOS
 
 3. サンプル設定と比較
    ```bash
-   cat configs/run/tournament/example.yaml
+   cat examples/configs/run/tournament/example.yaml
    ```
 
 #### dry-run で確認
@@ -195,7 +195,7 @@ shogiarena run tournament tournament.yaml --dry-run
 
 3. エンジンを単体でテスト
    ```bash
-   shogiarena run mate configs/engine/myengine.yaml startpos --ply-limit 5
+   shogiarena run mate myengine.yaml startpos --ply-limit 5
    ```
 
 #### 対局数が想定より少ない

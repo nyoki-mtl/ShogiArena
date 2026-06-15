@@ -575,8 +575,8 @@ export function recomputeTrend(): void {
         return;
     }
     candidates.sort((a, b) => {
-        const tsA = resolveTimestamp(a);
-        const tsB = resolveTimestamp(b);
+        const tsA = timestampSortKey(a);
+        const tsB = timestampSortKey(b);
         if (tsA !== tsB) return tsA - tsB;
         return a.updateIdx - b.updateIdx;
     });
@@ -649,8 +649,8 @@ function pruneUpdateCache(): void {
     }
     const entries = Array.from(cache.values());
     entries.sort((a, b) => {
-        const tsA = resolveTimestamp(a);
-        const tsB = resolveTimestamp(b);
+        const tsA = timestampSortKey(a);
+        const tsB = timestampSortKey(b);
         if (tsA !== tsB) {
             return tsA - tsB;
         }
@@ -671,6 +671,18 @@ function resolveTimestamp(entry: NormalizedSpsaUpdateEntry): number {
         return entry.timestamp as number;
     }
     return Date.now();
+}
+
+/**
+ * Deterministic ordering key for sorting/pruning update entries.
+ *
+ * resolveTimestamp() falls back to Date.now() for display, but using that inside a sort
+ * comparator returns a different value on every call, violating the comparator contract and
+ * making cache pruning non-deterministic. Untimestamped entries sort as oldest here; the
+ * updateIdx secondary key keeps their relative order stable.
+ */
+function timestampSortKey(entry: NormalizedSpsaUpdateEntry): number {
+    return Number.isFinite(entry.timestamp) ? (entry.timestamp as number) : Number.NEGATIVE_INFINITY;
 }
 
 function resolveDeltaNorm(entry: NormalizedSpsaUpdateEntry): number | null {

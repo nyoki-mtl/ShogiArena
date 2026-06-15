@@ -27,8 +27,12 @@ def numerical_hessian(
     return hessian
 
 
-def invert_neg_def(hessian: list[list[float]]) -> list[list[float]]:
-    """Compute covariance ≈ inv(-H) with small damping if needed."""
+def invert_neg_def(hessian: list[list[float]]) -> list[list[float]] | None:
+    """Compute covariance ≈ inv(-H), or None when the Hessian is singular.
+
+    A singular Hessian (e.g. a disconnected comparison graph) has no well-defined covariance, so we
+    return None instead of a zero matrix that would masquerade as perfectly precise estimates.
+    """
     matrix = copy.deepcopy(hessian)
     size = len(matrix)
     for row in range(size):
@@ -52,7 +56,7 @@ def invert_neg_def(hessian: list[list[float]]) -> list[list[float]]:
                 max_val = value
                 pivot = row
         if max_val < 1e-12:
-            return [[0.0] * size for _ in range(size)]
+            return None
         if pivot != col:
             matrix[col], matrix[pivot] = matrix[pivot], matrix[col]
             identity[col], identity[pivot] = identity[pivot], identity[col]

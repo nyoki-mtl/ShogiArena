@@ -6,7 +6,7 @@ import {
     resetWorkerRuntimeClockStateForNewGame,
     syncClockToTurnBoundary,
     updateTimeControlState,
-} from '@/modules/live/utils/clockSync';
+} from '@/modules/live/utils/clock-sync';
 
 describe('clockSync', () => {
     it('uses started_at_ms from payload as the running clock anchor', () => {
@@ -28,16 +28,17 @@ describe('clockSync', () => {
         expect(ws.startedAtMs).toBe(123_456);
     });
 
-    it('accepts camelCase clock fields from merged payloads', () => {
+    it('accepts snake_case clock fields from merged payloads', () => {
         const ws: WorkerRuntimeState = {};
         queueClockCorrections(
             ws,
             {
-                blackRemainMs: 111_000,
-                whiteRemainMs: 222_000,
-                byoyomiMsBlack: 30_000,
-                timeControlBlack: 't300000+b30000',
-            } as unknown as Parameters<typeof queueClockCorrections>[1],
+                active: 'black',
+                black_remain_ms: 111_000,
+                white_remain_ms: 222_000,
+                byoyomi_ms_black: 30_000,
+                time_control_black: 't300000+b30000',
+            },
             'snapshot',
             1000,
         );
@@ -54,6 +55,32 @@ describe('clockSync', () => {
         expect(ws.byoyomiMsBlack).toBe(30_000);
         expect(ws.timeControlBlack).toBe('t300000+b30000');
         expect(ws.clockActive).toBe('black');
+    });
+
+    it('ignores legacy camelCase clock fields (snake_case wire contract only)', () => {
+        const ws: WorkerRuntimeState = {};
+        queueClockCorrections(
+            ws,
+            {
+                blackRemainMs: 111_000,
+                byoyomiMsBlack: 30_000,
+                timeControlBlack: 't300000+b30000',
+            } as unknown as Parameters<typeof queueClockCorrections>[1],
+            'snapshot',
+            1000,
+        );
+
+        syncClockToTurnBoundary({
+            ws,
+            current_ply: 0,
+            initialSfen: 'startpos',
+            normalizeSFEN: (value) => value || 'startpos',
+            nowMs: 1000,
+        });
+
+        expect(ws.blackRemainMs).toBeUndefined();
+        expect(ws.byoyomiMsBlack).toBeUndefined();
+        expect(ws.timeControlBlack).toBeUndefined();
     });
 
     it('ignores stale clock snapshots older than current anchor', () => {

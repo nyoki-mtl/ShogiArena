@@ -83,6 +83,9 @@ export function installTournamentStandings(owner: StandingsWindow = defaultWindo
     );
 
     let previousStandingsOrder: string[] = [];
+    // Held at installer scope (not per-call) so the once-bound click/keydown delegation always reads
+    // the latest engine metadata; a per-call const would freeze the first render's map into the listener.
+    let standingsMetaMap = new Map<string, NormalizedTournamentEngineMeta>();
 
     const core = arenaWindow.DashboardCore;
     const liveViewStore = core ? getLiveViewSnapshotStore(core) : null;
@@ -551,13 +554,14 @@ export function installTournamentStandings(owner: StandingsWindow = defaultWindo
         updateStandings();
     }
 
-    function formatRatingDisplay(ratingValue: number, isAnchor: boolean): string {
+    // _isAnchor is kept for call-site symmetry (BTD anchor rows) but does not yet alter
+    // formatting; the previous `isAnchor ? base : base` no-op ternary has been collapsed.
+    function formatRatingDisplay(ratingValue: number, _isAnchor: boolean): string {
         const value = Math.round(Number(ratingValue) || 0);
         const absStr = String(Math.abs(value));
         const sign = value < 0 ? '-' : ' ';
         const padded = absStr.padStart(4, ' ');
-        const base = `${sign}${padded}`;
-        return isAnchor ? base : base;
+        return `${sign}${padded}`;
     }
 
     function setupStandingsClickHandlers(container: HTMLElement): void {
@@ -565,7 +569,7 @@ export function installTournamentStandings(owner: StandingsWindow = defaultWindo
         if (!normalizedSummary) {
             throw new Error('Tournament standings require normalized summary before binding handlers');
         }
-        const metaMap = new Map<string, NormalizedTournamentEngineMeta>(
+        standingsMetaMap = new Map<string, NormalizedTournamentEngineMeta>(
             Object.entries(normalizedSummary?.engineMeta ?? {}).map(([name, meta]) => [
                 name,
                 meta as NormalizedTournamentEngineMeta,
@@ -631,7 +635,7 @@ export function installTournamentStandings(owner: StandingsWindow = defaultWindo
         function renderOptionsHTML(name: string): string {
             return renderEngineOptionsPane({
                 engineName: name,
-                meta: metaMap.get(name),
+                meta: standingsMetaMap.get(name),
                 escapeHtml,
                 formatOptionValue,
             });
@@ -713,7 +717,7 @@ export function installTournamentStandings(owner: StandingsWindow = defaultWindo
                 return;
             }
 
-            const meta = metaMap.get(engineName);
+            const meta = standingsMetaMap.get(engineName);
             if (!meta) {
                 throw new Error(`Missing normalized engine metadata for ${engineName}`);
             }

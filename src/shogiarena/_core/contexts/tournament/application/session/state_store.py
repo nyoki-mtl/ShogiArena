@@ -150,7 +150,12 @@ class TournamentSessionStateStore:
                 restored_sprt: SprtServicePort = type(ctx.state.sprt).from_snapshot(sprt_state)
                 ctx.state.sprt = restored_sprt
             except (AttributeError, TypeError, ValueError) as exc:
-                logger.warning("Failed to restore SPRT state: %s", exc)
+                # Resume must reconstruct the exact prior test state; a corrupt/incompatible
+                # SPRT snapshot cannot be silently dropped or the test would continue under
+                # different statistics. Fail closed.
+                raise RuntimeError(
+                    f"Failed to restore SPRT state for resume: {exc}. Use --no-resume to start a fresh run."
+                ) from exc
         openbench_state = saved_state.get("openbench_state")
         if openbench_state is not None:
             ctx.openbench.restore_state(openbench_state)
@@ -257,8 +262,11 @@ class TournamentSessionStateStore:
                 if game.get("game_name")
             }
         except (OSError, RuntimeError, ValueError, TypeError) as exc:
-            logger.warning("Failed to load completed games from game.db: %s", exc)
-            return set()
+            # game.db is the authoritative source of completed games on resume. Treating a read
+            # failure as "zero completed" would re-run every game and corrupt the run. Fail closed.
+            raise RuntimeError(
+                f"Failed to load completed games from game.db for resume: {exc}. Use --no-resume to start a fresh run."
+            ) from exc
 
     @staticmethod
     def _load_persisted_schedule(path: Path) -> list[GameSpec] | None:

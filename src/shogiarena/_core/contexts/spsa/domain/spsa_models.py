@@ -57,9 +57,7 @@ class SpsaAlgorithmConfig(TypedDict):
     """SPSA algorithm parameter snapshot for dashboard serialization."""
 
     num_updates: int
-    mobility: float
     scale: float
-    a0: float
     A: float | None
     alpha: float
     gamma: float

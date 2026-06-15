@@ -84,8 +84,13 @@ class BoardState {
             }
             if (text.startsWith('sfen ')) {
                 const tokens = text.split(/\s+/);
+                // "sfen <board> <turn> <hands> [<move-number>]" → 5 tokens with the move number, 4 without.
                 if (tokens.length >= 5) {
                     return tokens.slice(1, 5).join(' ');
+                }
+                if (tokens.length >= 4) {
+                    // Move number omitted but board/turn/hands present: keep the real position.
+                    return tokens.slice(1, 4).join(' ');
                 }
                 return STARTPOS_SFEN;
             }

@@ -12,6 +12,7 @@ from shogiarena._core.shared.kernel.session_hooks import GameLifecycleHooks, Ses
 
 ProgressPayload: TypeAlias = Mapping[str, JsonValue]
 DashboardProfile: TypeAlias = Literal["tournament", "spsa", "match", "sprt", "generate"]
+EngineLifecyclePolicy: TypeAlias = Literal["reuse", "per_game"]
 PROFILE_KEYS: tuple[DashboardProfile, ...] = ("tournament", "spsa", "match", "sprt", "generate")
 
 
@@ -82,6 +83,7 @@ class SessionRunnerPort(Protocol[TRunResult]):
 
 __all__ = [
     "DashboardProfile",
+    "EngineLifecyclePolicy",
     "OrchestratorPort",
     "PROFILE_KEYS",
     "ProgressPayload",

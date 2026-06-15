@@ -34,7 +34,7 @@ class StandingsPayload(TypedDict):
     """``build_standings_payload`` が返す順位表レスポンス。"""
 
     standings: list[StandingEntry]
-    enginesMeta: list[JsonObject]
+    engines_meta: list[JsonObject]
     updated_at: str
 
 
@@ -50,11 +50,11 @@ class ProgressPayload(TypedDict):
     """``build_progress_payload`` が返す進捗レスポンス。"""
 
     games: GamesCounter
-    inProgress: int
+    in_progress: int
     pending: int
-    completionRate: float | int
-    estimatedTimeRemaining: str
-    updatedAt: str
+    completion_rate: float | int
+    estimated_time_remaining: str
+    updated_at: str
 
 
 # ---------------------------------------------------------------------------

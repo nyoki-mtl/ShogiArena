@@ -28,14 +28,19 @@ class TournamentSummaryFinalBtdSectionsService:
         btd: BTDEstimate,
     ) -> TournamentSummaryFinalBtdSectionsResponse:
         ratings: JsonObject = {
-            name: {"elo": float(btd.ratings[name]), "se": float(btd.rating_se.get(name, 0.0))}
+            name: {
+                "elo": float(btd.ratings[name]),
+                "se": float(se) if (se := btd.rating_se.get(name)) is not None else None,
+            }
             for name in btd.ratings.keys()
         }
         pairs: JsonObject = {
             f"{engine_a}_vs_{engine_b}": {
                 "delta_elo": float(pair.delta_elo),
-                "standard_error": float(pair.standard_error or 0.0),
-                "likelihood_of_superiority": float(pair.likelihood_of_superiority or 0.0),
+                "standard_error": float(pair.standard_error) if pair.standard_error is not None else None,
+                "likelihood_of_superiority": (
+                    float(pair.likelihood_of_superiority) if pair.likelihood_of_superiority is not None else None
+                ),
                 "wdl": {
                     engine_a: int(pair_result.get(f"{engine_a}_wins", 0)),
                     engine_b: int(pair_result.get(f"{engine_b}_wins", 0)),

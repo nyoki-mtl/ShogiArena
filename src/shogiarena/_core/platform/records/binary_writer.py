@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,16 +14,14 @@ from shogiarena._core.platform.records.index_store import (
     RecordIndexEntry,
     append_record_index_entry,
     build_records_manifest_payload,
-    load_record_index,
     next_file_index,
-    truncate_unindexed_record_bytes,
+    recover_record_index,
     written_game_ids,
 )
 from shogiarena._core.platform.records.manifest_store import (
-    load_manifest,
     write_manifest,
 )
-from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int, coerce_str
+from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_str
 
 
 @dataclass(frozen=True)
@@ -55,10 +54,9 @@ class RecordBinaryWriter:
         self._manifest_path = self._config.output_dir / "records_manifest.json"
         self._index_path = self._config.output_dir / "records_index.jsonl"
         self._ensure_existing_output_is_compatible()
-        self._index_entries = load_record_index(self._index_path)
-        truncate_unindexed_record_bytes(
+        self._index_entries = recover_record_index(
+            index_path=self._index_path,
             output_dir=self._config.output_dir,
-            entries=self._index_entries,
             file_prefix=self._config.file_prefix,
             format_id=self._config.format_id,
         )
@@ -67,6 +65,7 @@ class RecordBinaryWriter:
         self._positions_in_file = 0
         self._games_in_file = 0
         self._bytes_in_file = 0
+        self._closed = False
         self._handle: BinaryIO | None = self._open_new_file()
         self._write_manifest()
 
@@ -79,6 +78,10 @@ class RecordBinaryWriter:
     ) -> None:
         """Append GameRecord to binary output."""
 
+        if self._closed:
+            # Without this guard a rotation-triggering append after close() would silently
+            # reopen a handle and keep writing, so reject it consistently.
+            raise RuntimeError("Cannot append to a closed record writer")
         resolved_game_id = game_id or self._record_game_id(record)
         resolved_game_type = game_type or self._record_game_type(record)
         if not resolved_game_id:
@@ -96,6 +99,7 @@ class RecordBinaryWriter:
         if self._handle is not None:
             self._handle.close()
             self._handle = None
+        self._closed = True
         self._write_manifest()
 
     def get_records_summary(self) -> dict[str, int]:
@@ -106,10 +110,10 @@ class RecordBinaryWriter:
         total_bytes = sum(entry.byte_end - entry.byte_start for entry in self._index_entries)
         file_count = len({entry.file for entry in self._index_entries})
         return {
-            "totalGames": total_games,
-            "totalPositions": total_positions,
-            "totalBytes": total_bytes,
-            "fileCount": file_count,
+            "total_games": total_games,
+            "total_positions": total_positions,
+            "total_bytes": total_bytes,
+            "file_count": file_count,
         }
 
     def written_game_ids(self) -> set[str]:
@@ -134,7 +138,7 @@ class RecordBinaryWriter:
             handle.write(entry_payload)
             self._positions_in_file += 1
             self._bytes_in_file += len(entry_payload)
-        handle.flush()
+        self._flush_and_sync(handle)
         byte_end = handle.tell()
         self._games_in_file += 1
         self._commit_index_entry(
@@ -150,7 +154,11 @@ class RecordBinaryWriter:
         max_games = self._config.max_games_per_file
         exceeds_games = max_games is not None and max_games > 0 and (self._games_in_file + 1) > max_games
         max_positions = self._config.max_positions_per_file
-        exceeds_positions = max_positions > 0 and (self._positions_in_file + incoming_positions) > max_positions
+        exceeds_positions = (
+            self._has_current_file_data()
+            and max_positions > 0
+            and (self._positions_in_file + incoming_positions) > max_positions
+        )
         if exceeds_games or exceeds_positions:
             self._rotate()
         if self._serializer is None:
@@ -163,7 +171,7 @@ class RecordBinaryWriter:
             raise RuntimeError("Record writer handle is closed")
         byte_start = handle.tell()
         handle.write(payload)
-        handle.flush()
+        self._flush_and_sync(handle)
         self._games_in_file += 1
         self._positions_in_file += incoming_positions
         self._bytes_in_file += len(payload)
@@ -175,6 +183,16 @@ class RecordBinaryWriter:
             byte_start=byte_start,
             byte_end=byte_end,
         )
+
+    @staticmethod
+    def _flush_and_sync(handle: BinaryIO) -> None:
+        """Flush and fsync the binary so its bytes are durable before the index entry is committed.
+
+        Write-ahead ordering (binary fsync -> index append/fsync) guarantees that a committed index
+        entry always refers to bytes that survived a crash.
+        """
+        handle.flush()
+        os.fsync(handle.fileno())
 
     def _rotate(self) -> None:
         if self._handle is not None:
@@ -239,14 +257,15 @@ class RecordBinaryWriter:
 
     def _ensure_existing_output_is_compatible(self) -> None:
         data_files = list(self._config.output_dir.glob(f"{self._config.file_prefix}_*.{self._config.format_id}"))
-        manifest = load_manifest(self._manifest_path)
-        has_existing = bool(data_files) or self._manifest_path.exists() or self._index_path.exists()
+        has_existing = bool(data_files) or self._index_path.exists()
         if not has_existing:
             return
-        schema_version = coerce_int(manifest.get("schema_version"))
-        if schema_version != 2 or not self._index_path.exists():
+        # The record index is the source of truth for schema v2; the manifest is a derived cache
+        # rebuilt on open, so a missing/corrupt manifest must not block resume. Existing binaries
+        # without an index, however, cannot be safely resumed.
+        if not self._index_path.exists():
             raise ValueError(
-                "Existing records output is not compatible with schema v2; "
+                "Existing records output is not compatible with schema v2 (no record index); "
                 "start fresh or choose an empty records_output.output_dir"
             )
 

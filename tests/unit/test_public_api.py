@@ -16,6 +16,27 @@ def test_public_cli_module_exports_expected_surface() -> None:
     assert set(shogiarena.cli.__all__) == {"CliArgumentError", "CliError", "build_parser", "main"}
 
 
+def test_resolve_instance_pool_injects_default_local_when_implicit() -> None:
+    from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
+    from shogiarena.engine import _resolve_instance_pool
+
+    # No instance_id and no pool -> a real local pool must be injected (the runtime factory
+    # no longer synthesizes a placeholder), so a plain create_engine*() call works.
+    pool = _resolve_instance_pool(None, None)
+    assert isinstance(pool, InstancePool)
+    assert pool.ensure_local_instance().is_local
+
+
+def test_resolve_instance_pool_preserves_explicit_pool_and_instance_id() -> None:
+    from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
+    from shogiarena.engine import _resolve_instance_pool
+
+    explicit = InstancePool()
+    assert _resolve_instance_pool(None, explicit) is explicit
+    # instance_id without a pool stays None so the factory fails fast (explicit pool required).
+    assert _resolve_instance_pool("worker-1", None) is None
+
+
 def test_public_composition_module_exports_expected_surface() -> None:
     assert set(shogiarena.composition.__all__) == {"DefaultRoot", "build_default_root"}
 

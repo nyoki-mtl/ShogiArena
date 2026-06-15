@@ -16,6 +16,7 @@ def determine_ltc_status(
     criteria: Any,
     *,
     winrate: float,
+    elo: float | None,
     sprt_payload: JsonObject | None,
     sprt_decision: SprtDecision | None,
 ) -> tuple[str, list[str]]:
@@ -27,6 +28,14 @@ def determine_ltc_status(
     if min_winrate is not None and winrate < min_winrate:
         status = "failed"
         fail_reasons.append(f"winrate {winrate:.3f} below threshold {min_winrate:.3f}")
+
+    # Treat both 10 and -10 as "allow at most a 10 Elo drop" to preserve existing configs
+    # that wrote the threshold as a negative Elo bound.
+    max_elo_drop = getattr(criteria, "max_elo_drop", None)
+    allowed_elo_drop = abs(max_elo_drop) if max_elo_drop is not None else None
+    if allowed_elo_drop is not None and elo is not None and elo < -allowed_elo_drop:
+        status = "failed"
+        fail_reasons.append(f"elo {elo:.1f} below allowed drop of {allowed_elo_drop:.1f}")
 
     if sprt_payload is not None and sprt_decision is not None:
         if sprt_decision == SprtDecision.ACCEPT_H0:

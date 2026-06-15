@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { mergeWorkerSnapshot } from '../snapshotMerge';
+import { mergeWorkerSnapshot } from '../snapshot-merge';
 import { createEmptyWorkerSnapshot } from '@/modules/live/utils';
 import type { WorkerSnapshotRecord, WorkerSnapshotUpdate } from '@/modules/live/types/updates';
 

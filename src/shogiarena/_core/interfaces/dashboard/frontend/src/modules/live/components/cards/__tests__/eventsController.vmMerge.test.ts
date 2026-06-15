@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { __testMergeWorkerVmMessage } from '@/modules/live/components/cards/eventsController';
-import type { WorkerViewModelMessage } from '@/modules/live/services/updates/workerBridge';
+import { __testMergeWorkerVmMessage } from '@/modules/live/components/cards/events-controller';
+import type { WorkerViewModelMessage } from '@/modules/live/services/updates/worker-bridge';
 
 function vm(overrides: Partial<WorkerViewModelMessage>): WorkerViewModelMessage {
     return {

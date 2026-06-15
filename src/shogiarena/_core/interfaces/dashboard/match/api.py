@@ -59,11 +59,26 @@ class MatchAPI(PairwiseRunnerAPI):
         return 400.0 * math.log10(bounded / (1.0 - bounded))
 
     @staticmethod
-    def _elo_confidence_interval(win_rate: float | None, total: int) -> ConfidenceInterval:
-        if win_rate is None or total <= 0:
+    def _score_std_error(counts: WdlGamesCount) -> float | None:
+        """Standard error of the mean game score using the {1, 0.5, 0} sample variance.
+
+        Using the draw-aware score distribution instead of a Bernoulli p*(1-p) variance avoids
+        over-estimating the interval when draws are frequent.
+        """
+        total = counts["games"]
+        if total <= 0:
+            return None
+        mean = (counts["wins"] + 0.5 * counts["draws"]) / total
+        # Per-game score variance: E[s^2] - mean^2 for s in {0, 0.5, 1}.
+        second_moment = (counts["wins"] + 0.25 * counts["draws"]) / total
+        variance = max(second_moment - mean * mean, 0.0)
+        return math.sqrt(variance / total)
+
+    @staticmethod
+    def _elo_confidence_interval(win_rate: float | None, counts: WdlGamesCount) -> ConfidenceInterval:
+        std = MatchAPI._score_std_error(counts)
+        if win_rate is None or std is None:
             return {"lower": None, "upper": None}
-        variance = win_rate * (1.0 - win_rate) / total
-        std = math.sqrt(max(variance, 0.0))
         lower = max(0.0, win_rate - 1.96 * std)
         upper = min(1.0, win_rate + 1.96 * std)
         return {
@@ -72,11 +87,10 @@ class MatchAPI(PairwiseRunnerAPI):
         }
 
     @staticmethod
-    def _win_rate_confidence_interval(win_rate: float | None, total: int) -> ConfidenceInterval:
-        if win_rate is None or total <= 0:
+    def _win_rate_confidence_interval(win_rate: float | None, counts: WdlGamesCount) -> ConfidenceInterval:
+        std = MatchAPI._score_std_error(counts)
+        if win_rate is None or std is None:
             return {"lower": None, "upper": None}
-        variance = win_rate * (1.0 - win_rate) / total
-        std = math.sqrt(max(variance, 0.0))
         lower = max(0.0, win_rate - 1.96 * std)
         upper = min(1.0, win_rate + 1.96 * std)
         return {"lower": lower, "upper": upper}
@@ -162,26 +176,26 @@ class MatchAPI(PairwiseRunnerAPI):
 
             timeline.append(
                 {
-                    "gameIndex": index,
+                    "game_index": index,
                     "wins": summary_counts["wins"],
                     "losses": summary_counts["losses"],
                     "draws": summary_counts["draws"],
                     "games": summary_counts["games"],
-                    "winRate": total_rate,
-                    "eloEstimate": self._win_rate_to_elo(total_rate),
+                    "win_rate": total_rate,
+                    "elo_estimate": self._win_rate_to_elo(total_rate),
                     "black": {
                         "wins": black_counts["wins"],
                         "losses": black_counts["losses"],
                         "draws": black_counts["draws"],
                         "games": black_counts["games"],
-                        "winRate": black_rate,
+                        "win_rate": black_rate,
                     },
                     "white": {
                         "wins": white_counts["wins"],
                         "losses": white_counts["losses"],
                         "draws": white_counts["draws"],
                         "games": white_counts["games"],
-                        "winRate": white_rate,
+                        "win_rate": white_rate,
                     },
                 }
             )
@@ -194,7 +208,7 @@ class MatchAPI(PairwiseRunnerAPI):
         )
         payload = {
             "mode": "match",
-            "summarySource": "match",
+            "summary_source": "match",
             "tested": tested,
             "baseline": baseline,
             "games": {
@@ -204,10 +218,10 @@ class MatchAPI(PairwiseRunnerAPI):
                 "losses": summary_counts["losses"],
                 "draws": summary_counts["draws"],
             },
-            "winRate": win_rate,
-            "winRateCi95": self._win_rate_confidence_interval(win_rate, summary_counts["games"]),
-            "eloEstimate": self._win_rate_to_elo(win_rate),
-            "eloCi95": self._elo_confidence_interval(win_rate, summary_counts["games"]),
+            "win_rate": win_rate,
+            "win_rate_ci95": self._win_rate_confidence_interval(win_rate, summary_counts),
+            "elo_estimate": self._win_rate_to_elo(win_rate),
+            "elo_ci95": self._elo_confidence_interval(win_rate, summary_counts),
             "colors": {
                 "black": black_counts,
                 "white": white_counts,
@@ -216,5 +230,5 @@ class MatchAPI(PairwiseRunnerAPI):
             "timestamp": self._now_iso(),
         }
         payload_obj = to_json_object(payload)
-        payload_obj["liveView"] = json_serialize(build_live_view_snapshot(payload_obj))
+        payload_obj["live_view"] = json_serialize(build_live_view_snapshot(payload_obj))
         return payload_obj

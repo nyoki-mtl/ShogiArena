@@ -19,6 +19,28 @@ _GRACEFUL_SHUTDOWN_WARN_SECONDS = 5.0
 _GRACEFUL_SHUTDOWN_SIGNALS: tuple[signal.Signals, ...] = (signal.SIGINT, signal.SIGTERM)
 
 
+def _resolve_shutdown_hard_timeout() -> float:
+    """Hard upper bound for the graceful shutdown wait (env-overridable)."""
+    raw = os.getenv("SHOGI_ARENA_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS", "").strip()
+    try:
+        value = float(raw) if raw else 0.0
+    except ValueError:
+        value = 0.0
+    return value if value > 0 else 60.0
+
+
+_GRACEFUL_SHUTDOWN_HARD_TIMEOUT_SECONDS = _resolve_shutdown_hard_timeout()
+
+
+def _consume_task_result(task: asyncio.Task[object]) -> None:
+    """Retrieve a finished task's outcome so it is not reported as a never-retrieved exception."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.debug("Abandoned graceful shutdown finished with error: %s", exc)
+
+
 @runtime_checkable
 class _EnginePoolUsagePort(Protocol):
     in_use: Mapping[object, Sized]
@@ -129,7 +151,22 @@ class RunController:
 
         async def _await_shutdown_task() -> None:
             active_shutdown = _ensure_shutdown_task()
-            await active_shutdown
+            done, _pending = await asyncio.wait({active_shutdown}, timeout=_GRACEFUL_SHUTDOWN_HARD_TIMEOUT_SECONDS)
+            if active_shutdown in done:
+                # Completed within the bound; await is instant and re-raises any shutdown error.
+                await active_shutdown
+                return
+            # Do NOT await the cancellation: asyncio.wait_for would block until the cancel
+            # completes, which an unresponsive shutdown (one that swallows CancelledError) can
+            # ignore, re-introducing the hang. Request cancellation, hand off result retrieval to
+            # a done callback, and return. Engine processes are force-killed by the pool/bridge
+            # kill timeouts regardless.
+            logger.error(
+                "Graceful shutdown did not complete within %.1fs; abandoning the wait without blocking",
+                _GRACEFUL_SHUTDOWN_HARD_TIMEOUT_SECONDS,
+            )
+            active_shutdown.cancel()
+            active_shutdown.add_done_callback(_consume_task_result)
 
         def _on_shutdown_signal(received_signal: signal.Signals) -> None:
             nonlocal signal_count, signal_name
@@ -155,8 +192,10 @@ class RunController:
         for shutdown_signal in _GRACEFUL_SHUTDOWN_SIGNALS:
             try:
                 loop.add_signal_handler(shutdown_signal, _on_shutdown_signal, shutdown_signal)
-            except NotImplementedError:
-                logger.debug("Signal handlers are not supported by this event loop: %s", shutdown_signal.name)
+            except (NotImplementedError, ValueError, RuntimeError):
+                # Not supported on this platform, or the loop is not on the main thread
+                # (add_signal_handler raises ValueError there). Skip rather than abort the run.
+                logger.debug("Signal handlers are not available on this event loop: %s", shutdown_signal.name)
                 continue
             registered_signals.append(shutdown_signal)
 
@@ -169,6 +208,15 @@ class RunController:
             await self._stop_services()
             self._detach_orchestrator()
             return None
+        except Exception:
+            # A non-cancellation failure must still release engines/pool/dashboard and detach the
+            # orchestrator; otherwise these leak because the finally below only cancels run_task.
+            logger.exception("Run failed; shutting down orchestrator")
+            orchestrator.request_stop()
+            await _await_shutdown_task()
+            await self._stop_services()
+            self._detach_orchestrator()
+            raise
         else:
             await _await_shutdown_task()
             self._detach_orchestrator()

@@ -19,8 +19,8 @@ class DashboardWsClientMessage(BaseModel):
     type: str | None = None
     topic: str | None = None
     topics: list[str] | None = None
-    from_seq: int | None = Field(default=None, alias="fromSeq")
-    should_include_analysis: bool | None = Field(default=None, alias="includeAnalysis")
+    from_seq: int | None = None
+    should_include_analysis: bool | None = Field(default=None, alias="include_analysis")
     workers: list[int] | None = None
 
     @field_validator("topics", mode="before")

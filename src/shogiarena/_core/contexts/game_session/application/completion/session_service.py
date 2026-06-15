@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 
 import rshogi.record
 
+from shogiarena._core.contexts.game_session.application.sprt_service import SPRT_MODEL_GSPRT_PENTANOMIAL
 from shogiarena._core.contexts.game_session.ports.completion_runtime import (
     CompletionGameSpecPort,
     CompletionGameSummary,
@@ -19,6 +20,7 @@ from shogiarena._core.contexts.game_session.ports.completion_runtime import (
 )
 from shogiarena._core.shared.kernel.game_results import GameResult, game_result_name
 from shogiarena._core.shared.kernel.scalar_coercion.api import datetime_to_iso
+from shogiarena._core.shared.kernel.statistics.pentanomial_pairing import should_sample_for_sprt, tested_score
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +91,7 @@ class TournamentSessionCompletionService:
             game_spec.black_engine,
             game_spec.white_engine,
             result,
+            game_id=str(game_spec.game_id),
         )
 
     def commit_completion_state(
@@ -135,6 +138,13 @@ class TournamentSessionCompletionService:
         extract_participation: Callable[[object], tuple[object, ...]],
         openbench_error_type: type[Exception],
     ) -> tuple[bool, GameResult]:
+        game_id = str(game_spec.game_id)
+        if game_id in context.state.completed_game_ids:
+            # Idempotency guard: a duplicate completion for an already-recorded game must not
+            # re-persist the record, re-update ratings, or re-count SPRT. Resumed games are
+            # filtered out before dispatch, so this only catches duplicate completion events.
+            logger.debug("Skipping already-completed game %s (duplicate completion)", game_id)
+            return False, record.result
         summary = self.enrich_record_and_summarize(context, game_spec, record=record)
         result = record.result
         should_persist = self.should_persist_record(result, is_stop_requested=is_stop_requested)
@@ -182,12 +192,12 @@ class TournamentSessionCompletionService:
             for key, value in existing.items():
                 if value is not None:
                     attributes[str(key)] = str(value)
-        attributes["runMode"] = context.summary_source
+        attributes["run_mode"] = context.summary_source
         experiment = str(context.experiment_name or "").strip()
         if experiment:
-            attributes["experimentName"] = experiment
+            attributes["experiment_name"] = experiment
         if context.record_format is not None:
-            attributes["recordFormat"] = context.record_format
+            attributes["record_format"] = context.record_format
         return attributes
 
     def summarize_game_completion(self, record: rshogi.record.GameRecord) -> CompletionGameSummary:
@@ -222,24 +232,44 @@ class TournamentSessionCompletionService:
         white = str(game_spec.white_engine)
 
         if a == black:
-            sprt_result = (
-                GameResult.WHITE_WIN
-                if result.is_black_win()
-                else GameResult.BLACK_WIN
-                if result.is_white_win()
-                else GameResult.DRAW_BY_MAX_PLIES
-            )
+            is_tested_black = True
         elif a == white:
-            sprt_result = (
-                GameResult.WHITE_WIN
-                if result.is_white_win()
-                else GameResult.BLACK_WIN
-                if result.is_black_win()
-                else GameResult.DRAW_BY_MAX_PLIES
-            )
+            is_tested_black = False
         else:
             return
 
+        # Centralized policy: PAUSED is excluded from the sample, ERROR/INVALID fail-fast.
+        if not should_sample_for_sprt(result, context=f"game {game_spec.game_id}"):
+            logger.debug("Skipping SPRT update for paused game %s", game_spec.game_id)
+            return
+
+        if context.sprt_service.model == SPRT_MODEL_GSPRT_PENTANOMIAL:
+            # Buffer the game by (opening sfen, pair slot); the pair completes when the reversed
+            # colour arrives. round_num // 2 collapses the two colour-reversed rounds into one slot.
+            context.sprt_service.add_game_observation(
+                sfen=str(game_spec.initial_sfen),
+                pair_slot=game_spec.round_num // 2,
+                is_tested_black=is_tested_black,
+                tested_score=tested_score(result, is_tested_black=is_tested_black),
+            )
+            return
+
+        if is_tested_black:
+            sprt_result = (
+                GameResult.WHITE_WIN
+                if result.is_black_win()
+                else GameResult.BLACK_WIN
+                if result.is_white_win()
+                else GameResult.DRAW_BY_MAX_PLIES
+            )
+        else:
+            sprt_result = (
+                GameResult.WHITE_WIN
+                if result.is_white_win()
+                else GameResult.BLACK_WIN
+                if result.is_black_win()
+                else GameResult.DRAW_BY_MAX_PLIES
+            )
         context.sprt_service.add_game_result(sprt_result)
 
 

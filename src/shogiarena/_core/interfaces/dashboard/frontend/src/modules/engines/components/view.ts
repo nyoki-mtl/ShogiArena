@@ -1,7 +1,7 @@
 import type { EngineInstanceDetail, EngineMetaDetail, InstanceConfig, InstanceMetrics } from '../types/internal';
-import { resolveOptionSourceLabel } from '@/modules/shared/utils/engineOptionSources';
+import { resolveOptionSourceLabel } from '@/modules/shared/utils/engine-option-sources';
 import { escapeHtml } from '@/modules/shared/utils/html';
-import { formatDuration, formatNodesCountDetail, parseTimeControlSpec } from '@/modules/shared/utils/timeControl';
+import { formatDuration, formatNodesCountDetail, parseTimeControlSpec } from '@/modules/shared/utils/time-control';
 import { formatOptionValue } from '@/modules/tournament/utils/formatters';
 import type { DashboardCore } from '@/types/dashboard';
 

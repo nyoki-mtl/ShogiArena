@@ -60,7 +60,7 @@ from shogiarena._core.contexts.instances.ports.orchestrator_primitives import (
 )
 from shogiarena._core.contexts.spsa.adapters.runtime.tokens import phase_symbol, variant_token
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry, PhaseLiteral, SpsaGamePayload
-from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.game_results import GameResult, game_result_name
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
 
@@ -414,7 +414,9 @@ class SpsaOrchestratorGameplayMixin:
                 return GameResult.WHITE_WIN
         if result.is_draw():
             return GameResult.DRAW_BY_REPETITION
-        return GameResult.DRAW_BY_REPETITION
+        # Callers gate non-game outcomes (PAUSED skipped, ERROR/INVALID fail-fast) before reaching
+        # here, so anything else is a contract violation rather than a silent draw.
+        raise ValueError(f"LTC SPRT normalization received non-game result {game_result_name(result)}")
 
     @staticmethod
     def _calculate_winner_code(game_info: rshogi.record.GameRecord, is_tuned_as_black: bool) -> int:

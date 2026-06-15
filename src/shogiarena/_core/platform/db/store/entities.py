@@ -56,14 +56,14 @@ class Game(Base):
     )
     time_control_black: Mapped[str | None] = mapped_column(String(128), nullable=True)
     time_control_white: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    init_position_sfen: Mapped[str] = mapped_column(String(144), nullable=False)
+    initial_position_sfen: Mapped[str] = mapped_column(String(144), nullable=False)
     end_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     end_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
     black_player: Mapped[Player] = relationship("Player", foreign_keys=[black_player_id])
     white_player: Mapped[Player] = relationship("Player", foreign_keys=[white_player_id])
-    kifu: Mapped[list[Kifu]] = relationship(back_populates="game")
+    moves: Mapped[list[GameMove]] = relationship(back_populates="game")
 
     def __repr__(self) -> str:
         return (
@@ -73,13 +73,13 @@ class Game(Base):
             f"game_result={self.game_result}, num_moves={self.num_moves}, "
             f"black_player_id={self.black_player_id}, white_player_id={self.white_player_id}, "
             f"time_control_black={self.time_control_black}, time_control_white={self.time_control_white}, "
-            f"init_position_sfen={self.init_position_sfen}, end_time_ms={self.end_time_ms}, "
+            f"initial_position_sfen={self.initial_position_sfen}, end_time_ms={self.end_time_ms}, "
             f"end_comment={self.end_comment}, updated_date={self.updated_date})"
         )
 
 
-class Kifu(Base):
-    __tablename__ = "kifu"
+class GameMove(Base):
+    __tablename__ = "game_move"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     game_id: Mapped[int] = mapped_column(
@@ -99,11 +99,11 @@ class Kifu(Base):
     seldepth: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     nodes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    game: Mapped[Game] = relationship(back_populates="kifu")
+    game: Mapped[Game] = relationship(back_populates="moves")
 
     def __repr__(self) -> str:
         return (
-            "Kifu("
+            "GameMove("
             f"id={self.id}, game_id={self.game_id}, ply={self.ply}, next_move={self.next_move}, "
             f"next_move_time_ms={self.next_move_time_ms}, next_move_comment={self.next_move_comment}, "
             f"eval={self.eval})"
@@ -111,7 +111,7 @@ class Kifu(Base):
 
 
 Index("game_name_index", Game.game_name, unique=True)
-Index("game_id_index", Kifu.game_id)
+Index("game_id_index", GameMove.game_id)
 
 
 class EngineArtifact(Base):
@@ -228,7 +228,7 @@ __all__ = [
     "EngineArtifact",
     "Game",
     "GameInstanceParticipation",
-    "Kifu",
+    "GameMove",
     "ModelT",
     "Player",
     "InstanceSpec",

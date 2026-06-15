@@ -1,6 +1,6 @@
 import { createDeferredHydrator } from '@/modules/shared';
 import type { LiveDiagnosticsStopwatch } from '@/modules/live/utils/liveNamespace';
-import { DETAIL_HYDRATION_DELAY_MS } from './api.constants';
+import { DETAIL_HYDRATION_DELAY_MS } from './api-constants';
 import type { SpsaStreamCacheState } from './streams';
 
 export function createStreamCacheState(): SpsaStreamCacheState {

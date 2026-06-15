@@ -14,7 +14,7 @@ import {
     renderOpeningPlyStatsPane,
     renderOpeningStatsTableMarkup,
 } from '@/modules/tournament/components/openings';
-import { computeOpeningRows, type OpeningRow } from './openingStats';
+import { computeOpeningRows, type OpeningRow } from './opening-stats';
 import { normalizeTournamentGame } from './normalizers';
 import { recordLiveDiagnosticsMetric, startDiagnosticsStopwatch } from '@/modules/live/utils/liveNamespace';
 import type { HydrationTrigger } from '@/modules/shared/utils/hydration';

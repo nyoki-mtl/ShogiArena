@@ -251,9 +251,7 @@ def main() -> int:
         print(report)
 
     if args.update_baseline:
-        baseline_path = args.baseline_json or Path(
-            "agent-docs/tasks/0012-type-safety-hardening/logs/typing-audit-baseline.json"
-        )
+        baseline_path = args.baseline_json or Path("agent-docs/rules/typing-audit-baseline.json")
         _write_baseline(baseline_path, totals)
 
     if not args.fail_on_regression or baseline_totals is None:

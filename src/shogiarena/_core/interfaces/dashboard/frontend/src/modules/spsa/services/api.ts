@@ -14,7 +14,7 @@ import { summaryStore } from '@/store';
 import {
     parseTimeControlSpec as parseTournamentTimeControlSpec,
     formatNodesCountShort,
-} from '@/modules/shared/utils/timeControl';
+} from '@/modules/shared/utils/time-control';
 import {
     cancelOngoingRequests,
     clearError,
@@ -36,9 +36,9 @@ import { createSpsaFetchers } from './fetchers';
 import { createScopedHydrator, createStreamCacheState } from './hydration';
 import { resetSpsaConsistencyState } from './consistency';
 import { createBootstrapManager } from './bootstrap';
-import { createRefreshQueue } from './refreshQueue';
+import { createRefreshQueue } from './refresh-queue';
 import { createLifecycle } from './lifecycle';
-import { getResumeCoordinator } from '@/modules/shared/services/resumeCoordinator';
+import { getResumeCoordinator } from '@/modules/shared/services/resume-coordinator';
 import {
     ANALYSIS_HYDRATION_METRIC,
     DEFAULT_UPDATES_LIMIT,
@@ -46,7 +46,7 @@ import {
     LTC_HYDRATION_METRIC,
     PARAMS_REFRESH_INTERVAL_MS,
     SSE_DISCONNECT_MESSAGE,
-} from './api.constants';
+} from './api-constants';
 import { reportDashboardRecoverableFailure } from '@/modules/shared/utils/errors';
 
 type ErrorSource = 'sse' | 'generic';

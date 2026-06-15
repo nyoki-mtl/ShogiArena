@@ -250,15 +250,17 @@ export function createSpsaStreams(cacheState: SpsaStreamCacheState, deps: SpsaSt
         if (!Number.isFinite(completedValue)) {
             throw new Error('SPSA progress payload requires numeric "completed"');
         }
-        const totalRaw = payload.total;
-        if (!Number.isFinite(totalRaw)) {
+        // Coerce before the finiteness check so numeric strings are accepted symmetrically with
+        // "completed" (previously Number.isFinite ran on the raw value and rejected e.g. "100").
+        const totalValue = Number(payload.total);
+        if (!Number.isFinite(totalValue)) {
             throw new Error('SPSA progress payload requires numeric "total"');
         }
         const percentRaw = payload.percent;
         const percent = typeof percentRaw === 'number' && Number.isFinite(percentRaw) ? percentRaw : null;
         return {
             completed: Math.max(0, Math.trunc(completedValue)),
-            total: Math.max(0, Math.trunc(Number(totalRaw))),
+            total: Math.max(0, Math.trunc(totalValue)),
             percent,
         };
     };

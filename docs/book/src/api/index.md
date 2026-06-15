@@ -1,62 +1,89 @@
-# API Reference
+# 公開 API
 
-Shogi Arena を Python ライブラリとして使用するための API リファレンスです。
+ShogiArena の公開 Python API は、通常利用で必要な入口に絞っています。
 
-## Formal Public Surface
+## 公開 import
 
-現在、正式に公開 API として扱うのは次のモジュールです。
+| モジュール | 用途 |
+| --- | --- |
+| `shogiarena.engine` | USI エンジンの起動、思考、解析 |
+| `shogiarena.tournament` | トーナメント設定の読み込みと実行 |
+| `shogiarena.cli` | CLI エントリポイント |
+| `shogiarena.composition` | 依存注入ルートの高度な利用 |
 
-| モジュール | 用途 | 主な公開シンボル |
-| --- | --- | --- |
-| `shogiarena.engine` | USI エンジン操作 | `AnalysisHandle`, `AsyncUsiEngine`, `AsyncUsiProcess`, `AsyncUsiProcessBridgePort`, `PonderHandle`, `PonderHitTimings`, `SpawnerBackedUSIBridge`, `UsiEngineConfig`, `UsiEngineStartError`, `UsiEngineState`, `UsiMateResult`, `UsiOption`, `UsiProtocolParser`, `UsiThinkPV`, `UsiThinkRequest`, `UsiThinkResult`, `create_engine()`, `create_engine_from_mapping()`, `move_from_usi()` |
-| `shogiarena.tournament` | tournament / sprt 実行 | `FilesystemRunStorage`, `GameSpec`, `RunStorage`, `TournamentRunConfig`, `TournamentRunner`, `build_tournament_runner()`, `create_run_storage()`, `load_tournament_config()`, `run_tournament()` |
-| `shogiarena.cli` | CLI entrypoint | `CliArgumentError`, `CliError`, `build_parser()`, `main()` |
-| `shogiarena.composition` | advanced wiring | `DefaultRoot`, `build_default_root()` |
+`shogiarena._core` 配下は内部実装です。import できても互換性は保証されません。
 
-`shogiarena._core.*` は実装正本ですが、公開 API ではありません。
+## `shogiarena.engine`
 
-## Quick Start
+主な入口:
+
+- `create_engine(config_path, ...)`
+- `create_engine_from_mapping(config_mapping, ...)`
+- `UsiThinkRequest`
+- `UsiThinkResult`
+- `AsyncUsiEngine`
 
 ```python
 import asyncio
 
 from shogiarena.engine import UsiThinkRequest, create_engine
-from shogiarena.tournament import run_tournament
 
 
 async def main() -> None:
     async with await create_engine("engine.yaml") as engine:
         result = await engine.think(
             sfen="startpos",
-            request=UsiThinkRequest(byoyomi=1_000),
+            request=UsiThinkRequest(movetime=5_000),
         )
         print(result.bestmove)
-
-    await run_tournament("tournament.yaml", run_dir="runs/example")
 
 
 asyncio.run(main())
 ```
 
-## Public Module Docs
+## `shogiarena.tournament`
 
-- [Engines](engines.md)
-- [Runners](runners.md)
-- [CLI](cli.md)
+主な入口:
 
-## Internal / Contributor Reference
+- `load_tournament_config(config_source, ...)`
+- `run_tournament(config_source, run_dir=...)`
+- `create_run_storage(run_dir)`
+- `build_tournament_runner(config, storage=...)`
+- `TournamentRunConfig`
 
-以下のページは contributor 向けの補足リファレンスです。公開 API ではなく、互換保証もありません。
+```python
+import asyncio
 
-- [Configs](configs.md)
-- [Orchestrators](orchestrators.md)
-- [Scheduler](scheduler.md)
-- [Execution](execution.md)
-- [Services](services.md)
-- [Records](records.md)
-- [Instances](instances.md)
-- [Session](session.md)
-- [Storage](storage.md)
-- [Dashboard](dashboard.md)
-- [DB](db.md)
-- [Utils](utils.md)
+from shogiarena.tournament import run_tournament
+
+
+async def main() -> None:
+    await run_tournament(
+        "tournament.yaml",
+        run_dir="runs/example",
+    )
+
+
+asyncio.run(main())
+```
+
+SPRT は `sprt` ブロックを含むトーナメント設定として扱います。SPSA の Python API は現時点では正式公開面として固定していないため、CLI からの利用を推奨します。
+
+## `shogiarena.composition`
+
+高度な用途では、既定の runtime wiring を取得できます。
+
+```python
+from shogiarena.composition import build_default_root
+
+
+root = build_default_root()
+engine_runtime = root.engine_runtime
+tournament_runtime = root.tournament_runtime
+```
+
+通常は `shogiarena.engine` と `shogiarena.tournament` の helper を優先してください。
+
+## CLI
+
+コマンドラインの詳細は [CLI](cli.md) を参照してください。

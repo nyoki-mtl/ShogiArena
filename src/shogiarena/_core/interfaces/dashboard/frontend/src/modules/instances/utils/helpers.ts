@@ -1,6 +1,6 @@
 import type { DashboardNoticeVariant } from '@/types/dashboard';
 import type { InstanceGameRecord, InstanceRecord } from '@/modules/instances/types';
-import { assertDashboardCoreShowNotice } from '@/modules/shared/utils/dashboardCore';
+import { assertDashboardCoreShowNotice } from '@/modules/shared/utils/dashboard-core';
 
 type ShowNoticeFn = (message: string, type?: DashboardNoticeVariant) => void;
 

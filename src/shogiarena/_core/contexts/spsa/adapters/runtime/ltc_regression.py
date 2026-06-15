@@ -11,10 +11,17 @@ from typing import Any, Protocol, runtime_checkable
 
 import rshogi
 
-from shogiarena._core.contexts.game_session.application.sprt_service import Sprt, SprtDecision, SprtResult
+from shogiarena._core.contexts.game_session.application.sprt_service import (
+    PENTANOMIAL_MIN_PAIRS_FOR_LLR,
+    SPRT_MODEL_GSPRT_PENTANOMIAL,
+    Sprt,
+    SprtDecision,
+    SprtResult,
+)
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.statistics.pentanomial_pairing import should_sample_for_sprt, tested_score
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
 
 from .ltc_regression_events import (
@@ -100,10 +107,13 @@ class _LtcStats:
         self.draws += 1
 
     def compute_metrics(self) -> tuple[float, float | None, float]:
-        effective_games = self.tuned_wins + self.baseline_wins
-        winrate = (self.tuned_wins / effective_games) if effective_games > 0 else 0.5
+        total = self.total_games_played
+        # Draw-aware score winrate (W + 0.5*D) / N. The previous decisive-only winrate
+        # (W / (W + L)) ignored draws, disagreeing with min_winrate, the SPRT model, and
+        # average_score; in a draw-heavy game that masks regressions.
+        winrate = ((self.tuned_wins + 0.5 * self.draws) / total) if total > 0 else 0.5
         elo: float | None = None
-        if winrate not in (0.0, 1.0) and effective_games != 0:
+        if 0.0 < winrate < 1.0:
             elo = -400 * math.log10(1 / winrate - 1)
         average_score = self.total_score / self.pairs_completed if self.pairs_completed else 0.0
         return winrate, elo, average_score
@@ -112,6 +122,7 @@ class _LtcStats:
 @dataclass(slots=True)
 class _SprtTracker:
     sprt: Sprt | None
+    min_games: int = 0
     sprt_result: SprtResult | None = None
     sprt_decision: SprtDecision | None = None
     should_stop_due_to_sprt: bool = False
@@ -120,20 +131,47 @@ class _SprtTracker:
         if self.sprt is None:
             return
         result = game.result
+        # PAUSED is excluded from the LTC SPRT sample; ERROR/INVALID fail-fast (regression gating
+        # must not fold non-game outcomes into draws).
+        if not should_sample_for_sprt(result, context="LTC trinomial game"):
+            return
         normalized = runner._ltc_normalize_result_for_sprt(result, is_tuned_as_black)
-        self.sprt_result = self.sprt.add_game_result(normalized)
-        self.sprt_decision = self.sprt_result.decision
-        if self.sprt_decision != SprtDecision.CONTINUE:
+        self._record(self.sprt.add_game_result(normalized))
+
+    def submit_pair(self, game_black: rshogi.record.GameRecord, game_white: rshogi.record.GameRecord) -> None:
+        """Submit a complete colour-reversed pair to the pentanomial model (no buffering)."""
+        if self.sprt is None:
+            return
+        # A pentanomial observation needs both halves to be valid played games. If either is PAUSED
+        # the pair is incomplete and is skipped; ERROR/INVALID in either half fails fast.
+        if not (
+            should_sample_for_sprt(game_black.result, context="LTC pentanomial pair (black)")
+            and should_sample_for_sprt(game_white.result, context="LTC pentanomial pair (white)")
+        ):
+            return
+        black_score = tested_score(game_black.result, is_tested_black=True)
+        white_score = tested_score(game_white.result, is_tested_black=False)
+        self._record(self.sprt.add_paired_observation(black_score=black_score, white_score=white_score))
+
+    def _record(self, sprt_result: SprtResult) -> None:
+        self.sprt_result = sprt_result
+        # Mirror the runner: only act on (and report) a decision once games_played >= min_games.
+        decision = sprt_result.decision
+        if sprt_result.games_played < self.min_games:
+            decision = SprtDecision.CONTINUE
+        self.sprt_decision = decision
+        if decision != SprtDecision.CONTINUE:
             self.should_stop_due_to_sprt = True
+
+    @property
+    def is_pentanomial(self) -> bool:
+        return self.sprt is not None and self.sprt.model == SPRT_MODEL_GSPRT_PENTANOMIAL
 
     def finalize(self) -> None:
         if self.sprt is None:
             return
         if self.sprt_result is None:
-            self.sprt_result = self.sprt.get_status()
-            self.sprt_decision = self.sprt_result.decision
-        elif self.sprt_decision is None:
-            self.sprt_decision = self.sprt_result.decision
+            self._record(self.sprt.get_status())
 
 
 @dataclass(slots=True)
@@ -265,8 +303,12 @@ async def _run_ltc_pairs(
         stats.accumulate_game(game_black, is_tuned_as_black=True)
         stats.accumulate_game(game_white, is_tuned_as_black=False)
 
-        sprt_tracker.submit(runner, game_black, is_tuned_as_black=True)
-        sprt_tracker.submit(runner, game_white, is_tuned_as_black=False)
+        if sprt_tracker.is_pentanomial:
+            # LTC always holds a complete colour-reversed pair, so submit it directly (no pending).
+            sprt_tracker.submit_pair(game_black, game_white)
+        else:
+            sprt_tracker.submit(runner, game_black, is_tuned_as_black=True)
+            sprt_tracker.submit(runner, game_white, is_tuned_as_black=False)
 
         if sprt_tracker.should_stop_due_to_sprt:
             break
@@ -280,10 +322,11 @@ def _finalize_ltc_regression(
 ) -> JsonObject:
     winrate, elo, average_score = context.stats.compute_metrics()
     context.sprt_tracker.finalize()
-    sprt_payload = _build_sprt_payload(context.sprt_tracker.sprt_result)
+    sprt_payload = _build_sprt_payload(context.sprt_tracker.sprt_result, context.sprt_tracker.sprt_decision)
     status, fail_reasons = determine_ltc_status(
         context.criteria,
         winrate=winrate,
+        elo=elo,
         sprt_payload=sprt_payload,
         sprt_decision=context.sprt_tracker.sprt_decision,
     )
@@ -374,18 +417,24 @@ def _build_sprt_tracker(criteria: Any) -> _SprtTracker:
         elo1=float(sprt_config.elo1),
         alpha=float(sprt_config.alpha),
         beta=float(sprt_config.beta),
+        model=str(sprt_config.model),
+        # Scale the pentanomial decision floor to min_games (2 games per pair), matching the
+        # tournament runner. Ignored by the trinomial model.
+        min_pairs=max(PENTANOMIAL_MIN_PAIRS_FOR_LLR, math.ceil(sprt_config.min_games / 2)),
     )
-    return _SprtTracker(sprt=sprt)
+    return _SprtTracker(sprt=sprt, min_games=int(sprt_config.min_games))
 
 
-def _build_sprt_payload(sprt_result: SprtResult | None) -> JsonObject | None:
+def _build_sprt_payload(sprt_result: SprtResult | None, decision: SprtDecision | None = None) -> JsonObject | None:
     if sprt_result is None:
         return None
+    # Use the tracker's (min_games-masked) decision so the payload agrees with the LTC status.
+    effective = decision if decision is not None else sprt_result.decision
     return {
         "llr": sprt_result.llr,
         "lower": sprt_result.lower_bound,
         "upper": sprt_result.upper_bound,
-        "decision": sprt_result.decision.value,
+        "decision": effective.value,
         "games": sprt_result.games_played,
         "wins": sprt_result.wins,
         "draws": sprt_result.draws,

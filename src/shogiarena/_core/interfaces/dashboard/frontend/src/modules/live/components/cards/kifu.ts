@@ -1,6 +1,7 @@
 import type { LiveCardId, LiveCardState } from '@/modules/live/types';
 import { hasTerminalResult, resultCodeToKifJP } from '@/modules/live/utils';
 import { formatDurationMs } from '@/modules/shared/utils/format';
+import { escapeHtml } from '@/modules/shared/utils/html';
 import type { DashboardCore, DashboardCoreState } from '@/types/dashboard';
 import type { KifuHandlers, WorkerSnapshotRecord } from './types';
 
@@ -143,8 +144,10 @@ export function createKifuHandlers(deps: KifuDeps): KifuHandlers {
         const rows: string[] = [];
         for (let i = 0; i < moves.length; i++) {
             const idx1 = i + 1;
-            const move = moves[i] || '-';
-            rows.push(`<div class="ki2-line" data-move="${idx1}">${idx1.toString().padStart(3, '0')} ${move}</div>`);
+            const move = typeof moves[i] === 'string' && moves[i] ? (moves[i] as string) : '-';
+            rows.push(
+                `<div class="ki2-line" data-move="${idx1}">${idx1.toString().padStart(3, '0')} ${escapeHtml(move)}</div>`,
+            );
         }
         container.innerHTML = rows.join('');
     }
@@ -324,25 +327,6 @@ export function createKifuHandlers(deps: KifuDeps): KifuHandlers {
     function renderControlButton(target: MoveControlTarget): string {
         const meta = CONTROL_METADATA[target];
         return `<button type="button" class="inline-control ${target}" data-ui-action="move-control" data-move-target="${target}" aria-label="${meta.aria}">${meta.icon}</button>`;
-    }
-
-    function escapeHtml(value: string): string {
-        return value.replace(/[&<>"']/g, (char) => {
-            switch (char) {
-                case '&':
-                    return '&amp;';
-                case '<':
-                    return '&lt;';
-                case '>':
-                    return '&gt;';
-                case '"':
-                    return '&quot;';
-                case "'":
-                    return '&#39;';
-                default:
-                    return char;
-            }
-        });
     }
 
     function renderMoveContent(move: string): string {

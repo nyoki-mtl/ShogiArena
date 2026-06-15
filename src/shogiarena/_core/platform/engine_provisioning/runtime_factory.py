@@ -5,22 +5,64 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import platform as _platform
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from shogiarena._core.platform.engine_provisioning.provisioning_ports import EngineRuntimeInstancePort
-from shogiarena._core.platform.engine_provisioning.runtime_factory_fallbacks import FallbackInstance
 from shogiarena._core.platform.engine_provisioning.spawner_backed_usi_bridge import SpawnerBackedUSIBridge
 from shogiarena._core.platform.host_probe.cpu_detection import detect_target_cpu
 from shogiarena._core.platform.settings import project_dirs
+from shogiarena._core.shared.kernel.engine_book import resolve_engine_book_path
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.paths import PATH_OPTION_KEYS, resolve_path_like
 from shogiarena._core.shared.kernel.serialization import json_serialize
 from shogiarena._core.shared.kernel.service_ports import ArtifactResolutionPort
 
 logger = logging.getLogger(__name__)
+
+# 内蔵定跡(A) の remote 転送ポリシー（Task 0017）。
+# 既定では大型 book の意図しない自動転送を防ぐため、閾値超は hard block（明示 opt-in が必要）。
+#   env SHOGIARENA_REMOTE_BOOK_TRANSFER: "auto"(既定) | "always" | "preplaced"
+#     - auto:      閾値以下のみ自動転送。閾値超は明確なエラーで停止。
+#     - always:    サイズに関わらず content-hash 転送（ensure-once で初回のみ）。
+#     - preplaced: 転送せず、worker 側の同一パスを参照（fingerprint は provenance に記録）。
+#   env SHOGIARENA_REMOTE_BOOK_MAX_MB: 自動転送の上限（MiB, 既定 256）。
+_DEFAULT_REMOTE_BOOK_MAX_MB = 256
+_REMOTE_BOOK_TRANSFER_ENV = "SHOGIARENA_REMOTE_BOOK_TRANSFER"
+_REMOTE_BOOK_MAX_MB_ENV = "SHOGIARENA_REMOTE_BOOK_MAX_MB"
+
+BookTransferMode = Literal["auto", "always", "preplaced"]
+
+
+@dataclass(frozen=True, slots=True)
+class _BookRemotePolicy:
+    mode: BookTransferMode
+    max_bytes: int
+
+
+def _resolve_book_remote_policy() -> _BookRemotePolicy:
+    raw_mode = os.environ.get(_REMOTE_BOOK_TRANSFER_ENV, "auto").strip().lower()
+    mode: BookTransferMode
+    if raw_mode == "always":
+        mode = "always"
+    elif raw_mode == "preplaced":
+        mode = "preplaced"
+    else:
+        mode = "auto"
+        if raw_mode not in ("auto", ""):
+            logger.warning("Unknown %s=%r; falling back to 'auto'", _REMOTE_BOOK_TRANSFER_ENV, raw_mode)
+    raw_mb = os.environ.get(_REMOTE_BOOK_MAX_MB_ENV)
+    max_mb = _DEFAULT_REMOTE_BOOK_MAX_MB
+    if raw_mb is not None:
+        try:
+            max_mb = max(0, int(raw_mb))
+        except ValueError:
+            logger.warning("Invalid %s=%r; using default %d MiB", _REMOTE_BOOK_MAX_MB_ENV, raw_mb, max_mb)
+    return _BookRemotePolicy(mode=mode, max_bytes=max_mb * 1024 * 1024)
 
 
 class _InstancePoolPort(Protocol):
@@ -192,7 +234,17 @@ class EngineRuntimeFactory:
         remote_project_root = engine_dir.parent.parent
         remote_eval_root = remote_project_root / "data" / "evals"
 
+        # 内蔵定跡(A) は BookDir 丸ごとではなく、解決済みの book FILE 単体を
+        # content-hash 名で転送する（Task 0017）。ensure_remote_file は同一 hash なら
+        # 再転送しないため、2.4GB 級でも初回のみ転送され以降は worker 上で再利用される
+        # （事前配置相当）。BookFile が絶対のときは BookDir を無視する YaneuraOu 挙動に
+        # 合わせ、composite 表現（BookDir + 相対 BookFile）を維持して書き換える。
+        handled: set[str] = set()
+        await self._rewrite_book_for_remote(instance, options, remote_eval_root, handled)
+
         for key, value in list(options.items()):
+            if key in handled:
+                continue
             if not isinstance(value, str):
                 continue
             if key not in PATH_OPTION_KEYS:
@@ -221,14 +273,86 @@ class EngineRuntimeFactory:
                         logger.debug("[remote-options] skip ensure (cached this run): %s", remote_dir)
                 options[key] = remote_dir
             elif resolved.is_file():
-                local_hash = self._support.file_sha256(resolved)
-                short = local_hash[:8]
-                remote_file_path = remote_eval_root / f"{resolved.stem}-{short}{resolved.suffix}"
-                remote_file = str(remote_file_path)
-                file_lock = self._ensure_file_locks.setdefault(remote_file, asyncio.Lock())
-                async with file_lock:
-                    await self._support.ensure_remote_file(instance, resolved, remote_file)
+                remote_file = await self._ensure_remote_file_by_hash(instance, resolved, remote_eval_root)
                 options[key] = remote_file
+
+    async def _rewrite_book_for_remote(
+        self,
+        instance: EngineRuntimeInstancePort,
+        options: JsonObject,
+        remote_eval_root: Path,
+        handled: set[str],
+    ) -> None:
+        """内蔵定跡(A) の book FILE を content-hash 名で転送し、composite option を書き換える。
+
+        内蔵定跡が無効、または book file が絶対パスの実ファイルとして解決できない場合は何もしない
+        （その場合は汎用 path option 経路で従来どおり扱う）。
+        """
+
+        resolved_book = resolve_engine_book_path(options)
+        if resolved_book is None:
+            return
+        book_path = Path(resolved_book)
+        if not book_path.is_absolute() or not book_path.is_file():
+            return
+
+        policy = _resolve_book_remote_policy()
+        size = book_path.stat().st_size
+
+        if policy.mode == "preplaced":
+            # 転送せず worker 側の同一パスを参照する（事前配置済み前提）。fingerprint は
+            # provenance (0015) に記録され、local/remote の同一性確認に使える。
+            logger.info(
+                "Opening book referenced as pre-placed on remote worker (no transfer): %s (%.1f MiB)",
+                book_path,
+                size / (1024 * 1024),
+            )
+            options["BookDir"] = str(book_path.parent)
+            options["BookFile"] = book_path.name
+            handled.add("BookDir")
+            handled.add("BookFile")
+            return
+
+        if policy.mode == "auto" and size > policy.max_bytes:
+            raise ValueError(
+                f"Opening book is too large for automatic remote transfer "
+                f"({size / (1024 * 1024):.1f} MiB > {policy.max_bytes / (1024 * 1024):.0f} MiB): {book_path}. "
+                f"Set {_REMOTE_BOOK_TRANSFER_ENV}=always to opt into transfer, or "
+                f"{_REMOTE_BOOK_TRANSFER_ENV}=preplaced to reference a book already present on the worker, "
+                f"or raise {_REMOTE_BOOK_MAX_MB_ENV}."
+            )
+
+        if size > policy.max_bytes:
+            logger.warning(
+                "Transferring a large opening book (%.1f MiB) to remote worker on first use: %s "
+                "(content-hashed; reused on subsequent runs)",
+                size / (1024 * 1024),
+                book_path,
+            )
+
+        remote_file = await self._ensure_remote_file_by_hash(instance, book_path, remote_eval_root)
+        remote_path = Path(remote_file)
+        # composite 表現を維持: BookDir=remote dir, BookFile=basename（Combine で remote_file に解決）。
+        options["BookDir"] = str(remote_path.parent)
+        options["BookFile"] = remote_path.name
+        handled.add("BookDir")
+        handled.add("BookFile")
+
+    async def _ensure_remote_file_by_hash(
+        self,
+        instance: EngineRuntimeInstancePort,
+        local_file: Path,
+        remote_eval_root: Path,
+    ) -> str:
+        """ローカルファイルを content-hash 付き名で remote へ配置し、remote パスを返す。"""
+
+        local_hash = self._support.file_sha256(local_file)
+        short = local_hash[:8]
+        remote_file = str(remote_eval_root / f"{local_file.stem}-{short}{local_file.suffix}")
+        file_lock = self._ensure_file_locks.setdefault(remote_file, asyncio.Lock())
+        async with file_lock:
+            await self._support.ensure_remote_file(instance, local_file, remote_file)
+        return remote_file
 
     async def _resolve_engine_binary(
         self,
@@ -312,10 +436,12 @@ class EngineRuntimeFactory:
                 raise ValueError(f"Instance not found: {instance_id}")
             return instance
 
-        if instance_pool is not None:
-            return instance_pool.ensure_local_instance()
-
-        return FallbackInstance()
+        if instance_pool is None:
+            raise ValueError(
+                "instance_pool is required to create an engine; "
+                "inject a local pool (InstancePool.ensure_default_local_pool()) at the CLI/composition boundary"
+            )
+        return instance_pool.ensure_local_instance()
 
     @staticmethod
     def _apply_overrides(

@@ -1,7 +1,7 @@
 import './style.css';
 
-import { showFatalDashboardError } from '@/modules/shared/components/errorBanner';
-import { crash } from '@/modules/shared/utils/errors';
+import { showFatalDashboardError } from '@/modules/shared/components/error-banner';
+import { crash, reportDashboardRecoverableFailure } from '@/modules/shared/utils/errors';
 import { isTestEnvironment } from '@/modules/shared/utils/env';
 import { loadInitialDashboardData, resolveProfileConfiguration } from '@/modules/shared/services/bootstrap';
 
@@ -47,6 +47,37 @@ function installBrandingAssets(documentRef: Document | null | undefined): void {
     }
 }
 
+let globalErrorHandlersInstalled = false;
+
+/**
+ * 未捕捉の Promise 拒否・グローバルエラーを一元的に Diagnostics へ流すハンドラを設置する。
+ * フロントエンドには多数の fire-and-forget な `void promise` 呼び出しがあるため、握り潰された
+ * 失敗を可視化する最後の安全網として機能する。
+ */
+function installGlobalErrorHandlers(owner: Window): void {
+    if (globalErrorHandlersInstalled) {
+        return;
+    }
+    globalErrorHandlersInstalled = true;
+
+    owner.addEventListener('unhandledrejection', (event) => {
+        reportDashboardRecoverableFailure(event.reason, {
+            scope: 'Global.UnhandledRejection',
+            userMessage: 'An unexpected background error occurred.',
+        });
+    });
+    owner.addEventListener('error', (event) => {
+        // Resource-load errors (img/script) surface here with no `error` object; only report real exceptions.
+        if (!event.error) {
+            return;
+        }
+        reportDashboardRecoverableFailure(event.error, {
+            scope: 'Global.UncaughtError',
+            userMessage: 'An unexpected error occurred.',
+        });
+    });
+}
+
 let bootstrapped = false;
 let lastInitialization: DashboardInitializationResult | null = null;
 
@@ -90,6 +121,7 @@ export function bootstrapDashboardOnReady(options?: DashboardBootstrapOptions): 
     }
 }
 if (typeof window !== 'undefined' && typeof document !== 'undefined' && !isTestEnvironment()) {
+    installGlobalErrorHandlers(window);
     installBrandingAssets(document);
     const owner = window as ArenaDashboardWindow;
     const profileConfig = resolveProfileConfiguration(document);

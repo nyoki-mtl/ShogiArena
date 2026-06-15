@@ -49,14 +49,19 @@ def resolve_engine_metadata_cache(
     existing_metadata: list[JsonObject] | None,
     existing_runtime_sig: str | None,
     runtime_options: EngineOptionsSnapshots,
+    runtime_info: EngineInfoSnapshots,
     collect_metadata_fn: Callable[[], list[JsonObject]],
 ) -> tuple[list[JsonObject], str | None]:
-    """Update metadata cache only when runtime option signature changes."""
+    """Update metadata cache only when runtime snapshot signature changes."""
 
     try:
-        runtime_sig = json.dumps(runtime_options, sort_keys=True, ensure_ascii=False)
+        runtime_sig = json.dumps(
+            {"runtime_info": runtime_info, "runtime_options": runtime_options},
+            sort_keys=True,
+            ensure_ascii=False,
+        )
     except (TypeError, ValueError) as exc:
-        raise ValueError("runtime_options must be JSON-serializable") from exc
+        raise ValueError("runtime snapshots must be JSON-serializable") from exc
 
     should_refresh = existing_metadata is None or runtime_sig != existing_runtime_sig
     if should_refresh:

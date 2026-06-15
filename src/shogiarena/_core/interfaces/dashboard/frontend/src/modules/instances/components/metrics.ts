@@ -69,6 +69,12 @@ export function drawSparklines(state: InstancesDashboardState, ids?: readonly st
         return;
     }
     canvases.forEach((canvas) => {
+        // A canvas whose control was transferred to the OffscreenCanvas worker can no longer
+        // return a 2D context on the main thread; getContext() would throw InvalidStateError.
+        // Skip it so a worker failure cannot break the whole main-thread sparkline fallback.
+        if (canvas.dataset.offscreenTransferred === 'true') {
+            return;
+        }
         const instId = canvas.dataset.id || '';
         const kind = canvas.dataset.kind || 'cpu';
         const history = state.history[instId];

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { summaryStore, resetStore } from '../summaryStore';
+import { summaryStore, resetStore } from '../summary-store';
 
 describe('SummaryStore', () => {
     beforeEach(() => {
@@ -10,7 +10,7 @@ describe('SummaryStore', () => {
         it('stores tournament summary data', () => {
             const raw = {
                 engines: ['EngineA', 'EngineB'],
-                engineMeta: {
+                engine_meta: {
                     EngineA: {
                         name: 'EngineA',
                         engine_path: '/path/to/engineA',
@@ -22,11 +22,11 @@ describe('SummaryStore', () => {
                         merged_options: { Threads: 8 },
                     },
                 },
-                engineTimeControls: {
+                engine_time_controls: {
                     EngineA: 'byoyomi 10000',
                     EngineB: 'byoyomi 10000',
                 },
-                defaultTimeControl: 'byoyomi 10000',
+                default_time_control: 'byoyomi 10000',
             };
 
             const changed = summaryStore.applyTournamentSummary(raw);
@@ -40,7 +40,7 @@ describe('SummaryStore', () => {
         it('returns false when no engines change', () => {
             const raw = {
                 engines: ['EngineA'],
-                engineMeta: { EngineA: { name: 'EngineA' } },
+                engine_meta: { EngineA: { name: 'EngineA' } },
             };
 
             summaryStore.applyTournamentSummary(raw);
@@ -54,11 +54,11 @@ describe('SummaryStore', () => {
         it('stores SPSA summary data', () => {
             const raw = {
                 engines: ['Baseline', 'Tuned'],
-                engineMeta: {
+                engine_meta: {
                     Baseline: { name: 'Baseline' },
                     Tuned: { name: 'Tuned' },
                 },
-                engineTimeControls: {
+                engine_time_controls: {
                     Baseline: 'depth 10',
                     Tuned: 'depth 10',
                 },
@@ -76,11 +76,11 @@ describe('SummaryStore', () => {
             // Setup both sources
             summaryStore.applyTournamentSummary({
                 engines: ['TournamentEngine'],
-                engineMeta: { TournamentEngine: { name: 'TournamentEngine' } },
+                engine_meta: { TournamentEngine: { name: 'TournamentEngine' } },
             });
             summaryStore.applySpsaSummary({
                 engines: ['SpsaEngine'],
-                engineMeta: { SpsaEngine: { name: 'SpsaEngine' } },
+                engine_meta: { SpsaEngine: { name: 'SpsaEngine' } },
             });
 
             // Before setActiveSource, activeSource is null
@@ -108,7 +108,7 @@ describe('SummaryStore', () => {
         it('returns merged engine meta with runtime options', () => {
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA'],
-                engineMeta: {
+                engine_meta: {
                     EngineA: {
                         name: 'EngineA',
                         engine_path: '/path/to/engine',
@@ -140,7 +140,7 @@ describe('SummaryStore', () => {
         it('returns undefined for unknown engine', () => {
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA'],
-                engineMeta: { EngineA: { name: 'EngineA' } },
+                engine_meta: { EngineA: { name: 'EngineA' } },
             });
 
             expect(summaryStore.getEngineMeta('UnknownEngine')).toBeUndefined();
@@ -151,7 +151,7 @@ describe('SummaryStore', () => {
         it('merges runtime options with existing data', () => {
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA'],
-                engineMeta: {
+                engine_meta: {
                     EngineA: {
                         name: 'EngineA',
                         runtime_usi_options: {
@@ -176,7 +176,7 @@ describe('SummaryStore', () => {
         it('returns false when no changes', () => {
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA'],
-                engineMeta: { EngineA: { name: 'EngineA' } },
+                engine_meta: { EngineA: { name: 'EngineA' } },
             });
 
             summaryStore.applyRuntimeOptions('EngineA', { Threads: { current: 4 } });
@@ -190,15 +190,15 @@ describe('SummaryStore', () => {
         it('returns engine-specific time control', () => {
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA', 'EngineB'],
-                engineMeta: {
+                engine_meta: {
                     EngineA: { name: 'EngineA' },
                     EngineB: { name: 'EngineB' },
                 },
-                engineTimeControls: {
+                engine_time_controls: {
                     EngineA: 'byoyomi 10000',
                     EngineB: 'depth 15',
                 },
-                defaultTimeControl: 'byoyomi 5000',
+                default_time_control: 'byoyomi 5000',
             });
 
             expect(summaryStore.getTimeControl('EngineA')).toBe('byoyomi 10000');
@@ -208,8 +208,8 @@ describe('SummaryStore', () => {
         it('falls back to default time control', () => {
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA'],
-                engineMeta: { EngineA: { name: 'EngineA' } },
-                defaultTimeControl: 'byoyomi 5000',
+                engine_meta: { EngineA: { name: 'EngineA' } },
+                default_time_control: 'byoyomi 5000',
             });
 
             expect(summaryStore.getTimeControl('EngineA')).toBe('byoyomi 5000');
@@ -220,11 +220,11 @@ describe('SummaryStore', () => {
         it('returns instance ID for engine', () => {
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA', 'EngineB'],
-                engineMeta: {
+                engine_meta: {
                     EngineA: { name: 'EngineA' },
                     EngineB: { name: 'EngineB' },
                 },
-                engineInstances: {
+                engine_instances: {
                     EngineA: 'remote-1',
                     EngineB: null,
                 },
@@ -239,7 +239,7 @@ describe('SummaryStore', () => {
         it('returns true when merged_options has data', () => {
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA'],
-                engineMeta: {
+                engine_meta: {
                     EngineA: {
                         name: 'EngineA',
                         merged_options: { Threads: 4 },
@@ -253,7 +253,7 @@ describe('SummaryStore', () => {
         it('returns false when merged_options is empty', () => {
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA'],
-                engineMeta: {
+                engine_meta: {
                     EngineA: {
                         name: 'EngineA',
                         merged_options: {},
@@ -267,7 +267,7 @@ describe('SummaryStore', () => {
         it('returns false for unknown engine', () => {
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA'],
-                engineMeta: { EngineA: { name: 'EngineA' } },
+                engine_meta: { EngineA: { name: 'EngineA' } },
             });
 
             expect(summaryStore.hasValidOptionsData('UnknownEngine')).toBe(false);
@@ -278,7 +278,7 @@ describe('SummaryStore', () => {
         it('returns a complete view model', () => {
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA', 'EngineB'],
-                engineMeta: {
+                engine_meta: {
                     EngineA: {
                         name: 'EngineA',
                         engine_path: '/path/a',
@@ -289,13 +289,13 @@ describe('SummaryStore', () => {
                         engine_path: '/path/b',
                     },
                 },
-                engineTimeControls: {
+                engine_time_controls: {
                     EngineA: 'byoyomi 10000',
                 },
-                engineInstances: {
+                engine_instances: {
                     EngineA: 'remote-1',
                 },
-                defaultTimeControl: 'byoyomi 5000',
+                default_time_control: 'byoyomi 5000',
             });
             summaryStore.setActiveSource('tournament');
 
@@ -330,7 +330,7 @@ describe('SummaryStore', () => {
 
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA'],
-                engineMeta: { EngineA: { name: 'EngineA' } },
+                engine_meta: { EngineA: { name: 'EngineA' } },
             });
 
             expect(events.length).toBe(1);
@@ -341,7 +341,7 @@ describe('SummaryStore', () => {
             // Should not receive events after unsubscribe
             summaryStore.applySpsaSummary({
                 engines: ['EngineB'],
-                engineMeta: { EngineB: { name: 'EngineB' } },
+                engine_meta: { EngineB: { name: 'EngineB' } },
             });
 
             expect(events.length).toBe(1);
@@ -356,7 +356,7 @@ describe('SummaryStore', () => {
 
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA'],
-                engineMeta: { EngineA: { name: 'EngineA' } },
+                engine_meta: { EngineA: { name: 'EngineA' } },
             });
 
             summaryStore.applyRuntimeOptions('EngineA', { Threads: { current: 4 } });
@@ -371,7 +371,7 @@ describe('SummaryStore', () => {
         it('handles enginesMeta array format', () => {
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA'],
-                enginesMeta: [
+                engines_meta: [
                     {
                         name: 'EngineA',
                         engine_path: '/path/to/engine',
@@ -387,13 +387,13 @@ describe('SummaryStore', () => {
         it('merges both engineMeta and enginesMeta formats', () => {
             summaryStore.applyTournamentSummary({
                 engines: ['EngineA', 'EngineB'],
-                engineMeta: {
+                engine_meta: {
                     EngineA: {
                         name: 'EngineA',
                         merged_options: { Hash: 256 },
                     },
                 },
-                enginesMeta: [
+                engines_meta: [
                     {
                         name: 'EngineB',
                         merged_options: { Threads: 8 },

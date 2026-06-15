@@ -110,6 +110,9 @@ class EngineProcessSpawner:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=work_dir,
                 env=env,
+                # Raise the StreamReader buffer well above the 64KB default so long
+                # `info ... pv ...` lines (deep search / multipv) do not overrun readline().
+                limit=8 * 1024 * 1024,
             )
 
             logger.debug(f"Local engine started: pid={process.pid}")

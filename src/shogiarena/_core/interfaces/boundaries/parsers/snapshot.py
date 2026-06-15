@@ -19,8 +19,8 @@ class _DashboardSummaryPayloadModel(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     games: _BoundaryObject | None = None
-    liveView: _BoundaryObject | None = None
-    is_summary_ready: bool | None = Field(default=None, alias="summaryReady")
+    live_view: _BoundaryObject | None = None
+    is_summary_ready: bool | None = None
     timestamp: str | None = None
 
 
@@ -31,7 +31,7 @@ class _DashboardGamesSnapshotPayloadModel(BaseModel):
     revision: int = Field(ge=0)
     base_revision: int | None = Field(default=None, ge=0)
     rows: list[_BoundaryObject] = Field(default_factory=list)
-    snapshotMeta: _BoundaryObject = Field(default_factory=dict)
+    snapshot_meta: _BoundaryObject = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_revision_chain(self) -> _DashboardGamesSnapshotPayloadModel:

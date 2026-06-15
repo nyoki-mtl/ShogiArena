@@ -50,12 +50,12 @@ class SummaryGamesMediator:
         """Store and publish summary updates with coalescing."""
         base_snapshot = copy.deepcopy(self._state.get_summary_snapshot(source) or {})
         snapshot = {**base_snapshot, **payload}
-        snapshot["summarySource"] = source
+        snapshot["summary_source"] = source
 
-        if "is_summary_ready" not in payload and "summaryReady" not in payload:
+        if "is_summary_ready" not in payload:
             snapshot["is_summary_ready"] = True
-        if payload.get("tournament_ended") and "tournamentFinished" not in payload:
-            snapshot.setdefault("tournamentFinished", True)
+        if payload.get("tournament_ended") and "tournament_finished" not in payload:
+            snapshot.setdefault("tournament_finished", True)
 
         sanitised = self._storage.store_summary(snapshot, source=source)
         if sanitised is None:
@@ -89,7 +89,7 @@ class SummaryGamesMediator:
             "revision": next_revision,
             "base_revision": previous_revision,
             "rows": list(schedule_rows),
-            "snapshotMeta": dict(base),
+            "snapshot_meta": dict(base),
         }
         sanitised = self._storage.store_games(event_payload)
         if sanitised is None:

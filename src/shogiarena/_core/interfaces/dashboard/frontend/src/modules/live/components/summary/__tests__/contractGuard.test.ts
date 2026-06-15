@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeSummaryEventPayload } from '../contractGuard';
+import { normalizeSummaryEventPayload } from '../contract-guard';
 
 describe('normalizeSummaryEventPayload', () => {
     it('normalizes liveView snapshot and enforces progress fields', () => {
         const payload = {
-            liveView: {
+            live_view: {
                 mode: 'spsa',
                 progress: {
                     kind: 'updates',
@@ -16,16 +16,16 @@ describe('normalizeSummaryEventPayload', () => {
         };
 
         const normalized = normalizeSummaryEventPayload(payload) as {
-            liveView?: { progress?: { completed?: number | null; total?: number | null; unitLabel?: string } };
+            live_view?: { progress?: { completed?: number | null; total?: number | null; unit_label?: string } };
         };
-        expect(normalized.liveView?.progress?.completed).toBe(10);
-        expect(normalized.liveView?.progress?.total).toBe(20);
-        expect(normalized.liveView?.progress?.unitLabel).toBe('updates');
+        expect(normalized.live_view?.progress?.completed).toBe(10);
+        expect(normalized.live_view?.progress?.total).toBe(20);
+        expect(normalized.live_view?.progress?.unit_label).toBe('updates');
     });
 
     it('throws when progress lacks required fields', () => {
         const payload = {
-            liveView: {
+            live_view: {
                 mode: 'spsa',
                 progress: {
                     kind: 'updates',
@@ -39,7 +39,7 @@ describe('normalizeSummaryEventPayload', () => {
     });
 
     it('throws when liveView is missing', () => {
-        expect(() => normalizeSummaryEventPayload({})).toThrow('summary.liveView is required');
+        expect(() => normalizeSummaryEventPayload({})).toThrow('summary.live_view is required');
     });
 
     it('rejects non-object payloads', () => {

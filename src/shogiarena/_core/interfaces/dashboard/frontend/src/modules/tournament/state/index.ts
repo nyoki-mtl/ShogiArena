@@ -2,7 +2,7 @@ import type { TournamentState } from '@/modules/tournament/types';
 import type { DashboardCore } from '@/types/dashboard';
 import type { TournamentDashboardAPI } from '@/modules/tournament/types';
 import { escapeHtml } from '@/modules/shared/utils/html';
-import { assertDashboardCoreGetApiBase } from '@/modules/shared/utils/dashboardCore';
+import { assertDashboardCoreGetApiBase } from '@/modules/shared/utils/dashboard-core';
 import { abbreviateName, hashString } from '@/modules/shared/utils/format';
 import {
     formatOptionValue,

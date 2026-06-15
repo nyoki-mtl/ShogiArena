@@ -31,7 +31,7 @@ export function startDiagnosticsStopwatch(
         }
         finished = true;
         const latencyMs = Math.max(0, getTimestamp() - startedAt);
-        const payload: LiveDiagnosticsMetricUpdate = { latencyMs };
+        const payload: LiveDiagnosticsMetricUpdate = { latency_ms: latencyMs };
         if (extra) {
             for (const [key, value] of Object.entries(extra)) {
                 if (typeof value === 'number' && Number.isFinite(value)) {

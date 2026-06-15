@@ -22,6 +22,7 @@ from shogiarena._core.contexts.match.application.runner import GameRunner
 from shogiarena._core.contexts.match.domain.adjudication import AdjudicationConfig
 from shogiarena._core.platform.settings import project_dirs
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
+from shogiarena._core.shared.kernel.overlay_options import select_overlay_options
 from shogiarena._core.shared.kernel.paths import resolve_path_like
 
 from .config_engine import EngineConfig
@@ -45,13 +46,9 @@ def _load_overlay_payload(path: Path) -> JsonObject:
 
 
 def _extract_overlay_options(payload: Mapping[str, JsonValue], *, path: Path) -> JsonObject:
-    overlay_opts = payload.get("options") if "options" in payload else payload
-    if not isinstance(overlay_opts, Mapping):
-        raise TypeError(f"overlay options must be a mapping: {path}")
+    overlay_opts = select_overlay_options(payload, source=str(path))
     result: JsonObject = {}
     for key, value in overlay_opts.items():
-        if not isinstance(key, str):
-            raise TypeError(f"overlay option key must be a string: {path}")
         json_value = to_json_value(value)
         if json_value is None and value is not None:
             raise TypeError(f"overlay option contains non-serializable value for key {key}: {path}")

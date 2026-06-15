@@ -166,4 +166,3 @@ run 設定側に `openbench:` を書いた場合は、そちらが優先され�
 
 - [クイックスタート](../getting-started/quick-start.md)
 - [エンジン設定ファイル](engine-configuration.md)
-- [ビルドシステム](build-system.md)

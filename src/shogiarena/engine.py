@@ -31,6 +31,22 @@ from shogiarena._core.platform.engine_runtime.usi_protocol_types import (
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
 
+def _resolve_instance_pool(instance_id: str | None, instance_pool: InstancePool | None) -> InstancePool | None:
+    """Guarantee a local pool for the implicit-local case.
+
+    The runtime factory no longer synthesizes a placeholder instance, so a plain
+    ``create_engine*()`` call (no ``instance_id``, no ``instance_pool``) must be given a
+    real local pool. When ``instance_id`` is set without a pool, ``None`` is returned so
+    the factory fails fast (an explicit instance requires an explicit pool).
+    """
+
+    if instance_pool is not None:
+        return instance_pool
+    if instance_id is not None:
+        return None
+    return InstancePool.ensure_default_local_pool()
+
+
 async def create_engine(
     config_path: str | Path,
     *,
@@ -49,7 +65,7 @@ async def create_engine(
         extra_options=extra_options,
         engine_name=engine_name,
         instance_id=instance_id,
-        instance_pool=instance_pool,
+        instance_pool=_resolve_instance_pool(instance_id, instance_pool),
         cpu_affinity=cpu_affinity,
     )
 
@@ -72,7 +88,7 @@ async def create_engine_from_mapping(
         extra_options=extra_options,
         engine_name=engine_name,
         instance_id=instance_id,
-        instance_pool=instance_pool,
+        instance_pool=_resolve_instance_pool(instance_id, instance_pool),
         cpu_affinity=cpu_affinity,
     )
 

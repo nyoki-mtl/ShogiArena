@@ -3,18 +3,18 @@ import { summaryStore } from '@/store';
 import type { ArenaDashboardWindow } from '@/types/globals';
 
 type RecordsSummary = {
-    totalGames: number;
-    totalPositions: number;
-    totalBytes: number;
-    fileCount: number;
+    total_games: number;
+    total_positions: number;
+    total_bytes: number;
+    file_count: number;
 };
 
 type GenerateSummaryPayload = {
-    recordsSummary?: RecordsSummary;
-    totalGames?: number;
-    totalPositions?: number;
-    totalBytes?: number;
-    fileCount?: number;
+    records_summary?: RecordsSummary;
+    total_games?: number;
+    total_positions?: number;
+    total_bytes?: number;
+    file_count?: number;
 };
 
 const SUMMARY_SELECTORS = {
@@ -62,10 +62,10 @@ function updateSummary(state: RecordsSummary | null): void {
         return;
     }
 
-    totalEl.textContent = formatCount(state.totalGames);
-    positionsEl.textContent = formatCount(state.totalPositions);
-    filesEl.textContent = formatCount(state.fileCount);
-    bytesEl.textContent = formatBytes(state.totalBytes);
+    totalEl.textContent = formatCount(state.total_games);
+    positionsEl.textContent = formatCount(state.total_positions);
+    filesEl.textContent = formatCount(state.file_count);
+    bytesEl.textContent = formatBytes(state.total_bytes);
 }
 
 function coerceFiniteNumber(value: unknown): number | null {
@@ -79,17 +79,22 @@ function coerceRecordsSummary(payload: GenerateSummaryPayload | null): RecordsSu
     if (!payload) {
         return null;
     }
-    if (payload.recordsSummary) {
-        return payload.recordsSummary;
+    if (payload.records_summary) {
+        return payload.records_summary;
     }
-    const totalGames = coerceFiniteNumber(payload.totalGames);
-    const totalPositions = coerceFiniteNumber(payload.totalPositions);
-    const totalBytes = coerceFiniteNumber(payload.totalBytes);
-    const fileCount = coerceFiniteNumber(payload.fileCount);
+    const totalGames = coerceFiniteNumber(payload.total_games);
+    const totalPositions = coerceFiniteNumber(payload.total_positions);
+    const totalBytes = coerceFiniteNumber(payload.total_bytes);
+    const fileCount = coerceFiniteNumber(payload.file_count);
     if (totalGames === null || totalPositions === null || totalBytes === null || fileCount === null) {
         return null;
     }
-    return { totalGames, totalPositions, totalBytes, fileCount };
+    return {
+        total_games: totalGames,
+        total_positions: totalPositions,
+        total_bytes: totalBytes,
+        file_count: fileCount,
+    };
 }
 
 function extractSummaryPayload(value: unknown): GenerateSummaryPayload | null {
@@ -118,6 +123,10 @@ export function installGenerateModule(owner: ArenaDashboardWindow): { setActive?
     const doc = owner.document;
     if (!doc) {
         return {};
+    }
+    if (owner.DashboardGenerate) {
+        // Re-installing would attach a duplicate 'summary:update' listener; reuse the live instance.
+        return owner.DashboardGenerate;
     }
 
     const core = owner.DashboardCore;

@@ -22,17 +22,17 @@ def _apply_optional_sections(
         return
 
     payload["rules"] = optional_sections.rules
-    payload["initialPositions"] = optional_sections.initial_positions
-    payload["repetitionOccurrencesToDraw"] = optional_sections.repetition_occurrences_to_draw
-    payload["flipPolicy"] = payload.get("flipPolicy") or optional_sections.flip_policy
+    payload["initial_positions"] = optional_sections.initial_positions
+    payload["repetition_occurrences_to_draw"] = optional_sections.repetition_occurrences_to_draw
+    payload["flip_policy"] = payload.get("flip_policy") or optional_sections.flip_policy
     if optional_sections.tournament_config is not None:
-        payload["tournamentConfig"] = optional_sections.tournament_config
+        payload["tournament_config"] = optional_sections.tournament_config
     if optional_sections.sprt is not None and "sprt" not in payload:
         payload["sprt"] = optional_sections.sprt
     if optional_sections.generate_config is not None:
-        payload["generateConfig"] = optional_sections.generate_config
+        payload["generate_config"] = optional_sections.generate_config
     if optional_sections.records_output is not None:
-        payload["recordsOutput"] = optional_sections.records_output
+        payload["records_output"] = optional_sections.records_output
 
 
 @dataclass(slots=True)
@@ -61,7 +61,7 @@ class TournamentDashboardSummaryPayloadResponse:
         _apply_optional_sections(payload, self.optional_sections)
         payload["btd"] = self.dashboard_sections.btd
         if self.dashboard_sections.records_summary is not None:
-            payload["recordsSummary"] = self.dashboard_sections.records_summary
+            payload["records_summary"] = self.dashboard_sections.records_summary
         if self.dashboard_sections.pentanomial is not None:
             payload["pentanomial"] = self.dashboard_sections.pentanomial
         if self.dashboard_sections.sprt is not None:
@@ -87,7 +87,7 @@ class TournamentInitialBtdSummaryPayloadResponse:
             "anchor": self.anchor,
             "gamma_elo": self.gamma_elo,
             "gamma_elo_se": self.gamma_elo_se,
-            "enginesMeta": self.engines_meta,
+            "engines_meta": self.engines_meta,
         }
 
 
@@ -137,7 +137,7 @@ class TournamentFinalBtdSummaryPayloadResponse:
             "draw_eq": self.draw_eq,
             "draw_eq_se": self.draw_eq_se,
             "pairs": self.pairs,
-            "enginesMeta": self.engines_meta,
+            "engines_meta": self.engines_meta,
         }
 
 

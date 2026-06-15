@@ -43,13 +43,13 @@ export const TournamentSprtSummarySchema = z
 export const TournamentSummarySchema = z
     .object({
         engines: z.array(z.string().min(1)).default([]),
-        engineStats: z.record(z.string(), EngineStatsSchema).default({}),
-        // Be defensive: malformed enginesMeta entries must not take down the dashboard.
+        engine_stats: z.record(z.string(), EngineStatsSchema).default({}),
+        // Be defensive: malformed engines_meta entries must not take down the dashboard.
         // We normalize and validate entries separately in the tournament normalizer.
-        enginesMeta: z.array(z.unknown()).catch([]),
-        engineTimeControls: z.record(z.string(), z.string()).optional(),
-        defaultTimeControl: z.string().optional().nullable(),
-        ratingInitial: numberWithDefault(1500),
+        engines_meta: z.array(z.unknown()).catch([]),
+        engine_time_controls: z.record(z.string(), z.string()).optional(),
+        default_time_control: z.string().optional().nullable(),
+        rating_initial: numberWithDefault(1500),
         games: z
             .object({
                 completed: numberWithDefault(0),
@@ -57,13 +57,13 @@ export const TournamentSummarySchema = z
                 cancelled: numberWithDefault(0),
             })
             .default({ completed: 0, total: 0, cancelled: 0 }),
-        runDir: z.string().optional().nullable(),
-        tournamentFinished: z.boolean().optional(),
-        sprtConclusion: z.string().optional().nullable(),
+        run_dir: z.string().optional().nullable(),
+        tournament_finished: z.boolean().optional(),
+        sprt_conclusion: z.string().optional().nullable(),
         sprt: TournamentSprtSummarySchema.nullable().optional(),
         btd: TournamentBTDSummarySchema.nullable().optional(),
-        tournamentType: z.string().optional().nullable(),
-        pairResults: z.record(z.string(), z.any()).default({}),
-        engineInstances: z.record(z.string(), z.string().nullable()).default({}),
+        tournament_type: z.string().optional().nullable(),
+        pair_results: z.record(z.string(), z.any()).default({}),
+        engine_instances: z.record(z.string(), z.string().nullable()).default({}),
     })
     .passthrough();

@@ -37,9 +37,6 @@ from shogiarena._core.contexts.game_session.application.orchestration.selection_
 from shogiarena._core.contexts.game_session.application.orchestration.update_batch_execution_service import (
     SpsaUpdateBatchExecutionService,
 )
-from shogiarena._core.contexts.game_session.application.orchestration.update_delta_service import (
-    SpsaUpdateDeltaService,
-)
 from shogiarena._core.contexts.game_session.application.orchestration.update_recording_service import (
     SpsaUpdateRecordingService,
 )
@@ -144,7 +141,6 @@ class SpsaOrchestrator(
             execution_mode_service=self._execution_mode_service,
         )
         self._update_batch_execution_service = SpsaUpdateBatchExecutionService()
-        self._update_delta_service = SpsaUpdateDeltaService()
         self._update_recording_service = SpsaUpdateRecordingService()
         self._game_assignment_service = OrchestratorGameAssignmentService()
         self._game_setup_service: SpsaGameSetupService[Instance] = SpsaGameSetupService(

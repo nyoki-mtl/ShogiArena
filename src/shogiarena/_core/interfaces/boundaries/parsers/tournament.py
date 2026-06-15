@@ -33,7 +33,7 @@ class _TournamentStandingsPayloadModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     standings: list[_TournamentStandingsEntryModel] = Field(default_factory=list)
-    enginesMeta: list[_BoundaryObject] = Field(default_factory=list)
+    engines_meta: list[_BoundaryObject] = Field(default_factory=list)
     updated_at: str
 
 
@@ -49,11 +49,11 @@ class _TournamentProgressPayloadModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     games: _TournamentGamesCounterModel
-    inProgress: int
+    in_progress: int
     pending: int
-    completionRate: float
-    estimatedTimeRemaining: str
-    updatedAt: str
+    completion_rate: float
+    estimated_time_remaining: str
+    updated_at: str
 
 
 class _TournamentGameBaseModel(BaseModel):

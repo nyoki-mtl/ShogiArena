@@ -1,5 +1,5 @@
 import type { LiveViewSnapshot } from '@/modules/live/types';
-import { LIVE_VIEW_UPDATE_EVENT } from '@/modules/shared/stores/liveViewSnapshot';
+import { LIVE_VIEW_UPDATE_EVENT } from '@/modules/shared/stores/live-view-snapshot';
 import { reportDashboardRecoverableFailure } from '@/modules/shared/utils/errors';
 import type { DashboardCore } from '@/types/dashboard';
 

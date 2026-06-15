@@ -1,7 +1,7 @@
 // Live module internal types
 
 import type { WorkerSnapshot } from '@/types/live';
-import type { EngineStatusSnapshot } from '@/modules/live/utils/engineStatus';
+import type { EngineStatusSnapshot } from '@/modules/live/utils/engine-status';
 
 export type LiveCardId = string | number;
 

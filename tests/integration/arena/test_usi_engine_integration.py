@@ -58,14 +58,18 @@ def _write_mock_usi_engine(script_path: Path) -> None:
                     pending_stop_reply = "bestmove 7g7f ponder 3c3d"
                 elif line.startswith("go "):
                     send("info depth 5 nodes 500 time 20 nps 2500 pv 7g7f")
-                    time.sleep(0.05)
                     tokens = line.split()
                     if "ponder" in tokens:
-                        send("bestmove 2g2f ponder 3c3d")
+                        # USI ponder: do NOT emit bestmove until ponderhit/stop.
+                        pending_stop_reply = "bestmove 2g2f ponder 3c3d"
                     else:
+                        time.sleep(0.05)
                         send("bestmove 7g7f ponder 3c3d")
                 elif line.startswith("ponderhit"):
                     send("info string ponderhit")
+                    if pending_stop_reply:
+                        send(pending_stop_reply)
+                        pending_stop_reply = None
                 elif line == "stop":
                     if pending_stop_reply:
                         send(pending_stop_reply)
@@ -137,8 +141,13 @@ async def test_async_usi_engine_state_machine_with_subprocess(tmp_path: Path) ->
         )
         await asyncio.sleep(0.01)
         assert engine.state == UsiEngineState.PONDER
-        ponder_result = await ponder_task
+        # Hardened ponder protocol: a bestmove only arrives after ponderhit/stop, so the
+        # pondering engine is resolved via stop() (an early unsolicited bestmove is rejected).
+        ponder_result = await engine.stop(timeout=1.0)
+        assert ponder_result is not None
         assert ponder_result.bestmove == Move.from_usi("2g2f")
+        final_ponder_result = await ponder_task
+        assert final_ponder_result.bestmove == Move.from_usi("2g2f")
         await _wait_for_state(engine, UsiEngineState.READY)
 
         stop_task = asyncio.create_task(engine.think(sfen="startpos", request=UsiThinkRequest(movetime=200)))

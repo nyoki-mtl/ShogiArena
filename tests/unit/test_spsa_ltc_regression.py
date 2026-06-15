@@ -71,30 +71,41 @@ class DummySpsaOrchestrator(SpsaOrchestrator):
         )
 
 
+# The GSPRT trinomial guard suppresses a decision until every outcome (loss, draw, win) has
+# occurred, so these fixtures feed two one-sided pairs first and then a pair that adds the missing
+# draw/loss (or draw/win) while keeping the mean clearly winning (or losing).
 class DummySprtPassOrchestrator(DummySpsaOrchestrator):
     def __init__(self, tmp_path) -> None:  # type: ignore[override]
         super().__init__(tmp_path)
+        self._ltc_config.total_pairs = 3
         self._ltc_config.pass_criteria = LtcPassCriteria(sprt=SprtConfig(elo0=0.0, elo1=400.0, alpha=0.49, beta=0.49))
+        self._pair_calls = 0
 
     async def _run_game_pair(self, *args, **kwargs):  # type: ignore[override]
-        return (
-            1.0,
-            _make_record(GameResult.BLACK_WIN),
-            _make_record(GameResult.WHITE_WIN),
-        )
+        idx = self._pair_calls
+        self._pair_calls += 1
+        if idx < 2:
+            # tested wins both colors
+            return (1.0, _make_record(GameResult.BLACK_WIN), _make_record(GameResult.WHITE_WIN))
+        # add a draw and a loss so L/D/W are all populated while the mean stays winning -> accept_h1
+        return (-0.5, _make_record(GameResult.DRAW_BY_REPETITION), _make_record(GameResult.BLACK_WIN))
 
 
 class DummySprtFailOrchestrator(DummySpsaOrchestrator):
     def __init__(self, tmp_path) -> None:  # type: ignore[override]
         super().__init__(tmp_path)
+        self._ltc_config.total_pairs = 3
         self._ltc_config.pass_criteria = LtcPassCriteria(sprt=SprtConfig(elo0=0.0, elo1=400.0, alpha=0.49, beta=0.49))
+        self._pair_calls = 0
 
     async def _run_game_pair(self, *args, **kwargs):  # type: ignore[override]
-        return (
-            -1.0,
-            _make_record(GameResult.WHITE_WIN),
-            _make_record(GameResult.BLACK_WIN),
-        )
+        idx = self._pair_calls
+        self._pair_calls += 1
+        if idx < 2:
+            # tested loses both colors
+            return (-1.0, _make_record(GameResult.WHITE_WIN), _make_record(GameResult.BLACK_WIN))
+        # add a draw and a win so L/D/W are all populated while the mean stays losing -> accept_h0
+        return (0.5, _make_record(GameResult.DRAW_BY_REPETITION), _make_record(GameResult.WHITE_WIN))
 
 
 def _make_param(value: float) -> ParamEntry:
@@ -160,7 +171,7 @@ async def test_ltc_regression_uses_sprt_acceptance(tmp_path):
     assert record["is_accepted"] is True
     assert record["sprt"] is not None
     assert record["sprt"]["decision"] == "accept_h1"
-    assert record["pairs_played"] == 1
+    assert record["pairs_played"] == 3
     assert orch._ltc_last_completed == 4
 
 
@@ -182,4 +193,101 @@ async def test_ltc_regression_uses_sprt_rejection(tmp_path):
     assert record["is_accepted"] is False
     assert record["sprt"] is not None
     assert record["sprt"]["decision"] == "accept_h0"
-    assert record["pairs_played"] == 1
+    assert record["pairs_played"] == 3
+
+
+class DummySprtPentanomialPassOrchestrator(DummySpsaOrchestrator):
+    def __init__(self, tmp_path) -> None:  # type: ignore[override]
+        super().__init__(tmp_path)
+        self._ltc_config.total_pairs = 2  # min_pairs floor is 2 for pentanomial
+        self._ltc_config.pass_criteria = LtcPassCriteria(
+            sprt=SprtConfig(model="gsprt-pentanomial-v1", elo0=0.0, elo1=400.0, alpha=0.49, beta=0.49)
+        )
+
+    async def _run_game_pair(self, *args, **kwargs):  # type: ignore[override]
+        # tuned (tested) wins both colours -> pair score 2.0 -> WW bin
+        return (1.0, _make_record(GameResult.BLACK_WIN), _make_record(GameResult.WHITE_WIN))
+
+
+@pytest.mark.asyncio
+async def test_ltc_regression_uses_pentanomial_paired_submission(tmp_path):
+    # Regression: a pentanomial LTC config must use add_paired_observation, not crash on
+    # add_game_result (which is trinomial-only).
+    orch = DummySprtPentanomialPassOrchestrator(tmp_path)
+    record = await run_ltc_regression(
+        orch,
+        update_idx=4,
+        tuned_params=[_make_param(3.0)],
+        baseline_params=[_make_param(1.0)],
+        baseline_update_idx=-1,
+    )
+
+    assert record["status"] == "passed"
+    assert record["sprt"] is not None
+    assert record["sprt"]["decision"] == "accept_h1"
+    assert record["pairs_played"] == 2
+
+
+class DummySprtPentanomialHighMinGamesOrchestrator(DummySpsaOrchestrator):
+    def __init__(self, tmp_path) -> None:  # type: ignore[override]
+        super().__init__(tmp_path)
+        self._ltc_config.total_pairs = 2
+        self._ltc_config.pass_criteria = LtcPassCriteria(
+            sprt=SprtConfig(model="gsprt-pentanomial-v1", elo0=0.0, elo1=400.0, alpha=0.49, beta=0.49, min_games=100)
+        )
+
+    async def _run_game_pair(self, *args, **kwargs):  # type: ignore[override]
+        return (1.0, _make_record(GameResult.BLACK_WIN), _make_record(GameResult.WHITE_WIN))
+
+
+@pytest.mark.asyncio
+async def test_ltc_pentanomial_respects_min_games_floor(tmp_path):
+    # Regression: min_games must scale the pentanomial min_pairs floor (max(2, ceil(min_games/2)))
+    # in LTC too, so 2 pairs cannot decide when min_games=100 demands far more.
+    orch = DummySprtPentanomialHighMinGamesOrchestrator(tmp_path)
+    record = await run_ltc_regression(
+        orch,
+        update_idx=4,
+        tuned_params=[_make_param(3.0)],
+        baseline_params=[_make_param(1.0)],
+        baseline_update_idx=-1,
+    )
+
+    assert record["sprt"]["decision"] == "continue"
+    assert record["status"] != "passed"
+
+
+def test_ltc_stats_winrate_is_draw_aware():
+    # Regression (S8): winrate must be (W + 0.5*D) / N, not the decisive-only W / (W + L) that
+    # ignored draws. With 2 wins / 1 loss / 3 draws the draw-aware winrate is 0.583, not 0.667.
+    from shogiarena._core.contexts.spsa.adapters.runtime.ltc_regression import _LtcStats
+
+    stats = _LtcStats(tuned_wins=2, baseline_wins=1, draws=3, total_games_played=6)
+    winrate, elo, _average = stats.compute_metrics()
+    assert winrate == pytest.approx((2 + 0.5 * 3) / 6)  # 0.583, not the decisive 2/3 = 0.667
+    assert elo is not None and elo > 0.0  # winrate > 0.5 -> positive Elo
+
+
+class DummySprtPassHighMinGamesOrchestrator(DummySprtPassOrchestrator):
+    def __init__(self, tmp_path) -> None:  # type: ignore[override]
+        super().__init__(tmp_path)
+        self._ltc_config.pass_criteria = LtcPassCriteria(
+            sprt=SprtConfig(elo0=0.0, elo1=400.0, alpha=0.49, beta=0.49, min_games=100)
+        )
+
+
+@pytest.mark.asyncio
+async def test_ltc_sprt_decision_masked_below_min_games(tmp_path):
+    # Regression (S9): the SPRT decision must not be acted on/reported before min_games, matching
+    # the tournament runner. W4/D1/L1 = 6 games would accept_h1 but min_games=100 is not met.
+    orch = DummySprtPassHighMinGamesOrchestrator(tmp_path)
+    record = await run_ltc_regression(
+        orch,
+        update_idx=4,
+        tuned_params=[_make_param(3.0)],
+        baseline_params=[_make_param(1.0)],
+        baseline_update_idx=-1,
+    )
+
+    assert record["sprt"]["decision"] == "continue"
+    assert record["status"] != "passed"

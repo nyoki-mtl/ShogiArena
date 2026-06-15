@@ -26,10 +26,16 @@ def update_remote_move_aggregates(
     Returns the updated ``last_ply_seen``.
     """
     if event.get("type") == "move_progress":
-        last_ply_val = coerce_int(event.get("ply")) or 0
-        last_ply_seen = max(last_ply_seen, last_ply_val)
         move = event.get("move")
         if isinstance(move, str) and move.strip():
+            # Only move-carrying events participate in ply de-dup, and last_ply_seen advances
+            # only when a move is actually appended. Otherwise a move-less terminal event at the
+            # same ply would block a later real move at that ply. The remote stream is not
+            # guaranteed to be strictly ordered or de-duplicated, so skip non-advancing plies.
+            last_ply_val = coerce_int(event.get("ply")) or 0
+            if last_ply_val <= last_ply_seen:
+                return last_ply_seen
+            last_ply_seen = last_ply_val
             moves.append(move)
             evals.append(coerce_int(event.get("eval_cp")))
             nodes.append(coerce_int(event.get("nodes")))

@@ -20,19 +20,19 @@ _RuleValue = _RuleScalar | list[_RuleScalar] | dict[str, _RuleScalar]
 class GenerateSummary(TypedDict, total=False):
     """``get_summary`` が返す生成モードサマリ。"""
 
-    totalGames: int
-    totalPositions: int
-    totalBytes: int
-    fileCount: int
-    runDir: str
-    tournamentType: str
+    total_games: int
+    total_positions: int
+    total_bytes: int
+    file_count: int
+    run_dir: str
+    tournament_type: str
     mode: str
-    recordFormat: str | None
-    outputDir: str | None
-    filePrefix: str | None
+    record_format: str | None
+    output_dir: str | None
+    file_prefix: str | None
     rules: JsonObject | None
-    runStatus: str | None
-    isResumable: bool
+    run_status: str | None
+    is_resumable: bool
 
 
 # ---------------------------------------------------------------------------

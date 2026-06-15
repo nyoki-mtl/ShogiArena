@@ -17,7 +17,7 @@ def test_resolve_paths_and_overrides(tmp_path: Path) -> None:
     mapping = {
         "name": "TestEngine",
         "engine_path": "{engine_dir}/Test/bin",
-        "working_dir": "{output_dir}/runs",
+        "working_directory": "{output_dir}/runs",
         "engine_args": ["--threads", "4"],
         "env": {"OMP_NUM_THREADS": 1},
         "options": {"EvalDir": "{output_dir}/evals/book", "Hash": 64},
@@ -121,6 +121,20 @@ def test_from_mapping_rejects_invalid_isready_sync_strategy() -> None:
                 "name": "test",
                 "engine_path": "/tmp/dummy",
                 "isready_sync_strategy": "invalid",
+            }
+        )
+
+
+def test_from_mapping_rejects_legacy_working_dir_key() -> None:
+    # 'working_dir' was renamed to 'working_directory'; the stale key must fail fast rather than be
+    # silently ignored (extra="allow") and fall back to the default working directory.
+    # from_mapping wraps the wire-model ValidationError into a TypeError at the boundary.
+    with pytest.raises(TypeError, match="working_directory"):
+        UsiEngineConfig.from_mapping(
+            {
+                "name": "test",
+                "engine_path": "/tmp/dummy",
+                "working_dir": "/tmp/work",
             }
         )
 

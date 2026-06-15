@@ -107,7 +107,7 @@ class GameRunnerLoopMixin:
             # 2. Check for entering king declaration win
             if board.can_declare_win():
                 # Current player wins by entering king declaration
-                logger.debug(f"Game ended by nyugyoku declaration - {player_name} wins")
+                logger.debug(f"Game ended by entering king declaration - {player_name} wins")
                 return GameResult.BLACK_WIN if is_black_turn else GameResult.WHITE_WIN
 
             # 3. Check for time expiry
@@ -277,9 +277,8 @@ class GameRunnerLoopMixin:
                 )
                 apply_elapsed_ms = (time.perf_counter() - apply_start) * 1000.0
                 if apply_elapsed_ms >= self._apply_move_log_threshold_ms:
-                    print(
-                        f"[apply] game={game_id} ply={ply_count} duration_ms={apply_elapsed_ms:.1f}",
-                        flush=True,
+                    logger.warning(
+                        "Slow move apply: game=%s ply=%s duration_ms=%.1f", game_id, ply_count, apply_elapsed_ms
                     )
                 game_finished_after_move = result_after_apply is not None
                 hit_max_plies = max_plies is not None and ply_count >= max_plies
@@ -304,14 +303,17 @@ class GameRunnerLoopMixin:
                     wall_time_ms=wall_time_sample,
                 )
 
+                # A decisive result for this move (mate, illegal, timeout, repetition win,
+                # resign adjudication) takes precedence over the ply limit, even when the move
+                # also reaches max_plies.
+                if game_finished_after_move:
+                    assert result_after_apply is not None
+                    return result_after_apply
+
                 # Enforce max plies if enabled
                 if hit_max_plies:
                     logger.debug(f"Game ended by ply limit ({max_plies})")
                     return GameResult.DRAW_BY_MAX_PLIES
-
-                if game_finished_after_move:
-                    assert result_after_apply is not None
-                    return result_after_apply
 
                 await self._maybe_start_ponder(
                     engine=current_engine,

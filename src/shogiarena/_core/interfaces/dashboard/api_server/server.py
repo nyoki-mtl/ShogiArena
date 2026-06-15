@@ -41,6 +41,7 @@ from shogiarena._core.interfaces.dashboard.api_server.events_mixin import (
 from shogiarena._core.interfaces.dashboard.api_server.runtime_mixin import (
     ArenaApiServerRuntimeMixin,
 )
+from shogiarena._core.interfaces.dashboard.book.api import BookAPI
 from shogiarena._core.interfaces.dashboard.generate.api import GenerateAPI
 from shogiarena._core.interfaces.dashboard.instances.api import InstancesAPI
 from shogiarena._core.interfaces.dashboard.match.api import MatchAPI
@@ -124,6 +125,7 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
             db_path=self.db_path,
             run_dir=self.run_dir,
         )
+        self.book_api = BookAPI(db_path=self.db_path, game_query=self._game_query)
 
         self.scheduler_api = SchedulerAPI(
             schedule_boundary,
@@ -186,6 +188,7 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
         self.match_api.register_routes(self.app)
         self.sprt_api.register_routes(self.app)
         self.generate_api.register_routes(self.app)
+        self.book_api.register_routes(self.app)
         self.app.router.add_get("/ws", self.ws_hub.handler)
         self.app.router.add_post("/api/diagnostics/snapshots", self.post_diagnostics_snapshot)
 

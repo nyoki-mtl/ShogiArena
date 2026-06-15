@@ -1,15 +1,21 @@
 import { peekWorkerSnapshotRecord } from '@/modules/live/state/updates';
 import type { LiveUpdatesContext } from '@/modules/live/types/updates';
 import { recordLiveDiagnosticsMetric } from '@/modules/live/utils/liveNamespace/metrics';
-import { getResumeCoordinator, type ResumeToken } from '@/modules/shared/services/resumeCoordinator';
+import { getResumeCoordinator, type ResumeToken } from '@/modules/shared/services/resume-coordinator';
 import { reportDashboardRecoverableFailure } from '@/modules/shared/utils/errors';
-import { parseLiveGamesEnvelope, parseLiveSummaryEnvelope } from '@/contracts/parsers/liveWs';
+import { parseLiveGamesEnvelope, parseLiveSummaryEnvelope } from '@/contracts/parsers/live-ws';
+import {
+    buildRequestSnapshotMessage,
+    buildSetWorkerFilterMessage,
+    buildSubscribeMessage,
+    type WsClientMessage,
+} from '@/contracts/ws-client-messages';
 import { bootstrapWorkers } from './bootstrap';
 import type { LiveUpdateHandlers } from './handlers';
 import { normalizeSummaryPayload } from './normalizers';
-import { createSseContractGuard } from './sseContractGuard';
-import { createMergeWorkerBridge } from './workerBridge';
-import type { LiveEnvelope } from './wsTypes';
+import { createSseContractGuard } from './sse-contract-guard';
+import { createMergeWorkerBridge } from './worker-bridge';
+import type { LiveEnvelope } from './ws-types';
 
 type DisconnectReason = 'error' | 'closed' | 'unsupported';
 type ResumeSession = {
@@ -346,7 +352,7 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
         });
     }
 
-    function send(message: Record<string, unknown>): void {
+    function send(message: WsClientMessage): void {
         if (!socket || socket.readyState !== WebSocket.OPEN) return;
         try {
             socket.send(JSON.stringify(message));
@@ -398,7 +404,7 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
         const workersPayload = desiredWorkerFilterKey
             ? desiredWorkerFilterKey.split(',').map((value) => Number(value))
             : [];
-        send({ type: 'set_worker_filter', workers: workersPayload });
+        send(buildSetWorkerFilterMessage(workersPayload));
         lastWorkerFilterKey = desiredWorkerFilterKey;
         awaitingAssignmentSnapshot = true;
         assignmentByWorker.clear();
@@ -416,7 +422,7 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
         if (nextKey === lastSubscriptionKey && analysisEnabled === lastIncludeAnalysis) {
             return;
         }
-        send({ type: 'subscribe', topics: Array.from(topics), includeAnalysis: analysisEnabled });
+        send(buildSubscribeMessage(Array.from(topics), analysisEnabled));
         const newGids = new Set<string>();
         for (const gid of gids) {
             if (!lastSubscribedGids.has(gid)) {
@@ -762,7 +768,12 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
                     onWorkerUpdate: handlers.onWorkerUpdate,
                 }).catch((error) => {
                     notifyDashboardServerStopped();
-                    throw error;
+                    // Rethrowing inside this fire-and-forget .catch only produces an
+                    // unhandledrejection; report it for diagnostics instead.
+                    reportDashboardRecoverableFailure(error, {
+                        scope: 'Live.WsSetup.WorkerBootstrap',
+                        userMessage: 'Failed to bootstrap live worker snapshots.',
+                    });
                 });
             }, WORKER_SNAPSHOT_BOOTSTRAP_GRACE_MS);
         };
@@ -968,7 +979,8 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
                 scope: 'Live.WsSetup.ConnectionError',
                 userMessage: 'ライブ更新ストリーム (WebSocket) への接続が中断されました。',
             });
-            throw error;
+            // Already reported and reconnect scheduled; throwing here is swallowed by the event
+            // dispatcher and only adds noise, so do not rethrow.
         };
 
         socket.onclose = () => {
@@ -983,6 +995,8 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
         close(reason);
         events?.emit?.('live:merge-worker-disabled');
         workerBridge.dispose();
+        // Drop the global diagnostics hook so it does not retain the disposed worker bridge closure.
+        delete (window as unknown as { __liveDiagnostics?: () => void }).__liveDiagnostics;
     }
 
     function isActive(): boolean {
@@ -1093,12 +1107,11 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
             }
             lastSnapshotRequestFromSeqByTopic.set(topic, fromSeq);
         }
-        const message = {
-            type: 'request_snapshot',
+        const message = buildRequestSnapshotMessage(
             topic,
-            fromSeq: typeof fromSeq === 'number' ? fromSeq : undefined,
-            reason_code: reasonCode,
-        };
+            typeof fromSeq === 'number' ? fromSeq : undefined,
+            reasonCode,
+        );
         if (!mergeWorkerManaged) {
             pendingSnapshotTopics.add(topic);
         }

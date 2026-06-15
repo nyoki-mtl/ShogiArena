@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -38,12 +39,12 @@ class ArenaApiServerDiagnosticsMixin:
         except OSError as exc:
             logger.warning("Failed to load live_diagnostics.yml: %s", exc)
             return 0
-        auto_snapshot = guidelines.get("autoSnapshot")
+        auto_snapshot = guidelines.get("auto_snapshot")
         if isinstance(auto_snapshot, Mapping):
             try:
-                return max(0, int(auto_snapshot.get("retentionMinutes", 0)))
+                return max(0, int(auto_snapshot.get("retention_minutes", 0)))
             except (TypeError, ValueError) as exc:
-                logger.debug("Invalid autoSnapshot.retentionMinutes value %r: %s", auto_snapshot, exc)
+                logger.debug("Invalid auto_snapshot.retention_minutes value %r: %s", auto_snapshot, exc)
                 return 0
         return 0
 
@@ -89,7 +90,7 @@ class ArenaApiServerDiagnosticsMixin:
 
         timestamp = datetime.now(tz=UTC)
         metadata = {key: value for key, value in payload.items() if key != "snapshot"}
-        metadata["receivedAt"] = timestamp.isoformat()
+        metadata["received_at"] = timestamp.isoformat()
         record = {"snapshot": snapshot, "metadata": metadata}
 
         diagnostics_root = self._diagnostics_root()
@@ -98,12 +99,16 @@ class ArenaApiServerDiagnosticsMixin:
         target_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{timestamp.strftime('%H%M%S')}_{uuid4().hex[:6]}.json"
         file_path = target_dir / filename
-        file_path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
-
-        self._prune_diagnostics_snapshots(diagnostics_root, self._diagnostics_retention_minutes)
+        # Offload blocking filesystem work (write + retention scan) off the event loop so a
+        # large/aged diagnostics directory cannot stall other dashboard requests.
+        payload_text = json.dumps(record, indent=2, ensure_ascii=False)
+        await asyncio.to_thread(file_path.write_text, payload_text, encoding="utf-8")
+        await asyncio.to_thread(
+            self._prune_diagnostics_snapshots, diagnostics_root, self._diagnostics_retention_minutes
+        )
 
         relative_path = file_path.relative_to(self.run_dir)
-        response_payload = {"stored": str(relative_path), "receivedAt": metadata["receivedAt"]}
+        response_payload = {"stored": str(relative_path), "received_at": metadata["received_at"]}
         return web.json_response(response_payload, status=201)
 
     def _diagnostics_root(self) -> Path:

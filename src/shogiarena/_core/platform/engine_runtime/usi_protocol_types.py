@@ -210,8 +210,12 @@ class UsiThinkPV:
                         current_eval = UsiEvalValue.mated_in_ply(0)
                     else:
                         ply = int(mate_val)
+                        # Inspect the textual sign rather than the int so that "mate -0" (which
+                        # YaneuraOu emits for "being mated, distance unknown") is treated as a
+                        # mated score; int("-0") == 0 would otherwise flip it to a winning mate.
+                        is_mated = ply < 0 or mate_val.lstrip().startswith("-")
                         current_eval = (
-                            UsiEvalValue.mate_in_ply(ply) if ply >= 0 else UsiEvalValue.mated_in_ply(abs(ply))
+                            UsiEvalValue.mated_in_ply(abs(ply)) if is_mated else UsiEvalValue.mate_in_ply(ply)
                         )
             elif token == "hashfull" and i < len(args):
                 pv_info.hashfull = int(args[i])

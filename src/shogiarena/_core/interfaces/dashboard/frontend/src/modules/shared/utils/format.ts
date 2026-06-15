@@ -50,7 +50,7 @@ export function hashString(str: string): number {
     for (let i = 0; i < str.length; i += 1) {
         const char = str.charCodeAt(i);
         hash = (hash << 5) - hash + char;
-        hash |= 0; // eslint-disable-line no-bitwise
+        hash |= 0; // force 32-bit integer wraparound
     }
     return Math.abs(hash);
 }

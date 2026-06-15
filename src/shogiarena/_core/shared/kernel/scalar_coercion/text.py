@@ -6,7 +6,12 @@ from pydantic import BeforeValidator
 
 
 def coerce_str(value: object | None) -> str | None:
-    """Convert value to trimmed ``str``; empty string becomes ``None``."""
+    """Strict: return the trimmed value only when it *is* a ``str``; else ``None``.
+
+    Non-string inputs (``int``, ``Path``, ``bool``, ...) become ``None``. Use this when a
+    field must already be a string. This is distinct from :func:`coerce_optional_text`,
+    which stringifies any truthy value — the two are intentionally not interchangeable.
+    """
 
     match value:
         case str() as svalue:
@@ -16,7 +21,11 @@ def coerce_str(value: object | None) -> str | None:
 
 
 def coerce_optional_text(value: object | None) -> str | None:
-    """Convert truthy scalar-ish value to trimmed ``str``; empty/falsey becomes ``None``."""
+    """Lenient: stringify any truthy value to trimmed ``str``; empty/falsey becomes ``None``.
+
+    Unlike :func:`coerce_str`, this accepts non-string scalars (e.g. ``123`` -> ``"123"``)
+    and is the right choice at lenient I/O boundaries (e.g. the ``OptionalText`` Pydantic type).
+    """
 
     normalized = str(value or "").strip()
     return normalized or None

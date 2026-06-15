@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { __testShouldIgnoreIncomingSnapshot } from '../liveMergeWorker';
+import { __testShouldIgnoreIncomingSnapshot } from '../live-merge-worker';
 import type { WorkerSnapshotRecord } from '@/modules/live/types/updates';
 
 const snap = (partial: Partial<WorkerSnapshotRecord>): WorkerSnapshotRecord => ({

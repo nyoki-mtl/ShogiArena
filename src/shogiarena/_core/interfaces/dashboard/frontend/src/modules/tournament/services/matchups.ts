@@ -181,9 +181,7 @@ export function installTournamentMatchups(owner: TournamentWindow = defaultWindo
 
     function normalCdf(z: number): number {
         if (Number.isNaN(z)) return 0.5;
-        if (typeof Math.erf === 'function') {
-            return 0.5 * (1 + Math.erf(z / Math.SQRT2));
-        }
+        // Math.erf is non-standard and absent in browsers; use the Abramowitz–Stegun approximation.
         const sign = z >= 0 ? 1 : -1;
         const x = Math.abs(z) / Math.SQRT2;
         const a1 = 0.254_829_592;

@@ -1,24 +1,8 @@
-# Python Library Usage
+# Python ライブラリ
 
-ShogiArena は CLI だけでなく Python ライブラリとしても使えます。
-ただし、正式な公開 API は一部のモジュールに限定しています。
+ShogiArena は CLI だけでなく Python からも利用できます。正式な公開入口は `shogiarena.engine` と `shogiarena.tournament` が中心です。
 
-## 正式な公開 import
-
-利用者向けとしてサポートする import は次です。
-
-- `shogiarena.engine`
-- `shogiarena.tournament`
-- `shogiarena.cli`
-- `shogiarena.composition`
-
-`shogiarena._core` は実装本体ですが、内部用です。import できても公開 API ではありません。
-
-## エンジンを使う
-
-現在の公開 API は `AsyncUsiEngine` による非同期エンジンアクセスを提供しています。
-
-### 設定ファイルから起動
+## エンジンを起動する
 
 ```python
 import asyncio
@@ -38,7 +22,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-### マッピングから起動
+mapping から直接起動することもできます。
 
 ```python
 import asyncio
@@ -48,9 +32,9 @@ from shogiarena.engine import UsiThinkRequest, create_engine_from_mapping
 
 async def main() -> None:
     config = {
+        "name": "EngineA",
         "engine_path": "/path/to/engine",
-        "name": "my-engine",
-        "options": {"Threads": 1},
+        "options": {"Threads": 2, "USI_Hash": 256},
     }
     async with await create_engine_from_mapping(config) as engine:
         result = await engine.think(
@@ -63,39 +47,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-### 複数エンジンを並行に扱う
-
-```python
-import asyncio
-
-from shogiarena.engine import UsiThinkRequest, create_engine
-
-
-async def analyze(path: str) -> object:
-    async with await create_engine(path) as engine:
-        return await engine.think(
-            sfen="startpos",
-            request=UsiThinkRequest(movetime=1_000),
-        )
-
-
-async def main() -> None:
-    results = await asyncio.gather(
-        analyze("engine1.yaml"),
-        analyze("engine2.yaml"),
-    )
-    for result in results:
-        print(result.bestmove)
-
-
-asyncio.run(main())
-```
-
 ## トーナメントを実行する
-
-### 最も簡単な入口
-
-`run_tournament()` が最短の public helper です。設定ファイルパスでも mapping でも受け取れます。
 
 ```python
 import asyncio
@@ -113,7 +65,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-### mapping から実行
+mapping も受け取れます。
 
 ```python
 import asyncio
@@ -124,24 +76,24 @@ from shogiarena.tournament import run_tournament
 async def main() -> None:
     await run_tournament(
         {
-            "experiment_name": "example",
+            "experiment_name": "python-example",
             "engines": [
-                {"engine_path": "engine1.yaml"},
-                {"engine_path": "engine2.yaml"},
+                {"engine_path": "engine_a.yaml"},
+                {"engine_path": "engine_b.yaml"},
             ],
-            "tournament": {"games_per_pair": 10, "num_parallel": 2},
+            "tournament": {"scheduler": "round_robin", "games_per_pair": 10},
             "rules": {"time_control": {"time_ms": 10_000, "increment_ms": 100}},
         },
-        run_dir="runs/example",
+        run_dir="runs/python-example",
     )
 
 
 asyncio.run(main())
 ```
 
-### advanced API
+## Runner を組み立てる
 
-より細かく制御したい場合は、`TournamentRunner` を組み立てます。
+保存先や dashboard 有効化を細かく制御したい場合は、設定と storage を明示して runner を作れます。
 
 ```python
 import asyncio
@@ -167,27 +119,8 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`TournamentRunner` は通常の tournament だけでなく、`sprt` セクションを含む設定も扱います。つまり、公開 Python API では `SprtRunner` を別名で公開していません。
+## 公開対象外
 
-## composition root を使う
+`shogiarena._core` 配下は内部実装です。開発者向けの説明で登場することはありますが、アプリケーションコードから直接 import しないでください。
 
-依存注入や runtime の差し替えが必要なら `shogiarena.composition` を使います。
-
-```python
-from shogiarena.composition import build_default_root
-
-
-root = build_default_root()
-engine_runtime = root.engine_runtime
-tournament_runtime = root.tournament_runtime
-```
-
-これは advanced API です。普通の利用では `shogiarena.engine` / `shogiarena.tournament` の helper を優先してください。
-
-## いま公開していないもの
-
-- `SpsaRunner` の top-level public export
-- `shogiarena._core.*` の deep import に対する互換保証
-
-SPRT は `TournamentRunner` に `sprt` セクションを含む設定を渡すことで利用できます（専用の `SprtRunner` クラスはありません）。
-SPSA は現状 CLI 中心です。Python 向けの正式公開面は今後整理する想定です。
+SPSA は現時点では CLI 中心です。Python からの正式な公開 API は固定していません。

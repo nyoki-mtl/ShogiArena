@@ -29,7 +29,7 @@ class GamesSnapshotPayload(TypedDict):
     revision: int
     base_revision: int | None
     rows: list[JsonObject]
-    snapshotMeta: JsonObject
+    snapshot_meta: JsonObject
 
 
 @dataclass(frozen=True)

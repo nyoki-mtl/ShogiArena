@@ -1,5 +1,5 @@
 import { isAbortError } from './errors';
-import { BOOTSTRAP_RETRY_DELAY_MS, INITIAL_BOOTSTRAP_UPDATES_LIMIT, MAX_BOOTSTRAP_ATTEMPTS } from './api.constants';
+import { BOOTSTRAP_RETRY_DELAY_MS, INITIAL_BOOTSTRAP_UPDATES_LIMIT, MAX_BOOTSTRAP_ATTEMPTS } from './api-constants';
 
 import type { SpsaFetchers } from './fetchers';
 import type { DeferredHydrator } from '@/modules/shared/utils/hydration';

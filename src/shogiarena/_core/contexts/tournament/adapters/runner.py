@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 from shutil import rmtree
 from typing import Any
@@ -57,7 +58,12 @@ from shogiarena._core.contexts.game_session.application.session.run_metadata_per
     RunMetadataPersistenceService,
 )
 from shogiarena._core.contexts.game_session.application.session.run_service import TournamentSessionRunService
-from shogiarena._core.contexts.game_session.application.sprt_service import Sprt
+from shogiarena._core.contexts.game_session.application.sprt_service import (
+    PENTANOMIAL_MIN_PAIRS_FOR_LLR,
+    SPRT_MODEL_GSPRT_PENTANOMIAL,
+    Sprt,
+    validate_pentanomial_preconditions,
+)
 from shogiarena._core.contexts.game_session.application.summary.results_service import TournamentSummaryResultsService
 from shogiarena._core.contexts.game_session.application.summary.runtime_context import (
     SummaryRuntimeActionRefs,
@@ -587,18 +593,41 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
 
         self._ensure_db_service()
 
-        self._state.rating_service = EloRatingService(
+        rating_service = EloRatingService(
             initial_rating=self.config.rating.initial, k_factor=self.config.rating.k_factor
         )
+        # Rebuild ratings from the games already in the database so a resumed run reflects every
+        # completed game, not just those played after the restart (no-op on a fresh start).
+        db_service = self._state.db_service
+        if db_service is not None:
+            game_type = "generate" if self._is_generate_run() else "arena"
+            restored = rating_service.restore_from_games(db_service.get_games_with_players(game_type=game_type))
+            if restored:
+                logger.debug("Restored ratings from %d completed games", restored)
+        self._state.rating_service = rating_service
         self._record_writer = self._create_record_writer()
         self._backfill_records_output()
         sprt_conf = self.config.sprt
         if sprt_conf is not None:
+            model = str(sprt_conf.model)
+            min_pairs = PENTANOMIAL_MIN_PAIRS_FOR_LLR
+            if model == SPRT_MODEL_GSPRT_PENTANOMIAL:
+                # Fail-fast before any games run if the schedule cannot produce reversed-colour
+                # pairs of a single 1v1 matchup.
+                validate_pentanomial_preconditions(
+                    flip_policy=self.config.rules.initial_positions.flip_policy,
+                    num_engines=len(self.config.engines),
+                    games_per_pair=int(self.config.tournament.games_per_pair),
+                )
+                # Scale the pentanomial decision floor to min_games (2 games per pair).
+                min_pairs = max(PENTANOMIAL_MIN_PAIRS_FOR_LLR, math.ceil(sprt_conf.min_games / 2))
             self._state.sprt = Sprt(
                 elo0=float(sprt_conf.elo0),
                 elo1=float(sprt_conf.elo1),
                 alpha=float(sprt_conf.alpha),
                 beta=float(sprt_conf.beta),
+                model=model,
+                min_pairs=min_pairs,
             )
             self._state.sprt_min_games = sprt_conf.min_games
             if len(self.config.engines) == 2:
@@ -628,7 +657,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
         db = self._state.db_service
         if db is None:
             db = self.storage.db_service()
-            db.ensure_schema_compatibility()
+            db.ensure_schema()
             self._state.db_service = db
         return db
 
@@ -687,6 +716,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             existing_metadata=self._state.engine_metadata_cache,
             existing_runtime_sig=self._state.engine_metadata_runtime_sig,
             runtime_options=runtime_options,
+            runtime_info=runtime_info,
             collect_metadata_fn=lambda: self._collect_engine_metadata(runtime_options, runtime_info),
         )
         self._state.engine_metadata_cache = metadata

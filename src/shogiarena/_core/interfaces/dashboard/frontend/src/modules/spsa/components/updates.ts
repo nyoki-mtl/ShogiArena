@@ -8,7 +8,7 @@ import type {
     NormalizedSpsaParameter,
 } from '@/modules/spsa/types';
 import { INITIAL_UPDATE_IDX } from '@/modules/spsa/types';
-import { gameResultAbbreviation, gameResultDetailKey, gameResultLabel } from '@/modules/shared/utils/gameResult';
+import { gameResultAbbreviation, gameResultDetailKey, gameResultLabel } from '@/modules/shared/utils/game-result';
 import { escapeHtml } from '@/modules/shared/utils/html';
 import type { GameOutcomeInfo, GameOutcomeKind } from '@/modules/games/types';
 import { evaluateOutcome, RESULT_LABELS } from '@/modules/games/utils';

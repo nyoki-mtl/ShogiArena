@@ -1,17 +1,10 @@
-# 初めてのトーナメント
+# 最初のトーナメント
 
-このチュートリアルでは、同じエンジン設定を 2 つのバリエーションとして使い、最小構成の round-robin を動かします。
+このチュートリアルでは、同じエンジンを別オプションで 2 つ登録し、強さ違いの round-robin を動かします。
 
-## このチュートリアルで学ぶこと
+## エンジン設定
 
-- エンジン YAML の書き方
-- tournament YAML の最小構成
-- `--dry-run` での検証
-- ダッシュボードと run ディレクトリの見方
-
-## ステップ 1: エンジン YAML を作る
-
-`configs/engine/yaneuraou.yaml`:
+`engines/yaneuraou.yaml`:
 
 ```yaml
 name: "YaneuraOu"
@@ -21,21 +14,21 @@ options:
   USI_Hash: 256
 ```
 
-## ステップ 2: tournament YAML を作る
+## トーナメント設定
 
-`configs/arena/round_robin.yaml`:
+`first_tournament.yaml`:
 
 ```yaml
 experiment_name: "first_tournament"
 
 engines:
-  - engine_path: "configs/engine/yaneuraou.yaml"
+  - engine_path: "engines/yaneuraou.yaml"
     name: "YaneuraOu_Strong"
     options:
       Threads: 4
       USI_Hash: 1024
-  - engine_path: "configs/engine/yaneuraou.yaml"
-    name: "YaneuraOu_Weak"
+  - engine_path: "engines/yaneuraou.yaml"
+    name: "YaneuraOu_Light"
     options:
       Threads: 1
       USI_Hash: 128
@@ -49,45 +42,40 @@ rules:
   time_control:
     time_ms: 10000
     increment_ms: 1000
+  adjudication:
+    enable_max_plies: true
+    max_plies: 320
 
 dashboard:
   enabled: true
   api_port: 8080
 ```
 
-同じ `engine_path` を参照しつつ、トーナメント側で `options` を上書きして強さ違いのバリエーションを作っています。
+トーナメント側の `options` は、参照先のエンジン YAML にマージされます。ここでは同じ実行ファイルを使い、スレッド数とハッシュだけ変えています。
 
-## ステップ 3: まずは検証する
-
-```bash
-shogiarena run tournament configs/arena/round_robin.yaml --dry-run
-```
-
-## ステップ 4: 実行する
+## 実行
 
 ```bash
-shogiarena run tournament configs/arena/round_robin.yaml
+shogiarena run tournament first_tournament.yaml --dry-run
+shogiarena run tournament first_tournament.yaml
 ```
 
-結果は通常 `output_dir/runs/first_tournament-<hash8>/YYYYMMDDHHMMSS/` に保存されます。
-
-## ステップ 5: ダッシュボードで確認する
-
-実行中は `http://localhost:8080` を開きます。
-
-- `Tournament`: 勝敗、Elo、対戦表
-- `Games`: 個別の棋譜と結果
-- `Engines`: 実際に使われたエンジン設定
-- `Live View`: 実行中の対局盤面
-
-終了後に見直す場合:
+実行中は `http://localhost:8080` を開きます。終了後は run ディレクトリを指定して再表示できます。
 
 ```bash
-shogiarena dashboard serve --config configs/arena/round_robin.yaml
+shogiarena dashboard serve --run-dir /path/to/run
 ```
+
+## 確認するポイント
+
+- `Tournament`: 順位表、勝敗、Elo 推定
+- `Games`: 個別対局、棋譜、結果フィルタ
+- `Engines`: 実際に使われたオプション
+- `Live View`: 進行中対局の盤面と時計
+- `Rules`: 持ち時間や adjudication 設定
 
 ## 次のステップ
 
-- [トーナメントの実行](../user-guide/tournaments.md)
-- [エンジン設定ファイル](../user-guide/engine-configuration.md)
-- [ダッシュボードガイド](../user-guide/dashboard.md)
+- [トーナメント](../user-guide/tournaments.md)
+- [エンジン設定](../user-guide/engine-configuration.md)
+- [ダッシュボード](../user-guide/dashboard.md)

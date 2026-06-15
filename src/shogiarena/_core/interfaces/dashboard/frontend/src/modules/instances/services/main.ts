@@ -8,6 +8,7 @@ import { apiBase, requestJson } from '@/modules/instances/services/api';
 import { type FormHandlers, initializeForms } from '@/modules/instances/components/forms';
 import {
     applyActiveHighlights,
+    clearHighlightTimers,
     processHighlightQueue,
     queueInstanceHighlights,
 } from '@/modules/instances/utils/highlights';
@@ -123,10 +124,20 @@ function createInstancesModule(owner: InstancesWindow): DashboardInstancesApi {
             return false;
         }
         try {
-            sparklineWorker = new Worker(new URL('../workers/sparklineWorker.ts', import.meta.url), { type: 'module' });
+            sparklineWorker = new Worker(new URL('../workers/sparkline-worker.ts', import.meta.url), {
+                type: 'module',
+            });
             sparklineWorker.onerror = (event) => {
                 console.warn('[Instances] Sparkline worker failed', event);
                 sparklineWorkerFailed = true;
+                // Tear down the broken worker so we stop posting to a dead instance and release it
+                // instead of looping ensureSparklineWorker() into a truthy-but-broken reference.
+                try {
+                    sparklineWorker?.terminate();
+                } catch {
+                    // ignore terminate failures during teardown
+                }
+                sparklineWorker = null;
             };
             sparklineWorker.onmessageerror = (event) => {
                 console.warn('[Instances] Sparkline worker message error', event);
@@ -516,6 +527,7 @@ function createInstancesModule(owner: InstancesWindow): DashboardInstancesApi {
         observedCards.clear();
         sparklineCanvasesByInstance.clear();
         sparklineCanvasMeta.clear();
+        clearHighlightTimers(state);
         if (sparklineWorker) {
             sparklineWorker.terminate();
             sparklineWorker = null;

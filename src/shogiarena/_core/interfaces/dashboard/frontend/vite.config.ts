@@ -12,11 +12,44 @@ export default defineConfig(({ command }) => {
         build: {
             outDir: path.resolve(__dirname, '../static/dist'),
             emptyOutDir: true,
-            sourcemap: true,
+            // 'hidden' still emits maps for error reporting but omits the sourceMappingURL comment,
+            // so the production bundle does not advertise/expose source to casual viewers.
+            sourcemap: command === 'build' ? 'hidden' : true,
             manifest: true,
             rollupOptions: {
                 input: {
                     dashboard: path.resolve(__dirname, 'src/main.ts'),
+                },
+                output: {
+                    // Split the large feature areas (and vendor code) into separate chunks so the
+                    // single dashboard bundle no longer trips the 500 kB warning and the browser can
+                    // download/cache them in parallel (each chunk is now well under 300 kB).
+                    //
+                    // Rollup still prints a benign "Circular chunk" advisory: `live` eagerly imports a
+                    // constant from `spsa` and a normalizer from `tournament`, while those modules
+                    // re-import live-side types — splitting the trio surfaces this at chunk granularity.
+                    // There is NO real ES-module import cycle (`make ts-import-cycle-check` => 0), the
+                    // emitted chunks are correctly ordered, and runtime is unaffected. Clearing the size
+                    // warning (a real perf concern) is preferred over hiding the advisory by keeping one
+                    // ~640 kB bundle. Tab-level dynamic import is tracked as a follow-up.
+                    manualChunks(id: string) {
+                        if (id.includes('node_modules')) {
+                            return 'vendor';
+                        }
+                        if (id.includes('/modules/live/utils/liveNamespace/')) {
+                            return 'diagnostics';
+                        }
+                        if (id.includes('/modules/spsa/')) {
+                            return 'spsa';
+                        }
+                        if (id.includes('/modules/tournament/')) {
+                            return 'tournament';
+                        }
+                        if (id.includes('/modules/live/')) {
+                            return 'live';
+                        }
+                        return undefined;
+                    },
                 },
             },
         },

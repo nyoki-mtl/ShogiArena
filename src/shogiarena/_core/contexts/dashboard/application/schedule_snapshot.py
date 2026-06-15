@@ -15,7 +15,7 @@ def build_schedule_snapshot_from_games_snapshot(snapshot: Mapping[str, object]) 
         return None
     revision = snapshot.get("revision")
     rows = snapshot.get("rows")
-    snapshot_meta = snapshot.get("snapshotMeta")
+    snapshot_meta = snapshot.get("snapshot_meta")
 
     if not isinstance(revision, int) or revision < 0:
         return None

@@ -1,6 +1,6 @@
 import type { LiveUpdatesContext, LiveUpdatesWindow } from '@/modules/live/types/updates';
 import { ensureLiveNamespace, requireLiveApi } from '@/modules/live/utils/liveNamespace';
-import { assertDashboardCoreGetApiBase } from '@/modules/shared/utils/dashboardCore';
+import { assertDashboardCoreGetApiBase } from '@/modules/shared/utils/dashboard-core';
 
 export function createLiveUpdatesContext(owner: LiveUpdatesWindow): LiveUpdatesContext {
     const core = owner.DashboardCore;

@@ -14,6 +14,7 @@ from shogiarena._core.platform.settings.platform_paths import (
 )
 from shogiarena._core.shared.kernel.json_coercion import to_json_object
 from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.overlay_options import select_overlay_options
 from shogiarena._core.shared.kernel.serialization import json_serialize
 from shogiarena._core.shared.kernel.settings_loading.settings_models import (
     ArenaSettings,
@@ -201,9 +202,7 @@ def validate_overlays(settings: ArenaSettings) -> None:
         raw = _load_yaml(path)
         if not isinstance(raw, Mapping):
             raise TypeError(f"overlay YAML must be a mapping: {path}")
-        overlay_opts = raw.get("options") if "options" in raw else raw
-        if not isinstance(overlay_opts, Mapping):
-            raise TypeError(f"overlay options must be a mapping: {path}")
+        select_overlay_options(raw, source=str(path))
 
 
 __all__ = ["load_settings", "validate_overlays", "write_settings_file"]

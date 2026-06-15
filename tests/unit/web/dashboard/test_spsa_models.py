@@ -142,9 +142,7 @@ class TestSpsaMetaData:
             "engine_instances": {"engine1": "inst_a", "engine2": None},
             "engine_stats": {"engine1": {"wins": 10, "losses": 5, "draws": 3, "games": 18}},
             "engines_meta": [{"name": "engine1", "version": "1.0"}],
-            "mobility": 0.5,
             "scale": 1.0,
-            "a0": 100.0,
             "A": 50.0,
             "alpha": 0.602,
             "gamma": 0.101,
@@ -163,7 +161,6 @@ class TestSpsaMetaData:
         assert isinstance(m.engine_stats["engine1"], EngineStatEntry)
         assert m.engine_stats["engine1"].wins == 10
         assert m.spsa_A == 50.0
-        assert m.mobility == 0.5
 
     def test_empty_dict(self) -> None:
         m = SpsaMetaData.model_validate({})
@@ -173,31 +170,28 @@ class TestSpsaMetaData:
         assert m.engines == []
         assert m.engine_stats == {}
 
-    # -- camelCase normalization --
+    # -- engines_meta canonical snake_case key (legacy camelCase alias removed) --
 
-    def test_camel_case_normalization(self) -> None:
+    def test_snake_engines_meta(self) -> None:
+        """canonical な snake_case `engines_meta` を読み込む。"""
+        m = SpsaMetaData.model_validate({"engines_meta": [{"name": "e1"}]})
+        assert m.engines_meta == [{"name": "e1"}]
+
+    def test_removed_camel_aliases_are_ignored(self) -> None:
+        """旧 camelCase キーは正規化されない（producer/reader は snake のみ）。"""
         data = {
+            "enginesMeta": [{"name": "e1"}],
             "engineTimeControls": {"e1": "500+5"},
             "defaultTimeControl": "500+5",
             "engineInstances": {"e1": "inst"},
             "engineStats": {"e1": {"wins": 1}},
-            "enginesMeta": [{"name": "e1"}],
         }
         m = SpsaMetaData.model_validate(data)
-        assert m.engine_time_controls == {"e1": "500+5"}
-        assert m.default_time_control == "500+5"
-        assert m.engine_instances == {"e1": "inst"}
-        assert m.engine_stats["e1"].wins == 1
-        assert m.engines_meta == [{"name": "e1"}]
-
-    def test_snake_case_takes_precedence(self) -> None:
-        """snake_case が既にある場合は camelCase で上書きしない。"""
-        data = {
-            "engine_time_controls": {"e1": "1000+10"},
-            "engineTimeControls": {"e1": "500+5"},
-        }
-        m = SpsaMetaData.model_validate(data)
-        assert m.engine_time_controls == {"e1": "1000+10"}
+        assert m.engines_meta == []
+        assert m.engine_time_controls == {}
+        assert m.default_time_control is None
+        assert m.engine_instances == {}
+        assert m.engine_stats == {}
 
     # -- session_uuid coercion --
 
@@ -301,10 +295,10 @@ class TestSpsaMetaData:
         assert m.effective_num_updates is None
 
     def test_resolve_spsa_config_returns_dict(self) -> None:
-        m = SpsaMetaData.model_validate({"mobility": 0.5, "scale": 1.0, "A": 50.0})
+        m = SpsaMetaData.model_validate({"scale": 0.5, "A": 50.0})
         config = m.resolve_spsa_config()
         assert config is not None
-        assert config["mobility"] == 0.5
+        assert config["scale"] == 0.5
         assert config["A"] == 50.0
 
     def test_resolve_spsa_config_none_when_empty(self) -> None:
@@ -312,7 +306,7 @@ class TestSpsaMetaData:
         assert m.resolve_spsa_config() is None
 
     def test_resolve_spsa_config_includes_ltc(self) -> None:
-        m = SpsaMetaData.model_validate({"mobility": 0.5, "ltc_regression": {"enabled": True, "pairs": 50}})
+        m = SpsaMetaData.model_validate({"scale": 0.5, "ltc_regression": {"enabled": True, "pairs": 50}})
         config = m.resolve_spsa_config()
         assert config is not None
         assert "ltc_regression" in config

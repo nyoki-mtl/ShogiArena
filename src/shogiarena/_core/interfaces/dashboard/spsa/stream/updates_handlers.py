@@ -177,7 +177,7 @@ async def sse_updates(handler, request: web.Request) -> web.StreamResponse:
         if should_send_initial:
             updates = handler._update_query_service.load_index_updates()
             if updates:
-                limited = updates[-20:] if updates else []
+                limited = updates[-20:]
                 for entry in updates:
                     idx_value = entry.get("update_idx")
                     if isinstance(idx_value, int):

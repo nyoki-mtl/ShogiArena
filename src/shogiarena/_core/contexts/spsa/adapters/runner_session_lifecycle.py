@@ -69,9 +69,7 @@ def build_spsa_algorithm_config(config: SpsaRunConfig) -> SpsaAlgorithmConfig:
     return {
         "num_updates": config.num_updates,
         "pairs_per_update": config.pairs_per_update,
-        "mobility": config.mobility,
         "scale": config.scale,
-        "a0": config.a0,
         "A": float(config.algorithm_a) if config.algorithm_a is not None else None,
         "alpha": config.alpha,
         "gamma": config.gamma,
@@ -363,10 +361,10 @@ async def build_spsa_dashboard_summary_payload(
     if not isinstance(raw_summary_payload, dict):
         return None
     summary_payload = {str(key): json_serialize(value) for key, value in raw_summary_payload.items()}
-    summary_payload.setdefault("tournamentType", "spsa")
+    summary_payload.setdefault("tournament_type", "spsa")
     summary_payload.setdefault("mode", "spsa")
     summary_payload["timestamp"] = datetime.now(tz=UTC).isoformat()
-    summary_payload["enginesMeta"] = engine_metadata
+    summary_payload["engines_meta"] = engine_metadata
     return summary_payload
 
 

@@ -166,12 +166,12 @@ class SpsaAPI:
 
         events: list[JsonObject] = []
         for event_data in event_entries[-limit:]:
-            event_base = {k: v for k, v in event_data.items() if k != "payload"}
-            payload = dict(event_base)
-            event_base["type"] = event_data.get("event", "event")
-            event_base["timestamp"] = event_base.get("ts", coerce_int(time.time() * 1000.0) or 0)
-            event_base["payload"] = payload
-            events.append(event_base)
+            inner_payload = event_data.get("payload", {})
+            event_out = {k: v for k, v in event_data.items() if k != "payload"}
+            event_out["type"] = event_data.get("event", "event")
+            event_out["timestamp"] = event_data.get("ts", coerce_int(time.time() * 1000.0) or 0)
+            event_out["payload"] = inner_payload
+            events.append(event_out)
 
         return web.json_response({"events": events})
 
@@ -279,7 +279,13 @@ class SpsaAPI:
         limit = parsed_query.limit
         search_query = parsed_query.q.strip().lower()
 
-        games, total = self._game_listing_service.list_games(offset=offset, limit=limit, search_query=search_query)
+        try:
+            games, total = self._game_listing_service.list_games(offset=offset, limit=limit, search_query=search_query)
+        except Exception as exc:
+            # The listing service propagates DB-layer failures (e.g. a corrupt game.db); convert
+            # them to a clean 500 at the API boundary instead of leaking an unhandled traceback.
+            logger.exception("Failed to list SPSA games")
+            return json_error_response(str(exc), status=500, code="games_query_failed")
         return web.json_response({"games": games, "total": total, "offset": offset, "limit": limit})
 
     # ------------------------------------------------------------------

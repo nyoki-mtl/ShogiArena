@@ -26,7 +26,7 @@ def test_store_summary_returns_none_when_games_missing(tmp_path: Path) -> None:
                 "games": {
                     "completed": 1,
                 },
-                "summaryReady": True,
+                "is_summary_ready": True,
             },
             source="tournament",
         )
@@ -44,7 +44,7 @@ def test_store_summary_returns_none_when_games_counts_are_non_numeric(tmp_path: 
                     "completed": "1",
                     "total": "2",
                 },
-                "summaryReady": True,
+                "is_summary_ready": True,
             },
             source="tournament",
         )
@@ -62,7 +62,7 @@ def test_store_games_returns_none_when_rows_is_not_list(tmp_path: Path) -> None:
                 "revision": 1,
                 "base_revision": None,
                 "rows": {"game_id": "g-1"},
-                "snapshotMeta": {},
+                "snapshot_meta": {},
             }
         )
         is None
@@ -79,7 +79,7 @@ def test_store_games_returns_none_when_row_is_not_object(tmp_path: Path) -> None
                 "revision": 1,
                 "base_revision": None,
                 "rows": ["invalid"],
-                "snapshotMeta": {},
+                "snapshot_meta": {},
             }
         )
         is None
@@ -96,7 +96,7 @@ def test_store_games_returns_none_when_snapshot_meta_not_object(tmp_path: Path) 
                 "revision": 1,
                 "base_revision": None,
                 "rows": [{"game_id": "g-1"}],
-                "snapshotMeta": 123,
+                "snapshot_meta": 123,
             }
         )
         is None

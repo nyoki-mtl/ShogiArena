@@ -1,5 +1,5 @@
 import { crash } from '@/modules/shared/utils/errors';
-import { gameResultAbbreviation, gameResultDetailKey, isGameResultName } from '@/modules/shared/utils/gameResult';
+import { gameResultAbbreviation, gameResultDetailKey, isGameResultName } from '@/modules/shared/utils/game-result';
 import { computeSfenBasePlies } from '@/modules/shared/utils/sfen';
 import type {
     AssignmentMode,
@@ -22,8 +22,39 @@ export type GamesDeltaPayload = {
     revision?: number;
     base_revision?: number | null;
     rows?: Array<{ op?: string; row?: GamesScheduleEntry; id?: string }>;
-    snapshotMeta?: Record<string, unknown>;
+    snapshot_meta?: Record<string, unknown>;
 };
+
+function rowHasGameId(row: GamesScheduleEntry | null | undefined): boolean {
+    return typeof row?.game_id === 'string' && row.game_id.trim().length > 0;
+}
+
+/**
+ * Decide whether a row delta must skip the game_id-only DOM fast-path and do a full re-render.
+ *
+ * The DOM fast-path (applyDeltaToDom) can only add/update/remove rows identified by game_id.
+ * Rows identified only by `order` (no game_id) would be silently ignored while the fast-path
+ * still reports success, leaving the active table stale. When such a row is present we fall
+ * back to renderGamesTable, which rebuilds from the (correctly maintained) raw schedule.
+ *
+ * `lookupRaw` must resolve the pre-delta raw row for a remove id so order-only removals are
+ * detected (their id is the numeric order key, not a game_id).
+ */
+export function deltaRequiresFullRender(
+    rowsUpdate: Array<{ op?: string; row?: GamesScheduleEntry; id?: string }>,
+    lookupRaw: (id: string) => GamesScheduleEntry | undefined,
+): boolean {
+    for (const entry of rowsUpdate) {
+        if (!entry || typeof entry !== 'object') continue;
+        if (entry.op === 'add' || entry.op === 'update') {
+            if (entry.row && !rowHasGameId(entry.row)) return true;
+        } else if (entry.op === 'remove') {
+            const existing = entry.id ? lookupRaw(entry.id) : undefined;
+            if (existing && !rowHasGameId(existing)) return true;
+        }
+    }
+    return false;
+}
 
 const VIRTUAL_THRESHOLD = 200;
 const VIRTUAL_OVERSCAN = 24;
@@ -410,7 +441,7 @@ export function createScheduleController({ context }: ScheduleControllerDependen
 
         const rowsRaw = payload.rows;
         const rows = Array.isArray(rowsRaw) ? (rowsRaw as GamesScheduleEntry[]) : [];
-        const metaRaw = payload.snapshotMeta;
+        const metaRaw = payload.snapshot_meta;
         const meta = metaRaw && typeof metaRaw === 'object' ? (metaRaw as Partial<GamesScheduleSnapshot>) : undefined;
 
         const snapshot: GamesScheduleSnapshot = {
@@ -499,12 +530,15 @@ export function createScheduleController({ context }: ScheduleControllerDependen
         const rowsUpdate = Array.isArray(delta.rows) ? delta.rows : [];
         if (!rowsUpdate.length) {
             state.lastRevision = revision;
+            // Meta-only delta: keep the existing raw schedule untouched. Re-deriving it from
+            // the normalized rowsByGame would store NormalizedGameRow objects, which the render
+            // path would normalize a second time (dropping order/round, double-counting plies).
             state.lastSnapshot = {
                 ...(state.lastSnapshot ?? {}),
-                ...(delta.snapshotMeta ?? {}),
+                ...(delta.snapshot_meta ?? {}),
                 revision,
                 base_revision: baseRevision,
-                schedule: Array.from(state.rowsByGame.values()),
+                schedule: Array.isArray(state.lastSnapshot.schedule) ? state.lastSnapshot.schedule : [],
             };
             recordLiveDiagnosticsMetric('live.games.delta.apply', {
                 triggered: 1,
@@ -515,39 +549,64 @@ export function createScheduleController({ context }: ScheduleControllerDependen
             return;
         }
 
+        // Maintain the raw schedule keyed by game id so that the render path (which normalizes
+        // every row) always receives raw entries. rowsByGame keeps the normalized rows used by
+        // the DOM fast-path. Keeping these two representations separate avoids a second
+        // normalization pass that would drop order/round and double-count base plies.
+        const existingSchedule = Array.isArray(state.lastSnapshot.schedule) ? state.lastSnapshot.schedule : [];
+        const rawByGame = new Map<string, GamesScheduleEntry>();
+        existingSchedule.forEach((row) => {
+            const key = resolveGameRowKey(row);
+            if (key) rawByGame.set(key, row);
+        });
+
         if (!(state.rowsByGame instanceof Map) || state.rowsByGame.size === 0) {
-            // seed map from last snapshot if not ready
-            const seedRows = Array.isArray(state.lastSnapshot.schedule) ? state.lastSnapshot.schedule : [];
+            // seed normalized map from the raw schedule if not ready
             state.rowsByGame.clear();
-            seedRows.forEach((row) => {
-                state.rowsByGame.set(row.game_id, row);
+            existingSchedule.forEach((row) => {
+                const normalized = normalizeScheduleRow(row);
+                if (normalized?.game_id) {
+                    state.rowsByGame.set(normalized.game_id, normalized);
+                }
             });
         }
+
+        // Determine fast-path eligibility against the pre-apply raw schedule so order-only
+        // removals (whose id is the order key) can be detected before rawByGame is mutated.
+        const requiresFullRender = deltaRequiresFullRender(rowsUpdate, (id) => rawByGame.get(id));
 
         for (const entry of rowsUpdate) {
             if (!entry || typeof entry !== 'object') continue;
             const op = (entry as { op?: string }).op;
             if (op === 'remove') {
                 const id = (entry as { id?: string }).id;
-                if (id) state.rowsByGame.delete(id);
+                if (id) {
+                    state.rowsByGame.delete(id);
+                    rawByGame.delete(id);
+                }
                 continue;
             }
             if (op === 'add' || op === 'update') {
                 const rowRaw = (entry as { row?: GamesScheduleEntry }).row;
                 if (!rowRaw) continue;
                 const normalized = normalizeScheduleRow(rowRaw);
-                if (!normalized || !normalized.game_id) continue;
-                state.rowsByGame.set(normalized.game_id, normalized);
+                if (!normalized) continue;
+                // Keep the raw schedule complete: order-only rows (no game_id) must survive,
+                // keyed the same way the backend delta identifies them. rowsByGame stays a
+                // game_id-only index since the render path also only indexes game_id rows.
+                const rowKey = resolveGameRowKey(rowRaw);
+                if (rowKey) rawByGame.set(rowKey, rowRaw);
+                if (normalized.game_id) state.rowsByGame.set(normalized.game_id, normalized);
             }
         }
 
-        const nextRows = Array.from(state.rowsByGame.values());
+        const nextSchedule = Array.from(rawByGame.values());
         state.lastSnapshot = {
             ...(state.lastSnapshot ?? {}),
-            ...(delta.snapshotMeta ?? {}),
+            ...(delta.snapshot_meta ?? {}),
             revision,
             base_revision: baseRevision,
-            schedule: nextRows,
+            schedule: nextSchedule,
         };
         state.lastRevision = revision;
         if (!state.active) {
@@ -560,7 +619,8 @@ export function createScheduleController({ context }: ScheduleControllerDependen
             });
             return;
         }
-        if (!applyDeltaToDom(rowsUpdate)) {
+        // Order-only rows force a full render: the DOM fast-path cannot locate them by game_id.
+        if (requiresFullRender || !applyDeltaToDom(rowsUpdate)) {
             renderGamesTable(state.lastSnapshot);
         } else {
             updateGamesSummary(state.lastSnapshot);
@@ -874,6 +934,25 @@ export function createScheduleController({ context }: ScheduleControllerDependen
         return output || '-';
     }
 
+    // Mirror of the backend row-key resolution in snapshot_delta.py (_resolve_game_row_key):
+    // game_id -> gameId -> id -> order -> display_order. Rows may be identified by a numeric
+    // order alone (no game_id), so the raw schedule must be keyed the same way the delta is.
+    function resolveGameRowKey(row: GamesScheduleEntry | null | undefined): string | null {
+        if (!row || typeof row !== 'object') return null;
+        const candidates = [
+            (row as { game_id?: unknown }).game_id,
+            (row as { gameId?: unknown }).gameId,
+            (row as { id?: unknown }).id,
+            (row as { order?: unknown }).order,
+            (row as { display_order?: unknown }).display_order,
+        ];
+        for (const value of candidates) {
+            if (typeof value === 'string' && value.trim()) return value.trim();
+            if (typeof value === 'number' && Number.isInteger(value)) return String(value);
+        }
+        return null;
+    }
+
     function normalizeScheduleRow(row: unknown): NormalizedGameRow | null {
         if (!row || typeof row !== 'object') return null;
         const raw = row as GamesScheduleEntry;
@@ -885,7 +964,9 @@ export function createScheduleController({ context }: ScheduleControllerDependen
         const gameId = typeof raw.game_id === 'string' && raw.game_id ? raw.game_id : null;
         const statusRaw = typeof raw.status === 'string' ? raw.status.trim() : '';
         if (!statusRaw) {
-            throw new Error('Games schedule row is missing a status value');
+            // Skip a malformed row instead of throwing: the caller iterates rows in an
+            // un-guarded forEach, so one bad row would abort the whole table render / reject the delta.
+            return null;
         }
         const status = statusRaw;
         const black = formatEngineName(raw.black);

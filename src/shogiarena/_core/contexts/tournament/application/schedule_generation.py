@@ -11,8 +11,11 @@ from typing import Protocol
 
 from shogiarena._core.contexts.tournament.domain.tournament_models import GameSpec
 from shogiarena._core.contexts.tournament.ports.session_state_runtime import ScheduleSeed
+from shogiarena._core.shared.kernel.schedule_color_policy import COLOR_POLICY_VERSION
 
 logger = logging.getLogger(__name__)
+
+__all__ = ["COLOR_POLICY_VERSION"]
 
 
 class EngineSpecPort(Protocol):
@@ -30,6 +33,16 @@ def _require_engine_name(spec: EngineSpecPort) -> str:
     if not spec.name:
         raise ValueError("Engine name must be set before scheduling")
     return str(spec.name)
+
+
+def _first_takes_black(seed_str: str, name_a: str, name_b: str, salt: str) -> bool:
+    """Deterministic fair coin: whether ``name_a`` (the earlier-listed engine) takes black.
+
+    Used for the single odd/extra game of a pair and to seed the starting colour of an alternating
+    pair, so neither is biased toward the earlier-listed engine. Both schedulers share this so the
+    same matchup gets the same colour assignment.
+    """
+    return random.Random(f"{seed_str}-{name_a}-{name_b}-{salt}").random() < 0.5
 
 
 class _PositionCursor:
@@ -171,37 +184,45 @@ class RoundRobinScheduler(GameScheduler):
 
             if pair_both:
                 games_remaining = games_per_pair
-                while games_remaining > 0:
+                while games_remaining >= 2:
                     sfen = position_cursor.next()
                     games.append(
                         GameSpec.create(
-                            black=engine_a_name,
-                            white=engine_b_name,
-                            sfen=sfen,
-                            round_num=round_num,
-                            seed=seed_str,
+                            black=engine_a_name, white=engine_b_name, sfen=sfen, round_num=round_num, seed=seed_str
                         ),
                     )
                     round_num += 1
-                    games_remaining -= 1
-                    if games_remaining > 0:
-                        games.append(
-                            GameSpec.create(
-                                black=engine_b_name,
-                                white=engine_a_name,
-                                sfen=sfen,
-                                round_num=round_num,
-                                seed=seed_str,
-                            ),
-                        )
-                        round_num += 1
-                        games_remaining -= 1
+                    games.append(
+                        GameSpec.create(
+                            black=engine_b_name, white=engine_a_name, sfen=sfen, round_num=round_num, seed=seed_str
+                        ),
+                    )
+                    round_num += 1
+                    games_remaining -= 2
+                if games_remaining == 1:
+                    # The single odd game gets a seeded fair colour (matching the gauntlet
+                    # scheduler) instead of always handing black to the earlier-listed engine.
+                    sfen = position_cursor.next()
+                    a_black = _first_takes_black(seed_str, engine_a_name, engine_b_name, "odd")
+                    black_name, white_name = (
+                        (engine_a_name, engine_b_name) if a_black else (engine_b_name, engine_a_name)
+                    )
+                    games.append(
+                        GameSpec.create(
+                            black=black_name, white=white_name, sfen=sfen, round_num=round_num, seed=seed_str
+                        ),
+                    )
+                    round_num += 1
                 continue
 
+            # Seed the starting colour of an alternating pair so an odd games_per_pair does not
+            # always give the extra black game to the earlier-listed engine.
+            alt_start_a_black = _first_takes_black(seed_str, engine_a_name, engine_b_name, "alt-start")
             for game_num in range(games_per_pair):
                 if initial_positions.flip_policy == "alternate":
+                    a_black = (game_num % 2 == 0) == alt_start_a_black
                     black_name, white_name = (
-                        (engine_a_name, engine_b_name) if game_num % 2 == 0 else (engine_b_name, engine_a_name)
+                        (engine_a_name, engine_b_name) if a_black else (engine_b_name, engine_a_name)
                     )
                 elif initial_positions.flip_policy == "random":
                     black_name, white_name = (
@@ -301,27 +322,13 @@ class GauntletScheduler(GameScheduler):
                     challenger_name = _require_engine_name(challenger_engine)
                     if remaining_games[challenger_name] == 1:
                         sfen = position_cursor.next()
-                        rng = random.Random(f"{seed_str}-{baseline_name}-{challenger_name}-odd")
-                        if rng.random() < 0.5:
-                            games.append(
-                                GameSpec.create(
-                                    black=baseline_name,
-                                    white=challenger_name,
-                                    sfen=sfen,
-                                    round_num=round_num,
-                                    seed=seed_str,
-                                ),
-                            )
-                        else:
-                            games.append(
-                                GameSpec.create(
-                                    black=challenger_name,
-                                    white=baseline_name,
-                                    sfen=sfen,
-                                    round_num=round_num,
-                                    seed=seed_str,
-                                ),
-                            )
+                        baseline_black = _first_takes_black(seed_str, baseline_name, challenger_name, "odd")
+                        black, white = (
+                            (baseline_name, challenger_name) if baseline_black else (challenger_name, baseline_name)
+                        )
+                        games.append(
+                            GameSpec.create(black=black, white=white, sfen=sfen, round_num=round_num, seed=seed_str),
+                        )
                         round_num += 1
             else:
                 baseline_name = _require_engine_name(baseline_engine)
@@ -329,10 +336,12 @@ class GauntletScheduler(GameScheduler):
                     for challenger_engine in challenger_engines:
                         challenger_name = _require_engine_name(challenger_engine)
                         if initial_positions.flip_policy == "alternate":
+                            start_baseline_black = _first_takes_black(
+                                seed_str, baseline_name, challenger_name, "alt-start"
+                            )
+                            baseline_black = (game_num % 2 == 0) == start_baseline_black
                             black, white = (
-                                (baseline_name, challenger_name)
-                                if (game_num % 2 == 0)
-                                else (challenger_name, baseline_name)
+                                (baseline_name, challenger_name) if baseline_black else (challenger_name, baseline_name)
                             )
                         elif initial_positions.flip_policy == "random":
                             rng = random.Random(f"{seed_str}-{baseline_name}-{challenger_name}-{game_num}")

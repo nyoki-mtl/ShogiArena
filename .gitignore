@@ -52,7 +52,13 @@ yarn-error.log*
 
 # Project-specific tools
 .serena/
-.claude/settings.local.json
 .mcp.json
 src/shogiarena/web/dashboard/static/dist/
 *.mp4
+
+# Claude Code: ignore local/runtime state, keep shared project config
+.claude/*
+!.claude/settings.json
+
+# Generated reports (typing audit, etc.)
+agent-docs/reports/

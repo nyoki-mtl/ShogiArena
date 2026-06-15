@@ -25,7 +25,7 @@ import {
     flushPendingCorrelationResult,
     renderLtcResultsUpdate,
 } from '../components/analysis';
-import { getAnalysisPipeline } from './analysisPipeline';
+import { getAnalysisPipeline } from './analysis-pipeline';
 
 type ArenaWindow = Window & {
     DashboardCore?: DashboardCore;
@@ -54,8 +54,8 @@ function resolveTournamentType(
     }
 
     const coreSummary = core?.state?.spsaSummary;
-    if (coreSummary && typeof coreSummary === 'object' && 'tournamentType' in coreSummary) {
-        const rawType = (coreSummary as { tournamentType?: unknown }).tournamentType;
+    if (coreSummary && typeof coreSummary === 'object' && 'tournament_type' in coreSummary) {
+        const rawType = (coreSummary as { tournament_type?: unknown }).tournament_type;
         if (typeof rawType === 'string' && rawType.trim()) {
             return rawType.trim().toLowerCase();
         }

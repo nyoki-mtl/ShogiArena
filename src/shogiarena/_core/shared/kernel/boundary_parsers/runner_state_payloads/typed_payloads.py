@@ -21,7 +21,15 @@ class _CancelledGameEntryType(TypedDict, total=False):
     should_require_install: bool
 
 
+class _SprtPendingHalf(TypedDict):
+    sfen: str
+    pair_slot: int
+    is_tested_black: bool
+    score: float
+
+
 class _SprtStateSnapshot(TypedDict):
+    model: str
     elo0: float
     elo1: float
     alpha: float
@@ -31,6 +39,9 @@ class _SprtStateSnapshot(TypedDict):
     losses: int
     games_played: int
     llr: float
+    min_pairs: int
+    penta_bins: list[int]
+    pending: list[_SprtPendingHalf]
 
 
 class _TournamentRunStateType(TypedDict, total=False):

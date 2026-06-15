@@ -60,7 +60,7 @@ class ArenaDBAdapter:
                 black_player.player_name.label("black_player"),
                 white_player.player_name.label("white_player"),
                 Game.game_result,
-                Game.init_position_sfen,
+                Game.initial_position_sfen,
             )
             .join(black_player, Game.black_player_id == black_player.id)
             .join(white_player, Game.white_player_id == white_player.id)
@@ -84,7 +84,8 @@ class ArenaDBAdapter:
             )
         return games
 
-    def ensure_schema_compatibility(self) -> None:
+    def ensure_schema(self) -> None:
+        """Create the database tables if they do not yet exist."""
         db = self._get_db()
         db.create_tables()
 

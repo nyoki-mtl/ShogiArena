@@ -46,4 +46,4 @@ export {
 
 export { setVisibilityPaused, registerVisibilityHandler } from './visibility';
 
-export { applyConvergenceMetrics } from './convergence_metrics';
+export { applyConvergenceMetrics } from './convergence-metrics';

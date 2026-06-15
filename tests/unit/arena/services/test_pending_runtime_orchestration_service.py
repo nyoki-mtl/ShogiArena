@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 
 import pytest
 
@@ -33,13 +34,18 @@ class _DummyRuntime:
 @dataclass(slots=True)
 class _FailingRuntime:
     fail_game_id: str
+    raise_in_skip: bool = False
+    seen: list[str] = field(default_factory=list)
 
     def should_skip_pending_item(self, item: _DummySpec) -> bool:
+        if self.raise_in_skip and item.game_id == self.fail_game_id:
+            raise RuntimeError(f"skip-boom:{item.game_id}")
         return False
 
     async def run_pending_item(self, item: _DummySpec) -> None:
         if item.game_id == self.fail_game_id:
             raise RuntimeError(f"boom:{item.game_id}")
+        self.seen.append(item.game_id)
 
 
 def test_collect_pending_specs_excludes_completed_and_cancelled() -> None:
@@ -126,4 +132,28 @@ async def test_execute_pending_items_propagates_worker_error_without_hanging() -
             running_tasks=set(),
             worker_tasks=set(),
             runtime=runtime,
+        )
+
+
+@pytest.mark.asyncio
+async def test_execute_pending_items_does_not_hang_when_skip_check_raises() -> None:
+    # O6: an exception between queue.get() and the task try/finally must still task_done(),
+    # otherwise queue.join() would hang forever. The error still surfaces (fail-fast), but the
+    # call must complete rather than hang.
+    service = PendingRuntimeOrchestrationService[_DummySpec]()
+    state = service.initialize_state(_build_specs("g1", "g2"))
+    pending = service.collect_pending_specs(state=state, completed_game_ids=set(), cancelled_game_ids=set())
+    runtime = _FailingRuntime(fail_game_id="g1", raise_in_skip=True)
+
+    with pytest.raises(RuntimeError, match="skip-boom:g1"):
+        await asyncio.wait_for(
+            service.execute_pending_items(
+                state=state,
+                pending_specs=pending,
+                concurrency_limit=2,
+                running_tasks=set(),
+                worker_tasks=set(),
+                runtime=runtime,
+            ),
+            timeout=5.0,
         )

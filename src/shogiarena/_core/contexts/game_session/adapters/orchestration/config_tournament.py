@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_valid
 
 from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
 from shogiarena._core.platform.settings import project_dirs
+from shogiarena._core.shared.kernel.engine_book import collect_book_preflight_errors, is_engine_book_enabled
 from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_serialized
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.paths import PATH_OPTION_KEYS, resolve_path_like
@@ -81,6 +82,7 @@ class TournamentRunConfig(BaseModel):
                 "resource_poll_max_interval",
                 "engine_handshake_timeout",
                 "path_preflight",
+                "resource_capacity_preflight",
                 "extras",
             }
             payload: dict[str, JsonValue] = {k: source[k] for k in source if k in allowed_keys}
@@ -176,8 +178,16 @@ class TournamentRunConfig(BaseModel):
             return
         errors: list[str] = []
         for engine in self.engines:
-            for option_name, resolved_path in self._iter_path_option_values(engine):
+            merged = self._merged_engine_options(engine)
+            working_dir = self._engine_working_dir(engine)
+            # 内蔵定跡が有効なら BookDir は composite 検証に委ね、scalar 検証から除外する。
+            # （絶対 BookFile は BookDir を無視する YaneuraOu 挙動とも整合し、二重/誤検知を避ける）。
+            book_enabled = is_engine_book_enabled(merged)
+            for option_name, resolved_path in self._iter_path_option_values(engine, merged, skip_book_dir=book_enabled):
                 candidate = Path(resolved_path)
+                # 相対 path は実行時 cwd（working_dir）基準で存在確認し、ランタイムと揃える。
+                if not candidate.is_absolute() and working_dir is not None:
+                    candidate = working_dir / candidate
                 if candidate.exists():
                     continue
                 message = f"Engine '{engine.name}' path option '{option_name}' references missing path: {candidate}"
@@ -185,17 +195,38 @@ class TournamentRunConfig(BaseModel):
                     errors.append(message)
                 else:
                     logger.warning("%s", message)
+            # 内蔵定跡(A) の composite 検証（BookDir+BookFile）。USI_OwnBook が false で
+            # 明示無効化されておらず BookFile != no_book のときのみ発動する（Task 0014）。
+            book_errors = collect_book_preflight_errors(
+                merged,
+                engine_name=engine.name,
+                output_dir=self.output_dir,
+                engine_dir=project_dirs.engine_dir,
+                working_dir=working_dir,
+            )
+            for message in book_errors:
+                if mode == "error":
+                    errors.append(message)
+                else:
+                    logger.warning("%s", message)
         if errors:
             raise FileNotFoundError("; ".join(errors))
 
-    def _iter_path_option_values(self, engine: EngineConfig) -> list[tuple[str, str]]:
-        option_names = set(PATH_OPTION_KEYS)
-        option_names.update(engine.path_options)
-        if not option_names:
-            return []
+    def _merged_engine_options(self, engine: EngineConfig) -> JsonObject:
         merged = self._load_engine_file_options(engine)
         merged.update(engine.load_overlay_options())
         merged.update({str(key): json_serialize(value) for key, value in engine.options.items()})
+        return merged
+
+    def _iter_path_option_values(
+        self, engine: EngineConfig, merged: JsonObject, *, skip_book_dir: bool = False
+    ) -> list[tuple[str, str]]:
+        option_names = set(PATH_OPTION_KEYS)
+        option_names.update(engine.path_options)
+        if skip_book_dir:
+            option_names.discard("BookDir")
+        if not option_names:
+            return []
         values: list[tuple[str, str]] = []
         for option_name in sorted(option_names):
             raw_value = merged.get(option_name)
@@ -214,6 +245,27 @@ class TournamentRunConfig(BaseModel):
             engine_dir=project_dirs.engine_dir,
         )
         return {str(key): json_serialize(value) for key, value in config.options.items()}
+
+    def _engine_working_dir(self, engine: EngineConfig) -> Path | None:
+        """エンジンプロセスの実行時 cwd を preflight 用に推定する。
+
+        ランタイムは ``working_directory or <engine binary parent>`` を cwd にする
+        (`runtime_factory`)。これを再現して相対 ``BookDir`` の存在確認基準を実行時と揃える。
+        artifact 指定で engine_path 不明な場合は ``None``（cwd 基準にフォールバック）。
+        """
+
+        if engine.engine_path is None:
+            return None
+        config = UsiEngineConfig.from_file(
+            engine.engine_path,
+            output_dir=self.output_dir,
+            engine_dir=project_dirs.engine_dir,
+        )
+        if config.working_directory:
+            return Path(config.working_directory)
+        if config.engine_path:
+            return Path(config.engine_path).parent
+        return None
 
     @classmethod
     def from_mapping(

@@ -1,4 +1,4 @@
-import { installLiveDiagnosticsPanel } from '@/modules/live/services/diagnosticsPanel';
+import { installLiveDiagnosticsPanel } from '@/modules/live/services/diagnostics-panel';
 import {
     ensureLiveNamespace,
     recordLiveDiagnosticsMetric,

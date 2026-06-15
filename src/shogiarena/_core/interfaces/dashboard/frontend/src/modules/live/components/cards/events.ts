@@ -1,8 +1,8 @@
 import type { DashboardCore } from '@/types/dashboard';
 import type { LiveCardState } from '@/modules/live/types';
 import type { WorkerSnapshotRecord } from './types';
-import type { WorkerViewModelMessage } from '@/modules/live/services/updates/workerBridge';
-import { shouldRunEngineClock } from '@/modules/live/utils/engineStatus';
+import type { WorkerViewModelMessage } from '@/modules/live/services/updates/worker-bridge';
+import { shouldRunEngineClock } from '@/modules/live/utils/engine-status';
 import { getWorkerStateEntry } from './state';
 
 export interface EventHandlers {
@@ -130,15 +130,10 @@ export function createCardEventHandlers(deps: EventDeps): EventSubscription {
             ensureIncrementPlaceholders(idx);
         }
         if (event.kind === 'clock_increment') {
-            const inc = (clockData as { applied_increment_ms?: number; appliedIncrementMs?: number })
-                .applied_increment_ms;
+            const inc = (clockData as { applied_increment_ms?: number }).applied_increment_ms;
             const side = inferIncrementSide(clockData);
             if (!mergeWorkerActive) {
-                flashIncrement(
-                    idx,
-                    (side ?? undefined) as string | undefined,
-                    Number(inc ?? clockData.appliedIncrementMs ?? 0),
-                );
+                flashIncrement(idx, (side ?? undefined) as string | undefined, Number(inc ?? 0));
                 applyByoyomiFreezeCache(idx, clockData);
             }
         }

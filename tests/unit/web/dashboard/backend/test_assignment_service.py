@@ -26,8 +26,8 @@ def test_build_snapshot_filters_workers_and_deduplicates_gids() -> None:
     assert snapshot["assignments"] == {"0": "g1", "2": "g2"}
     assert snapshot["gids"] == ["g1", "g2"]
     assert snapshot["assignment_rev"] == 0
-    assert isinstance(snapshot["updatedAt"], int)
-    assert snapshot["updatedAt"] >= 0
+    assert isinstance(snapshot["updated_at"], int)
+    assert snapshot["updated_at"] >= 0
 
 
 def test_update_worker_assignment_updates_state_and_publishes_streams() -> None:

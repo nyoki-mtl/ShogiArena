@@ -1,7 +1,7 @@
 import type { SseSummaryPayload } from '@/modules/live/types/public';
 import type { JsonObject, MutableJsonObject } from '@/types/shared';
 import { ensureObject, normalizeOptionalNumber, normalizeOptionalString, normalizeRequiredString } from './common';
-import { normalizeLiveViewSnapshot } from './liveView';
+import { normalizeLiveViewSnapshot } from './live-view';
 
 export function normalizeSummaryPayload(raw: unknown): SseSummaryPayload {
     if (raw == null) {
@@ -11,31 +11,31 @@ export function normalizeSummaryPayload(raw: unknown): SseSummaryPayload {
 
     const next: MutableJsonObject = { ...obj };
 
-    if ('defaultTimeControl' in next) {
-        const normalized = normalizeOptionalString(next.defaultTimeControl, 'summary.defaultTimeControl');
+    if ('default_time_control' in next) {
+        const normalized = normalizeOptionalString(next.default_time_control, 'summary.default_time_control');
         if (normalized === undefined) {
-            delete next.defaultTimeControl;
+            delete next.default_time_control;
         } else {
-            next.defaultTimeControl = normalized ?? null;
+            next.default_time_control = normalized ?? null;
         }
     }
 
-    if ('engineTimeControls' in next) {
-        const controls = next.engineTimeControls;
+    if ('engine_time_controls' in next) {
+        const controls = next.engine_time_controls;
         if (!controls || typeof controls !== 'object' || Array.isArray(controls)) {
-            throw new Error('summary payload engineTimeControls must be an object');
+            throw new Error('summary payload engine_time_controls must be an object');
         }
         const record: Record<string, string> = {};
         for (const [key, value] of Object.entries(controls as JsonObject)) {
-            record[normalizeRequiredString(key, 'summary.engineTimeControls key')] = normalizeRequiredString(
+            record[normalizeRequiredString(key, 'summary.engine_time_controls key')] = normalizeRequiredString(
                 value,
-                `summary.engineTimeControls[${String(key)}]`,
+                `summary.engine_time_controls[${String(key)}]`,
             );
         }
-        next.engineTimeControls = record;
+        next.engine_time_controls = record;
     }
 
-    const numericFields: Array<keyof SseSummaryPayload> = ['gamesCompleted', 'gamesScheduled'];
+    const numericFields: Array<keyof SseSummaryPayload> = ['games_completed', 'games_scheduled'];
     for (const field of numericFields) {
         if (field in next) {
             const num = normalizeOptionalNumber(next[field], `summary.${String(field)}`);
@@ -47,15 +47,15 @@ export function normalizeSummaryPayload(raw: unknown): SseSummaryPayload {
         }
     }
 
-    const hasLiveView = Object.hasOwn(next, 'liveView');
-    if (next.liveView === null) {
-        next.liveView = null;
+    const hasLiveView = Object.hasOwn(next, 'live_view');
+    if (next.live_view === null) {
+        next.live_view = null;
     } else {
-        const liveViewSnapshot = normalizeLiveViewSnapshot(next.liveView, 'summary.liveView');
+        const liveViewSnapshot = normalizeLiveViewSnapshot(next.live_view, 'summary.live_view');
         if (liveViewSnapshot) {
-            next.liveView = liveViewSnapshot;
+            next.live_view = liveViewSnapshot;
         } else if (hasLiveView) {
-            delete next.liveView;
+            delete next.live_view;
         }
     }
 

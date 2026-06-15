@@ -4,9 +4,19 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "CHANGELOG.md"
+      - "README*.md"
+      - "docs/**"
+      - "release-notes/**"
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - "CHANGELOG.md"
+      - "README*.md"
+      - "docs/**"
+      - "release-notes/**"
   workflow_dispatch:
 
 jobs:

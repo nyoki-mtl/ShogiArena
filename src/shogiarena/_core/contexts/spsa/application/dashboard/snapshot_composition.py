@@ -157,9 +157,9 @@ class SpsaSnapshotCompositionService:
 
         summary_data = self.attach_ltc_summary_fields(summary_data, ltc_summary=ltc_summary)
         summary_data.setdefault("mode", "spsa")
-        summary_data.setdefault("summarySource", "spsa")
+        summary_data.setdefault("summary_source", "spsa")
         if self._live_view_builder is not None:
-            summary_data["liveView"] = json_serialize(self._live_view_builder(summary_data))
+            summary_data["live_view"] = json_serialize(self._live_view_builder(summary_data))
         total_elapsed = (time.perf_counter() - overall_start) * 1000.0
         if total_elapsed >= 200.0:
             print(f"[spsa:summary_total] duration_ms={total_elapsed:.1f}", flush=True)

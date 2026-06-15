@@ -110,7 +110,7 @@ def build_standings_payload(
 
     return {
         "standings": standings,
-        "enginesMeta": engines_meta,
+        "engines_meta": engines_meta,
         "updated_at": datetime.now().isoformat(),
     }
 
@@ -142,11 +142,11 @@ def build_progress_payload(
                     "total": total,
                     "cancelled": 0,
                 },
-                "inProgress": 0,
+                "in_progress": 0,
                 "pending": pending,
-                "completionRate": completed / total if total > 0 else 0,
-                "estimatedTimeRemaining": f"{estimated_minutes:02d}:00:00",
-                "updatedAt": datetime.now().isoformat(),
+                "completion_rate": completed / total if total > 0 else 0,
+                "estimated_time_remaining": f"{estimated_minutes:02d}:00:00",
+                "updated_at": datetime.now().isoformat(),
             }
 
         return {
@@ -155,11 +155,11 @@ def build_progress_payload(
                 "total": -1,
                 "cancelled": 0,
             },
-            "inProgress": 0,
+            "in_progress": 0,
             "pending": -1,
-            "completionRate": -1,
-            "estimatedTimeRemaining": "Unknown",
-            "updatedAt": datetime.now().isoformat(),
+            "completion_rate": -1,
+            "estimated_time_remaining": "Unknown",
+            "updated_at": datetime.now().isoformat(),
         }
 
     games = game_query.load_games(db_path)
@@ -170,11 +170,11 @@ def build_progress_payload(
             "total": -1,
             "cancelled": 0,
         },
-        "inProgress": 0,
+        "in_progress": 0,
         "pending": -1,
-        "completionRate": -1,
-        "estimatedTimeRemaining": "Unknown",
-        "updatedAt": datetime.now().isoformat(),
+        "completion_rate": -1,
+        "estimated_time_remaining": "Unknown",
+        "updated_at": datetime.now().isoformat(),
     }
 
 
@@ -185,7 +185,7 @@ def _load_summary_engines_meta(run_dir: Path) -> list[JsonObject]:
         return engines_meta
     with open(summary_btd_path, encoding="utf-8") as handle:
         summary_data = json.load(handle)
-        engines_meta_raw = summary_data.get("enginesMeta", [])
+        engines_meta_raw = summary_data.get("engines_meta", [])
         if isinstance(engines_meta_raw, list):
             normalized_meta: list[JsonObject] = []
             for item in engines_meta_raw:

@@ -112,7 +112,8 @@ function emit<T = unknown>(eventName: string, payload?: T): void {
         try {
             (listener as DashboardEventHandler<T>)((payload ?? undefined) as T);
         } catch (error) {
-            warnSoftFailure(`DashboardCore.events handler failed for ${eventName}`, error);
+            // A single faulty listener must not abort delivery to the remaining listeners.
+            console.error(`[Dashboard] events handler failed for ${eventName}: ${formatErrorMessage(error)}`, error);
         }
     }
 }
@@ -201,7 +202,14 @@ function showApiError(title: string, detail: unknown): void {
         const now = new Date();
         const ts = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
         const detailsStr = typeof detail === 'string' ? detail : (JSON.stringify(detail, null, 2) ?? '');
-        banner.innerHTML = `<div>${title}</div><pre style="white-space:pre-wrap; font-weight:400; margin:4px 0 0 0;">[${ts}] ${detailsStr}</pre>`;
+        // Build the banner via text nodes so server/engine-derived strings can never inject markup.
+        banner.replaceChildren();
+        const titleEl = document.createElement('div');
+        titleEl.textContent = title;
+        const detailEl = document.createElement('pre');
+        detailEl.style.cssText = 'white-space:pre-wrap; font-weight:400; margin:4px 0 0 0;';
+        detailEl.textContent = `[${ts}] ${detailsStr}`;
+        banner.append(titleEl, detailEl);
         console.error('[Dashboard API]', title, detail);
     } catch (error) {
         console.error('[Dashboard API] Error while reporting API error', error, { title, detail });

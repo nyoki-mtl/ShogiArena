@@ -10,9 +10,11 @@ from shogiarena._core.contexts.game_session.adapters.orchestration.config_tourna
 from shogiarena._core.contexts.game_session.adapters.orchestration.engine_config_artifacts import (
     resolve_engine_config_entry,
 )
+from shogiarena._core.shared.kernel.json_types import JsonValue
 from shogiarena._core.shared.kernel.run_artifact_contract import (
     build_engine_manifest_payload,
     build_run_artifact_payload_bundle,
+    build_schedule_payload,
 )
 from shogiarena._core.shared.kernel.run_artifact_hashes import (
     ResumeHashRequest,
@@ -41,6 +43,30 @@ def test_hash_kinds_are_domain_separated() -> None:
 
     assert config_fingerprint(payload) != schedule_hash(payload)
     assert schedule_hash(payload) != provenance_hash(payload)
+
+
+def test_sprt_model_changes_resume_hash_but_not_schedule_hash() -> None:
+    def _sprt_payload(model: str) -> dict[str, JsonValue]:
+        return {"model": model, "elo0": 0.0, "elo1": 5.0, "alpha": 0.05, "beta": 0.05}
+
+    def _config(sprt_payload: dict[str, JsonValue]) -> dict[str, object]:
+        return {
+            "tournament": {"format": "round_robin", "games_per_pair": 2},
+            "sprt": sprt_payload,
+            "engines": [{"name": "a"}, {"name": "b"}],
+        }
+
+    tri_sprt = _sprt_payload("gsprt-trinomial-v1")
+    pen_sprt = _sprt_payload("gsprt-pentanomial-v1")
+
+    # The schedule (game plan) must be identical regardless of the analysis/stopping model.
+    assert build_schedule_payload(_config(tri_sprt)) == build_schedule_payload(_config(pen_sprt))
+    assert schedule_hash(build_schedule_payload(_config(tri_sprt))) == schedule_hash(
+        build_schedule_payload(_config(pen_sprt))
+    )
+
+    # The resume test definition is model-sensitive, so cross-model resume is rejected.
+    assert sprt_test_def_hash(tri_sprt) != sprt_test_def_hash(pen_sprt)
 
 
 def test_schedule_hash_includes_effective_options_but_not_provenance_bytes() -> None:

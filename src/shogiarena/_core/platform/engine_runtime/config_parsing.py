@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping
 from typing import TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonScalar, JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import (
@@ -52,7 +52,6 @@ class _UsiEngineMappingInput(BaseModel):
     name: OptionalText = None
     engine_path: OptionalText = None
     artifact: OptionalText = None
-    working_dir: OptionalText = None
     working_directory: OptionalText = None
     engine_args: StringListLike = None
     env: _ConfigObject = Field(default_factory=dict)
@@ -72,6 +71,15 @@ class _UsiEngineMappingInput(BaseModel):
     isready_lock_check_template: str | None = None
     isready_lock_check_templates: StringListLike = None
     should_skip_isready_lock_if_exists: BoolLike = Field(default=False, alias="isready_lock_skip_if_exists")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_working_dir(cls, data: object) -> object:
+        # 'working_dir' was renamed to 'working_directory'. extra="allow" would otherwise swallow
+        # the stale key and silently fall back to the default working directory, so fail fast.
+        if isinstance(data, Mapping) and "working_dir" in data:
+            raise ValueError("engine config key 'working_dir' was renamed; use 'working_directory'")
+        return data
 
     @field_validator("isready_sync_strategy", mode="before")
     @classmethod

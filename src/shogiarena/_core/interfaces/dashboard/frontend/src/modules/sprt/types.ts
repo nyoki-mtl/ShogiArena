@@ -6,8 +6,8 @@ export interface SprtConfigPayload {
     elo1?: number;
     alpha?: number;
     beta?: number;
-    minGames?: number;
-    maxGames?: number | null;
+    min_games?: number;
+    max_games?: number | null;
 }
 
 export interface SprtStatusPayload {
@@ -19,19 +19,19 @@ export interface SprtStatusPayload {
     draws?: number;
     losses?: number;
     games?: number;
-    winRate?: number | null;
-    eloEstimate?: number | null;
+    win_rate?: number | null;
+    elo_estimate?: number | null;
 }
 
 export interface SprtTimelinePoint extends SprtStatusPayload {
-    gameIndex: number;
+    game_index: number;
 }
 
 export interface SprtSummaryPayload {
     mode?: string;
     tested?: string;
     baseline?: string;
-    liveView?: LiveViewSnapshot | null;
+    live_view?: LiveViewSnapshot | null;
     config?: SprtConfigPayload;
     status?: SprtStatusPayload;
     games?: { completed?: number; total?: number | null };

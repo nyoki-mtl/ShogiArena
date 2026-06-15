@@ -27,7 +27,7 @@ def extract_summary_diff(
 
 def _resolve_game_row_key(row: Mapping[str, JsonValue]) -> str | None:
     """Extract a deterministic row identifier from a game row."""
-    for key in ("game_id", "gameId", "id", "order", "display_order"):
+    for key in ("game_id", "game_id", "id", "order", "display_order"):
         value = row.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -79,7 +79,7 @@ def compute_games_delta(
         "revision": int(revision),
         "base_revision": int(base_revision) if base_revision is not None else None,
         "rows": updates + removed,
-        "snapshotMeta": to_json_object(snapshot_meta),
+        "snapshot_meta": to_json_object(snapshot_meta),
     }
 
 

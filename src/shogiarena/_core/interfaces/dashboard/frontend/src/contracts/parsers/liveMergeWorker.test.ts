@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseLiveMergeWorkerEnvelope } from './liveMergeWorker';
+import { parseLiveMergeWorkerEnvelope } from './live-merge-worker';
 
 describe('live merge worker parser', () => {
     it('parses a worker envelope', () => {

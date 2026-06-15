@@ -1,297 +1,128 @@
-# エンジン設定ファイル
+# エンジン設定
 
-ShogiArena で使用するエンジンの設定方法を詳しく解説します。
+ShogiArena は USI エンジンを YAML で定義します。トーナメント設定の `engines` からこの YAML を参照するか、`artifact` を直接指定します。
 
-## 基本構造
-
-エンジン設定ファイルは YAML 形式で記述します。
+## ローカルエンジン
 
 ```yaml
-name: "MyEngine"
-engine_path: "/path/to/engine/binary"
-options:
-  Threads: 4
-  Hash: 256
-```
-
-## 必須フィールド
-
-### name
-
-エンジンの表示名です。ダッシュボードやログで使用されます。
-
-```yaml
-name: "YaneuraOu-Strong"
-```
-
-### engine_path
-
-エンジンのバイナリファイルへのパスです。
-
-```yaml
-# 絶対パス
-engine_path: "/home/user/engines/YaneuraOu"
-
-# プレースホルダーを使用（config init 済みの場合）
-engine_path: "{engine_dir}/yaneuraou/YaneuraOu"
-
-# 相対パス（設定ファイルからの相対パス）
-engine_path: "../../bin/myengine"
-```
-
-> **Tip: プレースホルダー**
->
-> `{engine_dir}` は `shogiarena config init` で設定したエンジンディレクトリに展開されます。
-> 複数の環境で設定を共有する場合に便利です。
-
-
-## オプショナルフィールド
-
-### options
-
-USI エンジンのオプション設定です。`setoption name X value Y` として送信されます。
-
-```yaml
-options:
-  Threads: 4
-  Hash: 256
-  BookFile: "standard_book.db"
-  NetworkDelay: 120
-  NetworkDelay2: 1120
-  # エンジン固有のオプションも指定可能
-  Contempt: 2
-  ContemptFromBlack: false
-```
-
-> **Note: エンジン依存のオプション**
->
-> 利用可能なオプションはエンジンによって異なります。
-> エンジンのドキュメントを参照してください。
-
-
-### working_dir
-
-エンジンの作業ディレクトリを指定します。
-
-```yaml
-working_dir: "/path/to/engine/directory"
-```
-
-定義しない場合、エンジンバイナリと同じディレクトリが使用されます。
-
-### env
-
-エンジン実行時の環境変数を設定します。
-
-```yaml
-env:
-  LD_LIBRARY_PATH: "/usr/local/lib"
-  OMP_NUM_THREADS: "4"
-```
-
-### handshake_timeout
-
-エンジンの起動時ハンドシェイクタイムアウト時間（秒、float）です。デフォルトは `None`（システムデフォルトを使用）です。
-
-```yaml
-handshake_timeout: 30.0
-```
-
-大規模なニューラルネットワークモデルを読み込むエンジンでは、長めに設定する必要があります。
-
-### mate_default_ply_limit / mate_default_node_limit / mate_default_infinite
-
-`think_mate()` で個別指定がないときの `go mate` 送信形式を指定します。
-
-```yaml
-mate_default_ply_limit: 30000
-# または
-mate_default_node_limit: 2000000
-# または
-mate_default_infinite: true
-```
-
-`mate_default_ply_limit` と `mate_default_node_limit` は同時指定できません。`mate_default_infinite` は両者と排他です。
-
-### mate_wait_for_bestmove
-
-`checkmate` を受けたあと、trailing `bestmove` を待ってから `think_mate()` を完了させる既定値です。
-
-```yaml
-mate_wait_for_bestmove: true
-```
-
-### isready_sync_strategy
-
-`trigger_isready` 実行時に、進行中の探索とどう同期するかを指定します。
-
-```yaml
-isready_sync_strategy: "direct"  # direct | wait | stop
-```
-
-- `direct`: そのまま `isready` を送信
-- `wait`: 進行中探索の完了を待ってから `isready`
-- `stop`: `stop` を送って探索停止後に `isready`
-
-## 使用例
-
-### 基本的な設定
-
-```yaml
-name: "YaneuraOu"
-engine_path: "/usr/local/bin/YaneuraOu"
+name: "Local Engine"
+engine_path: "/path/to/engine"
+working_directory: "/path/to"
+engine_args:
+  - "--usi"
+environment:
+  OMP_NUM_THREADS: "2"
 options:
   Threads: 2
-  Hash: 128
+  USI_Hash: 256
+go_options:
+  byoyomi: 1000
+enable_early_ponder: false
 ```
 
-### 強さ調整したエンジン
+主なフィールド:
+
+| フィールド | 説明 |
+| --- | --- |
+| `name` | 表示名。省略時は `engine_path` などから派生 |
+| `engine_path` | USI エンジン実行ファイル |
+| `working_directory` | エンジンの作業ディレクトリ |
+| `engine_args` | エンジン起動時の引数 |
+| `environment` | エンジンプロセスへ渡す環境変数 |
+| `options` | USI `setoption` として送る値 |
+| `go_options` | `go` コマンドへ渡す既定値 |
+| `enable_early_ponder` | ponderhit を早めに送る実験的オプション |
+
+`engine_path`、`working_directory`、`options` 内のパス値には相対パスや `{engine_dir}` を使えます。
+
+## 内蔵定跡
+
+YaneuraOu 系エンジンの `BookDir` / `BookFile` は、エンジン内蔵定跡として扱います。ShogiArena は指し手を book から選ばず、USI option をエンジンへ渡したうえで、実体ファイルの検証と provenance 記録を行います。
 
 ```yaml
-name: "YaneuraOu-Weak"
-engine_path: "/usr/local/bin/YaneuraOu"
 options:
-  Threads: 1
-  Hash: 64
-  SkillLevel: 5  # エンジンがサポートしている場合
+  USI_OwnBook: true
+  BookDir: "./book"
+  BookFile: "user_book1.db"
+  BookOnTheFly: true
 ```
 
-### ニューラルネットワークエンジン
+`USI_OwnBook` が明示的に `false` でなく、`BookFile` が `no_book` でない場合、`BookDir + BookFile` の実体パスを起動前に検証します。大きな YANEURAOU-DB2016 形式の book では `BookOnTheFly: true` を使う運用を推奨します。
+
+実力比較や SPSA では、内蔵定跡をエンジンごとに変えると「エンジンではなく定跡」を比較することになります。既定のサンプル overlay は `BookFile: no_book` とし、共有開始局面集は `rules.initial_positions` で指定します。
+
+## artifact エンジン
+
+ビルド済み成果物やリポジトリ定義からエンジンを解決する場合は `artifact` を使います。
 
 ```yaml
-name: "DLShogi"
-engine_path: "/opt/dlshogi/bin/dlshogi"
-working_dir: "/opt/dlshogi"
-handshake_timeout: 60.0  # モデル読み込みに時間がかかる
+name: "YO-mainline"
+artifact: "YaneuraOu/9f89431a"
+build_options:
+  target_cpu: ZEN3
+  edition: YANEURAOU_ENGINE_NNUE_HALFKP_512X2_8_64
 options:
-  model_path: "model/model.onnx"
-  use_gpu: true
-  gpu_id: 0
-env:
-  CUDA_VISIBLE_DEVICES: "0"
+  Threads: 4
+  USI_Hash: 2048
 ```
 
-### プレースホルダーを使用
+`artifact` と `engine_path` は同時に指定できません。`artifact` を使う場合、通常は `build_options.target_cpu` が必要です。
+
+## トーナメント側で上書きする
+
+同じエンジン YAML を使いながら、トーナメントごとに名前や USI オプションを変えられます。
 
 ```yaml
-name: "YaneuraOu-ZEN3"
-engine_path: "{engine_dir}/YaneuraOu/YaneuraOu-by-gcc-zen3"
-options:
-  Threads: 16
-  Hash: 8192
-  BookFile: "{engine_dir}/books/standard.db"
-```
-
-## トーナメント設定での上書き
-
-トーナメント設定ファイル内で、エンジン設定の一部を上書きできます。
-
-```yaml
-# tournament.yaml
 engines:
-  - engine_path: "configs/engine/yaneuraou.yaml"
-    name: "YaneuraOu-Strong"
+  - engine_path: "engines/yaneuraou.yaml"
+    name: "YaneuraOu_Strong"
     options:
-      Threads: 8      # engine_path の値を上書き
-      Hash: 1024
-  
-  - engine_path: "configs/engine/yaneuraou.yaml"
-    name: "YaneuraOu-Weak"
+      Threads: 4
+      USI_Hash: 1024
+  - engine_path: "engines/yaneuraou.yaml"
+    name: "YaneuraOu_Light"
     options:
       Threads: 1
-      Hash: 128
+      USI_Hash: 128
 ```
 
-この機能を使うと、同じエンジンバイナリで強さを変えたバリエーションを簡単に作成できます。
-
-## アーティファクト参照
-
-ビルド済みエンジンを artifact として参照することもできます。詳細は[ビルドシステムガイド](build-system.md)を参照してください。
+`options_overlays` を使うと、USI オプション上書き用 YAML を段階的にマージできます。
 
 ```yaml
-# engine_path の代わりに artifact を指定
-artifact: "YaneuraOu/a5ee2786"
-# build_options はビルド設定で参照される場合のみ指定
+engines:
+  - artifact: "YaneuraOu/9f89431a"
+    build_options:
+      target_cpu: ZEN3
+    options_overlays:
+      - "examples/configs/resources/engines/overlays/YaneuraOu.yaml"
+    options:
+      Threads: 4
 ```
 
-### DeepLearningShogi の例
+## 確認する
 
-```yaml
-artifact: "DeepLearningShogi/ef2306c"
-options:
-  DNN_Model: "/path/to/model.onnx"
-  Draw_Ply: 320
-```
-
-- `DNN_Model` は評価関数（ONNX）を指定します。
-- `Draw_Ply` は引き分け手数の USI オプション名です。
-
-### FukauraOu (DLShogi互換) の例
-
-```yaml
-artifact: "FukauraOu/743186e7"
-build_options:
-  target_cpu: "AVX2"
-options:
-  EvalDir: "eval"
-  DNN_Model: "model.onnx"
-```
-
-- FukauraOu は YaneuraOu と同一repoのビルドオプション違いです。
-- `EvalDir` は engine 実行ディレクトリからの相対パスで解決されます。
-
-## 設定の検証
-
-エンジン設定が正しいか確認するには、以下のコマンドを使用します。
+単体エンジンの起動確認:
 
 ```bash
-# エンジンが起動するか確認
-shogiarena run mate configs/engine/myengine.yaml startpos --ply-limit 5
-
-# トーナメント設定を dry-run で検証
-shogiarena run tournament configs/arena/test.yaml --dry-run
+shogiarena run analyze engine.yaml startpos --nodes 100000
+shogiarena run mate engine.yaml startpos --ply-limit 5
 ```
 
-## トラブルシューティング
-
-### エンジンが起動しない
-
-1. **パスが正しいか確認**
-   ```bash
-   ls -l /path/to/engine/binary
-   ```
-
-2. **実行権限があるか確認**
-   ```bash
-   chmod +x /path/to/engine/binary
-   ```
-
-3. **依存ライブラリが揃っているか確認**
-   ```bash
-   ldd /path/to/engine/binary
-   ```
-
-### タイムアウトエラー
-
-ニューラルネットワークモデルの読み込みに時間がかかるエンジンでは、`handshake_timeout` を長めに設定してください。
-
-```yaml
-handshake_timeout: 60.0
-```
-
-### オプションが反映されない
-
-エンジンがサポートしているオプション名を確認してください。大文字小文字やスペースの有無に注意が必要です。
+トーナメント設定込みの検証:
 
 ```bash
-# エンジンのオプション一覧を確認（手動で起動）
-/path/to/engine/binary
-> usi
-> quit
+shogiarena run tournament tournament.yaml --dry-run
 ```
 
-## 参考資料
+## よくある問題
 
-- [トーナメントガイド](tournaments.md): トーナメント設定での上書き
-- [ビルドシステム](build-system.md): アーティファクト参照の詳細
-- [USI プロトコル](../technical/usi-engine.md): USI の技術詳細
+- 実行ファイルに権限がない: `chmod +x /path/to/engine`
+- USI オプション名が違う: エンジンを手動起動して `usi` の出力を確認する
+- 評価関数や定跡の相対パスがずれる: `working_directory` と `path-preflight` を確認する
+- artifact が解決できない: `shogiarena config repo ...` と `settings.yaml` のリポジトリ定義を確認する
+
+## サンプル
+
+- `examples/configs/resources/engines/local_example.yaml`
+- `examples/configs/resources/engines/artifact_example.yaml`
+- `examples/configs/resources/engines/overlays/`

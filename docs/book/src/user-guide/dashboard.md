@@ -1,105 +1,82 @@
-# ダッシュボードガイド
+# ダッシュボード
 
-Shogi Arena のダッシュボードは、トーナメントや SPSA チューニングの進行状況をリアルタイムで可視化します。
+ShogiArena のダッシュボードは、実行中または保存済み run の状態をブラウザで確認するための UI です。
 
-## 起動方法
+## 実行中に開く
 
-### トーナメント実行時
-run 設定で `dashboard.enabled: true` に設定すると自動的に起動します（デフォルトポート: 8080）。
+run 設定で `dashboard.enabled: true` にすると、実行時に API サーバーが起動します。
 
-```bash
-shogiarena run tournament my_config.yaml
-# -> http://localhost:8080
+```yaml
+dashboard:
+  enabled: true
+  api_port: 8080
 ```
 
-### スタンドアロン起動
-保存済みのデータベース（`game.db`）を指定して起動することも可能です。
+```bash
+shogiarena run tournament tournament.yaml
+```
+
+ブラウザで `http://localhost:8080` を開きます。
+
+## 保存済み run を開く
 
 ```bash
-shogiarena dashboard serve --run-dir work_dir/... --port 8080
-# または設定ファイルから最新 run を解決
+shogiarena dashboard serve --run-dir /path/to/run
+```
+
+設定ファイルから最新 run を解決したい場合:
+
+```bash
 shogiarena dashboard serve --config tournament.yaml
 ```
 
-## ランタイムモード
+ポートを変える場合:
 
-ダッシュボードは実行内容に応じて自動的にモードが切り替わり、表示されるタブが変化します。
+```bash
+shogiarena dashboard serve --run-dir /path/to/run --port 9090
+```
 
-| モード | 用途 | 主なタブ |
-|--------|------|---------|
-| **tournament** | 複数エンジンのトーナメント | Tournament, Games, Engines, Live View, Instances |
-| **spsa** | SPSA パラメータ最適化 | SPSA, Games, Live View, Instances |
-| **match** | 2 エンジン間の対戦分析 | Match, Games, Live View |
-| **sprt** | SPRT 統計テスト | SPRT, Games, Live View |
-| **generate** | 棋譜生成 | Generate |
+## 表示内容
 
-## 主要なビュー
+実行モードに応じて表示されるタブが切り替わります。
 
-### Tournament Dashboard
-トーナメントの全体状況を表示します。
+| モード | 主な用途 | 主な表示 |
+| --- | --- | --- |
+| `tournament` | 複数エンジン比較 | 順位表、対戦表、棋譜、エンジン設定 |
+| `sprt` | 2 エンジンの統計検定 | LLR、判定状態、対局履歴 |
+| `spsa` | パラメータチューニング | 更新履歴、パラメータ、収束状況 |
+| `generate` | 自己対局の棋譜生成 | 生成数、出力ファイル、進捗 |
+| `book` | 内蔵定跡の利用状況 | book fingerprint、勝率、先後別集計、out-of-book ply 分布 |
 
-- **Overview**: 進行状況、エンジンの勝率ランキング。
-- **Standings**: 順位表・レーティング推移。
-- **Matchups**: エンジン間のヘッド・ツー・ヘッド成績。
-- **Openings**: 戦型別の統計。
-- **Engines**: 各エンジンのオプション設定とメトリクス。
-- **Games**: 全対局のリスト。フィルタリングや棋譜ダウンロードが可能。
-- **Rules**: 対局ルール（持ち時間、引き分け条件等）の表示。
-- **Live View**: 現在実行中の対局をリアルタイムで盤面表示します。
+共通して、`Games` では保存済み対局を確認でき、`Live View` では進行中の対局盤面を見られます。
 
-### Match Dashboard
-2 エンジン間の対戦専用ビューです。
+Book タブの out-of-book は「実着手が指定 book 上の候補手集合に含まれたか」を後から観測する指標です。エンジンが実際に book 由来で指したことを断定するものではありません。
 
-- **Summary**: 勝率、Elo 推定値、信頼区間。
-- **Timeline**: 対局結果の時系列推移。
+## run ディレクトリ
 
-### SPRT Dashboard
-SPRT（Sequential Probability Ratio Test）統計テスト用のビューです。
+ダッシュボードは run ディレクトリ内の成果物を読みます。代表的なファイルは次の通りです。
 
-- **Summary**: LLR（Log-Likelihood Ratio）、判定状態（H0/H1/未確定）。
-- **Timeline**: LLR の推移グラフと信頼区間。
+```text
+run/
+├── game.db
+├── manifest.json
+├── state.json
+├── data/
+└── records/
+```
 
-### SPSA Dashboard
-チューニングセッション専用のビューです。
+`game.db` がない生成系 run では、run ディレクトリのメタデータと出力ファイルを中心に表示します。
 
-- **Summary**: チューニングの進捗と推定残り時間。
-- **Parameters**: チューニング対象パラメータの現在値と変動履歴。
-- **Updates**: 各更新ステップの詳細（勾配推定、バリアント結果）。
-- **Correlation**: パラメータ間の相関分析。
-- **Convergence**: 収束分析（LTC Elo、Mobility、Δ-norm）。
+## うまく表示されないとき
 
-### Generate Dashboard
-`run generate` 向けに、生成状況の集計を表示します（DB なしで run_dir のメタデータを参照）。
+- `--run-dir` が実際の run ディレクトリを指しているか確認する
+- 実行中の dashboard と同じポートを別プロセスが使っていないか確認する
+- ブラウザをリロードする
+- run が古い場合は、現在の ShogiArena で再実行または再生成する
 
-- **Generate Summary**: 生成ファイル数、総対局数、総局面数、総バイト数。
+関連する確認コマンド:
 
-`run generate` を起動した場合は自動的に Generate タブが有効になり、スタンドアロン起動でも `experiment_name: generate` を含む run ディレクトリを指定すると Generate プロファイルが選択されます。
-
-### Instances タブ
-エンジンインスタンスのライフサイクル管理を行います。
-
-- インスタンスの作成・停止・削除。
-- 各インスタンスの健全性メトリクス。
-- インスタンスごとの対局履歴。
-
-### Scheduler タブ
-マッチスケジュールの管理を行います（Runner が有効な場合のみ）。
-
-- 対局のキャンセル・復元。
-- インスタンスへの手動アサイン。
-- リスケジュール。
-
-## リアルタイム更新
-
-ダッシュボードは WebSocket と Server-Sent Events (SSE) を使用してリアルタイム更新を行います。
-
-- **Live View**: WebSocket（`/ws`）を使用し、盤面・時計・指し手を秒単位で更新。
-- **Tournament/SPSA**: SSE でサマリー・順位表・パラメータを自動更新。
-- **Instances**: SSE でインスタンス状態を監視。
-
-ブラウザをリロードすることなく、最新の対局結果やレーティングが自動的に反映されます。
-
-## エクスポート
-
-- **棋譜**: 各対局の「Download」ボタン、または一括ダウンロード機能で SFEN/KIF/CSA 形式を取得可能。
-- **データ**: CSV 形式での統計データエクスポートに対応しています。
+```bash
+shogiarena results summary /path/to/run
+shogiarena results verify-provenance /path/to/run
+```

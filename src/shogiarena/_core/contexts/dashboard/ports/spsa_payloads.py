@@ -335,14 +335,14 @@ class SpsaSummaryPayload(TypedDict, total=False):
     progress: float
     recent_step: float
     recent_delta_norm: float
-    engineTimeControls: dict[str, str]
-    defaultTimeControl: str | None
+    engine_time_controls: dict[str, str]
+    default_time_control: str | None
     engines: list[str]
-    enginesMeta: list[JsonObject]
-    engineInstances: dict[str, str | None]
-    engineStats: dict[str, dict[str, int | float]]
-    spsaConfig: JsonObject | None
-    liveView: LiveViewSnapshot
+    engines_meta: list[JsonObject]
+    engine_instances: dict[str, str | None]
+    engine_stats: dict[str, dict[str, int | float]]
+    spsa_config: JsonObject | None
+    live_view: LiveViewSnapshot
 
 
 # ---------------------------------------------------------------------------

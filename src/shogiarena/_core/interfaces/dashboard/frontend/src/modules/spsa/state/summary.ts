@@ -16,10 +16,10 @@ export function resolveSummary(data: NormalizedSpsaSummary): void {
     // when the tab becomes active, not on every data update.
     summaryStore.applySpsaSummary({
         engines: data.engines,
-        engineMeta: data.engineMeta as unknown as JsonObject,
-        engineTimeControls: data.engineTimeControls,
-        engineInstances: data.engineInstances,
-        defaultTimeControl: data.defaultTimeControl,
+        engine_meta: data.engineMeta as unknown as JsonObject,
+        engine_time_controls: data.engineTimeControls,
+        engine_instances: data.engineInstances,
+        default_time_control: data.defaultTimeControl,
     });
 }
 

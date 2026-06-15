@@ -362,14 +362,19 @@ class EngineParticipant(GameEnginePort):
         return False
 
     def _map_game_result(self, result: GameResult) -> str | None:
+        """Map a decided game result to a USI ``gameover`` token from this engine's perspective.
+
+        Returns ``None`` for non-decided outcomes (paused/error/invalid): there is no valid
+        gameover token for them, and the caller skips the notification. A win/loss with an
+        unknown role is a wiring bug and fails fast rather than guessing a token.
+        """
         if result.is_draw():
             return "draw"
         if result.is_win():
-            if self._role is not None and self._role.is_black():
+            if self._role is None:
+                raise ValueError(f"{self.name}: cannot map a decisive result without an engine role")
+            if self._role.is_black():
                 return "win" if result.is_black_win() else "lose"
-            if self._role is not None and self._role.is_white():
-                return "win" if result.is_white_win() else "lose"
-            # Unknown role: treat any win as win for the notified engine? default to lose for safety
-            return "lose" if result.is_white_win() else "win"
-        # For non-win, non-draw outcomes (e.g., paused, error) fall back to loss
-        return "lose"
+            return "win" if result.is_white_win() else "lose"
+        # Paused/error/invalid are not games with a win/lose/draw token; skip the gameover.
+        return None

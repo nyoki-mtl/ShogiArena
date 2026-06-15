@@ -1,6 +1,6 @@
 import type { LiveBoardAdapter } from '@/modules/live/types';
 import type { DashboardCoreState } from '@/types/dashboard';
-import { createOffscreenBoardAdapterCtor, supportsOffscreenCanvas } from './worker/offscreenBoardAdapter';
+import { createOffscreenBoardAdapterCtor, supportsOffscreenCanvas } from './worker/offscreen-board-adapter';
 import { recordLiveDiagnosticsMetric } from '@/modules/live/utils/liveNamespace/metrics';
 
 type ShogiBoardAdapterCtor = new () => LiveBoardAdapter;

@@ -1,62 +1,99 @@
-# SPSA Tuning
+# SPRT / SPSA
 
-Shogi Arena は SPSA (Simultaneous Perturbation Stochastic Approximation) アルゴリズムを用いたエンジンパラメータの自動チューニングをサポートしています。
+このページでは、統計検定用の `run sprt` と、パラメータチューニング用の `run spsa` をまとめます。
 
-## 実行コマンド
+## SPRT
 
-`run` コマンドの `spsa` サブコマンドで実行します。
+SPRT は、2 つのエンジン差が十分に大きいかを逐次的に判定します。
 
 ```bash
-shogiarena run spsa configs/run/spsa/example.yaml [options]
+cp examples/configs/run/sprt/example.yaml sprt.yaml
+shogiarena run sprt sprt.yaml
 ```
 
-### 実行ディレクトリの決まり方
-
-- `--run-dir` を指定した場合は **そのパスがそのまま使われます**（`<experiment-name>-<hash8>/<timestamp>` は付かない）
-- `--run-dir` を指定しない場合は、`output_dir` 配下に
-  `spsa/runs/<experiment-name>-<hash8>/<timestamp>` が作成されます
-- `--experiment-name` は **run_dir を自動生成する場合のみ** 反映されます
-
-`--run-dir` は相対パスも指定でき、`{output_dir}` や環境変数を展開できます。
-
-## 設定ファイル (SpsaRunConfig)
-
-SPSA 用の設定ファイルはトップレベルに `spsa` ブロックを持ちます。チューニング対象のパラメータ自体は
-`spsa` ブロックに直接書くのではなく、**SPSA space spec** という別ファイルに切り出して `spsa.space` から参照します
-（[SPSA space protocol](#spsa-space-protocol) を参照）。
-
-### 基本構造
+最小構成:
 
 ```yaml
-engines:
-  - artifact: "rshogi-az/local"
-    options:
-      Threads: 1
-      USI_Hash: 256
-    # 1 つのディスクリプタで十分。SPSA が plus/minus バリアントを自動生成します。
+experiment_name: "sprt-test"
 
-dashboard:
-  enabled: true
-  api_port: 8080
+engines:
+  - name: "Baseline"
+    engine_path: "baseline.yaml"
+  - name: "Modified"
+    engine_path: "modified.yaml"
+
+tournament:
+  scheduler: round_robin
+  games_per_pair: 2
+  num_parallel: 4
 
 rules:
+  time_control:
+    time_ms: 60000
+    increment_ms: 1000
+
+sprt:
+  elo0: 0.0
+  elo1: 5.0
+  alpha: 0.05
+  beta: 0.05
+  min_games: 0
+  max_games: 1000
+```
+
+結果の目安:
+
+- H0 棄却: Modified が設定した差以上に強い可能性が高い
+- H0 受容: 設定した差は確認できない
+- `max_games` 到達: 結論に必要な対局数が足りない
+
+OpenBench / ShogiBench へ提出する場合は、run 設定の `openbench` ブロックを使います。
+
+## SPSA
+
+SPSA は、1 つのエンジン設定から plus/minus バリアントを生成し、対局結果からパラメータを更新します。
+
+```bash
+cp examples/configs/run/spsa/example.yaml spsa.yaml
+shogiarena run spsa spsa.yaml
+```
+
+現行の SPSA 設定では `engines` は 1 エントリのみです。チューニング対象のパラメータ一覧は `spsa.space` で SPSA space 定義ファイルとして指定します。
+
+```yaml
+experiment_name: "my-spsa"
+
+engines:
+  - engine_path: "engine.yaml"
+    options:
+      Threads: 2
+      USI_Hash: 1024
+    go_options:
+      nodes: 1000000
+
+rules:
+  time_control:
+    node_limit: 1000000
   initial_positions:
-    type: "file"
+    type: file
     source: "./data/initial_sfens/start_sfens_ply24.txt"
-  repetition_occurrences_to_draw: 2
+    flip_policy: pair_both
+  adjudication:
+    enable_max_plies: true
+    max_plies: 320
 
 spsa:
-  space: "./configs/resources/spsa/rshogi-az-mcts.yaml"  # space spec へのパス（必須）
-  num_updates: 50          # 総更新ステップ数（必須）
-  pairs_per_update: 2      # 1 更新あたりの対局ペア数
-  inflight_factor: 4       # 先行投入する更新バッチ数
-  num_parallel: 4          # 並列ワーカー数
+  space: "examples/configs/resources/spsa/rshogi-az-mcts.yaml"
+  num_updates: 200
+  pairs_per_update: 2
+  inflight_factor: 6
+  num_parallel: 4
   algorithm:
     name: classic
     alpha: 0.602
     gamma: 0.101
     A:
-      mode: ratio          # ratio | absolute
+      mode: ratio
       value: 0.1
   variants:
     pairing: plus_minus
@@ -65,135 +102,49 @@ spsa:
     apply:
       clear_hash: true
       after_setoption: isready
+
+dashboard:
+  enabled: true
+  api_port: 8080
 ```
 
-完全な例は `configs/run/spsa/example.yaml` を参照してください。
-
-### エンジン設定
-
-SPSA モードでは `engines` リストに**1つのエンジンのみ**を指定します。システム内部で「ベースライン（変更前）」と
-「Tuned（摂動後）」の plus/minus バリアントに複製され、対戦が行われます。
-
-### 開始局面
-
-開始局面は `rules.initial_positions` で指定します（`type: file` のみ対応）。SPSA は手番を入れ替えたペア対局を
-前提とするため、`flip_policy` を指定する場合は `pair_both` のみ許容されます。
-
-### SPSA パラメータ (`spsa`)
-
-| フィールド | 既定値 | 説明 |
-| --- | --- | --- |
-| `space` | （必須） | SPSA space spec YAML へのパス。チューニング対象パラメータを定義します。 |
-| `num_updates` | （必須） | 総更新ステップ数。 |
-| `pairs_per_update` | 1 | 1 更新あたりの対局ペア数（勾配推定に使うバッチサイズ）。 |
-| `inflight_factor` | 4 | 先行して投入する更新バッチ数。スループット向上のため複数更新分の対局を並行投入します。 |
-| `num_parallel` | 4 | 並列ワーカー数。 |
-| `algorithm` | classic | 減衰係数ブロック（下記）。 |
-| `variants` | — | バリアント生成・適用ポリシー（下記）。 |
-| `snap_float_to_step` | false | 浮動小数点パラメータを step 単位に丸めるか。 |
-| `int_ck_floor` | 0.5 | 整数パラメータの摂動 `c_k` の下限。 |
-| `early_stop` | なし | 早期終了条件。 |
-| `ltc_regression` | なし | LTC 回帰テスト（下記）。 |
-
-### アルゴリズムブロック (`spsa.algorithm`)
-
-| フィールド | 既定値 | 説明 |
-| --- | --- | --- |
-| `name` | classic | アルゴリズム名。 |
-| `alpha` | 0.602 | ステップサイズ `a_k` の減衰指数。 |
-| `gamma` | 0.101 | 摂動幅 `c_k` の減衰指数。 |
-| `A` | — | 安定化項。`{mode: ratio\|absolute, value: N}` で指定。`ratio` は `num_updates` に対する比率、`absolute` は実数。数値を直接書くと `absolute` 扱い。 |
-
-### バリアントブロック (`spsa.variants`)
-
-| フィールド | 既定値 | 説明 |
-| --- | --- | --- |
-| `pairing` | plus_minus | バリアントペアリング方式。 |
-| `crn` | true | Common Random Numbers（共通乱数）による分散削減を有効にするか。 |
-| `integer_rounding` | stochastic | 整数パラメータの丸め方式（`stochastic` 等）。 |
-| `instance_affinity` | update | バリアントとインスタンスの割り当て方針。 |
-| `apply` | — | バリアント切替時の適用挙動。`clear_hash`（ハッシュクリア）、`after_setoption`（`setoption` 後の同期、例: `isready`）。 |
-
-### LTC Regression (`spsa.ltc_regression`)
-
-チューニング中に定期的に検証対局（LTC: Long Time Control）を行い、性能低下を防ぐ機能です。
-
-- `every_n_updates`: 何ステップごとに検証するか。
-- `total_pairs`: 検証対局数。
-- `time_control`: LTC 用の持ち時間。
-- `pass_criteria`: 通過条件（`max_elo_drop` など）。
-
-## SPSA space protocol
-
-チューニング対象パラメータは `schema_version: shogiarena.spsa.space.v1` の **space spec** ファイルに定義します。
-これによりエンジンの USI オプション空間と SPSA ループが疎結合になり、エンジンごとのチューニング対象を
-独立したファイルとして管理できます。
-
-```yaml
-schema_version: shogiarena.spsa.space.v1
-
-target:
-  engine_family: rshogi-az
-  protocol: usi_options          # USI setoption 経由でパラメータを適用
-  required_options_policy: strict
-  tunable_manifest:
-    required: false
-    command: usi_tunables
-
-parameters:
-  - id: cpuct
-    label: Cpuct
-    target:
-      option: Tune.Cpuct           # 実際に setoption するオプション名
-      value_encoding: decimal
-    value_type: float
-    initial: 1.745
-    bounds:
-      min: 0.5
-      max: 4.0
-    schedule:
-      c_end: 0.05                  # 最終ステップでの摂動幅
-      r_end: 0.002                 # 最終ステップでの学習率
-    significant_digits: 6
-
-  - id: max_collision_visits
-    label: Max collision visits
-    target:
-      option: Tune.MaxCollisionVisits
-      value_encoding: integer
-    value_type: int
-    initial: 8
-    bounds:
-      min: 1
-      max: 64
-    schedule:
-      c_end: 2
-      r_end: 0.002
-    rounding:
-      mode: stochastic
-```
+## SPSA の主要フィールド
 
 | フィールド | 説明 |
 | --- | --- |
-| `target.engine_family` | 対象エンジンファミリ識別子。 |
-| `target.protocol` | パラメータ適用プロトコル（`usi_options`）。 |
-| `parameters[].id` | パラメータ識別子（成果物・ダッシュボードでのキー）。 |
-| `parameters[].target.option` | エンジンへ `setoption` する USI オプション名。 |
-| `parameters[].value_type` | `float` または `int`。 |
-| `parameters[].initial` | 初期値。 |
-| `parameters[].bounds` | 探索範囲 `{min, max}`。 |
-| `parameters[].schedule` | ゲインスケジュール（`c_end`: 最終摂動幅、`r_end`: 最終学習率）。 |
-| `parameters[].rounding` | 整数パラメータの丸め方式（`{mode: stochastic}` 等）。 |
+| `space` | 調整対象パラメータを定義する SPSA space ファイル |
+| `num_updates` | 更新回数 |
+| `pairs_per_update` | 1 更新あたりの対局ペア数 |
+| `inflight_factor` | 先行投入する更新数の係数 |
+| `algorithm` | SPSA のゲインスケジュール |
+| `variants.crn` | Common Random Numbers による分散削減 |
+| `variants.integer_rounding` | 整数パラメータの丸め方式 |
+| `num_parallel` | SPSA 用の並列数 |
 
-サンプルは `configs/resources/spsa/` を参照してください。
+## 開始局面
+
+SPSA では `rules.initial_positions.type: file` を指定し、開始局面リストを用意する運用を推奨します。`flip_policy: pair_both` にすると同じ局面を先後入れ替えで使いやすく、ノイズを抑えられます。
+
+## ダッシュボード
+
+`dashboard.enabled: true` の場合、`http://localhost:8080` で次を確認できます。
+
+- 更新ごとの結果
+- パラメータの現在値
+- 勾配推定
+- 収束状況
+- 生成された対局一覧
 
 ## 実行結果
 
-SPSA の実行結果は `output_dir/spsa/runs/<config_stem または experiment_name>-<hash8>/YYYYMMDDHHMMSS/`
-に保存されます。run ディレクトリ直下には共通の run artifact（`game.db`, `state.json`, `manifest.json` など）が、
-`spsa/` サブディレクトリに SPSA 固有の成果物が出力されます。
+run ディレクトリには通常の `game.db`、`manifest.json`、`state.json` に加え、SPSA 固有のイベントやスナップショットが保存されます。完了後も次のコマンドで再表示できます。
 
-- **spsa/index.json**: 各更新ステップのパラメータ・勾配・ステップ幅などのスナップショット。
-- **spsa/events.jsonl**: SPSA ループのイベントストリーム（ダッシュボードのライブ更新に使用）。
-- **spsa/results.jsonl**: 更新ごとの確定結果レコード。
-- **dashboard**: SPSA の収束状況を確認できます（`http://localhost:8080`）。
+```bash
+shogiarena dashboard serve --run-dir /path/to/run
+```
+
+## 関連
+
+- [内部技術: SPRT](../internals/sprt/index.md)
+- [内部技術: SPSA](../internals/spsa/index.md)
+- [ダッシュボード](dashboard.md)

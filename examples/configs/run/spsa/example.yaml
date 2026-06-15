@@ -1,72 +1,44 @@
-# SPSA チューニング設定テンプレート
-# ------------------------------------------------------------------
-# - `engines` は 1 エントリのみが許可され、baseline / tuned の両方に同じエンジン定義が使われます。
-# - `rules.initial_positions` では必ず type=file を指定し、チューニングに用いる開始局面リストを読み込みます。
-# - `spsa` ブロックでアルゴリズムの更新回数やステップ幅、CRN 設定などを細かく制御できます。
-# - コメント内の「必須/任意」「既定: ...」は SpsaRunConfig の初期値を基準にしています。
+## Equivalent: shogiarena run spsa examples/configs/run/spsa/example.yaml
 
-experiment_name: "halfkp512x2-8-64"        # 任意 (既定: YAML から推測)
-# work_dir: "{output_dir}"                 # 任意 (既定: project_dirs.output_dir)
-instances:
-  - "../../resources/instances/local_example.yaml"   # 任意。CLI --instances で上書き可能（相対パスは設定ファイルからの相対）
+# SPSA example targeting the generic ShogiArena SPSA space protocol.
 
-engines:                                   # 必須。SPSA では 1 エントリのみ許可
-  - artifact: "YaneuraOu/3570416"          # artifact or engine_path の一方が必須
-    build_options:
-      target_cpu: ZEN3                     # artifact 利用時は必須
-      edition: YANEURAOU_ENGINE_NNUE_HALFKP_512X2_8_64  # 任意
-      # tune_file: "./data/YaneuraOu-params/suisho10.tune"  # 任意 (SPSA 用の初期パラメータ、相対パスまたは絶対パス)
-    name: "YO-tuning"                      # 任意 (既定: artifact／engine_path から派生)
-    options_overlays:                      # 任意 (既定: [])
-      - "../../resources/engines/overlays/example.yaml"
-    options:                               # 任意 (既定: {})
-      Threads: 2
-      USI_Hash: 1024
-      # EvalDir: "./data/evals/Suisho10"  # パスオプションの例（相対パスまたは絶対パス）
-    go_options:                            # 任意 (既定: {})
-      nodes: 1000000
-    instance_id: "local-dev"               # 任意 (既定: null)
-
-rules:                                     # 必須 (SPSA load_config_yaml では rules ブロックが必須)
-  time_control:
-    node_limit: 1000000                    # 任意 (既定: null) だが SPSA では固定時間/ノード指定を推奨
-  initial_positions:                       # 必須。type=file / flip_policy=pair_both / source=必須
-    type: "file"
-    source: "./data/initial_sfens/start_sfens_ply24.txt"  # 相対パスまたは絶対パス
-    flip_policy: "pair_both"
-  adjudication:
-    resign_threshold_cp: null              # null で投了判定を無効化
-    max_plies: 320                         # 任意 (既定: 320。ただし enable_max_plies=true 時は必須)
-    enable_max_plies: true                 # 任意 (既定: true)
-
-spsa:                                      # 必須。アルゴリズム設定
-  parameters_path: "./data/YaneuraOu-params/suisho10.params"  # 必須。調整対象パラメータ一覧（相対パスまたは絶対パス）
-  num_updates: 200                          # 必須。正の整数
-  inflight_factor: 6                        # 任意 (既定: 4)
-  update_batch_size: 2                      # 任意 (既定: null -> 1更新ごと)
-  mobility: 1.0                             # 任意 (既定: 1.0)
-  scale: 1.0                                # 任意 (既定: 1.0)
-  a0: 0.2                                   # 任意 (既定: 1.0)
-  A: 50                                     # 任意 (既定: None。ローダーが内部ルールで処理)
-  alpha: 0.602                              # 任意 (既定: 0.602)
-  gamma: 0.101                              # 任意 (既定: 0.101)
-  snap_float_to_step: false                 # 任意 (既定: false)
-  crn_enabled: true                         # 任意 (既定: true)
-  int_rounding: "none"                      # 任意 (none / stochastic)
-  int_ck_floor: 0.5                         # 任意 (既定: 0.5)
-  update_mode: "immediate"                  # 任意 (既定: "immediate")
-  early_stop:                               # 任意。SPRT などで早期打ち切りを行う場合に設定
-    enabled: false
-    sprt:
-      elo0: 0.0
-      elo1: 5.0
-      alpha: 0.05
-      beta: 0.05
-      engines: null
-      min_games: 0
-  num_parallel: 4                           # 任意 (既定: 4)
+engines:
+  - artifact: "rshogi-az/local"
+    options:
+      Threads: 1
+      USI_Hash: 256
+    # Single descriptor is enough; SPSA creates plus/minus variants from it.
 
 dashboard:
   enabled: true
   api_port: 8080
-num_workers: 1                              # 任意 (既定: 1)。SPSA 用ワーカー数
+
+# Rules and initial positions
+rules:
+  initial_positions:
+    type: "file"
+    source: "./data/initial_sfens/start_sfens_ply24.txt"
+  # 千日手扱いとする同一局面の出現回数（SPSAでも調整可能）
+  repetition_occurrences_to_draw: 2
+
+# SPSA loop and required inputs
+spsa:
+  space: "../../resources/spsa/rshogi-az-mcts.yaml"
+  num_updates: 50
+  pairs_per_update: 2
+  inflight_factor: 4
+  num_parallel: 4
+  algorithm:
+    name: classic
+    alpha: 0.602
+    gamma: 0.101
+    A:
+      mode: ratio
+      value: 0.1
+  variants:
+    pairing: plus_minus
+    crn: true
+    integer_rounding: stochastic
+    apply:
+      clear_hash: true
+      after_setoption: isready

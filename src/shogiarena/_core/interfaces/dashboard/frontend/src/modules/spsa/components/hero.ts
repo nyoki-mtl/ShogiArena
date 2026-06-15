@@ -232,7 +232,7 @@ export function renderHero(state: SpsaDashboardState, liveView?: LiveViewSnapsho
     const updatesCompleted =
         liveViewProgress?.completed ?? summary?.updatesCompleted ?? progressSnapshot?.completed ?? 0;
     const numUpdates = liveViewProgress?.total ?? summary?.numUpdates ?? progressSnapshot?.total ?? 0;
-    const unitLabelRaw = typeof liveViewProgress?.unitLabel === 'string' ? liveViewProgress.unitLabel : 'updates';
+    const unitLabelRaw = typeof liveViewProgress?.unit_label === 'string' ? liveViewProgress.unit_label : 'updates';
     const unitLabel = unitLabelRaw.trim() || 'updates';
     setText(ELEMENT_IDS.progressValue, formatGamesPlayed(summary));
 

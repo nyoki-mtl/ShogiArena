@@ -32,18 +32,18 @@ class ColorTimelineEntry(TypedDict):
     losses: int
     draws: int
     games: int
-    winRate: float | None
+    win_rate: float | None
 
 
 class MatchTimelineEntry(TypedDict):
     """マッチタイムラインの各エントリ。"""
 
-    gameIndex: int
+    game_index: int
     wins: int
     losses: int
     draws: int
     games: int
-    winRate: float | None
-    eloEstimate: float | None
+    win_rate: float | None
+    elo_estimate: float | None
     black: ColorTimelineEntry
     white: ColorTimelineEntry

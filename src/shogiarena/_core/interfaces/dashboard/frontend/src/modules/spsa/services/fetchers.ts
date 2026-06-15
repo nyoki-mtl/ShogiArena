@@ -79,14 +79,14 @@ import {
     LTC_SUMMARY_CACHE_TTL_MS,
     PARAMS_HYDRATION_METRIC,
     SUMMARY_HYDRATION_METRIC,
-} from './api.constants';
+} from './api-constants';
 import { SPSA_SUMMARY_PROGRESS_EVENT } from '../constants';
 import {
     SPSA_DETAIL_DEFAULT_VIEW,
     SPSA_DETAIL_DEFAULT_WINDOW,
     SPSA_DETAIL_SUPPORTED_INCLUDES,
 } from '@/modules/spsa/constants';
-import type { ResumeCoordinator } from '@/modules/shared/services/resumeCoordinator';
+import type { ResumeCoordinator } from '@/modules/shared/services/resume-coordinator';
 
 const ANALYSIS_FETCH_TIMEOUT_MS = 15_000;
 

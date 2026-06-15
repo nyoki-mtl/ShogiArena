@@ -147,6 +147,7 @@ class RulesConfig(BaseModel):
 class SprtConfig(BaseModel):
     """SPRT early stopping configuration."""
 
+    model: Literal["gsprt-trinomial-v1", "gsprt-pentanomial-v1"] = "gsprt-trinomial-v1"
     elo0: float = 0.0
     elo1: float = 5.0
     alpha: float = 0.05

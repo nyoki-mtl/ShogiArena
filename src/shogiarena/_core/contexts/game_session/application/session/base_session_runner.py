@@ -139,7 +139,11 @@ class BaseSessionRunner(ABC, Generic[TFinal, TRun]):
         )
         self._session_flow = SessionFlow(cast(SessionRunnerPort[TRun], self))
         self._result_store = result_store
-        type(self)._active_dashboard_manager = self._dashboard_manager
+        # Write to the base class because the static cleanup helpers read
+        # BaseSessionRunner._active_dashboard_manager; writing to type(self) (the concrete
+        # subclass) left those reads on the no-op default, so asset cleanup never ran. (One
+        # active manager per process; runs are sequential.)
+        BaseSessionRunner._active_dashboard_manager = self._dashboard_manager
 
     _active_dashboard_manager: _DashboardAssetLifecyclePort = _NoopDashboardAssetLifecycle()
     dashboard_profiles: tuple[DashboardProfile, ...] = ("tournament", "spsa", "match", "sprt")

@@ -224,7 +224,7 @@ class TestSpsaSummaryPayload:
 
     def test_contains_engine_keys(self) -> None:
         keys = _all_keys(SpsaSummaryPayload)
-        assert {"engines", "enginesMeta", "engineInstances", "engineStats"} <= keys
+        assert {"engines", "engines_meta", "engine_instances", "engine_stats"} <= keys
 
     def test_key_count_minimum(self) -> None:
         assert len(_all_keys(SpsaSummaryPayload)) >= 25

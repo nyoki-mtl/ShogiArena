@@ -11,7 +11,6 @@ import yaml
 from pydantic import ValidationError
 
 from shogiarena._core.shared.kernel.json_coercion import to_json_object
-from shogiarena._core.shared.kernel.json_types import JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import (
     coerce_bool,
     coerce_float,
@@ -32,7 +31,13 @@ from .diagnostics_models import (
 logger = logging.getLogger(__name__)
 
 
-def _normalize_watch_extra(entry: Mapping[str, JsonValue] | str | None) -> WatchlistExtra:
+def _as_object_mapping(value: object) -> Mapping[str, object]:
+    if isinstance(value, Mapping):
+        return {str(key): item for key, item in value.items()}
+    return {}
+
+
+def _normalize_watch_extra(entry: Mapping[str, object] | str | None) -> WatchlistExtra:
     default_extra = DEFAULT_GUIDELINES["watchlist"]["extras"][0]
     if isinstance(entry, str):
         key = entry.strip() or default_extra["key"]
@@ -81,31 +86,27 @@ def _normalize_watch_extra(entry: Mapping[str, JsonValue] | str | None) -> Watch
     }
 
 
-def _parse_guidelines(raw: Mapping[str, JsonValue]) -> _GuidelinesConfig:
+def _parse_guidelines(raw: Mapping[str, object]) -> _GuidelinesConfig:
     parsed = deep_copy_guidelines()
-    hydrator_raw = raw.get("hydrator")
-    hydrator = hydrator_raw if isinstance(hydrator_raw, dict) else {}
-    trigger_raw = hydrator.get("trigger_per_hour")
-    trigger = trigger_raw if isinstance(trigger_raw, dict) else {}
-    failure_raw = hydrator.get("failure_rate")
-    failure = failure_raw if isinstance(failure_raw, dict) else {}
-    watchlist_raw = raw.get("watchlist")
-    watchlist = watchlist_raw if isinstance(watchlist_raw, dict) else {}
+    hydrator = _as_object_mapping(raw.get("hydrator"))
+    trigger = _as_object_mapping(hydrator.get("trigger_per_hour"))
+    failure = _as_object_mapping(hydrator.get("failure_rate"))
+    watchlist = _as_object_mapping(raw.get("watchlist"))
 
     trigger_warning = coerce_float(trigger.get("warning"))
     if trigger_warning is not None:
-        parsed["hydrator"]["triggerPerHour"]["warning"] = trigger_warning
+        parsed["hydrator"]["trigger_per_hour"]["warning"] = trigger_warning
     trigger_critical = coerce_float(trigger.get("critical"))
     if trigger_critical is not None:
-        parsed["hydrator"]["triggerPerHour"]["critical"] = trigger_critical
+        parsed["hydrator"]["trigger_per_hour"]["critical"] = trigger_critical
     failure_warning = coerce_float(failure.get("warning"))
     if failure_warning is not None:
-        parsed["hydrator"]["failureRate"]["warning"] = failure_warning
+        parsed["hydrator"]["failure_rate"]["warning"] = failure_warning
     failure_critical = coerce_float(failure.get("critical"))
     if failure_critical is not None:
-        parsed["hydrator"]["failureRate"]["critical"] = failure_critical
+        parsed["hydrator"]["failure_rate"]["critical"] = failure_critical
 
-    extras_input: list[JsonValue] = []
+    extras_input: list[object] = []
     raw_extras = watchlist.get("extras")
     if isinstance(raw_extras, list):
         extras_input.extend(raw_extras)
@@ -121,7 +122,7 @@ def _parse_guidelines(raw: Mapping[str, JsonValue]) -> _GuidelinesConfig:
         if isinstance(entry, str) and not entry.strip():
             continue
         if isinstance(entry, Mapping):
-            normalized_entry: dict[str, JsonValue] = {}
+            normalized_entry: dict[str, object] = {}
             for key, item in entry.items():
                 normalized_entry[str(key)] = json_serialize(item)
             normalized_extras.append(_normalize_watch_extra(normalized_entry))
@@ -132,19 +133,19 @@ def _parse_guidelines(raw: Mapping[str, JsonValue]) -> _GuidelinesConfig:
     parsed["watchlist"] = {"limit": max(1, parsed_limit or parsed["watchlist"]["limit"]), "extras": normalized_extras}
 
     auto_snapshot_raw = raw.get("auto_snapshot")
-    if isinstance(auto_snapshot_raw, dict):
-        auto_snapshot = auto_snapshot_raw
+    if isinstance(auto_snapshot_raw, Mapping):
+        auto_snapshot = _as_object_mapping(auto_snapshot_raw)
         interval = max(0, coerce_int(auto_snapshot.get("interval_seconds")) or 0)
         mode = (coerce_optional_text(auto_snapshot.get("mode")) or "console").lower()
         destination = (coerce_optional_text(auto_snapshot.get("destination")) or "").lower()
         if destination not in {"console", "clipboard", "api"}:
             destination = "api" if mode == "clipboard" else "console"
         retention = max(0, coerce_int(auto_snapshot.get("retention_minutes")) or 0)
-        parsed["autoSnapshot"] = {
-            "intervalSeconds": interval,
+        parsed["auto_snapshot"] = {
+            "interval_seconds": interval,
             "mode": "clipboard" if mode == "clipboard" else "console",
             "destination": destination,
-            "retentionMinutes": retention,
+            "retention_minutes": retention,
         }
 
     try:
@@ -155,7 +156,7 @@ def _parse_guidelines(raw: Mapping[str, JsonValue]) -> _GuidelinesConfig:
     return _guidelines_from_model(validated)
 
 
-def _safe_load_yaml(path: Path) -> Mapping[str, JsonValue] | None:
+def _safe_load_yaml(path: Path) -> Mapping[str, object] | None:
     try:
         text = path.read_text(encoding="utf-8")
         data = yaml.safe_load(text)

@@ -7,6 +7,11 @@ import { recordLiveDiagnosticsMetric } from '@/modules/live/utils/liveNamespace/
 
 const BYOYOMI_POSTMOVE_BEHAVIOR = 'freeze';
 
+// How long the "+increment" flash badge stays visible. The primary setTimeout and the wall-clock
+// expiry deadline must use the same value, otherwise the cleanupExpiredIncrementBadge fallback
+// (used when the timer is throttled in a background tab) can never observe a live expiry entry.
+const INCREMENT_FLASH_MS = 1200;
+
 interface RunningClockDisplay {
     mainRemainMs: number;
     byoyomiRemainMs: number | null;
@@ -141,12 +146,11 @@ export function createClocksController(deps: ClocksDeps) {
 
     function updateTimeControlLabelsForWorker(
         workerIdx: number,
-        clock: { timeControlBlack?: unknown; timeControlWhite?: unknown } | null | undefined,
+        clock: Record<string, unknown> | null | undefined,
     ): void {
         if (!clock) return;
-        const clockFields = clock as Record<string, unknown>;
-        const tcBlack = clock.timeControlBlack ?? clockFields.time_control_black;
-        const tcWhite = clock.timeControlWhite ?? clockFields.time_control_white;
+        const tcBlack = clock.time_control_black;
+        const tcWhite = clock.time_control_white;
         if (!tcBlack && !tcWhite) return;
         const labelB = tcBlack ? formatTimeControlShort(tcBlack) : null;
         const labelW = tcWhite ? formatTimeControlShort(tcWhite) : null;
@@ -198,7 +202,7 @@ export function createClocksController(deps: ClocksDeps) {
             }
             el.textContent = `+${formatInc(incMs)}`;
             el.classList.add('inc-flash');
-            incrementExpiresAt.set(timeoutKey, Date.now() + 1200);
+            incrementExpiresAt.set(timeoutKey, Date.now() + INCREMENT_FLASH_MS);
             const timeoutId = setTimeout(() => {
                 const current = document.getElementById(elId);
                 if (current) {
@@ -207,7 +211,7 @@ export function createClocksController(deps: ClocksDeps) {
                 }
                 incrementTimeouts.delete(timeoutKey);
                 incrementExpiresAt.delete(timeoutKey);
-            }, 1000);
+            }, INCREMENT_FLASH_MS);
             incrementTimeouts.set(timeoutKey, timeoutId);
         }
     }
@@ -389,10 +393,7 @@ export function createClocksController(deps: ClocksDeps) {
         stopAllWorkerClockTimers();
     }
 
-    function applyByoyomiFreezeCache(
-        workerIdx: number,
-        clock: { side?: string; occurredAtMs?: number } | null | undefined,
-    ): void {
+    function applyByoyomiFreezeCache(workerIdx: number, clock: { side?: string } | null | undefined): void {
         if (!clock || !clock.side) return;
         const ws = getWorkerStateEntry(state, workerIdx);
         const side = String(clock.side).toLowerCase();
@@ -406,18 +407,12 @@ export function createClocksController(deps: ClocksDeps) {
         const source = clock as Record<string, unknown>;
         const snake = clock as unknown as {
             occurred_at_ms?: number;
-            pre_black_remain_ms?: number;
-            pre_white_remain_ms?: number;
-            preBlackRemainMs?: number;
-            preWhiteRemainMs?: number;
         };
-        const occurredAt = Number(clock.occurredAtMs ?? snake.occurred_at_ms ?? Date.now());
+        const occurredAt = Number(snake.occurred_at_ms ?? Date.now());
         const startedAt = Number(ws.startedAtMs || occurredAt);
         const elapsedMs = Math.max(0, occurredAt - startedAt);
         const preRemainMs =
-            side === 'black'
-                ? toFiniteNumber(source.pre_black_remain_ms ?? snake.preBlackRemainMs)
-                : toFiniteNumber(source.pre_white_remain_ms ?? snake.preWhiteRemainMs);
+            side === 'black' ? toFiniteNumber(source.pre_black_remain_ms) : toFiniteNumber(source.pre_white_remain_ms);
         const freezeMs = computeByoyomiRemainMs(byoyomiMs, elapsedMs, preRemainMs);
         const text = BYOYOMI_POSTMOVE_BEHAVIOR === 'freeze' ? formatByoyomi(freezeMs) : formatByoyomi(byoyomiMs);
         if (side === 'black') ws.blackFrozenByoText = text;

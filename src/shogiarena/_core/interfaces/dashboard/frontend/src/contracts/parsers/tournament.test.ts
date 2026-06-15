@@ -9,12 +9,12 @@ describe('tournament parser', () => {
     it('accepts a modern tournament summary payload', () => {
         const payload = {
             engines: ['A', 'B'],
-            engineStats: {
+            engine_stats: {
                 A: { wins: 1, draws: 0, losses: 1 },
                 B: { wins: 1, draws: 1, losses: 0 },
             },
             games: { completed: 2, total: 4, cancelled: 0 },
-            engineInstances: {},
+            engine_instances: {},
         };
         const parsed = parseTournamentSummary(payload);
         expect(parsed.engines).toEqual(['A', 'B']);
