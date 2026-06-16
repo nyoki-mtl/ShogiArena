@@ -42,6 +42,7 @@ class GameSnapshot(TypedDict, total=False):
     seldepth_values: list[int]
     move_times_ms: list[int]
     wall_times_ms: list[int]
+    engine_wall_times_ms: list[int]
     latency_deltas_ms: list[int]
     latency_alerts: list[bool]
     current_ply: int

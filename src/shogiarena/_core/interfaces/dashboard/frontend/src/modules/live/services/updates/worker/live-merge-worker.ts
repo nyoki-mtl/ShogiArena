@@ -32,6 +32,7 @@ type WorkerDiffPatch = {
     nodes?: number | null;
     time_ms?: number | null;
     wall_time_ms?: number | null;
+    engine_wall_time_ms?: number | null;
     latency_ms?: number | null;
     latency_alert?: boolean | null;
     clock?: Record<string, unknown> | null;
@@ -821,6 +822,14 @@ function mergeStaleSnapshotIntoExisting(existing: WorkerSnapshotRecord, incoming
             missingNum,
         );
     }
+    if (Array.isArray(existing.engine_wall_times_ms) && Array.isArray(incoming.engine_wall_times_ms)) {
+        fillArrayPrefix(
+            existing.engine_wall_times_ms as Array<number | null | undefined>,
+            incoming.engine_wall_times_ms as Array<number | null | undefined>,
+            incoming.engine_wall_times_ms.length,
+            missingNum,
+        );
+    }
     if (Array.isArray(existing.latency_deltas_ms) && Array.isArray(incoming.latency_deltas_ms)) {
         fillArrayPrefix(
             existing.latency_deltas_ms as Array<number | null | undefined>,
@@ -1051,6 +1060,7 @@ function sanitizeSnapshot(raw: unknown): WorkerSnapshotRecord | null {
         seldepth_values: seldepthValues,
         move_times_ms: moveTimesMs,
         wall_times_ms: truncate(ensureArray<number | null>(snapshot.wall_times_ms), moves.length),
+        engine_wall_times_ms: truncate(ensureArray<number | null>(snapshot.engine_wall_times_ms), moves.length),
         latency_deltas_ms: truncate(ensureArray<number | null>(snapshot.latency_deltas_ms), moves.length),
         latency_alerts: truncate(
             Array.isArray(snapshot.latency_alerts)
@@ -1183,6 +1193,9 @@ function unwrapGameDiffPayload(payload: unknown, gidFromTopic: string, topic: st
         if (usi && typeof env.wall_time_ms === 'number' && Number.isFinite(env.wall_time_ms)) {
             patch.wall_time_ms = env.wall_time_ms;
         }
+        if (usi && typeof env.engine_wall_time_ms === 'number' && Number.isFinite(env.engine_wall_time_ms)) {
+            patch.engine_wall_time_ms = env.engine_wall_time_ms;
+        }
         if (usi && typeof env.latency_ms === 'number' && Number.isFinite(env.latency_ms)) {
             patch.latency_ms = env.latency_ms;
         }
@@ -1209,6 +1222,12 @@ function unwrapGameDiffPayload(payload: unknown, gidFromTopic: string, topic: st
             }
             if (typeof analysisFinal.wall_time_ms === 'number' && Number.isFinite(analysisFinal.wall_time_ms)) {
                 patch.wall_time_ms = analysisFinal.wall_time_ms;
+            }
+            if (
+                typeof analysisFinal.engine_wall_time_ms === 'number' &&
+                Number.isFinite(analysisFinal.engine_wall_time_ms)
+            ) {
+                patch.engine_wall_time_ms = analysisFinal.engine_wall_time_ms;
             }
             if (typeof analysisFinal.latency_ms === 'number' && Number.isFinite(analysisFinal.latency_ms)) {
                 patch.latency_ms = analysisFinal.latency_ms;
@@ -1398,6 +1417,7 @@ function buildUpdateFromDiff(
         'nodes',
         'time_ms',
         'wall_time_ms',
+        'engine_wall_time_ms',
         'latency_ms',
     ];
     for (const field of fields) {
@@ -1700,6 +1720,7 @@ function handleGameDiff(topic: string, gid: string, payload: unknown): void {
         'nodes',
         'time_ms',
         'wall_time_ms',
+        'engine_wall_time_ms',
         'latency_ms',
         'latency_alert',
         'game_result',
@@ -1737,6 +1758,7 @@ function handleGameDiff(topic: string, gid: string, payload: unknown): void {
         'seldepth_values',
         'move_times_ms',
         'wall_times_ms',
+        'engine_wall_times_ms',
         'latency_deltas_ms',
         'latency_alerts',
     ];

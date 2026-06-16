@@ -16,7 +16,9 @@ from shogiarena._core.contexts.game_session.application.orchestration.remote_mov
 
 def _aggregate(events: list[dict]) -> tuple[list[str], int]:
     moves: list[str] = []
-    buffers: dict[str, list] = {k: [] for k in ("evals", "nodes", "depth", "seldepth", "move_times", "wall_times")}
+    buffers: dict[str, list] = {
+        k: [] for k in ("evals", "nodes", "depth", "seldepth", "move_times", "wall_times", "engine_wall_times")
+    }
     seen = 0
     for event in events:
         seen = update_remote_move_aggregates(
@@ -29,6 +31,7 @@ def _aggregate(events: list[dict]) -> tuple[list[str], int]:
             seldepth=buffers["seldepth"],
             move_times=buffers["move_times"],
             wall_times=buffers["wall_times"],
+            engine_wall_times=buffers["engine_wall_times"],
         )
     return moves, seen
 

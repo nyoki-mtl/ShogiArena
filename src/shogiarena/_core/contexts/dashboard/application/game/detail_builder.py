@@ -99,6 +99,7 @@ def build_game_detail_payload(*, record: Any, game_id: str, logger: logging.Logg
     seldepth_values: list[int | None] = []
     move_times_ms: list[int | None] = []
     wall_times_ms: list[int | None] = []
+    engine_wall_times_ms: list[int | None] = []
     latency_deltas_ms: list[int | None] = []
     for move_entry in record.moves:
         mv = move_entry.move
@@ -117,6 +118,9 @@ def build_game_detail_payload(*, record: Any, game_id: str, logger: logging.Logg
         depth = engine_info.depth if engine_info is not None else None
         seldepth = engine_info.seldepth if engine_info is not None else None
         wall_time = engine_info.wall_time_ms if engine_info is not None else None
+        engine_wall_time = None
+        if engine_info is not None:
+            engine_wall_time = engine_info.extras.get("engine_wall_time_ms")
         latency_delta = engine_info.latency_delta_ms if engine_info is not None else None
         move_time_value = strict_int(move_time)
         eval_value = strict_int(eval_cp)
@@ -124,17 +128,21 @@ def build_game_detail_payload(*, record: Any, game_id: str, logger: logging.Logg
         depth_value = strict_int(depth)
         seldepth_values.append(strict_int(seldepth))
         wall_time_value = strict_int(wall_time)
+        engine_wall_time_value = strict_int(engine_wall_time)
         latency_deltas_ms.append(strict_int(latency_delta))
         move_times_ms.append(move_time_value)
         eval_values.append(eval_value)
         nodes_values.append(nodes_value)
         depth_values.append(depth_value)
         wall_times_ms.append(wall_time_value)
+        engine_wall_times_ms.append(engine_wall_time_value)
 
     if not any(value is not None for value in move_times_ms):
         move_times_ms = []
     if not any(value is not None for value in wall_times_ms):
         wall_times_ms = []
+    if not any(value is not None for value in engine_wall_times_ms):
+        engine_wall_times_ms = []
     if not any(value is not None for value in latency_deltas_ms):
         latency_deltas_ms = []
 
@@ -162,6 +170,7 @@ def build_game_detail_payload(*, record: Any, game_id: str, logger: logging.Logg
         "seldepth_values": seldepth_values,
         "move_times_ms": move_times_ms,
         "wall_times_ms": wall_times_ms,
+        "engine_wall_times_ms": engine_wall_times_ms,
         "latency_deltas_ms": latency_deltas_ms,
         "total_plies": len(record.moves),
         "start_time": start_time,

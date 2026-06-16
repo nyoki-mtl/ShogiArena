@@ -21,6 +21,7 @@ class MoveProgressDiffPayload(TypedDict, total=False):
     nodes: int
     time_ms: int
     wall_time_ms: int
+    engine_wall_time_ms: int
     latency_ms: int
     is_latency_alert: bool
     game_result: str

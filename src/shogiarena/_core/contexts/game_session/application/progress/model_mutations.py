@@ -172,6 +172,7 @@ def apply_move_progress_model(snapshot: WorkerSnapshotModel, event: MoveProgress
         ("seldepth", snapshot.seldepth_values),
         ("time_ms", snapshot.move_times_ms),
         ("wall_time_ms", snapshot.wall_times_ms),
+        ("engine_wall_time_ms", snapshot.engine_wall_times_ms),
         ("latency_ms", snapshot.latency_deltas_ms),
     ):
         value = event.get(key[0])

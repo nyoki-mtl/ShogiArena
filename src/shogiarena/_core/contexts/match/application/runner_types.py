@@ -28,6 +28,7 @@ class ApplyMoveCommonResult(NamedTuple):
     eval_value: int | None
     search_stats: dict[str, int | None]
     wall_time_ms: int | None
+    engine_wall_time_ms: int | None
 
 
 @dataclass(slots=True)
@@ -37,6 +38,7 @@ class MoveApplicationRequest:
     move: Move
     think_result: UsiThinkResultPort
     elapsed_ms: int
+    engine_wall_time_ms: int | None
     game_id: str | None
     ply_count: int
     is_side_that_moved_black: bool
@@ -55,6 +57,7 @@ class MoveApplicationStateRefs:
     seldepth_values: list[int | None]
     move_times_ms: list[int | None]
     wall_times_ms: list[int | None]
+    engine_wall_times_ms: list[int | None]
     latency_deltas_ms: list[int | None]
     current_time_control: GameClock
     black_time_control: GameClock
@@ -74,6 +77,7 @@ class RecoveredBestmoveRequest:
 
     think_result: UsiThinkResultPort
     elapsed_ms: int
+    engine_wall_time_ms: int | None
     current_engine_name: str
     game_id: str | None
     ply_count: int
@@ -145,6 +149,7 @@ class _MoveProgressPayload(TypedDict, total=False):
     nodes: int | None
     time_ms: int | None
     wall_time_ms: int | None
+    engine_wall_time_ms: int | None
     game_result: str
 
 

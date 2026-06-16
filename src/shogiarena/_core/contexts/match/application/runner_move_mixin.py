@@ -82,6 +82,7 @@ class GameRunnerMoveMixin:
                     result=result,
                     think_result=think_result,
                     elapsed_ms=request.elapsed_ms,
+                    engine_wall_time_ms=request.engine_wall_time_ms,
                 )
                 state.result_progress_emitted[0] = True
             return RecoveredBestmoveResult(result=result, ply_count=request.ply_count)
@@ -109,11 +110,13 @@ class GameRunnerMoveMixin:
             _eval_value,
             _search_stats,
             _wall_sample,
+            _engine_wall_sample,
         ) = await self._apply_move_common(
             request=MoveApplicationRequest(
                 move=move,
                 think_result=think_result,
                 elapsed_ms=request.elapsed_ms,
+                engine_wall_time_ms=request.engine_wall_time_ms,
                 game_id=request.game_id,
                 ply_count=request.ply_count,
                 is_side_that_moved_black=is_side_that_moved_black,
@@ -151,6 +154,7 @@ class GameRunnerMoveMixin:
         state.move_times_ms.append(search_stats["time_ms"])
         wall_sample: int | None = int(elapsed_ms)
         state.wall_times_ms.append(wall_sample)
+        state.engine_wall_times_ms.append(request.engine_wall_time_ms)
         state.latency_deltas_ms.append(None)
 
         # Apply move
@@ -186,6 +190,7 @@ class GameRunnerMoveMixin:
                 eval_value=eval_value,
                 search_stats=search_stats,
                 wall_time_ms=wall_sample,
+                engine_wall_time_ms=request.engine_wall_time_ms,
             )
 
         # Update time control and notify
@@ -215,6 +220,7 @@ class GameRunnerMoveMixin:
                 eval_value=eval_value,
                 search_stats=search_stats,
                 wall_time_ms=wall_sample,
+                engine_wall_time_ms=request.engine_wall_time_ms,
             )
 
         # Adjudication
@@ -244,6 +250,7 @@ class GameRunnerMoveMixin:
                     eval_value=eval_value,
                     search_stats=search_stats,
                     wall_time_ms=wall_sample,
+                    engine_wall_time_ms=request.engine_wall_time_ms,
                 )
         return ApplyMoveCommonResult(
             result=repetition_result,
@@ -251,4 +258,5 @@ class GameRunnerMoveMixin:
             eval_value=eval_value,
             search_stats=search_stats,
             wall_time_ms=wall_sample,
+            engine_wall_time_ms=request.engine_wall_time_ms,
         )

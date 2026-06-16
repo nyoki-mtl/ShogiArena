@@ -116,7 +116,7 @@ def test_db_record_store_append_prefers_engine_info_timing_fields(tmp_path) -> N
         eval=15,
         wall_time_ms=130,
         latency_delta_ms=7,
-        extras={"probe": "keep"},
+        extras={"engine_wall_time_ms": 121, "probe": "keep"},
     )
     record = rshogi.record.GameRecord.from_dict(
         {
@@ -157,6 +157,44 @@ def test_db_record_store_append_prefers_engine_info_timing_fields(tmp_path) -> N
     assert engine_info is not None
     assert engine_info.wall_time_ms == 130
     assert engine_info.latency_delta_ms == 7
+    assert engine_info.extras["engine_wall_time_ms"] == 121
+
+
+def test_create_tables_migrates_engine_wall_time_column(tmp_path) -> None:
+    db_path = tmp_path / "compat.sqlite3"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE game_move (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id INTEGER NOT NULL,
+                ply SMALLINT NOT NULL,
+                next_move SMALLINT NOT NULL,
+                next_move_time_ms INTEGER,
+                wall_time_ms INTEGER,
+                latency_delta_ms INTEGER,
+                next_move_comment TEXT,
+                eval SMALLINT,
+                depth SMALLINT,
+                seldepth SMALLINT,
+                nodes INTEGER
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    repo = SQLiteShogiDBFactory(db_path).create()
+    repo.create_tables()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(game_move)").fetchall()}
+    finally:
+        conn.close()
+    assert "engine_wall_time_ms" in columns
 
 
 def test_create_tables_rejects_legacy_result_code_schema(tmp_path) -> None:

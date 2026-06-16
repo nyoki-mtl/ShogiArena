@@ -90,6 +90,7 @@ class _TournamentGamePayloadModel(_TournamentGameBaseModel):
     seldepth_values: list[float | None] = Field(default_factory=list)
     move_times_ms: list[float | None] = Field(default_factory=list)
     wall_times_ms: list[float | None] = Field(default_factory=list)
+    engine_wall_times_ms: list[float | None] = Field(default_factory=list)
     latency_deltas_ms: list[float | None] = Field(default_factory=list)
     total_plies: NonNegativeInt | None = None
     start_time: str | None = None

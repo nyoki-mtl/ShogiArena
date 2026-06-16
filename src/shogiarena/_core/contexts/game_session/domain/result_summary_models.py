@@ -123,6 +123,11 @@ class OfflineResultSummary:
             "failed_games": self.failed_games,
             "confidence": self.confidence,
             "draw_rate": self.draw_rate,
+            "timing_metrics": {
+                "engine_throughput_wall_time_field": "engine_wall_time_ms",
+                "clock_charged_wall_time_field": "wall_time_ms",
+                "wall_nps_default_time_field": "engine_wall_time_ms",
+            },
             "engines": [engine.to_payload() for engine in self.engines],
             "raw_result_counts": dict(sorted(self.raw_result_counts.items())),
             "failures": [dict(failure) for failure in self.failures],

@@ -36,6 +36,7 @@ export interface WorkerSnapshot {
     seldepth_values: (number | null)[];
     move_times_ms: (number | null)[];
     wall_times_ms: (number | null)[];
+    engine_wall_times_ms: (number | null)[];
     latency_deltas_ms: (number | null)[];
     latency_alerts: (boolean | null)[];
     current_ply: number;
@@ -65,6 +66,7 @@ export interface WorkerUpdatePayload {
     nodes?: number | null;
     time_ms?: number | null;
     wall_time_ms?: number | null;
+    engine_wall_time_ms?: number | null;
     latency_ms?: number | null;
     latency_alert?: boolean | null;
     sfen?: string | null;
@@ -77,6 +79,7 @@ export interface WorkerUpdatePayload {
     depth_values?: (number | null)[];
     seldepth_values?: (number | null)[];
     move_times_ms?: (number | null)[];
+    engine_wall_times_ms?: (number | null)[];
     black_remain_ms?: number | null;
     white_remain_ms?: number | null;
     byoyomi_ms_black?: number | null;
@@ -161,6 +164,7 @@ export interface LiveGameRecord {
     seldepth_values?: readonly (number | null)[] | null;
     move_times_ms?: readonly (number | null)[] | null;
     wall_times_ms?: readonly (number | null)[] | null;
+    engine_wall_times_ms?: readonly (number | null)[] | null;
     latency_deltas_ms?: readonly (number | null)[] | null;
     total_plies?: number | null;
     sfen?: string | null;

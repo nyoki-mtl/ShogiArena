@@ -358,6 +358,17 @@ def _format_text(summary: JsonObject) -> str:
         lines.append(f"Failed/cancelled games: {failed}")
     if draw_rate is not None:
         lines.append(f"Draw rate: {_format_rate(draw_rate)}")
+    timing_metrics = _object_or_none(summary.get("timing_metrics")) or {}
+    engine_wall_field = coerce_str(timing_metrics.get("engine_throughput_wall_time_field"))
+    clock_wall_field = coerce_str(timing_metrics.get("clock_charged_wall_time_field"))
+    wall_nps_field = coerce_str(timing_metrics.get("wall_nps_default_time_field"))
+    if engine_wall_field is not None and clock_wall_field is not None:
+        lines.append(
+            "Timing metrics: "
+            f"engine throughput wall={engine_wall_field}, "
+            f"clock-charged wall={clock_wall_field}, "
+            f"wall NPS default={wall_nps_field or engine_wall_field}"
+        )
     failures_by_phase = _object_or_none(summary.get("failures_by_phase")) or {}
     if failures_by_phase:
         lines.append("Failures by phase:")

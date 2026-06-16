@@ -93,6 +93,7 @@ class GameRunnerRunMixin:
         seldepth_values: list[int | None] = []
         move_times_ms: list[int | None] = []
         wall_times_ms: list[int | None] = []
+        engine_wall_times_ms: list[int | None] = []
         latency_deltas_ms: list[int | None] = []
 
         # Initialize time control and adjudication (time control is required)
@@ -150,6 +151,7 @@ class GameRunnerRunMixin:
                     seldepth_values,
                     move_times_ms,
                     wall_times_ms,
+                    engine_wall_times_ms,
                     latency_deltas_ms,
                     black_time_control=black_time_control,
                     white_time_control=white_time_control,
@@ -213,7 +215,7 @@ class GameRunnerRunMixin:
             },
         )
         logger.debug(f"Game {game_id} completed: {game_result}")
-        return rshogi.record.GameRecord.from_usi_main_line(
+        record = rshogi.record.GameRecord.from_usi_main_line(
             normalized_sfen,
             [move.to_usi() for move in moves],
             result=game_result,
@@ -226,6 +228,11 @@ class GameRunnerRunMixin:
             latency_deltas_ms=latency_deltas_ms,
             metadata=record_metadata,
         )
+        for move_record, engine_wall_time_ms in zip(record.moves, engine_wall_times_ms, strict=False):
+            engine_info = move_record.engine_info
+            if engine_info is not None and engine_wall_time_ms is not None:
+                engine_info.set_extra("engine_wall_time_ms", int(engine_wall_time_ms))
+        return record
 
     async def _prepare_engines_for_game(
         self,

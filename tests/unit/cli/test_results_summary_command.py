@@ -103,6 +103,11 @@ def test_results_summary_command_outputs_json_for_run_dir(tmp_path: Path, capsys
     }
     assert payload["failures_by_phase"] == {"engine_start": 1}
     assert payload["failures"][0]["game_id"] == "g3"
+    assert payload["timing_metrics"] == {
+        "engine_throughput_wall_time_field": "engine_wall_time_ms",
+        "clock_charged_wall_time_field": "wall_time_ms",
+        "wall_nps_default_time_field": "engine_wall_time_ms",
+    }
     engines = {entry["engine"]: entry for entry in payload["engines"]}
     assert engines["engine-a"]["wins"] == 1
     assert engines["engine-a"]["draws"] == 1

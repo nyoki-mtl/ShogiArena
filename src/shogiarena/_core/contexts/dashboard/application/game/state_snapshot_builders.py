@@ -34,6 +34,7 @@ def default_game_snapshot(gid: str) -> JsonObject:
         "seldepth_values": [],
         "move_times_ms": [],
         "wall_times_ms": [],
+        "engine_wall_times_ms": [],
         "latency_deltas_ms": [],
         "latency_alerts": [],
         "current_ply": 0,
@@ -100,6 +101,7 @@ def build_ws_snapshot_payload(
     nodes_values = snapshot["nodes_values"]
     move_times = snapshot["move_times_ms"]
     wall_times = snapshot["wall_times_ms"]
+    engine_wall_times = snapshot.get("engine_wall_times_ms", [])
     latency_deltas = snapshot["latency_deltas_ms"]
     latency_alerts = snapshot["latency_alerts"]
 
@@ -156,6 +158,7 @@ def build_ws_snapshot_payload(
         "seldepth_values": _to_json_list(seldepth_values),
         "move_times_ms": _to_json_list(move_times),
         "wall_times_ms": _to_json_list(wall_times),
+        "engine_wall_times_ms": _to_json_list(engine_wall_times),
         "latency_deltas_ms": _to_json_list(latency_deltas),
         "latency_alerts": _to_json_list(latency_alerts),
         "current_ply": len(moves),
@@ -207,6 +210,7 @@ def truncate_snapshot_history(snapshot: JsonObject, *, length: int) -> None:
         "seldepth_values",
         "move_times_ms",
         "wall_times_ms",
+        "engine_wall_times_ms",
         "latency_deltas_ms",
         "latency_alerts",
     )

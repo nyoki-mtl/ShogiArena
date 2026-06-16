@@ -57,6 +57,7 @@ class GameRunnerLoopMixin:
         seldepth_values: list[int | None],
         move_times_ms: list[int | None],
         wall_times_ms: list[int | None],
+        engine_wall_times_ms: list[int | None],
         latency_deltas_ms: list[int | None],
         black_time_control: GameClock,
         white_time_control: GameClock,
@@ -178,33 +179,41 @@ class GameRunnerLoopMixin:
             timeout_seconds = current_time_control.get_timeout_for_wait()
 
             # Wait for bestmove
+            engine_wall_start: float | None = None
+            engine_wall_time_ms: int | None = None
             try:
                 if self._is_shutting_down:
                     raise asyncio.CancelledError()
                 if should_use_ponder:
+                    engine_wall_start = time.perf_counter()
                     ponder_result = await current_engine.ponder_hit(
                         timings=ponder_timings,
                         timeout=timeout_seconds,
                     )
+                    engine_wall_time_ms = int((time.perf_counter() - engine_wall_start) * 1000)
                     if ponder_result is None:
                         logger.debug(
                             "Ponder hit returned no result, falling back to fresh go for %s", current_engine.name
                         )
+                        engine_wall_start = time.perf_counter()
                         think_result = await current_engine.think(
                             sfen=initial_sfen,
                             moves=tuple(moves),
                             request=think_request,
                             timeout=timeout_seconds,
                         )
+                        engine_wall_time_ms = int((time.perf_counter() - engine_wall_start) * 1000)
                     else:
                         think_result = ponder_result
                 else:
+                    engine_wall_start = time.perf_counter()
                     think_result = await current_engine.think(
                         sfen=initial_sfen,
                         moves=tuple(moves),
                         request=think_request,
                         timeout=timeout_seconds,
                     )
+                    engine_wall_time_ms = int((time.perf_counter() - engine_wall_start) * 1000)
 
                 # Calculate elapsed time as fallback for time_ms
                 elapsed_ms = int((time.perf_counter() - go_start_time) * 1000)
@@ -227,6 +236,7 @@ class GameRunnerLoopMixin:
                             result=game_result,
                             think_result=think_result,
                             elapsed_ms=elapsed_ms,
+                            engine_wall_time_ms=engine_wall_time_ms,
                         )
                         result_progress_emitted[0] = True
                     return game_result
@@ -249,11 +259,13 @@ class GameRunnerLoopMixin:
                     eval_value,
                     search_stats,
                     wall_time_sample,
+                    engine_wall_time_sample,
                 ) = await self._apply_move_common(
                     request=MoveApplicationRequest(
                         move=move,
                         think_result=think_result,
                         elapsed_ms=elapsed_ms,
+                        engine_wall_time_ms=engine_wall_time_ms,
                         game_id=game_id,
                         ply_count=ply_count,
                         is_side_that_moved_black=is_side_that_moved_black,
@@ -268,6 +280,7 @@ class GameRunnerLoopMixin:
                         seldepth_values=seldepth_values,
                         move_times_ms=move_times_ms,
                         wall_times_ms=wall_times_ms,
+                        engine_wall_times_ms=engine_wall_times_ms,
                         latency_deltas_ms=latency_deltas_ms,
                         current_time_control=current_time_control,
                         black_time_control=black_time_control,
@@ -301,6 +314,7 @@ class GameRunnerLoopMixin:
                     nodes=search_stats["nodes"],
                     time_ms=search_stats["time_ms"],
                     wall_time_ms=wall_time_sample,
+                    engine_wall_time_ms=engine_wall_time_sample,
                 )
 
                 # A decisive result for this move (mate, illegal, timeout, repetition win,
@@ -326,6 +340,8 @@ class GameRunnerLoopMixin:
                 )
 
             except TimeoutError:
+                if engine_wall_time_ms is None and engine_wall_start is not None:
+                    engine_wall_time_ms = int((time.perf_counter() - engine_wall_start) * 1000)
                 if self._is_shutting_down:
                     raise asyncio.CancelledError() from None
                 logger.warning(f"Engine {current_engine.name} timed out")
@@ -349,6 +365,7 @@ class GameRunnerLoopMixin:
                     request=RecoveredBestmoveRequest(
                         think_result=recovered_think,
                         elapsed_ms=int((time.perf_counter() - go_start_time) * 1000),
+                        engine_wall_time_ms=engine_wall_time_ms,
                         current_engine_name=current_engine.name,
                         game_id=game_id,
                         ply_count=ply_count,
@@ -370,6 +387,7 @@ class GameRunnerLoopMixin:
                             seldepth_values=seldepth_values,
                             move_times_ms=move_times_ms,
                             wall_times_ms=wall_times_ms,
+                            engine_wall_times_ms=engine_wall_times_ms,
                             latency_deltas_ms=latency_deltas_ms,
                             current_time_control=current_time_control,
                             black_time_control=black_time_control,

@@ -8,7 +8,7 @@ from rshogi.core import Board, Move, Move32
 from sqlalchemy import delete, select
 
 from shogiarena._core.shared.kernel.game_results import game_result_name
-from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_game_result, coerce_iso_datetime
+from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_game_result, coerce_int, coerce_iso_datetime
 
 from .entities import Game, GameMove, Player
 from .repository import ShogiRepositoryPort
@@ -22,6 +22,12 @@ def _push_record_move(board: Board, move_obj: Move | Move32) -> Move:
     if isinstance(move_obj, Move32):
         return board.push_move32(move_obj).to_move()
     raise TypeError(f"db storage requires Move/Move32 payload, got {type(move_obj)!r}")
+
+
+def _engine_wall_time_from_info(engine_info: rshogi.record.MoveEngineInfo | None) -> int | None:
+    if engine_info is None:
+        return None
+    return coerce_int(engine_info.extras.get("engine_wall_time_ms"))
 
 
 class DBRecordStore:
@@ -120,12 +126,14 @@ class DBRecordStore:
                     raise ValueError(f"db storage requires legal move payload: {move_obj!r}") from exc
                 engine_info = move_record.engine_info
                 wall_time_ms = engine_info.wall_time_ms if engine_info is not None else None
+                engine_wall_time_ms = _engine_wall_time_from_info(engine_info)
                 latency_delta_ms = engine_info.latency_delta_ms if engine_info is not None else None
                 game_move = GameMove(
                     ply=ply,
                     next_move=int(mv),
                     next_move_time_ms=move_record.time_ms,
                     wall_time_ms=wall_time_ms,
+                    engine_wall_time_ms=engine_wall_time_ms,
                     latency_delta_ms=latency_delta_ms,
                     game=game,
                     next_move_comment=move_record.comment,
@@ -141,6 +149,7 @@ class DBRecordStore:
                 next_move=int(Move.MOVE_END),
                 next_move_time_ms=end_time_ms,
                 wall_time_ms=None,
+                engine_wall_time_ms=None,
                 latency_delta_ms=None,
                 game=game,
                 next_move_comment=end_comment,
@@ -195,7 +204,11 @@ class DBRecordStore:
             except ValueError as exc:
                 raise ValueError(f"Illegal move in db record: {game_move.next_move}") from exc
             wall_time = game_move.wall_time_ms
+            engine_wall_time = game_move.engine_wall_time_ms
             latency_delta = game_move.latency_delta_ms
+            extras: dict[str, str | int | float] = {}
+            if engine_wall_time is not None:
+                extras["engine_wall_time_ms"] = int(engine_wall_time)
             engine_info = rshogi.record.MoveEngineInfo(
                 eval=game_move.eval,
                 depth=game_move.depth,
@@ -203,6 +216,7 @@ class DBRecordStore:
                 nodes=game_move.nodes,
                 wall_time_ms=int(wall_time) if wall_time is not None else None,
                 latency_delta_ms=int(latency_delta) if latency_delta is not None else None,
+                extras=extras or None,
             )
             move_records.append(
                 rshogi.record.MoveRecord(

@@ -76,6 +76,7 @@ def to_worker_snapshot_dto(model: WorkerSnapshotModel) -> GameSnapshot:
         "seldepth_values": list(model.seldepth_values),
         "move_times_ms": list(model.move_times_ms),
         "wall_times_ms": list(model.wall_times_ms),
+        "engine_wall_times_ms": list(model.engine_wall_times_ms),
         "latency_deltas_ms": list(model.latency_deltas_ms),
         "latency_alerts": list(model.latency_alerts),
         "current_ply": model.current_ply,
@@ -142,6 +143,8 @@ def to_ws_state_diff(
             payload["time_ms"] = time_ms
         if (wall_time_ms := event.get("wall_time_ms")) is not None:
             payload["wall_time_ms"] = wall_time_ms
+        if (engine_wall_time_ms := event.get("engine_wall_time_ms")) is not None:
+            payload["engine_wall_time_ms"] = engine_wall_time_ms
         if (latency_ms := event.get("latency_ms")) is not None:
             payload["latency_ms"] = latency_ms
         latency_alert = event.get("is_latency_alert")

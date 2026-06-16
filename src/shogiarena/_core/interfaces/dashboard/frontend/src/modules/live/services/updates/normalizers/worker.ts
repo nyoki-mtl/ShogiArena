@@ -53,6 +53,7 @@ function sanitizeWorkerSnapshotUpdate(payload: WorkerSnapshotUpdate): WorkerSnap
         'seldepth_values',
         'move_times_ms',
         'wall_times_ms',
+        'engine_wall_times_ms',
         'latency_deltas_ms',
     ];
     for (const field of numberArrayFields) {
@@ -73,6 +74,7 @@ function sanitizeWorkerSnapshotUpdate(payload: WorkerSnapshotUpdate): WorkerSnap
         'nodes',
         'time_ms',
         'wall_time_ms',
+        'engine_wall_time_ms',
         'latency_ms',
         'applied_increment_ms',
         'pre_black_remain_ms',

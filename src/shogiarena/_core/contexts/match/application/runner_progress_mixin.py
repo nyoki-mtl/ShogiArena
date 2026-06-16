@@ -92,6 +92,7 @@ class GameRunnerProgressMixin:
         nodes: int | None,
         time_ms: int | None,
         wall_time_ms: int | None = None,
+        engine_wall_time_ms: int | None = None,
     ) -> None:
         display_ply = max(0, start_ply_number - 1) + ply_index
         payload: _MoveProgressPayload = {
@@ -113,6 +114,7 @@ class GameRunnerProgressMixin:
             "nodes": nodes,
             "time_ms": time_ms,
             "wall_time_ms": wall_time_ms,
+            "engine_wall_time_ms": engine_wall_time_ms,
         }
         await self._enqueue_progress(game_id, ply_index, payload)
 
@@ -239,6 +241,7 @@ class GameRunnerProgressMixin:
         result: GameResult,
         think_result: UsiThinkResultPort,
         elapsed_ms: int,
+        engine_wall_time_ms: int | None = None,
     ) -> None:
         if self.progress_queue is None or game_id is None:
             return
@@ -263,6 +266,7 @@ class GameRunnerProgressMixin:
             "nodes": search_stats["nodes"],
             "time_ms": search_stats["time_ms"],
             "wall_time_ms": int(elapsed_ms),
+            "engine_wall_time_ms": engine_wall_time_ms,
         }
         await self._enqueue_progress(game_id, ply_index, payload)
 

@@ -25,6 +25,7 @@ def build_remote_game_info(
     white_limits: TimeControlLimitsPort,
     move_times: Sequence[int | None] | None = None,
     wall_times: Sequence[int | None] | None = None,
+    engine_wall_times: Sequence[int | None] | None = None,
     latency_deltas: Sequence[int | None] | None = None,
     nodes: Sequence[int | None] | None = None,
     depth: Sequence[int | None] | None = None,
@@ -63,7 +64,7 @@ def build_remote_game_info(
         },
     )
     try:
-        return rshogi.record.GameRecord.from_usi_main_line(
+        record = rshogi.record.GameRecord.from_usi_main_line(
             normalized_sfen,
             raw_moves,
             result=game_result,
@@ -76,6 +77,12 @@ def build_remote_game_info(
             latency_deltas_ms=_to_list(latency_deltas),
             metadata=record_metadata,
         )
+        if engine_wall_times is not None:
+            for move_record, engine_wall_time_ms in zip(record.moves, engine_wall_times, strict=False):
+                engine_info = move_record.engine_info
+                if engine_info is not None and engine_wall_time_ms is not None:
+                    engine_info.set_extra("engine_wall_time_ms", int(engine_wall_time_ms))
+        return record
     except ValueError as exc:
         raise RuntimeError(f"Illegal move in final payload: {exc}") from exc
 

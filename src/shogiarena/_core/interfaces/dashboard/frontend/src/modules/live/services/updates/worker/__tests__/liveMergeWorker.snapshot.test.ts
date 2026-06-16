@@ -18,6 +18,7 @@ const snap = (partial: Partial<WorkerSnapshotRecord>): WorkerSnapshotRecord => (
     seldepth_values: [],
     move_times_ms: [],
     wall_times_ms: [],
+    engine_wall_times_ms: [],
     latency_deltas_ms: [],
     latency_alerts: [],
     current_ply: 0,

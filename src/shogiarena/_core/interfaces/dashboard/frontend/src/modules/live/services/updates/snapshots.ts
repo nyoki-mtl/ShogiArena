@@ -27,6 +27,7 @@ export function hasSnapshotArrayPayload(update: WorkerSnapshotUpdate): boolean {
         Array.isArray(update.seldepth_values) ||
         Array.isArray(update.move_times_ms) ||
         Array.isArray(update.wall_times_ms) ||
+        Array.isArray(update.engine_wall_times_ms) ||
         Array.isArray(update.latency_deltas_ms) ||
         Array.isArray(update.latency_alerts)
     );
@@ -71,6 +72,7 @@ const HISTORY_ARRAY_KEYS: Array<keyof WorkerSnapshotRecord> = [
     'seldepth_values',
     'move_times_ms',
     'wall_times_ms',
+    'engine_wall_times_ms',
     'latency_deltas_ms',
     'latency_alerts',
 ];
@@ -164,6 +166,9 @@ export function buildSnapshotFromArrays(
         wall_times_ms: Array.isArray(update.wall_times_ms)
             ? cloneArray(update.wall_times_ms)
             : cloneArray(previous.wall_times_ms),
+        engine_wall_times_ms: Array.isArray(update.engine_wall_times_ms)
+            ? cloneArray(update.engine_wall_times_ms)
+            : cloneArray(previous.engine_wall_times_ms),
         latency_deltas_ms: Array.isArray(update.latency_deltas_ms)
             ? cloneArray(update.latency_deltas_ms)
             : cloneArray(previous.latency_deltas_ms),
@@ -392,6 +397,7 @@ export function updateSearchStatistics(snapshot: WorkerSnapshotRecord, update: W
     if (!Array.isArray(snapshot.nodes_values)) snapshot.nodes_values = [];
     if (!Array.isArray(snapshot.move_times_ms)) snapshot.move_times_ms = [];
     if (!Array.isArray(snapshot.wall_times_ms)) snapshot.wall_times_ms = [];
+    if (!Array.isArray(snapshot.engine_wall_times_ms)) snapshot.engine_wall_times_ms = [];
     if (!Array.isArray(snapshot.latency_deltas_ms)) snapshot.latency_deltas_ms = [];
     if (!Array.isArray(snapshot.latency_alerts)) snapshot.latency_alerts = [];
 
@@ -404,6 +410,7 @@ export function updateSearchStatistics(snapshot: WorkerSnapshotRecord, update: W
     ensureLength(snapshot.nodes_values, targetIndex + 1);
     ensureLength(snapshot.move_times_ms, targetIndex + 1);
     ensureLength(snapshot.wall_times_ms, targetIndex + 1);
+    ensureLength(snapshot.engine_wall_times_ms, targetIndex + 1);
     ensureLength(snapshot.latency_deltas_ms, targetIndex + 1);
     ensureLength(snapshot.latency_alerts, targetIndex + 1);
 
@@ -412,6 +419,9 @@ export function updateSearchStatistics(snapshot: WorkerSnapshotRecord, update: W
     if (typeof update.nodes === 'number') snapshot.nodes_values[targetIndex] = update.nodes;
     if (typeof update.time_ms === 'number') snapshot.move_times_ms[targetIndex] = update.time_ms;
     if (typeof update.wall_time_ms === 'number') snapshot.wall_times_ms[targetIndex] = update.wall_time_ms;
+    if (typeof update.engine_wall_time_ms === 'number') {
+        snapshot.engine_wall_times_ms[targetIndex] = update.engine_wall_time_ms;
+    }
     if (typeof update.latency_ms === 'number') snapshot.latency_deltas_ms[targetIndex] = update.latency_ms;
     if (typeof update.latency_alert === 'boolean') snapshot.latency_alerts[targetIndex] = update.latency_alert;
 }

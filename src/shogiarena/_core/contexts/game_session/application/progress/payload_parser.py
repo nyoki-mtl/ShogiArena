@@ -65,6 +65,7 @@ def parse_move_progress(raw: Mapping[str, JsonValue]) -> MoveProgressEvent:
         "seldepth",
         "time_ms",
         "wall_time_ms",
+        "engine_wall_time_ms",
         "latency_ms",
         "is_latency_alert",
         "game_result",

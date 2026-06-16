@@ -92,6 +92,7 @@ class GameMove(Base):
     next_move: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     next_move_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     wall_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    engine_wall_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_delta_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     next_move_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     eval: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
@@ -105,7 +106,8 @@ class GameMove(Base):
         return (
             "GameMove("
             f"id={self.id}, game_id={self.game_id}, ply={self.ply}, next_move={self.next_move}, "
-            f"next_move_time_ms={self.next_move_time_ms}, next_move_comment={self.next_move_comment}, "
+            f"next_move_time_ms={self.next_move_time_ms}, wall_time_ms={self.wall_time_ms}, "
+            f"engine_wall_time_ms={self.engine_wall_time_ms}, next_move_comment={self.next_move_comment}, "
             f"eval={self.eval})"
         )
 

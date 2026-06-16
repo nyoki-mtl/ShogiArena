@@ -123,6 +123,7 @@ export function createWorkerUpdatePipeline(deps: PipelineDeps) {
             Array.isArray(update.seldepth_values) ||
             Array.isArray(update.move_times_ms) ||
             Array.isArray(update.wall_times_ms) ||
+            Array.isArray(update.engine_wall_times_ms) ||
             Array.isArray(update.latency_deltas_ms) ||
             Array.isArray(update.latency_alerts);
 

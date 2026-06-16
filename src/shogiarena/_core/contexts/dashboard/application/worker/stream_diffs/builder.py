@@ -57,6 +57,7 @@ def build_game_diff_envelopes(
         "nodes",
         "time_ms",
         "wall_time_ms",
+        "engine_wall_time_ms",
         "latency_ms",
         "is_latency_alert",
     }

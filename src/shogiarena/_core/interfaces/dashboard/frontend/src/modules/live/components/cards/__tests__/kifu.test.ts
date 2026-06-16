@@ -19,6 +19,7 @@ function createSnapshot(overrides: Partial<WorkerSnapshotRecord> = {}): WorkerSn
         seldepth_values: [null],
         move_times_ms: [null],
         wall_times_ms: [null],
+        engine_wall_times_ms: [null],
         latency_deltas_ms: [null],
         latency_alerts: [null],
         current_ply: 1,

@@ -71,6 +71,7 @@ class WorkerSnapshotModel:
     seldepth_values: list[int] = field(default_factory=list)
     move_times_ms: list[int] = field(default_factory=list)
     wall_times_ms: list[int] = field(default_factory=list)
+    engine_wall_times_ms: list[int] = field(default_factory=list)
     latency_deltas_ms: list[int] = field(default_factory=list)
     latency_alerts: list[bool] = field(default_factory=list)
 
@@ -107,6 +108,7 @@ class WorkerSnapshotModel:
         self.seldepth_values.clear()
         self.move_times_ms.clear()
         self.wall_times_ms.clear()
+        self.engine_wall_times_ms.clear()
         self.latency_deltas_ms.clear()
         self.latency_alerts.clear()
         self.game_result = None
@@ -189,6 +191,7 @@ def _worker_snapshot_model_from_mapping(raw: Mapping[str, JsonValue]) -> WorkerS
         seldepth_values=coerce_int_list(raw.get("seldepth_values")),
         move_times_ms=coerce_int_list(raw.get("move_times_ms")),
         wall_times_ms=coerce_int_list(raw.get("wall_times_ms")),
+        engine_wall_times_ms=coerce_int_list(raw.get("engine_wall_times_ms")),
         latency_deltas_ms=coerce_int_list(raw.get("latency_deltas_ms")),
         latency_alerts=coerce_bool_list(raw.get("latency_alerts")),
         game_result=game_result,

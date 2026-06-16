@@ -44,6 +44,7 @@ def _build_move_state(board: Board) -> MoveApplicationStateRefs:
         seldepth_values=[],
         move_times_ms=[],
         wall_times_ms=[],
+        engine_wall_times_ms=[],
         latency_deltas_ms=[],
         current_time_control=current_time_control,
         black_time_control=black_time_control,
@@ -110,6 +111,7 @@ async def _adjudicate_white_move(eval_value: int) -> GameResult | None:
             move=white_move,
             think_result=think_result,
             elapsed_ms=40,
+            engine_wall_time_ms=33,
             game_id="g1",
             ply_count=1,
             is_side_that_moved_black=False,
@@ -174,6 +176,7 @@ async def test_handle_recovered_bestmove_emits_terminal_progress_once() -> None:
         request=RecoveredBestmoveRequest(
             think_result=SimpleNamespace(pvs=[]),
             elapsed_ms=25,
+            engine_wall_time_ms=20,
             current_engine_name="engine-a",
             game_id="g1",
             ply_count=0,
@@ -193,6 +196,7 @@ async def test_handle_recovered_bestmove_emits_terminal_progress_once() -> None:
     assert state.result_progress_emitted == [True]
     assert len(harness.terminal_events) == 1
     assert harness.terminal_events[0]["elapsed_ms"] == 25
+    assert harness.terminal_events[0]["engine_wall_time_ms"] == 20
 
 
 @pytest.mark.asyncio
@@ -206,6 +210,7 @@ async def test_handle_recovered_bestmove_returns_timeout_loss_when_clock_already
         request=RecoveredBestmoveRequest(
             think_result=SimpleNamespace(pvs=[]),
             elapsed_ms=30,
+            engine_wall_time_ms=28,
             current_engine_name="engine-a",
             game_id="g1",
             ply_count=0,
@@ -237,6 +242,7 @@ async def test_apply_move_common_updates_state_via_object_parameters() -> None:
             move=move,
             think_result=SimpleNamespace(pvs=[]),
             elapsed_ms=40,
+            engine_wall_time_ms=31,
             game_id="g1",
             ply_count=0,
             is_side_that_moved_black=True,
@@ -255,6 +261,7 @@ async def test_apply_move_common_updates_state_via_object_parameters() -> None:
     assert state.seldepth_values == [12]
     assert state.move_times_ms == [40]
     assert state.wall_times_ms == [40]
+    assert state.engine_wall_times_ms == [31]
     assert state.latency_deltas_ms == [None]
     assert len(harness.notify_calls) == 1
 
@@ -270,6 +277,7 @@ async def test_handle_recovered_bestmove_applies_late_bestmove_with_object_state
         request=RecoveredBestmoveRequest(
             think_result=SimpleNamespace(pvs=[]),
             elapsed_ms=35,
+            engine_wall_time_ms=29,
             current_engine_name="engine-a",
             game_id="g1",
             ply_count=0,

@@ -20,6 +20,7 @@ def update_remote_move_aggregates(
     seldepth: list[int | None],
     move_times: list[int | None],
     wall_times: list[int | None],
+    engine_wall_times: list[int | None],
 ) -> int:
     """Update remote-move aggregate buffers from a streamed event.
 
@@ -43,6 +44,7 @@ def update_remote_move_aggregates(
             seldepth.append(coerce_int(event.get("seldepth")))
             move_times.append(coerce_int(event.get("time_ms")))
             wall_times.append(coerce_int(event.get("wall_time_ms")))
+            engine_wall_times.append(coerce_int(event.get("engine_wall_time_ms")))
     return last_ply_seen
 
 

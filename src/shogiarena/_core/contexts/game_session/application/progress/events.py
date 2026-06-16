@@ -30,6 +30,7 @@ class MoveProgressEvent(_EventType):
     seldepth: NotRequired[int]
     time_ms: NotRequired[int]
     wall_time_ms: NotRequired[int]
+    engine_wall_time_ms: NotRequired[int]
     latency_ms: NotRequired[int]
     is_latency_alert: NotRequired[bool]
     game_result: NotRequired[GameResult]
@@ -132,6 +133,7 @@ def parse_progress_event(raw: Mapping[str, JsonValue]) -> ProgressEvent:
             "seldepth",
             "time_ms",
             "wall_time_ms",
+            "engine_wall_time_ms",
             "latency_ms",
         ):
             value = coerce_int(raw.get(key))

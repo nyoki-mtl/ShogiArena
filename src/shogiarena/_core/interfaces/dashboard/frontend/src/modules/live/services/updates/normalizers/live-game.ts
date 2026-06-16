@@ -31,6 +31,8 @@ export function normalizeLiveGameRecord(raw: LiveGameRecord, context = 'game_rec
     const seldepthValues = normalizeNumberArray(payload.seldepth_values, `${context}.seldepth_values`) ?? [];
     const moveTimesMs = normalizeNumberArray(payload.move_times_ms, `${context}.move_times_ms`) ?? [];
     const wallTimesMs = normalizeNumberArray(payload.wall_times_ms, `${context}.wall_times_ms`) ?? [];
+    const engineWallTimesMs =
+        normalizeNumberArray(payload.engine_wall_times_ms, `${context}.engine_wall_times_ms`) ?? [];
     const latencyDeltasMs = normalizeNumberArray(payload.latency_deltas_ms, `${context}.latency_deltas_ms`) ?? [];
 
     const blackName = normalizeOptionalString(payload.black_name, `${context}.black_name`) ?? null;
@@ -60,6 +62,7 @@ export function normalizeLiveGameRecord(raw: LiveGameRecord, context = 'game_rec
         seldepth_values: seldepthValues,
         move_times_ms: moveTimesMs,
         wall_times_ms: wallTimesMs,
+        engine_wall_times_ms: engineWallTimesMs,
         latency_deltas_ms: latencyDeltasMs,
         latency_alerts: [],
         current_ply,

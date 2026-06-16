@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1]
+
+### Added
+- **Engine throughput wall time metrics**: tournament DB / live payload / game detail に `engine_wall_time_ms`（配列では `engine_wall_times_ms`）を追加し、既存の clock-charged `wall_time_ms` と engine I/O 窓を分離。result summary では wall NPS の既定 wall time field が `engine_wall_time_ms` であることを明示する。
+
 ## [0.5.0]
 
 ### Added
@@ -94,7 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.5.0
 [0.4.0]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.4.0
 [0.3.1]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.3.1

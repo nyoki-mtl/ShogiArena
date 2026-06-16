@@ -76,6 +76,7 @@ function cloneSnapshot(base: WorkerSnapshotRecord | undefined): WorkerSnapshotRe
         seldepth_values: cloneArray(source.seldepth_values),
         move_times_ms: cloneArray(source.move_times_ms),
         wall_times_ms: cloneArray(source.wall_times_ms),
+        engine_wall_times_ms: cloneArray(source.engine_wall_times_ms),
         latency_deltas_ms: cloneArray(source.latency_deltas_ms),
         latency_alerts: Array.isArray(source.latency_alerts)
             ? source.latency_alerts.map((v) => (typeof v === 'boolean' ? v : Boolean(v)))
@@ -104,6 +105,7 @@ const HISTORY_ARRAY_KEYS: Array<keyof WorkerSnapshotRecord> = [
     'seldepth_values',
     'move_times_ms',
     'wall_times_ms',
+    'engine_wall_times_ms',
     'latency_deltas_ms',
     'latency_alerts',
 ];

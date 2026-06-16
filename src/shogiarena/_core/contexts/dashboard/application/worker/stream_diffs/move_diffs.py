@@ -26,7 +26,7 @@ def extract_analysis(source: JsonObject) -> JsonObject:
     eval_value = _extract_eval(source)
     if eval_value is not None:
         out["eval"] = eval_value
-    for key in ("depth", "seldepth", "nodes", "time_ms", "wall_time_ms", "latency_ms"):
+    for key in ("depth", "seldepth", "nodes", "time_ms", "wall_time_ms", "engine_wall_time_ms", "latency_ms"):
         value = source.get(key)
         if is_strict_numeric(value):
             out[key] = value
@@ -70,6 +70,9 @@ def build_move_payload(
     wall_time = payload.get("wall_time_ms")
     if is_strict_numeric(wall_time) and move_str:
         move_payload["wall_time_ms"] = wall_time
+    engine_wall_time = payload.get("engine_wall_time_ms")
+    if is_strict_numeric(engine_wall_time) and move_str:
+        move_payload["engine_wall_time_ms"] = engine_wall_time
     latency = payload.get("latency_ms")
     if is_strict_numeric(latency) and move_str:
         move_payload["latency_ms"] = latency

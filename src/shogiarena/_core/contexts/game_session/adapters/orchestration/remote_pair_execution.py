@@ -50,6 +50,7 @@ async def execute_remote_pair_game(
     agg_moves: list[str] = []
     agg_move_times: list[int | None] = []
     agg_wall_times: list[int | None] = []
+    agg_engine_wall_times: list[int | None] = []
     agg_nodes: list[int | None] = []
     agg_depth: list[int | None] = []
     agg_seldepth: list[int | None] = []
@@ -67,6 +68,7 @@ async def execute_remote_pair_game(
             seldepth=agg_seldepth,
             move_times=agg_move_times,
             wall_times=agg_wall_times,
+            engine_wall_times=agg_engine_wall_times,
         )
         enqueue_progress_event(
             progress_q,
@@ -95,6 +97,7 @@ async def execute_remote_pair_game(
         white_limits=white_limits,
         move_times=agg_move_times,
         wall_times=agg_wall_times,
+        engine_wall_times=agg_engine_wall_times,
         nodes=agg_nodes,
         depth=agg_depth,
         seldepth=agg_seldepth,
