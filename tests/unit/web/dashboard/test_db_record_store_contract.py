@@ -160,6 +160,22 @@ def test_db_record_store_append_prefers_engine_info_timing_fields(tmp_path) -> N
     assert engine_info.extras["engine_wall_time_ms"] == 121
 
 
+def test_db_record_store_persists_engine_wall_time_from_rebuilt_record(tmp_path) -> None:
+    repo = SQLiteShogiDBFactory(tmp_path / "db.sqlite3").create()
+    repo.create_tables()
+    store = DBRecordStore(repo)
+    record = _make_record(game_name="game-engine-wall")
+    payload = record.to_dict()
+    payload["moves"][0]["engine_info"]["extras"]["engine_wall_time_ms"] = 31
+    record_with_engine_wall = rshogi.record.GameRecord.from_dict(payload, strict=True)
+
+    store.append([record_with_engine_wall])
+    loaded = store.load(game_name="game-engine-wall")
+
+    assert loaded is not None
+    assert loaded.moves[0].engine_info.extras["engine_wall_time_ms"] == 31
+
+
 def test_create_tables_migrates_engine_wall_time_column(tmp_path) -> None:
     db_path = tmp_path / "compat.sqlite3"
     conn = sqlite3.connect(db_path)

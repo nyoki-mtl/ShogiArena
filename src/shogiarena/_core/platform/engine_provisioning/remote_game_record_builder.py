@@ -9,6 +9,7 @@ import rshogi.record
 from rshogi.core import normalize_usi_position
 
 from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.record_engine_metrics import attach_engine_wall_times
 from shogiarena._core.shared.kernel.time_control import TimeControlLimitsPort
 from shogiarena._core.shared.kernel.time_control_spec import limits_to_record_time_spec
 
@@ -78,10 +79,7 @@ def build_remote_game_info(
             metadata=record_metadata,
         )
         if engine_wall_times is not None:
-            for move_record, engine_wall_time_ms in zip(record.moves, engine_wall_times, strict=False):
-                engine_info = move_record.engine_info
-                if engine_info is not None and engine_wall_time_ms is not None:
-                    engine_info.set_extra("engine_wall_time_ms", int(engine_wall_time_ms))
+            record = attach_engine_wall_times(record, engine_wall_times)
         return record
     except ValueError as exc:
         raise RuntimeError(f"Illegal move in final payload: {exc}") from exc

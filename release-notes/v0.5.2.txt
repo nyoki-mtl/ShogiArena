@@ -1,0 +1,5 @@
+This patch release fixes persistence for the engine throughput wall time metric added in 0.5.1.
+
+- Fixed `engine_wall_time_ms` attachment so ShogiArena rebuilds the `GameRecord` payload instead of mutating cloned `MoveRecord` / `MoveEngineInfo` values returned by rshogi accessors.
+- Tournament DB move rows now persist non-null `game_move.engine_wall_time_ms` values when the runner collected engine wall time samples.
+- DB roundtrip restores `engine_wall_time_ms` through `MoveEngineInfo.extras`, and remote game record construction uses the same persistence path.

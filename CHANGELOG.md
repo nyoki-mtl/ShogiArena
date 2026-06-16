@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2]
+
+### Fixed
+- **Engine wall time persistence**: `GameRecord.moves` getter 経由の clone 更新を避け、`engine_wall_time_ms` を `GameRecord` payload に入れて再構築するよう修正。tournament DB の実指し手行で `game_move.engine_wall_time_ms` が保存されるようにした。
+
 ## [0.5.1]
 
 ### Added
@@ -99,7 +104,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.5.0
 [0.4.0]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.4.0

@@ -17,6 +17,7 @@ from shogiarena._core.shared.kernel.game_results import (
     GameResult,
 )
 from shogiarena._core.shared.kernel.json_coercion import to_json_object
+from shogiarena._core.shared.kernel.record_engine_metrics import attach_engine_wall_times
 from shogiarena._core.shared.kernel.time_control import (
     GameClock,
     TimeControlLimitsPort,
@@ -228,11 +229,7 @@ class GameRunnerRunMixin:
             latency_deltas_ms=latency_deltas_ms,
             metadata=record_metadata,
         )
-        for move_record, engine_wall_time_ms in zip(record.moves, engine_wall_times_ms, strict=False):
-            engine_info = move_record.engine_info
-            if engine_info is not None and engine_wall_time_ms is not None:
-                engine_info.set_extra("engine_wall_time_ms", int(engine_wall_time_ms))
-        return record
+        return attach_engine_wall_times(record, engine_wall_times_ms)
 
     async def _prepare_engines_for_game(
         self,
