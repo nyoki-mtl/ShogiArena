@@ -54,6 +54,7 @@ class AsyncUsiEngineProtocolMixin:
     _clear_mate_tracking: Any
     _clear_ponder_handle: Any
     _set_future_exception: Any
+    _emit_lifecycle_event: Any
 
     async def _monitor_output(self) -> None:
         try:
@@ -93,6 +94,7 @@ class AsyncUsiEngineProtocolMixin:
                 return
             self._set_state(UsiEngineState.NOT_READY, reason="received usiok")
             self._append_handshake_entry("in", line, state=UsiEngineState.WAITING_FOR_USIOK.value)
+            self._emit_lifecycle_event("usiok")
             return
         if normalized.startswith("readyok"):
             ready_future = self._readyok_future
@@ -110,6 +112,7 @@ class AsyncUsiEngineProtocolMixin:
             self._set_state(UsiEngineState.READY, reason="received readyok")
             self._has_ready_once = True
             self._append_handshake_entry("in", line, state=UsiEngineState.READY.value)
+            self._emit_lifecycle_event("readyok")
             return
         if line.startswith("id "):
             if self._state == UsiEngineState.WAITING_FOR_USIOK:

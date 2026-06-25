@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import TracebackType
 from typing import Literal, Protocol
 
-from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.engine_io import UsiIoEvent
 from shogiarena._core.shared.kernel.usi_transcript_contract import (
     TranscriptRole,
     transcript_path_for_game,
@@ -27,7 +27,7 @@ class UsiTranscriptEnginePort(Protocol):
 
     def register_io_log_handler(
         self,
-        handler: Callable[[JsonObject], Awaitable[None] | None],
+        handler: Callable[[UsiIoEvent], Awaitable[None] | None],
     ) -> Callable[[], None]: ...
 
     async def flush_io_log_handlers(self, *, timeout: float | None = None) -> None: ...
@@ -68,19 +68,19 @@ class UsiTranscriptWriter:
 
         return self._path
 
-    def handle(self, entry: Mapping[str, object]) -> None:
+    def handle(self, entry: UsiIoEvent) -> None:
         """USI I/O log entry を transcript に反映する。"""
 
-        line_value = entry.get("line")
-        if not isinstance(line_value, str) or not line_value:
+        line_value = entry.line
+        if not line_value:
             return
         line = line_value.strip()
         if not line:
             return
 
-        direction = str(entry.get("dir") or "?")
-        state = str(entry.get("state") or "-")
-        timestamp = _coerce_ts_ms(entry.get("ts"))
+        direction = entry.direction
+        state = entry.phase or "-"
+        timestamp = _coerce_ts_ms(entry.timestamp_ms)
         formatted = self._format_line(
             timestamp_ms=timestamp,
             direction=direction,

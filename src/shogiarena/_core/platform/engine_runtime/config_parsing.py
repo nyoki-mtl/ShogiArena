@@ -8,6 +8,7 @@ from typing import TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from shogiarena._core.platform.engine_runtime.usi_engine_session_models import UsiOptionValidationMode
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonScalar, JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import (
     OptionalText,
@@ -22,6 +23,8 @@ FloatLike: TypeAlias = str | int | float | None
 StringListLike: TypeAlias = str | list[str] | tuple[str, ...] | None
 _ConfigValue: TypeAlias = JsonScalar | list[JsonScalar] | dict[str, JsonScalar]
 _ConfigObject: TypeAlias = dict[str, _ConfigValue]
+_OptionValidationInput: TypeAlias = str | dict[str, str | dict[str, str]] | None
+_VALIDATION_MODES: set[str] = {"strict", "warn", "raw", "allow_unlisted_combo_value"}
 
 
 def _coerce_config_value(value: JsonValue, *, field: str) -> _ConfigValue:
@@ -44,6 +47,15 @@ def _coerce_config_value(value: JsonValue, *, field: str) -> _ConfigValue:
             raise TypeError(f"{field}.{key} must be a scalar JSON value")
         return values
     raise TypeError(f"{field} must be a scalar, scalar-list, or scalar mapping")
+
+
+class _UsiEngineIoInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    collect_info_strings: BoolLike = False
+    collect_raw_io: BoolLike = True
+    collect_stderr: BoolLike = True
+    collect_outbound: BoolLike = True
 
 
 class _UsiEngineMappingInput(BaseModel):
@@ -71,6 +83,8 @@ class _UsiEngineMappingInput(BaseModel):
     isready_lock_check_template: str | None = None
     isready_lock_check_templates: StringListLike = None
     should_skip_isready_lock_if_exists: BoolLike = Field(default=False, alias="isready_lock_skip_if_exists")
+    io: _UsiEngineIoInput = Field(default_factory=_UsiEngineIoInput)
+    option_validation: _OptionValidationInput = None
 
     @model_validator(mode="before")
     @classmethod
@@ -179,6 +193,56 @@ def to_float(value: FloatLike, *, field: str) -> float | None:
         except ValueError as exc:
             raise TypeError(f"{field} must be a float value; got {value!r}") from exc
     raise TypeError(f"{field} must be a float-compatible value; got {type(value).__name__}")
+
+
+def normalize_option_validation(
+    value: _OptionValidationInput,
+    *,
+    field: str = "option_validation",
+) -> tuple[UsiOptionValidationMode, dict[str, UsiOptionValidationMode]]:
+    """Normalize option validation policy from engine config."""
+
+    if value is None:
+        return "strict", {}
+    if isinstance(value, str):
+        return _normalize_option_validation_mode(value, field=field), {}
+    if not isinstance(value, Mapping):
+        raise TypeError(f"{field} must be a string or mapping")
+
+    default_raw = value.get("default", "strict")
+    if not isinstance(default_raw, str):
+        raise TypeError(f"{field}.default must be a string")
+    default = _normalize_option_validation_mode(default_raw, field=f"{field}.default")
+
+    overrides_raw = value.get("overrides", {})
+    if overrides_raw is None:
+        return default, {}
+    if not isinstance(overrides_raw, Mapping):
+        raise TypeError(f"{field}.overrides must be a mapping")
+
+    overrides: dict[str, UsiOptionValidationMode] = {}
+    for name, mode_raw in overrides_raw.items():
+        if not isinstance(mode_raw, str):
+            raise TypeError(f"{field}.overrides.{name} must be a string")
+        overrides[str(name)] = _normalize_option_validation_mode(
+            mode_raw,
+            field=f"{field}.overrides.{name}",
+        )
+    return default, overrides
+
+
+def _normalize_option_validation_mode(value: str, *, field: str) -> UsiOptionValidationMode:
+    normalized = value.strip().lower()
+    if normalized not in _VALIDATION_MODES:
+        expected = ", ".join(sorted(_VALIDATION_MODES))
+        raise ValueError(f"{field} must be one of: {expected}")
+    if normalized == "warn":
+        return "warn"
+    if normalized == "raw":
+        return "raw"
+    if normalized == "allow_unlisted_combo_value":
+        return "allow_unlisted_combo_value"
+    return "strict"
 
 
 def normalize_engine_args(raw_args: StringListLike) -> tuple[str, ...]:

@@ -8,6 +8,7 @@ from typing import Any, Protocol, runtime_checkable
 from rshogi.core import Move
 
 from shogiarena._core.contexts.match.ports.usi_think_ports import PonderHitTimings, UsiThinkRequest, UsiThinkResultPort
+from shogiarena._core.shared.kernel.engine_io import UsiIoEvent
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
@@ -67,7 +68,7 @@ class GameEnginePort(Protocol):
 
     def register_io_log_handler(
         self,
-        handler: Callable[[JsonObject], Awaitable[None] | None],
+        handler: Callable[[UsiIoEvent], Awaitable[None] | None],
     ) -> Callable[[], None]: ...
 
     async def start_ponder(

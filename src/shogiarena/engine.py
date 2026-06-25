@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.match.ports.usi_think_ports import PonderHitTimings, UsiThinkRequest
@@ -15,13 +14,23 @@ from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsi
 from shogiarena._core.platform.engine_runtime.usi_engine_session_models import (
     AnalysisHandle,
     AsyncUsiProcess,
+    EngineLifecycleEvent,
+    EngineProcessInfo,
     PonderHandle,
+    UsiAnalyzeItem,
+    UsiAnalyzePosition,
+    UsiAnalyzeResetPolicy,
+    UsiEngineSession,
     UsiEngineStartError,
     UsiEngineState,
+    UsiIoEvent,
     UsiMateResult,
+    UsiOptionValidationMode,
 )
 from shogiarena._core.platform.engine_runtime.usi_protocol_types import (
     AsyncUsiProcessBridgePort,
+    UsiBound,
+    UsiEvalValue,
     UsiOption,
     UsiProtocolParser,
     UsiThinkPV,
@@ -56,7 +65,12 @@ async def create_engine(
     instance_id: str | None = None,
     instance_pool: InstancePool | None = None,
     cpu_affinity: Sequence[int] | None = None,
-) -> Any:
+    collect_info_strings: bool | None = None,
+    collect_raw_io: bool | None = None,
+    collect_stderr: bool | None = None,
+    collect_outbound: bool | None = None,
+    option_validation: UsiOptionValidationMode | None = None,
+) -> UsiEngineSession:
     """Create an engine instance using the default ShogiArena runtime wiring."""
 
     return await build_default_root().engine_runtime.create_engine(
@@ -67,6 +81,11 @@ async def create_engine(
         instance_id=instance_id,
         instance_pool=_resolve_instance_pool(instance_id, instance_pool),
         cpu_affinity=cpu_affinity,
+        collect_info_strings=collect_info_strings,
+        collect_raw_io=collect_raw_io,
+        collect_stderr=collect_stderr,
+        collect_outbound=collect_outbound,
+        option_validation=option_validation,
     )
 
 
@@ -79,7 +98,12 @@ async def create_engine_from_mapping(
     instance_id: str | None = None,
     instance_pool: InstancePool | None = None,
     cpu_affinity: Sequence[int] | None = None,
-) -> Any:
+    collect_info_strings: bool | None = None,
+    collect_raw_io: bool | None = None,
+    collect_stderr: bool | None = None,
+    collect_outbound: bool | None = None,
+    option_validation: UsiOptionValidationMode | None = None,
+) -> UsiEngineSession:
     """Create an engine instance from a mapping using the default runtime wiring."""
 
     return await build_default_root().engine_runtime.create_engine_from_mapping(
@@ -90,6 +114,11 @@ async def create_engine_from_mapping(
         instance_id=instance_id,
         instance_pool=_resolve_instance_pool(instance_id, instance_pool),
         cpu_affinity=cpu_affinity,
+        collect_info_strings=collect_info_strings,
+        collect_raw_io=collect_raw_io,
+        collect_stderr=collect_stderr,
+        collect_outbound=collect_outbound,
+        option_validation=option_validation,
     )
 
 
@@ -98,14 +127,24 @@ __all__ = [
     "AsyncUsiEngine",
     "AsyncUsiProcess",
     "AsyncUsiProcessBridgePort",
+    "EngineLifecycleEvent",
+    "EngineProcessInfo",
     "PonderHandle",
     "PonderHitTimings",
     "SpawnerBackedUSIBridge",
+    "UsiAnalyzeItem",
+    "UsiAnalyzePosition",
+    "UsiAnalyzeResetPolicy",
+    "UsiBound",
+    "UsiEngineSession",
     "UsiEngineConfig",
     "UsiEngineStartError",
     "UsiEngineState",
+    "UsiEvalValue",
+    "UsiIoEvent",
     "UsiMateResult",
     "UsiOption",
+    "UsiOptionValidationMode",
     "UsiProtocolParser",
     "UsiThinkPV",
     "UsiThinkRequest",

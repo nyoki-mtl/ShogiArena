@@ -6,7 +6,7 @@ import asyncio
 import json
 import time
 import zlib
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from typing import Any, Literal
 
@@ -14,6 +14,7 @@ from rshogi.core import Move
 
 from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort
 from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkResultPort
+from shogiarena._core.shared.kernel.engine_io import UsiIoEvent
 from shogiarena._core.shared.kernel.game_results import GameResult, game_result_name
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
 
@@ -156,17 +157,14 @@ class GameRunnerProgressMixin:
         *,
         game_id: str | None,
         role: Literal["black", "white"],
-        entry: Mapping[str, object],
+        entry: UsiIoEvent,
         initial_sfen: str,
         black_name: str,
         white_name: str,
     ) -> None:
         if game_id is None:
             return
-        direction = entry.get("dir")
-        line = entry.get("line")
-        ts_value = entry.get("ts")
-        timestamp = int(ts_value) if isinstance(ts_value, int | float) else int(time.time() * 1000)
+        timestamp = entry.timestamp_ms if entry.timestamp_ms is not None else int(time.time() * 1000)
         payload: _EngineIoPayload = {
             "type": "engine_io",
             "game_id": game_id,
@@ -174,13 +172,12 @@ class GameRunnerProgressMixin:
             "black_name": black_name,
             "white_name": white_name,
             "role": role,
-            "direction": direction,
-            "line": line,
+            "direction": entry.direction,
+            "line": entry.line,
             "ts": timestamp,
         }
-        state = entry.get("state")
-        if isinstance(state, str) and state:
-            payload["state"] = state
+        if entry.phase:
+            payload["state"] = entry.phase
         await self._enqueue_progress(game_id, 0, payload)
 
     def _register_engine_io_listener(
@@ -195,7 +192,7 @@ class GameRunnerProgressMixin:
         if game_id is None:
             return lambda: None
 
-        def handler(entry: Mapping[str, object]) -> Awaitable[None] | None:
+        def handler(entry: UsiIoEvent) -> Awaitable[None] | None:
             return self._enqueue_engine_io_event(
                 game_id=game_id,
                 role=role,

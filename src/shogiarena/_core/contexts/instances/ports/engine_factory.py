@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from shogiarena._core.contexts.instances.ports.engine_runtime_port import EngineOptionValidationMode
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.service_ports import ArtifactResolutionPort
 
@@ -23,6 +24,11 @@ class EngineFactoryPort(Protocol):
         instance_id: str | None = None,
         instance_pool: Any = None,
         cpu_affinity: Sequence[int] | None = None,
+        collect_info_strings: bool | None = None,
+        collect_raw_io: bool | None = None,
+        collect_stderr: bool | None = None,
+        collect_outbound: bool | None = None,
+        option_validation: EngineOptionValidationMode | None = None,
         *,
         artifact_resolver: ArtifactResolutionPort | None = None,
     ) -> Any: ...
@@ -36,6 +42,11 @@ class EngineFactoryPort(Protocol):
         instance_id: str | None = None,
         instance_pool: Any = None,
         cpu_affinity: Sequence[int] | None = None,
+        collect_info_strings: bool | None = None,
+        collect_raw_io: bool | None = None,
+        collect_stderr: bool | None = None,
+        collect_outbound: bool | None = None,
+        option_validation: EngineOptionValidationMode | None = None,
         *,
         artifact_resolver: ArtifactResolutionPort | None = None,
     ) -> Any: ...
@@ -71,6 +82,11 @@ class EngineFactoryService:
         instance_id: str | None = None,
         instance_pool: Any = None,
         cpu_affinity: Sequence[int] | None = None,
+        collect_info_strings: bool | None = None,
+        collect_raw_io: bool | None = None,
+        collect_stderr: bool | None = None,
+        collect_outbound: bool | None = None,
+        option_validation: EngineOptionValidationMode | None = None,
         *,
         artifact_resolver: ArtifactResolutionPort | None = None,
     ) -> Any:
@@ -83,6 +99,11 @@ class EngineFactoryService:
             instance_id=instance_id,
             instance_pool=instance_pool,
             cpu_affinity=cpu_affinity,
+            collect_info_strings=collect_info_strings,
+            collect_raw_io=collect_raw_io,
+            collect_stderr=collect_stderr,
+            collect_outbound=collect_outbound,
+            option_validation=option_validation,
             artifact_resolver=self._select_artifact_resolver(artifact_resolver),
         )
 
@@ -95,6 +116,11 @@ class EngineFactoryService:
         instance_id: str | None = None,
         instance_pool: Any = None,
         cpu_affinity: Sequence[int] | None = None,
+        collect_info_strings: bool | None = None,
+        collect_raw_io: bool | None = None,
+        collect_stderr: bool | None = None,
+        collect_outbound: bool | None = None,
+        option_validation: EngineOptionValidationMode | None = None,
         *,
         artifact_resolver: ArtifactResolutionPort | None = None,
     ) -> Any:
@@ -107,6 +133,11 @@ class EngineFactoryService:
             instance_id=instance_id,
             instance_pool=instance_pool,
             cpu_affinity=cpu_affinity,
+            collect_info_strings=collect_info_strings,
+            collect_raw_io=collect_raw_io,
+            collect_stderr=collect_stderr,
+            collect_outbound=collect_outbound,
+            option_validation=option_validation,
             artifact_resolver=self._select_artifact_resolver(artifact_resolver),
         )
 

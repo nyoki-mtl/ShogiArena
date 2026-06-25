@@ -173,8 +173,8 @@ class _EngineIoPayload(TypedDict, total=False):
     black_name: str
     white_name: str
     role: Literal["black", "white"]
-    direction: object
-    line: object
+    direction: Literal["in", "out", "stderr"]
+    line: str
     ts: int
     state: str
 

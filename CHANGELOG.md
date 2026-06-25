@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3]
+
+### Added
+- **Public USI engine session API**: `create_engine()` / `create_engine_from_mapping()` の戻り型を `UsiEngineSession` として公開し、engine lifecycle、`think()`、option application、IO logging、batch analysis を private implementation に依存せず型付けできるようにした。
+- **Structured USI analysis data**: `UsiEvalValue.kind/value/is_mate/is_cp/as_dict()` と `UsiThinkResult.select_pv()` を追加し、score 文字列の再 parse や downstream 独自 PV selection helper を不要にした。
+- **Engine process and lifecycle observability**: `EngineProcessInfo`、`process_info`、lifecycle handler、typed `UsiIoEvent` を公開し、profiler attach、trace capture、diagnostics collection を public API で扱えるようにした。
+- **Lightweight fixed-position analysis API**: `iter_analyze_positions()` / `analyze_positions()`、per-position reset policy、failure collection policy を追加し、単一 engine process を再利用する fixed-position capture を ShogiArena runtime policy として実行できるようにした。
+- **USI option validation policy**: `strict`（既定）、`warn`、`raw`、`allow_unlisted_combo_value` を追加し、file/path 系 combo option などの custom value を用途に応じて許可できるようにした。
+
+### Changed
+- **Public engine API（破壊的変更）**: `get_usi_options()` は JSON snapshot ではなく `Mapping[str, UsiOption]` を返す。tournament metadata 用 JSON snapshot は内部の match adapter で明示変換する。
+- **USI IO event contract（破壊的変更）**: `UsiIoEvent` は Mapping 互換 key（`dir` / `ts` / `state`）を提供せず、`direction` / `line` / `phase` / `timestamp_ms` の typed field を使う。stderr は `direction="stderr"`、prefix なしの raw line として扱う。
+
 ## [0.5.2]
 
 ### Fixed
@@ -104,7 +117,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/nyoki-mtl/ShogiArena/releases/tag/v0.5.0

@@ -13,6 +13,7 @@ from shogiarena._core.contexts.instances.application.instance_pool import Instan
 from shogiarena._core.contexts.instances.application.provisioner import Provisioner
 from shogiarena._core.contexts.instances.application.remote_probe import detect_remote_target_cpu
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
+from shogiarena._core.contexts.instances.ports.engine_runtime_port import EngineOptionValidationMode
 from shogiarena._core.platform.engine_provisioning.runtime_factory import EngineRuntimeFactory
 from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
 from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine
@@ -48,6 +49,11 @@ class EngineRuntimeAdapter:
         instance_id: str | None = None,
         instance_pool: InstancePool | None = None,
         cpu_affinity: Sequence[int] | None = None,
+        collect_info_strings: bool | None = None,
+        collect_raw_io: bool | None = None,
+        collect_stderr: bool | None = None,
+        collect_outbound: bool | None = None,
+        option_validation: EngineOptionValidationMode | None = None,
     ) -> Any:
         resolved_path = self._coerce_config_path(config_path)
         return await self._engine_factory_service.create_engine(
@@ -58,6 +64,11 @@ class EngineRuntimeAdapter:
             instance_id=instance_id,
             instance_pool=instance_pool,
             cpu_affinity=cpu_affinity,
+            collect_info_strings=collect_info_strings,
+            collect_raw_io=collect_raw_io,
+            collect_stderr=collect_stderr,
+            collect_outbound=collect_outbound,
+            option_validation=option_validation,
         )
 
     async def create_engine_from_mapping(
@@ -70,6 +81,11 @@ class EngineRuntimeAdapter:
         instance_id: str | None = None,
         instance_pool: InstancePool | None = None,
         cpu_affinity: Sequence[int] | None = None,
+        collect_info_strings: bool | None = None,
+        collect_raw_io: bool | None = None,
+        collect_stderr: bool | None = None,
+        collect_outbound: bool | None = None,
+        option_validation: EngineOptionValidationMode | None = None,
     ) -> Any:
         normalized_mapping = {str(key): json_serialize(value) for key, value in config_mapping.items()}
         return await self._engine_factory_service.create_engine_from_mapping(
@@ -80,6 +96,11 @@ class EngineRuntimeAdapter:
             instance_id=instance_id,
             instance_pool=instance_pool,
             cpu_affinity=cpu_affinity,
+            collect_info_strings=collect_info_strings,
+            collect_raw_io=collect_raw_io,
+            collect_stderr=collect_stderr,
+            collect_outbound=collect_outbound,
+            option_validation=option_validation,
         )
 
 

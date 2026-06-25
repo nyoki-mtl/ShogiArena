@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Literal, Protocol, TypeAlias, cast, runtime_checkable
 
 from shogiarena._core.contexts.instances.application.engine_process_spawner import (
     EngineProcessSpawner,
@@ -13,6 +13,8 @@ from shogiarena._core.contexts.instances.application.instance_models import Inst
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.instances.application.provisioner import Provisioner
 from shogiarena._core.shared.kernel.json_types import JsonObject
+
+EngineOptionValidationMode: TypeAlias = Literal["strict", "warn", "raw", "allow_unlisted_combo_value"]
 
 
 @runtime_checkable
@@ -29,6 +31,11 @@ class EngineRuntimePort(Protocol):
         instance_id: str | None = None,
         instance_pool: InstancePool | None = None,
         cpu_affinity: Sequence[int] | None = None,
+        collect_info_strings: bool | None = None,
+        collect_raw_io: bool | None = None,
+        collect_stderr: bool | None = None,
+        collect_outbound: bool | None = None,
+        option_validation: EngineOptionValidationMode | None = None,
     ) -> Any: ...
 
     async def create_engine_from_mapping(
@@ -41,6 +48,11 @@ class EngineRuntimePort(Protocol):
         instance_id: str | None = None,
         instance_pool: InstancePool | None = None,
         cpu_affinity: Sequence[int] | None = None,
+        collect_info_strings: bool | None = None,
+        collect_raw_io: bool | None = None,
+        collect_stderr: bool | None = None,
+        collect_outbound: bool | None = None,
+        option_validation: EngineOptionValidationMode | None = None,
     ) -> Any: ...
 
 
@@ -71,4 +83,4 @@ async def copy_directory_scp(*, instance: object, local_dir: Path, remote_dir: s
     await Provisioner.copy_directory_scp(cast(Instance, instance), local_dir, remote_dir)
 
 
-__all__ = ["EngineRuntimePort", "copy_directory_scp", "spawn_engine_process"]
+__all__ = ["EngineOptionValidationMode", "EngineRuntimePort", "copy_directory_scp", "spawn_engine_process"]

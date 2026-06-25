@@ -6,7 +6,7 @@ import logging
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
 from rshogi.core import Move
 
@@ -23,6 +23,10 @@ _SPECIAL_MOVE_MAP: dict[str, Move] = {
 }
 
 logger = logging.getLogger(__name__)
+
+UsiScoreKind: TypeAlias = Literal["cp", "mate"]
+UsiPvBoundName: TypeAlias = Literal["lowerbound", "upperbound"]
+UsiPvFallback: TypeAlias = Literal["deepest", "last", "none"]
 
 
 def move_from_usi(usi: str) -> Move:
@@ -49,6 +53,38 @@ def find_last_pv(pvs: Iterable[UsiThinkPV], multipv_index: int = 1) -> UsiThinkP
 
 
 class UsiEvalValue(int):
+    @property
+    def kind(self) -> UsiScoreKind:
+        """評価値種別を返す。"""
+
+        return "mate" if self.is_mate else "cp"
+
+    @property
+    def value(self) -> int:
+        """USI score の生値を返す。
+
+        ``cp`` は centipawn、``mate`` は詰み手数を符号付きで返す。
+        """
+
+        raw = int(self)
+        if self.is_mate_score():
+            return VALUE_MATE - raw
+        if self.is_mated_score():
+            return -(raw - (-VALUE_MATE))
+        return raw
+
+    @property
+    def is_mate(self) -> bool:
+        """詰み系 score なら ``True`` を返す。"""
+
+        return self.is_mate_score() or self.is_mated_score()
+
+    @property
+    def is_cp(self) -> bool:
+        """centipawn score なら ``True`` を返す。"""
+
+        return not self.is_mate
+
     def is_mate_score(self) -> bool:
         return VALUE_MATE_IN_MAX_PLY <= int(self) <= VALUE_MATE
 
@@ -60,12 +96,15 @@ class UsiEvalValue(int):
 
     def to_string(self) -> str:
         if self.is_mate_score():
-            mate_ply: int = VALUE_MATE - int(self)
-            return f"mate {mate_ply}"
+            return f"mate {self.value}"
         if self.is_mated_score():
-            mated_ply: int = int(self) - (-VALUE_MATE)
-            return f"mate -{abs(mated_ply)}"
+            return f"mate -{abs(self.value)}"
         return f"cp {int(self)}"
+
+    def as_dict(self) -> dict[str, int | str]:
+        """JSON 化しやすい score payload を返す。"""
+
+        return {"kind": self.kind, "value": self.value}
 
     @staticmethod
     def mate_in_ply(ply: int) -> UsiEvalValue:
@@ -125,6 +164,17 @@ class UsiThinkPV:
         self.nps: int | None = None
         self.multipv: int | None = None
         self.string: str | None = None
+
+    @property
+    def bound_name(self) -> UsiPvBoundName | None:
+        """USI bound token を返す。bound が無い場合は ``None``。"""
+
+        value = self.bound.to_string()
+        if value == "lowerbound":
+            return "lowerbound"
+        if value == "upperbound":
+            return "upperbound"
+        return None
 
     def __str__(self) -> str:
         return self.to_debug_string()
@@ -257,6 +307,36 @@ class UsiThinkResult:
 
     def get_last_pv(self, multipv_index: int = 1) -> UsiThinkPV | None:
         return find_last_pv(self.pvs, multipv_index=multipv_index)
+
+    def select_pv(
+        self,
+        *,
+        depth: int | None = None,
+        multipv: int | None = None,
+        fallback: UsiPvFallback = "deepest",
+    ) -> UsiThinkPV | None:
+        """条件に合う PV を選択する。
+
+        ``depth`` が指定された場合は exact match の最後の PV を優先し、
+        見つからない場合だけ ``fallback`` を使う。
+        """
+
+        candidates = [
+            pv for pv in self.pvs if multipv is None or pv.multipv == multipv or (pv.multipv is None and multipv == 1)
+        ]
+        if depth is not None:
+            exact_matches = [pv for pv in candidates if pv.depth == depth]
+            if exact_matches:
+                return exact_matches[-1]
+        if fallback == "none" or not candidates:
+            return None
+        if fallback == "last":
+            return candidates[-1]
+        if fallback != "deepest":
+            raise ValueError("fallback must be one of: deepest, last, none")
+        indexed = list(enumerate(candidates))
+        _, selected = max(indexed, key=lambda item: (item[1].depth if item[1].depth is not None else -1, item[0]))
+        return selected
 
     def __str__(self) -> str:
         return self.to_debug_string()

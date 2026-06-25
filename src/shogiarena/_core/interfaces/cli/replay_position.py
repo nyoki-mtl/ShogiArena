@@ -17,9 +17,10 @@ from shogiarena._core.interfaces.cli.option_parsing import parse_option_override
 from shogiarena._core.interfaces.cli.run.analyze import parse_position_argument
 from shogiarena._core.interfaces.cli.run.engine_loader import load_engine
 from shogiarena._core.interfaces.composition_root.default_root import build_default_root
+from shogiarena._core.shared.kernel.engine_io import UsiIoEvent
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.run_manifest_reader import read_run_manifest
-from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int, coerce_str
+from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_str
 from shogiarena._core.shared.kernel.serialization import json_serialize
 from shogiarena._core.shared.kernel.usi_transcript_contract import (
     TranscriptRole,
@@ -101,16 +102,16 @@ class _ReplayTranscriptWriter:
         self._handle = path.open("w", encoding="utf-8")
         self._handle.write("# ShogiArena replay-position transcript\n")
 
-    def handle(self, entry: Mapping[str, object]) -> None:
-        line = coerce_str(entry.get("line"))
-        if line is None:
+    def handle(self, entry: UsiIoEvent) -> None:
+        line = entry.line
+        if not line:
             return
-        timestamp = coerce_int(entry.get("ts")) or 0
+        timestamp = entry.timestamp_ms or 0
         if self._start_ts_ms is None:
             self._start_ts_ms = timestamp
         elapsed_ms = max(0, timestamp - self._start_ts_ms)
-        direction = coerce_str(entry.get("dir")) or "?"
-        state = coerce_str(entry.get("state")) or "-"
+        direction = entry.direction
+        state = entry.phase or "-"
         self._handle.write(f"{elapsed_ms:010d}ms {direction} {state} {line}\n")
         self._handle.flush()
 

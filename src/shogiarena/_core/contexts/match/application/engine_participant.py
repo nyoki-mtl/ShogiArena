@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Protocol, runtime_checkable
@@ -13,6 +12,7 @@ from rshogi.types import Color
 
 from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort, InfoHandler, JsonObject
 from shogiarena._core.contexts.match.ports.usi_think_ports import PonderHitTimings, UsiThinkRequest, UsiThinkResultPort
+from shogiarena._core.shared.kernel.engine_io import UsiIoEvent
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_str
 
@@ -36,6 +36,15 @@ class _PonderHandlePort(Protocol):
 @runtime_checkable
 class _EngineConfigPort(Protocol):
     is_early_ponder_enabled: bool
+
+
+class _UsiOptionPort(Protocol):
+    option_type: str
+    default: str | None
+    current: str | None
+    minimum: int | None
+    maximum: int | None
+    choices: Sequence[str]
 
 
 @runtime_checkable
@@ -81,7 +90,7 @@ class _EngineRuntimePort(Protocol):
     async def gameover(self, result: str) -> None: ...
     async def stop(self, timeout: float | None = None) -> UsiThinkResultPort | None: ...
     async def close(self) -> None: ...
-    def get_usi_options(self) -> Mapping[str, JsonObject]: ...
+    def get_usi_options(self) -> Mapping[str, _UsiOptionPort]: ...
     async def start_ponder(
         self,
         *,
@@ -94,7 +103,7 @@ class _EngineRuntimePort(Protocol):
     ) -> _PonderHandlePort: ...
     def register_io_log_handler(
         self,
-        handler: Callable[[JsonObject], Awaitable[None] | None],
+        handler: Callable[[UsiIoEvent], Awaitable[None] | None],
     ) -> Callable[[], None]: ...
 
 
@@ -121,7 +130,7 @@ class EngineParticipant(GameEnginePort):
 
     def register_io_log_handler(
         self,
-        handler: Callable[[JsonObject], Awaitable[None] | None],
+        handler: Callable[[UsiIoEvent], Awaitable[None] | None],
     ) -> Callable[[], None]:
         return self._engine.register_io_log_handler(handler)
 
@@ -255,13 +264,18 @@ class EngineParticipant(GameEnginePort):
             raise RuntimeError(f"Engine participant '{self.name}' not prepared")
 
     def get_usi_options_snapshot(self) -> dict[str, JsonObject]:
-        """Return a deep copy of the engine's reported USI options."""
+        """Return a JSON-compatible snapshot of the engine's reported USI options."""
 
         snapshot: dict[str, JsonObject] = {}
-        for option_name, option_payload in self._engine.get_usi_options().items():
-            cloned_payload = copy.deepcopy(option_payload)
-            if isinstance(cloned_payload, dict):
-                snapshot[option_name] = {str(key): value for key, value in cloned_payload.items()}
+        for option_name, option in self._engine.get_usi_options().items():
+            snapshot[option_name] = {
+                "type": option.option_type,
+                "default": option.default,
+                "current": option.current,
+                "min": option.minimum,
+                "max": option.maximum,
+                "var": list(option.choices),
+            }
         return snapshot
 
     def get_engine_info_snapshot(self) -> dict[str, str]:
@@ -348,9 +362,9 @@ class EngineParticipant(GameEnginePort):
         opt = options.get("USI_Ponder")
         if opt is None:
             return True
-        current = opt.get("current")
+        current = opt.current
         if current is None:
-            current = opt.get("default")
+            current = opt.default
         if current is None:
             return True
         normalized = (coerce_str(current) or "").strip().lower()

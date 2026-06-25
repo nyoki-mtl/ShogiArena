@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import Enum
+from types import TracebackType
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 
 from rshogi.core import Move
 
-from shogiarena._core.contexts.match.ports.usi_think_ports import PonderHitTimings
+from shogiarena._core.contexts.match.ports.usi_think_ports import PonderHitTimings, UsiThinkRequest
 from shogiarena._core.platform.engine_runtime.usi_protocol_types import (
     AsyncUsiProcessBridgePort,
+    UsiOption,
     UsiThinkPV,
     UsiThinkResult,
     find_last_pv,
 )
+from shogiarena._core.shared.kernel.engine_io import UsiIoDirection, UsiIoEvent
+from shogiarena._core.shared.kernel.engine_process import EngineProcessInfo
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.serialization import json_serialize
 
@@ -26,6 +30,62 @@ _STALE_BESTMOVE_SYNC_TIMEOUT_SECONDS = 1.0
 _READY_TIMEOUT_DEFAULT: Literal["default"] = "default"
 ReadyTimeout = float | None | Literal["default"]
 TFutureResult = TypeVar("TFutureResult")
+EngineLifecycleEventName = Literal[
+    "process_started",
+    "usiok",
+    "options_applied",
+    "readyok",
+    "new_game",
+    "think_started",
+    "think_finished",
+    "process_exited",
+]
+UsiOptionValidationMode = Literal["strict", "warn", "raw", "allow_unlisted_combo_value"]
+UsiAnalyzeFailurePolicy = Literal["raise", "collect"]
+
+
+@dataclass(frozen=True, slots=True)
+class EngineLifecycleEvent:
+    """Engine lifecycle callback payload."""
+
+    name: EngineLifecycleEventName
+    monotonic_ns: int
+    process_info: EngineProcessInfo | None = None
+    state: str | None = None
+    details: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class UsiAnalyzePosition:
+    """Batch analysis target position."""
+
+    sfen: str
+    moves: tuple[Move, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class UsiAnalyzeResetPolicy:
+    """Per-position reset policy for lightweight analysis capture."""
+
+    new_game: bool = True
+    clear_hash_if_available: bool = True
+    isready_before_each: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class UsiAnalyzeItem:
+    """One result item from batch analysis."""
+
+    index: int
+    position: UsiAnalyzePosition
+    result: UsiThinkResult | None
+    error: Exception | None
+    elapsed_ms: int
+
+
+@runtime_checkable
+class _ProcessInfoBridgePort(Protocol):
+    def get_process_info(self) -> EngineProcessInfo | None: ...
 
 
 class AsyncUsiProcess:
@@ -100,6 +160,76 @@ class AnalysisHandle:
 
 
 InfoHandlerFn = Callable[[UsiThinkPV], Awaitable[None] | None]
+UsiIoHandlerFn = Callable[[UsiIoEvent], Awaitable[None] | None]
+EngineLifecycleHandlerFn = Callable[[EngineLifecycleEvent], None]
+
+
+class UsiEngineSession(Protocol):
+    """Public contract for an asynchronous USI engine session."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def process_info(self) -> EngineProcessInfo | None: ...
+
+    async def __aenter__(self) -> UsiEngineSession: ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None: ...
+
+    async def new_game(self) -> None: ...
+
+    async def trigger_isready(self, timeout: ReadyTimeout = _READY_TIMEOUT_DEFAULT) -> None: ...
+
+    async def apply_engine_options(
+        self,
+        options: Mapping[str, object] | None,
+        *,
+        clear_hash: bool = True,
+        after_setoption: Literal["none", "isready"] = "isready",
+        validation: UsiOptionValidationMode | Mapping[str, UsiOptionValidationMode] | None = None,
+    ) -> None: ...
+
+    async def think(
+        self,
+        *,
+        sfen: str,
+        request: UsiThinkRequest,
+        moves: Sequence[Move] | None = None,
+        info_handler: InfoHandlerFn | None = None,
+        timeout: float | None = None,
+    ) -> UsiThinkResult: ...
+
+    def get_usi_options(self) -> Mapping[str, UsiOption]: ...
+
+    def register_io_log_handler(self, handler: UsiIoHandlerFn) -> Callable[[], None]: ...
+
+    def register_lifecycle_handler(self, handler: EngineLifecycleHandlerFn) -> Callable[[], None]: ...
+
+    def iter_analyze_positions(
+        self,
+        positions: Sequence[UsiAnalyzePosition],
+        *,
+        request: UsiThinkRequest,
+        timeout_per_position: float | None = None,
+        reset_policy: UsiAnalyzeResetPolicy | None = None,
+        failure_policy: UsiAnalyzeFailurePolicy = "raise",
+    ) -> AsyncIterator[UsiAnalyzeItem]: ...
+
+    async def analyze_positions(
+        self,
+        positions: Sequence[UsiAnalyzePosition],
+        *,
+        request: UsiThinkRequest,
+        timeout_per_position: float | None = None,
+        reset_policy: UsiAnalyzeResetPolicy | None = None,
+        failure_policy: UsiAnalyzeFailurePolicy = "raise",
+    ) -> tuple[UsiAnalyzeItem, ...]: ...
 
 
 @runtime_checkable
@@ -225,16 +355,30 @@ def _normalize_start_failure_phase(raw: str) -> Literal["engine_start", "isready
 __all__ = [
     "AnalysisHandle",
     "AsyncUsiProcess",
+    "EngineLifecycleEvent",
+    "EngineLifecycleEventName",
+    "EngineLifecycleHandlerFn",
+    "EngineProcessInfo",
     "InfoHandlerFn",
     "PonderHandle",
     "ReadyTimeout",
     "TFutureResult",
+    "UsiAnalyzeFailurePolicy",
+    "UsiAnalyzeItem",
+    "UsiAnalyzePosition",
+    "UsiAnalyzeResetPolicy",
     "UsiEngineStartError",
+    "UsiEngineSession",
     "UsiEngineState",
+    "UsiIoDirection",
+    "UsiIoEvent",
+    "UsiIoHandlerFn",
     "UsiMateResult",
+    "UsiOptionValidationMode",
     "_HANDSHAKE_COMMANDS",
     "_HANDSHAKE_COMMAND_STATE",
     "_HANDSHAKE_LOG_LIMIT",
+    "_ProcessInfoBridgePort",
     "_READY_TIMEOUT_DEFAULT",
     "_STALE_BESTMOVE_SYNC_TIMEOUT_SECONDS",
     "_StderrBridgePort",

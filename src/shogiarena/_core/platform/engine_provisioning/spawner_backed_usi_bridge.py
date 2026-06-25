@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast, runtime_checkable
 
 from shogiarena._core.platform.engine_provisioning.provisioning_ports import NamedInstancePort
+from shogiarena._core.shared.kernel.engine_process import EngineProcessInfo
 
 
 @runtime_checkable
@@ -171,6 +172,18 @@ class SpawnerBackedUSIBridge:
 
     def set_stderr_handler(self, handler: Callable[[str], None] | None) -> None:
         self._stderr_handler = handler
+
+    def get_process_info(self) -> EngineProcessInfo | None:
+        proc = self.process
+        pid = proc.pid if proc is not None else None
+        if pid is None:
+            return None
+        return EngineProcessInfo(
+            pid=pid,
+            executable=self.engine_path,
+            working_directory=self.working_dir,
+            command_line=(self.engine_path, *self._engine_args),
+        )
 
     async def receive_lines(self) -> AsyncIterator[str]:
         proc = self.process

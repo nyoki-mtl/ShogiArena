@@ -14,7 +14,7 @@ from shogiarena._core.contexts.instances.application.instance_models import (
 )
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.instances.application.provisioner import Provisioner, ProvisionError
-from shogiarena._core.contexts.instances.ports.engine_runtime_port import EngineRuntimePort
+from shogiarena._core.contexts.instances.ports.engine_runtime_port import EngineOptionValidationMode, EngineRuntimePort
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
 
@@ -28,6 +28,11 @@ async def create_engine(
     instance_id: str | None = None,
     instance_pool: InstancePool | None = None,
     cpu_affinity: Sequence[int] | None = None,
+    collect_info_strings: bool | None = None,
+    collect_raw_io: bool | None = None,
+    collect_stderr: bool | None = None,
+    collect_outbound: bool | None = None,
+    option_validation: EngineOptionValidationMode | None = None,
 ) -> Any:
     """Create an engine runtime from a config path."""
 
@@ -39,6 +44,11 @@ async def create_engine(
         instance_id=instance_id,
         instance_pool=instance_pool,
         cpu_affinity=cpu_affinity,
+        collect_info_strings=collect_info_strings,
+        collect_raw_io=collect_raw_io,
+        collect_stderr=collect_stderr,
+        collect_outbound=collect_outbound,
+        option_validation=option_validation,
     )
 
 
@@ -52,6 +62,11 @@ async def create_engine_from_mapping(
     instance_id: str | None = None,
     instance_pool: InstancePool | None = None,
     cpu_affinity: Sequence[int] | None = None,
+    collect_info_strings: bool | None = None,
+    collect_raw_io: bool | None = None,
+    collect_stderr: bool | None = None,
+    collect_outbound: bool | None = None,
+    option_validation: EngineOptionValidationMode | None = None,
 ) -> Any:
     """Create an engine runtime from a boundary mapping payload."""
 
@@ -63,6 +78,11 @@ async def create_engine_from_mapping(
         instance_id=instance_id,
         instance_pool=instance_pool,
         cpu_affinity=cpu_affinity,
+        collect_info_strings=collect_info_strings,
+        collect_raw_io=collect_raw_io,
+        collect_stderr=collect_stderr,
+        collect_outbound=collect_outbound,
+        option_validation=option_validation,
     )
 
 

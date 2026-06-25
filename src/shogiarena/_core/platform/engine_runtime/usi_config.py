@@ -17,11 +17,13 @@ from shogiarena._core.platform.engine_runtime.config_parsing import (
     _render_template,
     _UsiEngineMappingInput,
     normalize_engine_args,
+    normalize_option_validation,
     to_bool,
     to_env_dict,
     to_float,
     to_string_dict,
 )
+from shogiarena._core.platform.engine_runtime.usi_engine_session_models import UsiOptionValidationMode
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.paths import maybe_resolve_path_option, resolve_path_like
 from shogiarena._core.shared.kernel.serialization import json_serialize
@@ -53,6 +55,13 @@ class UsiEngineConfig:
     isready_lock_check_template: str | None = None
     isready_lock_check_templates: tuple[str, ...] = ()
     should_skip_isready_lock_if_exists: bool = False
+    should_collect_info_strings: bool = False
+    # Master switch for stdin/stdout raw USI events; outbound is emitted only when this is enabled.
+    should_collect_raw_io: bool = True
+    should_collect_stderr: bool = True
+    should_collect_outbound: bool = True
+    option_validation_default: UsiOptionValidationMode = "strict"
+    option_validation_overrides: dict[str, UsiOptionValidationMode] = field(default_factory=dict)
     _raw_engine_path: str | None = field(default=None, repr=False, compare=False)
     _raw_working_directory: str | None = field(default=None, repr=False, compare=False)
     _raw_options: JsonObject = field(default_factory=dict, repr=False, compare=False)
@@ -155,6 +164,23 @@ class UsiEngineConfig:
             parsed.should_skip_isready_lock_if_exists,
             field="isready_lock_skip_if_exists",
         )
+        should_collect_info_strings = to_bool(
+            parsed.io.collect_info_strings,
+            field="io.collect_info_strings",
+        )
+        should_collect_raw_io = to_bool(
+            parsed.io.collect_raw_io,
+            field="io.collect_raw_io",
+        )
+        should_collect_stderr = to_bool(
+            parsed.io.collect_stderr,
+            field="io.collect_stderr",
+        )
+        should_collect_outbound = to_bool(
+            parsed.io.collect_outbound,
+            field="io.collect_outbound",
+        )
+        option_validation_default, option_validation_overrides = normalize_option_validation(parsed.option_validation)
 
         return cls(
             name=name,
@@ -179,6 +205,12 @@ class UsiEngineConfig:
             isready_lock_check_template=isready_lock_check_template,
             isready_lock_check_templates=isready_lock_check_templates,
             should_skip_isready_lock_if_exists=should_skip_isready_lock_if_exists,
+            should_collect_info_strings=should_collect_info_strings,
+            should_collect_raw_io=should_collect_raw_io,
+            should_collect_stderr=should_collect_stderr,
+            should_collect_outbound=should_collect_outbound,
+            option_validation_default=option_validation_default,
+            option_validation_overrides=option_validation_overrides,
             _raw_engine_path=engine_path,
             _raw_working_directory=working_dir,
             _raw_options=options.copy(),
@@ -234,6 +266,12 @@ class UsiEngineConfig:
         output_dir: Path | None = None,
         engine_dir: Path | None = None,
         is_early_ponder_enabled: bool | None = None,
+        should_collect_info_strings: bool | None = None,
+        should_collect_raw_io: bool | None = None,
+        should_collect_stderr: bool | None = None,
+        should_collect_outbound: bool | None = None,
+        option_validation_default: UsiOptionValidationMode | None = None,
+        option_validation_overrides: Mapping[str, UsiOptionValidationMode] | None = None,
     ) -> UsiEngineConfig:
         new_raw_options = self._raw_options.copy()
         new_resolved_options = self.options.copy()
@@ -257,6 +295,9 @@ class UsiEngineConfig:
         new_is_early_ponder_enabled = self.is_early_ponder_enabled
         if is_early_ponder_enabled is not None:
             new_is_early_ponder_enabled = to_bool(is_early_ponder_enabled, field="enable_early_ponder overrides")
+        new_option_validation_overrides = dict(self.option_validation_overrides)
+        if option_validation_overrides is not None:
+            new_option_validation_overrides.update(option_validation_overrides)
 
         next_name = self.name if name is None else name
         next_engine_path = self.engine_path if engine_path is None else engine_path
@@ -272,6 +313,22 @@ class UsiEngineConfig:
             options=new_resolved_options,
             go_options=new_go_options,
             is_early_ponder_enabled=new_is_early_ponder_enabled,
+            should_collect_info_strings=(
+                self.should_collect_info_strings if should_collect_info_strings is None else should_collect_info_strings
+            ),
+            should_collect_raw_io=self.should_collect_raw_io
+            if should_collect_raw_io is None
+            else should_collect_raw_io,
+            should_collect_stderr=self.should_collect_stderr
+            if should_collect_stderr is None
+            else should_collect_stderr,
+            should_collect_outbound=(
+                self.should_collect_outbound if should_collect_outbound is None else should_collect_outbound
+            ),
+            option_validation_default=(
+                self.option_validation_default if option_validation_default is None else option_validation_default
+            ),
+            option_validation_overrides=new_option_validation_overrides,
             _raw_engine_path=next_raw_engine_path,
             _raw_working_directory=next_raw_working_directory,
             _raw_options=new_raw_options,

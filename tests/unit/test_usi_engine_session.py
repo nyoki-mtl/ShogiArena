@@ -17,8 +17,15 @@ from shogiarena._core.platform.engine_runtime.usi_engine_session import (
     PonderHitTimings,
     UsiEngineState,
 )
-from shogiarena._core.platform.engine_runtime.usi_engine_session_models import UsiEngineStartError
-from shogiarena._core.platform.engine_runtime.usi_protocol_types import AsyncUsiProcessBridgePort
+from shogiarena._core.platform.engine_runtime.usi_engine_session_models import (
+    EngineLifecycleEvent,
+    EngineProcessInfo,
+    UsiAnalyzePosition,
+    UsiAnalyzeResetPolicy,
+    UsiEngineStartError,
+    UsiIoEvent,
+)
+from shogiarena._core.platform.engine_runtime.usi_protocol_types import AsyncUsiProcessBridgePort, UsiOption
 from shogiarena._core.shared.kernel.game_results import GameResult
 
 
@@ -95,6 +102,29 @@ class StopOrderBridge(DummyBridge):
         await self._queue.put(None)
 
 
+class ProcessInfoBridge(DummyBridge):
+    def get_process_info(self) -> EngineProcessInfo:
+        return EngineProcessInfo(
+            pid=12345,
+            executable="/tmp/dummy-engine",
+            working_directory="/tmp",
+            command_line=("/tmp/dummy-engine", "--flag"),
+        )
+
+
+class StderrBridge(DummyBridge):
+    def __init__(self) -> None:
+        super().__init__()
+        self._stderr_handler: Callable[[str], None] | None = None
+
+    def set_stderr_handler(self, handler: Callable[[str], None] | None) -> None:
+        self._stderr_handler = handler
+
+    def emit_stderr(self, line: str) -> None:
+        if self._stderr_handler is not None:
+            self._stderr_handler(line)
+
+
 @pytest.mark.asyncio
 async def test_engine_handshake_applies_options(tmp_path) -> None:
     config = UsiEngineConfig.from_mapping(
@@ -108,6 +138,53 @@ async def test_engine_handshake_applies_options(tmp_path) -> None:
     async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
         assert any(cmd.startswith("setoption name Threads") for cmd in bridge.commands)
         assert eng.engine_info.get("name") == "DummyEngine"
+
+
+@pytest.mark.asyncio
+async def test_get_usi_options_returns_option_declaration_snapshot(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        options = eng.get_usi_options()
+        assert isinstance(options["Threads"], UsiOption)
+        assert options["Threads"].option_type == "spin"
+        assert options["Threads"].current == "1"
+
+        options["Threads"].current = "99"
+        assert eng.get_usi_options()["Threads"].current == "1"
+
+
+@pytest.mark.asyncio
+async def test_engine_exposes_process_info_and_lifecycle_events(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = ProcessInfoBridge()
+    events: list[EngineLifecycleEvent] = []
+    eng = AsyncUsiEngine(config=config, bridge=bridge)
+    eng.register_lifecycle_handler(events.append)
+
+    async with eng:
+        assert eng.process_info is not None
+        assert eng.process_info.pid == 12345
+
+    names = [event.name for event in events]
+    assert "process_started" in names
+    assert "usiok" in names
+    assert "options_applied" in names
+    assert "readyok" in names
+    assert "process_exited" in names
+    assert events[-1].process_info is not None
+    assert events[-1].process_info.pid == 12345
 
 
 @pytest.mark.asyncio
@@ -135,6 +212,84 @@ async def test_engine_recognises_option_lines_for_custom_spsa_params(tmp_path) -
         assert opt.option_type == "spin"
         assert opt.minimum == 0
         assert opt.maximum == 990
+
+
+@pytest.mark.asyncio
+async def test_engine_option_validation_can_allow_unlisted_combo_value(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_usi(command: str) -> None:
+        await bridge.enqueue("id name DummyEngine")
+        await bridge.enqueue("option name BookFile type combo default standard var standard var no_book")
+        await bridge.enqueue("usiok")
+
+    bridge.set_handler("usi", handle_usi)
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        with pytest.raises(ValueError, match="must be one of"):
+            await eng.apply_engine_options(
+                {"BookFile": "user_book1.ybb"},
+                clear_hash=False,
+                after_setoption="none",
+            )
+
+        await eng.apply_engine_options(
+            {"BookFile": "user_book1.ybb"},
+            clear_hash=False,
+            after_setoption="none",
+            validation={"BookFile": "allow_unlisted_combo_value"},
+        )
+
+    assert "setoption name BookFile value user_book1.ybb" in bridge.commands
+
+
+@pytest.mark.asyncio
+async def test_engine_analyze_positions_reuses_session_with_reset_policy(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_usi(command: str) -> None:
+        await bridge.enqueue("id name DummyEngine")
+        await bridge.enqueue("option name Clear Hash type button")
+        await bridge.enqueue("usiok")
+
+    async def handle_go(command: str) -> None:
+        await bridge.enqueue("info depth 1 score cp 10 pv 7g7f")
+        await bridge.enqueue("bestmove 7g7f")
+
+    bridge.set_handler("usi", handle_usi)
+    bridge.set_handler("go ", handle_go)
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        items = await eng.analyze_positions(
+            (
+                UsiAnalyzePosition(sfen="startpos"),
+                UsiAnalyzePosition(sfen="startpos", moves=(Move.from_usi("7g7f"),)),
+            ),
+            request=UsiThinkRequest(depth=1),
+            reset_policy=UsiAnalyzeResetPolicy(
+                new_game=True,
+                clear_hash_if_available=True,
+                isready_before_each=True,
+            ),
+        )
+
+    assert len(items) == 2
+    assert all(item.result is not None for item in items)
+    assert all(item.error is None for item in items)
+    assert bridge.commands.count("usinewgame") == 2
+    assert bridge.commands.count("setoption name Clear Hash") == 2
 
 
 @pytest.mark.asyncio
@@ -173,6 +328,113 @@ async def test_engine_think_returns_bestmove(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_engine_io_handler_receives_typed_event(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = DummyBridge()
+    events: list[UsiIoEvent] = []
+
+    async def handle_go(command: str) -> None:
+        await bridge.enqueue("info depth 10 nodes 123 time 45")
+        await bridge.enqueue("bestmove 7g7f")
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        bridge.set_handler("go ", handle_go)
+        eng.register_io_log_handler(events.append)
+        await eng.think(sfen="startpos", request=UsiThinkRequest(movetime=1000))
+        await eng.flush_io_log_handlers()
+
+    info_event = next(event for event in events if event.line == "info depth 10 nodes 123 time 45")
+    assert isinstance(info_event, UsiIoEvent)
+    assert info_event.direction == "in"
+    assert info_event.line == "info depth 10 nodes 123 time 45"
+    assert info_event.phase is not None
+    assert info_event.as_dict() == {
+        "direction": "in",
+        "line": "info depth 10 nodes 123 time 45",
+        "monotonic_ns": info_event.monotonic_ns,
+        "phase": info_event.phase,
+        "timestamp_ms": info_event.timestamp_ms,
+    }
+
+
+@pytest.mark.asyncio
+async def test_engine_stderr_io_handler_receives_stderr_event(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+        }
+    )
+    bridge = StderrBridge()
+    events: list[UsiIoEvent] = []
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        eng.register_io_log_handler(events.append)
+        bridge.emit_stderr("warning line")
+        await eng.flush_io_log_handlers()
+
+    stderr_event = next(event for event in events if event.direction == "stderr")
+    assert stderr_event.line == "warning line"
+    assert stderr_event.phase is not None
+
+
+@pytest.mark.asyncio
+async def test_collect_raw_io_false_suppresses_in_out_events(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+            "io": {
+                "collect_raw_io": False,
+                "collect_outbound": True,
+            },
+        }
+    )
+    bridge = DummyBridge()
+    events: list[UsiIoEvent] = []
+
+    async def handle_go(command: str) -> None:
+        await bridge.enqueue("info depth 10 nodes 123 time 45")
+        await bridge.enqueue("bestmove 7g7f")
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        bridge.set_handler("go ", handle_go)
+        eng.register_io_log_handler(events.append)
+        result = await eng.think(sfen="startpos", request=UsiThinkRequest(movetime=1000))
+        await eng.flush_io_log_handlers()
+
+    assert result.bestmove == Move.from_usi("7g7f")
+    assert not events
+
+
+@pytest.mark.asyncio
+async def test_engine_collects_info_strings_from_config_policy(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+            "io": {"collect_info_strings": True},
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go(command: str) -> None:
+        await bridge.enqueue("info string trace busy=1")
+        await bridge.enqueue("bestmove 7g7f")
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        bridge.set_handler("go ", handle_go)
+        result = await eng.think(sfen="startpos", request=UsiThinkRequest(movetime=1000))
+
+    assert result.info_strings == ("trace busy=1",)
+
+
+@pytest.mark.asyncio
 async def test_engine_think_progresses_while_sync_io_log_handler_is_blocked(tmp_path) -> None:
     config = UsiEngineConfig.from_mapping(
         {
@@ -188,9 +450,8 @@ async def test_engine_think_progresses_while_sync_io_log_handler_is_blocked(tmp_
         await bridge.enqueue("info depth 10 nodes 123 time 45")
         await bridge.enqueue("bestmove 7g7f ponder 3c3d")
 
-    def blocking_handler(entry: dict[str, object]) -> None:
-        line = entry.get("line")
-        if line == "info depth 10 nodes 123 time 45":
+    def blocking_handler(entry: UsiIoEvent) -> None:
+        if entry.line == "info depth 10 nodes 123 time 45":
             handler_started.set()
             # Keep the handler blocked well past the assertion timeout so the test
             # proves think() is decoupled from synchronous log processing.
@@ -987,9 +1248,8 @@ async def test_engine_stop_recovers_while_sync_io_log_handler_is_blocked(tmp_pat
     async def handle_stop(command: str) -> None:
         await bridge.enqueue("bestmove 7g7f")
 
-    def blocking_handler(entry: dict[str, object]) -> None:
-        line = entry.get("line")
-        if line == "info string trace busy=1":
+    def blocking_handler(entry: UsiIoEvent) -> None:
+        if entry.line == "info string trace busy=1":
             handler_started.set()
             # Keep the handler blocked well past the assertion timeout so the test
             # proves stop() recovery is decoupled from synchronous log processing.

@@ -10,7 +10,7 @@ import platform as _platform
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, TypeAlias
 
 from shogiarena._core.platform.engine_provisioning.provisioning_ports import EngineRuntimeInstancePort
 from shogiarena._core.platform.engine_provisioning.spawner_backed_usi_bridge import SpawnerBackedUSIBridge
@@ -36,6 +36,7 @@ _REMOTE_BOOK_TRANSFER_ENV = "SHOGIARENA_REMOTE_BOOK_TRANSFER"
 _REMOTE_BOOK_MAX_MB_ENV = "SHOGIARENA_REMOTE_BOOK_MAX_MB"
 
 BookTransferMode = Literal["auto", "always", "preplaced"]
+UsiOptionValidationMode: TypeAlias = Literal["strict", "warn", "raw", "allow_unlisted_combo_value"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +128,11 @@ class EngineRuntimeFactory:
         instance_id: str | None = None,
         instance_pool: _InstancePoolPort | None = None,
         cpu_affinity: Sequence[int] | None = None,
+        collect_info_strings: bool | None = None,
+        collect_raw_io: bool | None = None,
+        collect_stderr: bool | None = None,
+        collect_outbound: bool | None = None,
+        option_validation: UsiOptionValidationMode | None = None,
         *,
         artifact_resolver: ArtifactResolutionPort | None = None,
     ) -> Any:
@@ -134,6 +140,11 @@ class EngineRuntimeFactory:
         config = self._apply_overrides(
             config,
             extra_options=extra_options,
+            collect_info_strings=collect_info_strings,
+            collect_raw_io=collect_raw_io,
+            collect_stderr=collect_stderr,
+            collect_outbound=collect_outbound,
+            option_validation=option_validation,
         )
         return await self._create_engine_from_config(
             config,
@@ -154,6 +165,11 @@ class EngineRuntimeFactory:
         instance_id: str | None = None,
         instance_pool: _InstancePoolPort | None = None,
         cpu_affinity: Sequence[int] | None = None,
+        collect_info_strings: bool | None = None,
+        collect_raw_io: bool | None = None,
+        collect_stderr: bool | None = None,
+        collect_outbound: bool | None = None,
+        option_validation: UsiOptionValidationMode | None = None,
         *,
         artifact_resolver: ArtifactResolutionPort | None = None,
     ) -> Any:
@@ -161,6 +177,11 @@ class EngineRuntimeFactory:
         config = self._apply_overrides(
             config,
             extra_options=extra_options,
+            collect_info_strings=collect_info_strings,
+            collect_raw_io=collect_raw_io,
+            collect_stderr=collect_stderr,
+            collect_outbound=collect_outbound,
+            option_validation=option_validation,
         )
         return await self._create_engine_from_config(
             config,
@@ -225,6 +246,10 @@ class EngineRuntimeFactory:
             config=config,
             bridge=bridge,
             handshake_timeout=handshake_timeout,
+            should_collect_info_strings=config.should_collect_info_strings,
+            should_collect_raw_io=config.should_collect_raw_io,
+            should_collect_stderr=config.should_collect_stderr,
+            should_collect_outbound=config.should_collect_outbound,
         )
 
     async def _rewrite_options_for_remote(self, instance: EngineRuntimeInstancePort, options: JsonObject) -> None:
@@ -448,6 +473,11 @@ class EngineRuntimeFactory:
         config: Any,
         *,
         extra_options: JsonObject | None,
+        collect_info_strings: bool | None,
+        collect_raw_io: bool | None,
+        collect_stderr: bool | None,
+        collect_outbound: bool | None,
+        option_validation: UsiOptionValidationMode | None,
     ) -> Any:
         if extra_options:
             for key in extra_options:
@@ -457,6 +487,20 @@ class EngineRuntimeFactory:
                 options=_cast_json_object_as_str(extra_options),
                 output_dir=project_dirs.output_dir,
                 engine_dir=project_dirs.engine_dir,
+            )
+        if (
+            collect_info_strings is not None
+            or collect_raw_io is not None
+            or collect_stderr is not None
+            or collect_outbound is not None
+            or option_validation is not None
+        ):
+            config = config.with_overrides(
+                should_collect_info_strings=collect_info_strings,
+                should_collect_raw_io=collect_raw_io,
+                should_collect_stderr=collect_stderr,
+                should_collect_outbound=collect_outbound,
+                option_validation_default=option_validation,
             )
         return config.resolve_isready_lock_key()
 

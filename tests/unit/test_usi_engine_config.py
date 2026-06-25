@@ -102,6 +102,32 @@ def test_from_mapping_parses_mate_defaults_and_sync_strategy() -> None:
     assert config.isready_sync_strategy == "wait"
 
 
+def test_from_mapping_parses_io_and_option_validation_policy() -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "test",
+            "engine_path": "/tmp/dummy",
+            "io": {
+                "collect_info_strings": True,
+                "collect_raw_io": False,
+                "collect_stderr": False,
+                "collect_outbound": True,
+            },
+            "option_validation": {
+                "default": "warn",
+                "overrides": {"BookFile": "allow_unlisted_combo_value"},
+            },
+        }
+    )
+
+    assert config.should_collect_info_strings is True
+    assert config.should_collect_raw_io is False
+    assert config.should_collect_stderr is False
+    assert config.should_collect_outbound is True
+    assert config.option_validation_default == "warn"
+    assert config.option_validation_overrides == {"BookFile": "allow_unlisted_combo_value"}
+
+
 def test_from_mapping_rejects_conflicting_mate_defaults() -> None:
     with pytest.raises(ValueError):
         UsiEngineConfig.from_mapping(

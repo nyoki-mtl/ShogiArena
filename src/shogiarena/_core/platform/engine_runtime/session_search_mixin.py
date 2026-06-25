@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
+import time
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from rshogi.core import Move
@@ -13,6 +14,10 @@ from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkReques
 from shogiarena._core.platform.engine_runtime.usi_engine_session_models import (
     AnalysisHandle,
     InfoHandlerFn,
+    UsiAnalyzeFailurePolicy,
+    UsiAnalyzeItem,
+    UsiAnalyzePosition,
+    UsiAnalyzeResetPolicy,
     UsiEngineState,
     UsiMateResult,
 )
@@ -55,6 +60,8 @@ class AsyncUsiEngineSearchMixin:
     _maybe_log_handshake_command: Any
     _recover_from_stop_timeout: Any
     trigger_isready: Any
+    _emit_lifecycle_event: Any
+    _clear_hash_if_available: Any
 
     _abandon_future: Any
 
@@ -70,6 +77,7 @@ class AsyncUsiEngineSearchMixin:
                 await self.trigger_isready()
             self._maybe_log_handshake_command("usinewgame")
             await self._send_command("usinewgame")
+            self._emit_lifecycle_event("new_game")
 
     async def gameover(self, result: str) -> None:
         await self._ensure_started()
@@ -161,6 +169,7 @@ class AsyncUsiEngineSearchMixin:
                     self._set_state(UsiEngineState.PONDER, reason="sent go ponder")
                 else:
                     self._set_state(UsiEngineState.WAITING_FOR_BESTMOVE, reason="sent go")
+                self._emit_lifecycle_event("think_started", details={"command": request.to_command()})
             except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
                 self._abandon_future(future)
                 self._bestmove_future = None
@@ -179,6 +188,7 @@ class AsyncUsiEngineSearchMixin:
             try:
                 # Keep bestmove future pending on timeout so caller can recover via stop().
                 result = await asyncio.wait_for(asyncio.shield(future), timeout)
+                self._emit_lifecycle_event("think_finished", details={"status": "ok"})
                 return result
             finally:
                 if future is not None and future.done():
@@ -187,6 +197,81 @@ class AsyncUsiEngineSearchMixin:
                     self._reset_current_info()
                     if self._state != UsiEngineState.WAITING_FOR_PONDER_BESTMOVE:
                         self._set_state(UsiEngineState.READY, reason="think completed")
+
+    async def iter_analyze_positions(
+        self,
+        positions: Sequence[UsiAnalyzePosition],
+        *,
+        request: UsiThinkRequest,
+        timeout_per_position: float | None = None,
+        reset_policy: UsiAnalyzeResetPolicy | None = None,
+        failure_policy: UsiAnalyzeFailurePolicy = "raise",
+    ) -> AsyncIterator[UsiAnalyzeItem]:
+        """固定局面列を同一 engine session で順に解析する。"""
+
+        if failure_policy not in {"raise", "collect"}:
+            raise ValueError("failure_policy must be one of: raise, collect")
+        policy = reset_policy or UsiAnalyzeResetPolicy()
+        for index, position in enumerate(positions):
+            started = time.monotonic()
+            try:
+                await self._prepare_analyze_position(policy)
+                result = await self.think(
+                    sfen=position.sfen,
+                    moves=position.moves,
+                    request=request,
+                    timeout=timeout_per_position,
+                )
+            except Exception as exc:
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+                if failure_policy == "raise":
+                    raise
+                yield UsiAnalyzeItem(
+                    index=index,
+                    position=position,
+                    result=None,
+                    error=exc,
+                    elapsed_ms=elapsed_ms,
+                )
+                continue
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            yield UsiAnalyzeItem(
+                index=index,
+                position=position,
+                result=result,
+                error=None,
+                elapsed_ms=elapsed_ms,
+            )
+
+    async def analyze_positions(
+        self,
+        positions: Sequence[UsiAnalyzePosition],
+        *,
+        request: UsiThinkRequest,
+        timeout_per_position: float | None = None,
+        reset_policy: UsiAnalyzeResetPolicy | None = None,
+        failure_policy: UsiAnalyzeFailurePolicy = "raise",
+    ) -> tuple[UsiAnalyzeItem, ...]:
+        """固定局面列の解析結果を tuple として返す。"""
+
+        items: list[UsiAnalyzeItem] = []
+        async for item in self.iter_analyze_positions(
+            positions,
+            request=request,
+            timeout_per_position=timeout_per_position,
+            reset_policy=reset_policy,
+            failure_policy=failure_policy,
+        ):
+            items.append(item)
+        return tuple(items)
+
+    async def _prepare_analyze_position(self, policy: UsiAnalyzeResetPolicy) -> None:
+        if policy.new_game:
+            await self.new_game()
+        if policy.clear_hash_if_available:
+            await self._clear_hash_if_available()
+        if policy.isready_before_each:
+            await self.trigger_isready()
 
     async def think_mate(
         self,

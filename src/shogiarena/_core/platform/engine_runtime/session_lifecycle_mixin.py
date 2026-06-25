@@ -49,6 +49,8 @@ class AsyncUsiEngineLifecycleMixin:
     stop: Any
     _emit_debug_log: Any
     _shutdown_io_log_dispatcher: Any
+    _emit_lifecycle_event: Any
+    process_info: Any
 
     @property
     def is_running(self) -> bool:
@@ -60,6 +62,7 @@ class AsyncUsiEngineLifecycleMixin:
         try:
             self._set_state(UsiEngineState.WAITING_FOR_USIOK, reason="starting engine process")
             await self._process.start()
+            self._emit_lifecycle_event("process_started")
             self._monitor_task = asyncio.create_task(self._monitor_output(), name=f"usi-monitor-{self.name}")
             await self._perform_handshake()
             await self._apply_config_options()
@@ -100,6 +103,7 @@ class AsyncUsiEngineLifecycleMixin:
             return
         if not self._is_started and self._monitor_task is None and self._state == UsiEngineState.QUIT_COMPLETED:
             return
+        process_info = self.process_info
         self._is_closing = True
         try:
             if self._analysis_handle is not None:
@@ -140,6 +144,7 @@ class AsyncUsiEngineLifecycleMixin:
             self._is_started = False
             self._is_closing = False
             self._set_state(UsiEngineState.QUIT_COMPLETED, reason="engine closed")
+            self._emit_lifecycle_event("process_exited", process_info=process_info)
 
     async def trigger_isready(self, timeout: ReadyTimeout = _READY_TIMEOUT_DEFAULT) -> None:
         lock = self._get_isready_lock()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -44,10 +45,23 @@ def test_public_composition_module_exports_expected_surface() -> None:
 def test_public_engine_module_exports_expected_symbols() -> None:
     exported = set(shogiarena.engine.__all__)
     assert "AsyncUsiEngine" in exported
+    assert "EngineLifecycleEvent" in exported
+    assert "EngineProcessInfo" in exported
+    assert "UsiAnalyzePosition" in exported
+    assert "UsiEngineSession" in exported
     assert "UsiEngineConfig" in exported
+    assert "UsiEvalValue" in exported
+    assert "UsiIoEvent" in exported
     assert "UsiThinkRequest" in exported
     assert "create_engine" in exported
     assert "create_engine_from_mapping" in exported
+
+
+def test_public_engine_factory_return_annotations_are_session_contract() -> None:
+    signature = inspect.signature(shogiarena.engine.create_engine)
+    mapping_signature = inspect.signature(shogiarena.engine.create_engine_from_mapping)
+    assert signature.return_annotation == "UsiEngineSession"
+    assert mapping_signature.return_annotation == "UsiEngineSession"
 
 
 def test_public_tournament_module_exports_expected_symbols() -> None:
