@@ -1,0 +1,6 @@
+This patch release hardens run configuration validation and refreshes the public documentation for the 0.5 series.
+
+- Made `rules.time_control` validation strict: unknown keys now fail during `--validate-only`, and common mistakes such as `depth`, `nodes`, and `byoyomi` point to `depth_limit`, `node_limit`, and `byoyomi_ms`.
+- Aligned engine runtime configuration naming by keeping `environment` as the canonical key and rejecting legacy `env` instead of silently accepting ambiguous runtime settings.
+- Restricted engine-level `go_options` defaults to safe search limits (`depth` and `nodes`) so clock-related controls stay in `rules.time_control` or explicit search requests.
+- Refreshed the mdBook user guide and API docs for v0.5 features, including GSPRT, opening books, remote book resources, engine lifecycle, resource capacity preflight, wall-time metrics, and the public USI engine session API.

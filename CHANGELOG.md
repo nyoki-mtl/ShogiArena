@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4]
+
+### Fixed
+- **Strict `rules.time_control` validation**: `TimeControlLimits` の unknown key を fail-fast で拒否し、`depth` / `nodes` / `byoyomi` などの誤用は `depth_limit` / `node_limit` / `byoyomi_ms` など正しいキーを示すエラーにした。`validate-only` で設定 typo を検出し、実行時に全局 ERROR になる前に停止する。
+- **Engine runtime configuration alignment**: エンジン設定の環境変数キーを `environment` に統一し、旧 `env` を明示エラーにした。CLI から直接指定した engine binary/path でも `environment`、`engine_args`、`build_options` などの runtime 設定を生成済み engine YAML に保持するよう修正した。
+- **Engine-level `go_options` validation**: engine config / tournament config / SPSA config の `go_options` を共通正規化し、エンジン単位の既定値として安全に扱える `depth` / `nodes` のみに限定した。`movetime`、`btime`、`wtime`、`byoyomi`、`infinite` などの時間制御は `rules.time_control` または明示的な探索 request 側で扱うようにし、対局の持ち時間管理との競合を防いだ。
+
+### Changed
+- **Book documentation refresh**: `docs/book/` を `v0.5.0` 以降の機能に合わせて更新し、GSPRT / pentanomial SPRT、engine opening book、remote book resource、Book tab、engine lifecycle、resource capacity preflight、engine wall time metrics、public USI engine session API の説明を現行仕様へ揃えた。
+- **Public API and CLI documentation**: `shogiarena.engine` の `UsiEngineSession`、typed `UsiIoEvent`、`UsiEvalValue`、batch analysis、option validation policy、`get_usi_options()` の戻り値変更を明記し、`run tournament` / `run analyze` / `run mate` / `results summary` の CLI 説明を補強した。
+- **Book structure and troubleshooting cleanup**: `SUMMARY.md` に既存の内部技術ページを収載し、古い run directory、dashboard stream endpoint、`startup_timeout_sec` などの旧記述を現在の設定名・出力レイアウトへ更新した。
+
 ## [0.5.3]
 
 ### Added
@@ -117,7 +129,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.0...v0.5.1

@@ -17,6 +17,7 @@ from shogiarena._core.shared.kernel.scalar_coercion.api import (
     strict_int,
 )
 from shogiarena._core.shared.kernel.serialization import json_serialize
+from shogiarena._core.shared.kernel.usi_go_options import normalize_go_options as normalize_usi_go_options
 
 BoolLike: TypeAlias = str | int | float | bool | None
 FloatLike: TypeAlias = str | int | float | None
@@ -66,7 +67,7 @@ class _UsiEngineMappingInput(BaseModel):
     artifact: OptionalText = None
     working_directory: OptionalText = None
     engine_args: StringListLike = None
-    env: _ConfigObject = Field(default_factory=dict)
+    environment: _ConfigObject = Field(default_factory=dict)
     options: _ConfigObject = Field(default_factory=dict)
     go_options: _ConfigObject = Field(default_factory=dict)
     build_options: _ConfigObject = Field(default_factory=dict)
@@ -88,11 +89,15 @@ class _UsiEngineMappingInput(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_legacy_working_dir(cls, data: object) -> object:
+    def _reject_stale_keys(cls, data: object) -> object:
         # 'working_dir' was renamed to 'working_directory'. extra="allow" would otherwise swallow
         # the stale key and silently fall back to the default working directory, so fail fast.
-        if isinstance(data, Mapping) and "working_dir" in data:
+        if not isinstance(data, Mapping):
+            return data
+        if "working_dir" in data:
             raise ValueError("engine config key 'working_dir' was renamed; use 'working_directory'")
+        if "env" in data:
+            raise ValueError("engine config key 'env' is not supported; use 'environment'")
         return data
 
     @field_validator("isready_sync_strategy", mode="before")
@@ -111,7 +116,7 @@ class _UsiEngineMappingInput(BaseModel):
     def _coerce_optional_lock_str(cls, value: JsonValue | None) -> str | None:
         return coerce_optional_text(value)
 
-    @field_validator("env", "options", "go_options", "build_options", mode="before")
+    @field_validator("environment", "options", "go_options", "build_options", mode="before")
     @classmethod
     def _coerce_mapping_fields(cls, value: JsonValue | Mapping[str, JsonValue] | None) -> _ConfigObject:
         if value is None:
@@ -155,9 +160,15 @@ def to_string_dict(mapping: Mapping[str, _ConfigValue], *, field: str) -> JsonOb
     return {str(key): json_serialize(value) for key, value in mapping.items()}
 
 
-def to_env_dict(mapping: Mapping[str, _ConfigValue]) -> dict[str, str]:
-    env = to_string_dict(mapping, field="env")
-    return {key: str(value) for key, value in env.items()}
+def to_environment_dict(mapping: Mapping[str, _ConfigValue]) -> dict[str, str]:
+    environment = to_string_dict(mapping, field="environment")
+    return {key: str(value) for key, value in environment.items()}
+
+
+def normalize_go_options(mapping: Mapping[str, _ConfigValue], *, field: str = "go_options") -> JsonObject:
+    """Normalize supported engine-level USI ``go`` defaults and fail fast on unknown keys."""
+
+    return normalize_usi_go_options(to_string_dict(mapping, field=field), field_name=field)
 
 
 def to_bool(value: BoolLike, *, field: str) -> bool:

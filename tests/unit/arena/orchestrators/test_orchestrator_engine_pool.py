@@ -26,7 +26,7 @@ def test_create_engine_pool_uses_explicit_default_handshake_timeout(tmp_path: Pa
         default_engine_handshake_timeout=12.5,
     )
     orchestrator.engine_configs = {
-        "engine-a": SimpleNamespace(instance_id=None, cpu_affinity=None, handshake_timeout=None),
+        "engine-a": SimpleNamespace(instance_id=None, cpu_affinity=None, handshake_timeout=None, go_options={}),
     }
 
     pool = orchestrator.create_engine_pool(3)

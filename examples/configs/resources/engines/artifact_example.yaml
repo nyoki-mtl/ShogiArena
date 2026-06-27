@@ -24,6 +24,5 @@ options:                                           # 任意。既定: {}
   # EvalDir: "./data/evals/Suisho10"  # パスオプションの例（相対パスまたは絶対パス）
   # BookDir: "./data/books/no_book"   # パスオプションの例（相対パスまたは絶対パス）
 go_options:                                        # 任意。既定: {}
-  byoyomi: 2000
-  nodes: 1000000
+  nodes: 1000000                                  # request に nodes がない場合だけ `go nodes 1000000` として渡される
 enable_early_ponder: false                         # 任意。既定: false。true で ponderhit を早めに送信

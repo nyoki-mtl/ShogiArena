@@ -36,8 +36,19 @@
 
 - [統計的検定とチューニング](internals/index.md)
   - [Elo レーティング](internals/elo/index.md)
+    - [BayesElo と引き分けモデル](internals/elo/bayeselo.md)
+    - [正規化 Elo（nElo）](internals/elo/nelo.md)
   - [SPRT](internals/sprt/index.md)
+    - [対数尤度比（LLR）](internals/sprt/llr.md)
+    - [GSPRT](internals/sprt/gsprt.md)
+    - [五項分布モデル](internals/sprt/pentanomial.md)
   - [SPSA](internals/spsa/index.md)
+    - [勾配推定と摂動](internals/spsa/gradient.md)
+    - [ゲインスケジュール](internals/spsa/gain-schedule.md)
+    - [ノイズと高次手法の限界](internals/spsa/noise-and-higher-order.md)
+    - [LTC 回帰テスト](internals/spsa/ltc-regression.md)
+  - [分散削減テクニック](internals/variance-reduction/index.md)
+  - [テストフレームワーク概説](internals/testing-frameworks.md)
   - [用語集](internals/glossary.md)
 
 ---
@@ -48,5 +59,7 @@
 - [コントリビュート](development/contributing.md)
 
 ---
+
+# サポート
 
 - [トラブルシューティング](troubleshooting.md)

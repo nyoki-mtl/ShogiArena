@@ -68,7 +68,7 @@ shogiarena run tournament tournament.yaml
 `--run-dir` を指定しない場合、結果は標準出力先の run ディレクトリに保存されます。
 
 ```text
-{output_dir}/runs/<experiment>-<hash8>/YYYYMMDDHHMMSS/
+{output_dir}/tournament/runs/<experiment>-<hash8>/YYYYMMDDHHMMSS/
 ├── game.db
 ├── manifest.json
 ├── state.json

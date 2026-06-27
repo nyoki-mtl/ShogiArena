@@ -19,9 +19,19 @@ ShogiArena の公開 Python API は、通常利用で必要な入口に絞って
 
 - `create_engine(config_path, ...)`
 - `create_engine_from_mapping(config_mapping, ...)`
+- `UsiEngineSession`
 - `UsiThinkRequest`
 - `UsiThinkResult`
-- `AsyncUsiEngine`
+- `UsiThinkPV`
+- `UsiEvalValue`
+- `UsiIoEvent`
+- `EngineLifecycleEvent`
+- `EngineProcessInfo`
+- `UsiAnalyzeItem`
+- `UsiAnalyzePosition`
+- `UsiAnalyzeResetPolicy`
+- `UsiOption`
+- `UsiOptionValidationMode`
 
 ```python
 import asyncio
@@ -40,6 +50,21 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+`create_engine()` と `create_engine_from_mapping()` の戻り値は `UsiEngineSession` として型付けされています。通常利用では `AsyncUsiEngine` の具体実装や `_core` 配下に依存せず、次の操作を public API だけで扱えます。
+
+| 用途 | API |
+| --- | --- |
+| 思考・解析 | `think()`、`UsiThinkRequest`、`UsiThinkResult.select_pv()` |
+| 評価値 | `UsiEvalValue.kind`、`value`、`is_cp`、`is_mate`、`as_dict()` |
+| USI option | `get_usi_options()`、`apply_engine_options()` |
+| I/O 診断 | `register_io_log_handler()`、`UsiIoEvent.direction/line/phase/timestamp_ms` |
+| lifecycle 診断 | `register_lifecycle_handler()`、`EngineLifecycleEvent`、`EngineProcessInfo` |
+| 固定局面の連続解析 | `iter_analyze_positions()`、`analyze_positions()`、`UsiAnalyzeItem` |
+
+`get_usi_options()` は JSON snapshot ではなく `Mapping[str, UsiOption]` を返します。JSON 化したい場合は、利用側で必要な field を選んで変換してください。
+
+`UsiIoEvent` は `direction` / `line` / `phase` / `timestamp_ms` などの typed field を使います。旧来の Mapping 風 key（`dir`、`ts`、`state`）は公開契約ではありません。
 
 ## `shogiarena.tournament`
 

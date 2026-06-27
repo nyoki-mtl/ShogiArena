@@ -76,6 +76,57 @@ def test_from_mapping_rejects_unknown_engine_lifecycle(tmp_path: Path) -> None:
         TournamentRunConfig.from_mapping(payload, base_dir=tmp_path)
 
 
+def test_from_mapping_rejects_unknown_engine_keys(tmp_path: Path) -> None:
+    payload = _minimal_tournament_mapping()
+    engines = payload["engines"]
+    assert isinstance(engines, list)
+    first = engines[0]
+    assert isinstance(first, dict)
+    first["environment"] = {"RSHOGI_TRACE": "1"}
+
+    with pytest.raises(ValueError, match="environment"):
+        TournamentRunConfig.from_mapping(payload, base_dir=tmp_path)
+
+
+def test_from_mapping_accepts_engine_go_options(tmp_path: Path) -> None:
+    payload = _minimal_tournament_mapping()
+    engines = payload["engines"]
+    assert isinstance(engines, list)
+    first = engines[0]
+    assert isinstance(first, dict)
+    first["go_options"] = {"nodes": 1000}
+
+    cfg = TournamentRunConfig.from_mapping(payload, base_dir=tmp_path)
+
+    assert cfg.engines[0].go_options == {"nodes": 1000}
+
+
+def test_from_mapping_rejects_timing_engine_go_options(tmp_path: Path) -> None:
+    payload = _minimal_tournament_mapping()
+    engines = payload["engines"]
+    assert isinstance(engines, list)
+    first = engines[0]
+    assert isinstance(first, dict)
+    first["go_options"] = {"movetime": 1000}
+
+    with pytest.raises(ValueError, match="go_options.movetime"):
+        TournamentRunConfig.from_mapping(payload, base_dir=tmp_path)
+
+
+def test_from_mapping_rejects_time_control_depth_alias(tmp_path: Path) -> None:
+    payload = _minimal_tournament_mapping()
+    payload["rules"] = {
+        "time_control": {
+            "depth": 9,
+            "expiry_margin_ms": 500,
+            "max_wait_ms": 600_000,
+        }
+    }
+
+    with pytest.raises(ValueError, match="depth.*depth_limit"):
+        TournamentRunConfig.from_mapping(payload, base_dir=tmp_path)
+
+
 def test_from_mapping_rejects_generate_and_tournament_sections(tmp_path: Path) -> None:
     payload = _minimal_tournament_mapping()
     payload["generate"] = {"games": 100, "seed": 42, "num_parallel": 4}

@@ -14,6 +14,7 @@ from .config_builder import (
     build_cli_config_payload,
     ensure_engine_names,
     parse_engine_tokens,
+    prepare_engine_payloads,
 )
 from .tournament_cli_options import flatten_block_tokens
 
@@ -65,6 +66,7 @@ async def run_sprt_command(args) -> None:
     engines = [parse_engine_tokens(tokens) for tokens in engine_tokens]
     ensure_engine_names(engines)
     _resolve_tested_engine(engines)
+    prepare_engine_payloads(engines, label="sprt")
 
     payload = build_cli_config_payload(
         base={

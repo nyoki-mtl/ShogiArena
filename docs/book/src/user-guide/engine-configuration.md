@@ -16,8 +16,18 @@ options:
   Threads: 2
   USI_Hash: 256
 go_options:
-  byoyomi: 1000
+  nodes: 1000000
 enable_early_ponder: false
+handshake_timeout: 10
+io:
+  collect_info_strings: false
+  collect_raw_io: true
+  collect_stderr: true
+  collect_outbound: true
+option_validation:
+  default: strict
+  overrides:
+    BookFile: allow_unlisted_combo_value
 ```
 
 主なフィールド:
@@ -30,10 +40,50 @@ enable_early_ponder: false
 | `engine_args` | エンジン起動時の引数 |
 | `environment` | エンジンプロセスへ渡す環境変数 |
 | `options` | USI `setoption` として送る値 |
-| `go_options` | `go` コマンドへ渡す既定値 |
+| `go_options` | `go depth` / `go nodes` へ渡すエンジン単位の既定値 |
 | `enable_early_ponder` | ponderhit を早めに送る実験的オプション |
+| `handshake_timeout` | 起動、`usiok`、`readyok`、停止回収などの待機秒数 |
+| `io` | info string / raw USI I/O / stderr / outbound command の収集方針 |
+| `option_validation` | USI option 値の検証方針 |
 
 `engine_path`、`working_directory`、`options` 内のパス値には相対パスや `{engine_dir}` を使えます。
+`go_options` は `depth` と `nodes` のみを受け付けます。`movetime`、`btime`、`wtime`、`byoyomi`、`infinite` などの時間制御は、実戦の持ち時間管理と競合するためエンジン設定では指定できません。時間制御は run 設定の `rules.time_control` で指定してください。
+
+## I/O 収集と option validation
+
+Python API や dashboard diagnostics で raw USI I/O を扱う場合は `io` を明示します。
+
+```yaml
+io:
+  collect_info_strings: true   # UsiThinkResult.info_strings に info line を残す
+  collect_raw_io: true         # stdin/stdout の typed UsiIoEvent を発行する
+  collect_stderr: true         # stderr も UsiIoEvent(direction="stderr") として扱う
+  collect_outbound: true       # ShogiArena から送った command も記録する
+```
+
+USI option は既定で `strict` に検証されます。mode は `strict`、`warn`、`raw`、`allow_unlisted_combo_value` です。`allow_unlisted_combo_value` は combo option の候補一覧に出ないファイル名を渡す必要がある場合だけ、option 単位で指定してください。
+
+```yaml
+option_validation:
+  default: strict
+  overrides:
+    BookFile: allow_unlisted_combo_value
+```
+
+### 高度な runtime field
+
+必要な場合だけ、次の field も engine YAML に指定できます。
+
+| フィールド | 用途 |
+| --- | --- |
+| `mate_default_ply_limit` | `run mate` / Python mate search の既定 ply 上限 |
+| `mate_default_node_limit` | mate search の既定 node 上限 |
+| `mate_default_infinite` | mate search の既定を `go mate infinite` にする |
+| `mate_wait_for_bestmove` | mate result 後の trailing `bestmove` を待つ |
+| `isready_sync_strategy` | `isready` 同期の方式。`direct`、`wait`、`stop` |
+| `isready_lock_key` / `isready_lock_template` | option 値から isready lock key を作る |
+| `isready_lock_check_key` / `isready_lock_check_template` / `isready_lock_check_templates` | lock 解放確認に使う file path template |
+| `isready_lock_skip_if_exists` | lock file が既にある場合に待機を省略する |
 
 ## 内蔵定跡
 
@@ -48,6 +98,8 @@ options:
 ```
 
 `USI_OwnBook` が明示的に `false` でなく、`BookFile` が `no_book` でない場合、`BookDir + BookFile` の実体パスを起動前に検証します。大きな YANEURAOU-DB2016 形式の book では `BookOnTheFly: true` を使う運用を推奨します。
+
+エンジンが `BookFile` を combo option として宣言していて、任意の book ファイル名を `var` に列挙しない場合は、上の `option_validation.overrides.BookFile` で `allow_unlisted_combo_value` を指定します。これは値の送信を許可するだけで、ShogiArena の path preflight と provenance 記録は引き続き実行されます。
 
 実力比較や SPSA では、内蔵定跡をエンジンごとに変えると「エンジンではなく定跡」を比較することになります。既定のサンプル overlay は `BookFile: no_book` とし、共有開始局面集は `rules.initial_positions` で指定します。
 
@@ -86,7 +138,7 @@ engines:
       USI_Hash: 128
 ```
 
-`options_overlays` を使うと、USI オプション上書き用 YAML を段階的にマージできます。
+`options_overlays` を使うと、USI オプション上書き用 YAML を段階的にマージできます。overlay YAML は必ず `options:` ブロック配下に書きます。旧来の flat top-level form は受け付けません。
 
 ```yaml
 engines:
@@ -97,6 +149,14 @@ engines:
       - "examples/configs/resources/engines/overlays/YaneuraOu.yaml"
     options:
       Threads: 4
+```
+
+overlay YAML の例:
+
+```yaml
+options:
+  USI_Hash: 1024
+  BookFile: no_book
 ```
 
 ## 確認する

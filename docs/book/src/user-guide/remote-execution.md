@@ -60,7 +60,8 @@ strict_host_key_checking: true
 | `identity_file` | 秘密鍵パス |
 | `port` | SSH ポート。省略時は 22 |
 | `project_root` | リモート側の作業ディレクトリ（省略時は `~/ShogiArena-remote`） |
-| `slots` | 同時実行可能な対局数 |
+| `slots` | engine thread / ponder から見積もる同時実行容量 |
+| `max_engines` | 同時起動できる engine process 数の上限 |
 | `strict_host_key_checking` | host key 検証を厳格に行うか |
 | `tags` | インスタンスのタグ（任意） |
 
@@ -154,6 +155,30 @@ shogiarena run tournament tournament.yaml \
 - エンジンバイナリ（`engine_path` で指定されたファイル）
 - 設定ファイル（YAML）
 - 開局集（`initial_positions.source` で指定されたファイル）
+- 内蔵定跡 book（`BookDir + BookFile` で解決されたファイル。下記 policy に従う）
+
+### remote book resource
+
+YaneuraOu 系の `BookDir` / `BookFile` は、remote 実行では book file 単体を content-hash 名で worker 側に配置します。巨大な book を意図せず転送しないよう、既定では 256 MiB を超える自動転送を明示エラーにします。
+
+| 環境変数 | 値 | 説明 |
+| --- | --- | --- |
+| `SHOGIARENA_REMOTE_BOOK_TRANSFER` | `auto` | 既定。`SHOGIARENA_REMOTE_BOOK_MAX_MB` 以下なら自動転送し、超過時は停止 |
+| `SHOGIARENA_REMOTE_BOOK_TRANSFER` | `always` | サイズに関わらず content-hash 転送する |
+| `SHOGIARENA_REMOTE_BOOK_TRANSFER` | `preplaced` | 転送せず、worker 側に同じ path の book が事前配置されている前提で参照する |
+| `SHOGIARENA_REMOTE_BOOK_MAX_MB` | 整数 | `auto` の上限 MiB。既定は `256` |
+
+```bash
+# 大型 book を明示的に転送する
+SHOGIARENA_REMOTE_BOOK_TRANSFER=always \
+  shogiarena run tournament tournament.yaml --provision force
+
+# worker 側に事前配置した book を使う
+SHOGIARENA_REMOTE_BOOK_TRANSFER=preplaced \
+  shogiarena run tournament tournament.yaml --provision none
+```
+
+`preplaced` では転送しませんが、local 側で解決した book fingerprint は provenance に記録されます。worker 側の配置と一致していることは運用側で確認してください。
 
 ## SSH 認証の設定
 
@@ -197,9 +222,9 @@ ssh-add ~/.ssh/id_rsa
 
 ### スロット数の設定
 
-`slots` は、各インスタンスで同時に実行できる対局数です。
+`slots` は、各インスタンスで同時に使える実行容量です。
 
-各インスタンス YAML の `slots` が、そのインスタンスで同時に走る対局数です。自動扱いにしたい場合は `slots: null` を使います。
+ShogiArena は engine の `Threads` / `USI_Threads` と `Ponder` / `USI_Ponder` から必要 slot 数を見積もり、`tournament.num_parallel` 分の pending games が `slots` と `max_engines` に収まるかを開始前に検査します。自動扱いにしたい場合は `slots: null` を使います。詳細は [トーナメント](tournaments.md#並列数とインスタンス容量) を参照してください。
 
 ### エンジン数の制限
 

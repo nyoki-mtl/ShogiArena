@@ -22,6 +22,5 @@ options:                                        # 任意。既定: {} (USI setop
   # BookDir: "./data/books/dev"       # パスオプションの例（相対パスまたは絶対パス）
   # EvalDir: "./data/evals/dev_eval"  # パスオプションの例（相対パスまたは絶対パス）
 go_options:                                     # 任意。既定: {}
-  byoyomi: 1000                                 # 例: `go byoyomi 1000` として渡される
-  nodes: 500000
+  nodes: 500000                                 # 例: request に nodes がない場合だけ `go nodes 500000` として渡される
 enable_early_ponder: true                       # 任意。既定: false。ponderhit を積極的に送る実験機能

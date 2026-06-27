@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -51,6 +52,37 @@ def test_engine_pool_slot_key():
     assert EnginePool.slot_key("engine", "local") == "engine@local"
     assert EnginePool.slot_key("engine", "  local ") == "engine@local"
     assert EnginePool.slot_key("engine", "") == "engine@auto"
+
+
+@pytest.mark.asyncio
+async def test_engine_pool_passes_engine_go_options_to_factory(tmp_path: Path) -> None:
+    config_path = _write_dummy_config(tmp_path)
+    create_kwargs: list[dict[str, Any]] = []
+
+    async def _create_engine(*args: Any, **kwargs: Any) -> _DummyEngine:  # noqa: ARG001
+        create_kwargs.append(kwargs)
+        return _DummyEngine(name="dummy")
+
+    mock_factory = AsyncMock()
+    mock_factory.create_engine = _create_engine
+    service = EngineFactoryService(factory=mock_factory)
+    engine_pool = EnginePool(
+        engine_factory_service=service,
+        engine_configs={
+            "engine-a": SimpleNamespace(
+                instance_id=None,
+                cpu_affinity=None,
+                handshake_timeout=None,
+                go_options={"nodes": 1000},
+            )
+        },
+    )
+
+    engine = await engine_pool.acquire("engine-a#black", config_path)
+
+    assert create_kwargs[0]["go_options"] == {"nodes": 1000}
+    await engine_pool.release("engine-a#black", engine)
+    await engine_pool.shutdown_all()
 
 
 @pytest.mark.asyncio

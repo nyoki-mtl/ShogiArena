@@ -11,6 +11,7 @@ from typing import Any
 from rshogi.core import Move
 
 from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkRequest
+from shogiarena._core.platform.engine_runtime.go_options import apply_go_options_defaults
 from shogiarena._core.platform.engine_runtime.usi_engine_session_models import (
     AnalysisHandle,
     InfoHandlerFn,
@@ -152,6 +153,8 @@ class AsyncUsiEngineSearchMixin:
     ) -> UsiThinkResult:
         await self._ensure_started()
         self._ensure_state({UsiEngineState.READY})
+        request = apply_go_options_defaults(request, getattr(self.config, "go_options", None))
+        command = request.to_command()
         async with self._thinking_lock:
             await self._sync_ignored_bestmoves_before_go()
             if self._bestmove_future is not None and not self._bestmove_future.done():
@@ -163,13 +166,13 @@ class AsyncUsiEngineSearchMixin:
             future = self._bestmove_future
             try:
                 await self._send_position(sfen, moves)
-                self._maybe_log_handshake_command(request.to_command())
-                await self._send_command(request.to_command())
+                self._maybe_log_handshake_command(command)
+                await self._send_command(command)
                 if request.is_ponder:
                     self._set_state(UsiEngineState.PONDER, reason="sent go ponder")
                 else:
                     self._set_state(UsiEngineState.WAITING_FOR_BESTMOVE, reason="sent go")
-                self._emit_lifecycle_event("think_started", details={"command": request.to_command()})
+                self._emit_lifecycle_event("think_started", details={"command": command})
             except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
                 self._abandon_future(future)
                 self._bestmove_future = None

@@ -19,9 +19,9 @@ def test_resolve_paths_and_overrides(tmp_path: Path) -> None:
         "engine_path": "{engine_dir}/Test/bin",
         "working_directory": "{output_dir}/runs",
         "engine_args": ["--threads", "4"],
-        "env": {"OMP_NUM_THREADS": 1},
+        "environment": {"OMP_NUM_THREADS": 1},
         "options": {"EvalDir": "{output_dir}/evals/book", "Hash": 64},
-        "go_options": {"movetime": 1000},
+        "go_options": {"nodes": 1000},
         "enable_early_ponder": True,
     }
 
@@ -34,7 +34,7 @@ def test_resolve_paths_and_overrides(tmp_path: Path) -> None:
     assert resolved.environment == {"OMP_NUM_THREADS": "1"}
     assert resolved.options["Hash"] == 64
     assert resolved.options["EvalDir"] == str((evals_dir / "book").resolve())
-    assert resolved.go_options == {"movetime": 1000}
+    assert resolved.go_options == {"nodes": 1000}
     assert resolved.is_early_ponder_enabled is True
 
     overrides = resolved.with_overrides(
@@ -51,8 +51,42 @@ def test_resolve_paths_and_overrides(tmp_path: Path) -> None:
     assert overrides.is_early_ponder_enabled is False
     # Original resolved config remains unchanged
     assert resolved.options["EvalDir"] == str((evals_dir / "book").resolve())
-    assert "nodes" not in resolved.go_options
+    assert resolved.go_options["nodes"] == 1000
     assert resolved.is_early_ponder_enabled is True
+
+
+def test_from_mapping_normalizes_go_options() -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "test",
+            "engine_path": "/tmp/dummy",
+            "go_options": {"nodes": "1000", "depth": 8},
+        }
+    )
+
+    assert config.go_options == {"nodes": 1000, "depth": 8}
+
+
+def test_from_mapping_rejects_timing_go_options() -> None:
+    with pytest.raises(ValueError, match="go_options.movetime"):
+        UsiEngineConfig.from_mapping(
+            {
+                "name": "test",
+                "engine_path": "/tmp/dummy",
+                "go_options": {"movetime": 1000},
+            }
+        )
+
+
+def test_from_mapping_rejects_unknown_go_option() -> None:
+    with pytest.raises(ValueError, match="go_options.node"):
+        UsiEngineConfig.from_mapping(
+            {
+                "name": "test",
+                "engine_path": "/tmp/dummy",
+                "go_options": {"node": 1000},
+            }
+        )
 
 
 def test_from_file_handles_missing_engine_path(tmp_path: Path) -> None:
@@ -75,6 +109,8 @@ name: sample
 engine_path: "{engine_dir}/sample_engine"
 options:
   EvalDir: "{output_dir}/evals/sample"
+environment:
+  OMP_NUM_THREADS: 2
         """.strip()
         + "\n",
         encoding="utf-8",
@@ -85,6 +121,7 @@ options:
     expected_eval = str((output_dir / "evals" / "sample").resolve())
     assert resolved.engine_path == expected_engine
     assert resolved.options["EvalDir"] == expected_eval
+    assert resolved.environment == {"OMP_NUM_THREADS": "2"}
 
 
 def test_from_mapping_parses_mate_defaults_and_sync_strategy() -> None:
@@ -161,6 +198,17 @@ def test_from_mapping_rejects_legacy_working_dir_key() -> None:
                 "name": "test",
                 "engine_path": "/tmp/dummy",
                 "working_dir": "/tmp/work",
+            }
+        )
+
+
+def test_from_mapping_rejects_env_key() -> None:
+    with pytest.raises(TypeError, match="environment"):
+        UsiEngineConfig.from_mapping(
+            {
+                "name": "test",
+                "engine_path": "/tmp/dummy",
+                "env": {"OMP_NUM_THREADS": "2"},
             }
         )
 

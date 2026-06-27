@@ -178,7 +178,7 @@ def _write_default_fukauraou_build_config(path: Path, *, cuda_path: Path | None 
     cuda_root = cuda_path or Path("/usr/local/cuda")
     payload = {
         "work_dir": "{repo.path}/source",
-        "env": {
+        "environment": {
             "CUDA_HOME": str(cuda_root),
             "PATH": f"{cuda_root}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         },
@@ -227,7 +227,7 @@ def _write_default_deeplearningshogi_build_config(path: Path) -> None:
     )
     payload = {
         "work_dir": "{repo.path}/usi",
-        "env": {
+        "environment": {
             "CUDA_HOME": "/usr/local/cuda",
             "PATH": "/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         },
@@ -248,7 +248,7 @@ def _write_default_build_config(path: Path, *, repo_name: str) -> None:
     payload = {
         "work_dir": "{repo.path}",
         "source_dir": "{repo.path}",
-        "env": {
+        "environment": {
             "TARGET_CPU": "{opts.target_cpu}",
             "EDITION": "{opts.edition}",
         },

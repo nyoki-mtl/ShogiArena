@@ -18,6 +18,7 @@ from shogiarena._core.contexts.game_session.application.engine.config_normalizer
     parse_isready_sync_strategy,
 )
 from shogiarena._core.contexts.game_session.application.engine.option_coercion import (
+    EngineOptionMap,
     coerce_engine_option_map,
 )
 from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_serialized
@@ -25,12 +26,18 @@ from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.paths import resolve_path_like
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_bool, coerce_float, coerce_int, coerce_str
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
+from shogiarena._core.shared.kernel.usi_go_options import normalize_go_options
 
 from .config_core import RulesConfig, parse_time_control_raw
 from .config_engine import EngineConfig
 from .config_spsa_models import _EngineCommonKwargs
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_go_options(raw: JsonValue | Mapping[str, JsonValue] | None) -> EngineOptionMap:
+    options = coerce_engine_option_map(raw, field_name="engines[0].go_options")
+    return normalize_go_options(options, field_name="engines[0].go_options")
 
 
 def _get_spsa_int(node: Mapping[str, JsonValue], name: str, default: int) -> int:
@@ -98,6 +105,7 @@ def _map_engine(x: Mapping[str, JsonValue]) -> EngineConfig:
             "build_options",
             "name",
             "options",
+            "go_options",
             "options_overlays",
             "mate_default_ply_limit",
             "mate_default_node_limit",
@@ -155,6 +163,7 @@ def _map_engine(x: Mapping[str, JsonValue]) -> EngineConfig:
             artifact=art,
             build_options=bo,
             options=coerce_engine_option_map(merged if merged else {}, field_name="engines[0].options"),
+            go_options=_coerce_go_options(x.get("go_options")),
             **common,
         )
 
@@ -184,6 +193,7 @@ def _map_engine(x: Mapping[str, JsonValue]) -> EngineConfig:
         name=str(name),
         engine_path=eng_cfg,
         options=coerce_engine_option_map(opts, field_name="engines[0].options"),
+        go_options=_coerce_go_options(x.get("go_options")),
         **common,
     )
 

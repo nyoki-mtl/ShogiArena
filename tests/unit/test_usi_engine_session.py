@@ -141,6 +141,59 @@ async def test_engine_handshake_applies_options(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_engine_go_options_apply_as_go_defaults(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+            "go_options": {"depth": 8, "nodes": 1000},
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go(command: str) -> None:
+        await bridge.enqueue("bestmove 7g7f")
+
+    bridge.set_handler("go ", handle_go)
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        await eng.think(sfen="startpos", request=UsiThinkRequest(movetime=100, depth=4))
+
+    assert "go movetime 100 depth 4 nodes 1000" in bridge.commands
+
+
+@pytest.mark.asyncio
+async def test_engine_go_options_apply_to_early_ponder(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "Dummy",
+            "engine_path": str(tmp_path / "engine"),
+            "go_options": {"nodes": 1000},
+            "enable_early_ponder": True,
+        }
+    )
+    bridge = DummyBridge()
+
+    async def handle_go_ponder(command: str) -> None:
+        assert command == "go ponder nodes 1000"
+
+    async def handle_ponderhit(command: str) -> None:
+        assert command == "ponderhit btime 1000 wtime 1000"
+        await bridge.enqueue("bestmove 7g7f")
+
+    bridge.set_handler("go ponder", handle_go_ponder)
+    bridge.set_handler("ponderhit", handle_ponderhit)
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        handle = await eng.start_ponder(
+            sfen="startpos",
+            moves=None,
+            request=UsiThinkRequest(btime=1000, wtime=1000, is_ponder=True),
+        )
+        await handle.hit(timings=PonderHitTimings(btime=1000, wtime=1000), timeout=1.0)
+
+
+@pytest.mark.asyncio
 async def test_get_usi_options_returns_option_declaration_snapshot(tmp_path) -> None:
     config = UsiEngineConfig.from_mapping(
         {

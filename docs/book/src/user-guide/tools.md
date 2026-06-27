@@ -7,7 +7,10 @@
 ```bash
 shogiarena config init
 shogiarena config show
-shogiarena config repo set yaneuraou --path ~/repos/YaneuraOu
+shogiarena config repo set yaneuraou \
+  --path ~/repos/YaneuraOu \
+  --url https://github.com/yaneurao/YaneuraOu.git \
+  --build-config ~/.config/shogiarena/builds/yaneuraou.yaml
 shogiarena config repo remove yaneuraou
 ```
 
@@ -55,6 +58,8 @@ shogiarena results summary /path/to/run
 shogiarena results summary /path/to/run --format json
 shogiarena results summary /path/to/game.db --format csv
 ```
+
+JSON 出力では `timing_metrics` に wall time field の意味が入ります。engine throughput 比較や wall NPS では `engine_wall_time_ms` を使い、持ち時間に課金された時間を見たい場合は `wall_time_ms` を見ます。
 
 マニフェストの provenance 検証:
 

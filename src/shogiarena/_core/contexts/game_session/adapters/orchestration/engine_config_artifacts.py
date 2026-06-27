@@ -20,10 +20,15 @@ from .config_engine import EngineConfig
 _ARTIFACT_REF_RE = re.compile(r"^([A-Za-z0-9._-]+)/([A-Fa-f0-9]{6,40})$")
 
 
-def _build_artifact_config_filename(artifact: str, build_options: Mapping[str, JsonValue]) -> str:
+def _build_artifact_config_filename(
+    artifact: str,
+    build_options: Mapping[str, JsonValue],
+    payload: Mapping[str, object] | None = None,
+) -> str:
     normalized_payload = {
         "artifact": artifact.strip(),
         "build_options": normalize_for_hash(dict(build_options)),
+        "payload": normalize_for_hash(dict(payload or {})),
     }
     raw = json.dumps(normalized_payload, sort_keys=True, separators=(",", ":"), default=str)
     hash_suffix = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
@@ -47,6 +52,8 @@ def _build_artifact_config_payload(
         payload["name"] = engine.name
     if engine.options:
         payload["options"] = dict(engine.options)
+    if engine.go_options:
+        payload["go_options"] = dict(engine.go_options)
     if engine.path_options:
         payload["path_options"] = list(engine.path_options)
     if engine.options_overlays:
@@ -91,7 +98,6 @@ def _materialize_engine_config_from_artifact(
         return None
 
     build_options = engine.build_options or {}
-    filename = _build_artifact_config_filename(artifact, build_options)
     resolved_engine_path = Path(artifact_resolver(artifact, build_options)) if artifact_resolver is not None else None
     payload = _build_artifact_config_payload(
         engine,
@@ -99,6 +105,7 @@ def _materialize_engine_config_from_artifact(
         build_options=build_options,
         resolved_engine_path=resolved_engine_path,
     )
+    filename = _build_artifact_config_filename(artifact, build_options, payload)
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / filename
     out_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")

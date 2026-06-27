@@ -16,6 +16,7 @@ from shogiarena._core.contexts.game_session.application.engine.config_hashing im
 )
 from shogiarena._core.contexts.game_session.application.engine.option_coercion import (
     EngineOptionMap,
+    coerce_engine_option_map,
 )
 from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import EngineLifecyclePolicy
 from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_serialized
@@ -24,12 +25,13 @@ from shogiarena._core.shared.kernel.overlay_options import select_overlay_option
 from shogiarena._core.shared.kernel.paths import resolve_path_like
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_str
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
+from shogiarena._core.shared.kernel.usi_go_options import normalize_go_options
 
 
 class EngineConfig(BaseModel):
     """Configuration for a single engine in the tournament."""
 
-    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
 
     engine_path: Path | None = None
     artifact: str | None = None
@@ -37,6 +39,7 @@ class EngineConfig(BaseModel):
     name: str | None = None
     name_style: Literal["hash", "short"] = "hash"
     options: EngineOptionMap = Field(default_factory=dict)
+    go_options: EngineOptionMap = Field(default_factory=dict)
     options_overlays: list[Path] = Field(default_factory=list)
     path_options: tuple[str, ...] = ()
     mate_default_ply_limit: int | None = Field(default=None, gt=0)
@@ -90,6 +93,12 @@ class EngineConfig(BaseModel):
             raise FileNotFoundError(f"Options overlay file not found: {candidate}")
         normalized.append(candidate)
         return normalized
+
+    @field_validator("go_options", mode="before")
+    @classmethod
+    def _normalize_go_options(cls, v: JsonValue | None) -> EngineOptionMap:
+        options = coerce_engine_option_map(v, field_name="go_options")
+        return normalize_go_options(options, field_name="go_options")
 
     @field_validator("path_options", mode="before")
     @classmethod

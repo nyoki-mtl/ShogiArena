@@ -124,6 +124,7 @@ class EngineRuntimeFactory:
         config_path: Path,
         timeout: float = 10.0,
         extra_options: JsonObject | None = None,
+        go_options: JsonObject | None = None,
         engine_name: str | None = None,
         instance_id: str | None = None,
         instance_pool: _InstancePoolPort | None = None,
@@ -140,6 +141,7 @@ class EngineRuntimeFactory:
         config = self._apply_overrides(
             config,
             extra_options=extra_options,
+            go_options=go_options,
             collect_info_strings=collect_info_strings,
             collect_raw_io=collect_raw_io,
             collect_stderr=collect_stderr,
@@ -161,6 +163,7 @@ class EngineRuntimeFactory:
         config_mapping: Mapping[str, object],
         timeout: float = 10.0,
         extra_options: JsonObject | None = None,
+        go_options: JsonObject | None = None,
         engine_name: str | None = None,
         instance_id: str | None = None,
         instance_pool: _InstancePoolPort | None = None,
@@ -177,6 +180,7 @@ class EngineRuntimeFactory:
         config = self._apply_overrides(
             config,
             extra_options=extra_options,
+            go_options=go_options,
             collect_info_strings=collect_info_strings,
             collect_raw_io=collect_raw_io,
             collect_stderr=collect_stderr,
@@ -473,6 +477,7 @@ class EngineRuntimeFactory:
         config: Any,
         *,
         extra_options: JsonObject | None,
+        go_options: JsonObject | None,
         collect_info_strings: bool | None,
         collect_raw_io: bool | None,
         collect_stderr: bool | None,
@@ -488,6 +493,8 @@ class EngineRuntimeFactory:
                 output_dir=project_dirs.output_dir,
                 engine_dir=project_dirs.engine_dir,
             )
+        if go_options:
+            config = config.with_overrides(go_options=_cast_json_object_as_str(go_options))
         if (
             collect_info_strings is not None
             or collect_raw_io is not None

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from shogiarena._core.shared.kernel.time_control_spec import limits_to_record_time_spec
 
@@ -16,6 +17,14 @@ logger = logging.getLogger(__name__)
 # constant so callers can reference the default without touching a Pydantic model
 # class attribute (model fields are not exposed on the class in Pydantic v2).
 DEFAULT_MAX_WAIT_MS = 600_000  # 10 minutes
+
+_TIME_CONTROL_KEY_HINTS = {
+    "byoyomi": "byoyomi_ms",
+    "depth": "depth_limit",
+    "fixed_time": "fixed_time_ms",
+    "increment": "increment_ms",
+    "nodes": "node_limit",
+}
 
 
 @runtime_checkable
@@ -50,6 +59,8 @@ class TimeControlLimits(BaseModel):
                      Useful when should_allow_timeout=True to avoid indefinite hangs.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     time_ms: int | None = None
     increment_ms: int | None = None
     byoyomi_ms: int | None = None
@@ -59,6 +70,16 @@ class TimeControlLimits(BaseModel):
     expiry_margin_ms: int = 500
     should_allow_timeout: bool = False
     max_wait_ms: int = DEFAULT_MAX_WAIT_MS  # 10 minutes default upper bound
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_known_alias_keys(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        for key, replacement in _TIME_CONTROL_KEY_HINTS.items():
+            if key in value:
+                raise ValueError(f"time_control.{key} is not a valid time_control key; use {replacement}")
+        return value
 
     # --- Encoding helpers (DB/UI spec string) ----------------------------
     def to_spec_str(self) -> str:

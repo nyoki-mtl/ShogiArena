@@ -30,7 +30,10 @@ shogiarena [global-options] <command> ...
 ```bash
 shogiarena config init
 shogiarena config show
-shogiarena config repo set yaneuraou --path ~/repos/YaneuraOu
+shogiarena config repo set yaneuraou \
+  --path ~/repos/YaneuraOu \
+  --url https://github.com/yaneurao/YaneuraOu.git \
+  --build-config ~/.config/shogiarena/builds/yaneuraou.yaml
 ```
 
 `config init` は標準の `output_dir`、`engine_dir`、artifact 用の設定を作ります。
@@ -60,7 +63,17 @@ shogiarena run tournament [config.yaml] [options]
 | `--run-dir PATH` | run ディレクトリを明示指定 |
 | `--no-resume` | 再開せず新規実行 |
 | `--provision {none,force}` | SSH インスタンスへの配置制御 |
+| `--git-worktree {strict,clean,allow-dirty}` | artifact build 前の Git worktree 扱い |
 | `--path-preflight {off,warn,error}` | パス系 USI オプションの事前検査 |
+| `--engine KEY=VALUE ...` | engine 定義を CLI から追加（repeatable） |
+| `--rules KEY=VALUE ...` | `rules.*` を上書き |
+| `--tournament KEY=VALUE ...` | `tournament.*` を上書き |
+| `--rating KEY=VALUE ...` | `rating.*` を上書き |
+| `--dashboard KEY=VALUE ...` | `dashboard.*` を上書き |
+| `--logging KEY=VALUE ...` | `logging.*` を上書き |
+| `--system KEY=VALUE ...` | `system.*` を上書き |
+| `--sprt KEY=VALUE ...` | `sprt.*` を上書き |
+| `--openbench KEY=VALUE ...` | `openbench.*` を上書き |
 
 YAML の一部は CLI から上書きできます。
 
@@ -106,6 +119,31 @@ shogiarena run mate engine.yaml startpos --ply-limit 5
 shogiarena run analyze engine.yaml startpos --nodes 100000
 ```
 
+`run analyze` の主なオプション:
+
+| オプション | 説明 |
+| --- | --- |
+| `--nodes N` | 探索ノード数 |
+| `--depth N` | 探索深さ |
+| `--movetime MS` | 固定思考時間 |
+| `--infinite` | `go infinite` を使う |
+| `--ponder` | `go` に ponder flag を付ける |
+| `--searchmoves MOVE ...` | 探索対象手を USI move で制限する |
+| `--timeout SEC` | `bestmove` 待機の timeout |
+| `--quiet` | 中間 info line を抑制する |
+| `--option KEY=VALUE` | engine option を上書き（repeatable） |
+
+`run mate` の主なオプション:
+
+| オプション | 説明 |
+| --- | --- |
+| `--ply-limit N` | 詰み探索の ply 上限 |
+| `--node-limit N` | 詰み探索の node 上限 |
+| `--infinite` | `go mate infinite` を使う |
+| `--wait-bestmove` | mate result 後の trailing `bestmove` を待つ |
+| `--timeout SEC` | mate result 待機の timeout |
+| `--option KEY=VALUE` | engine option を上書き（repeatable） |
+
 ## `dashboard`
 
 ```bash
@@ -122,6 +160,8 @@ shogiarena results summary /path/to/run --format json
 shogiarena results summary /path/to/game.db --engine EngineA
 shogiarena results verify-provenance /path/to/run
 ```
+
+`summary --format json` には timing metadata が含まれます。`engine_wall_time_ms` は engine の `think()` 呼び出しから `bestmove` 回収までの engine I/O 窓、`wall_time_ms` は持ち時間に課金された wall time です。wall NPS の既定 field は `engine_wall_time_ms` です。
 
 ## `replay-position`
 

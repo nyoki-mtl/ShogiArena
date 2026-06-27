@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+import yaml
 
 from shogiarena._core.interfaces.cli.main import CliArgumentError
 from shogiarena._core.platform.settings import project_dirs
@@ -13,6 +16,38 @@ from shogiarena._core.shared.kernel.serialization import json_serialize
 from .config_overrides import apply_override, apply_section_overrides, parse_scalar
 
 ConfigPayload = JsonObject
+
+_DIRECT_ENGINE_RUNTIME_KEYS = (
+    "working_directory",
+    "engine_args",
+    "environment",
+    "go_options",
+    "build_options",
+    "enable_early_ponder",
+    "handshake_timeout",
+    "mate_default_ply_limit",
+    "mate_default_node_limit",
+    "mate_default_infinite",
+    "mate_wait_for_bestmove",
+    "isready_sync_strategy",
+    "isready_lock_key",
+    "isready_lock_template",
+    "isready_lock_check_key",
+    "isready_lock_check_template",
+    "isready_lock_check_templates",
+    "isready_lock_skip_if_exists",
+    "io",
+    "option_validation",
+)
+_TOURNAMENT_ENGINE_KEYS = (
+    "options",
+    "options_overlays",
+    "path_options",
+    "time_control",
+    "name_style",
+    "instance_id",
+    "cpu_affinity",
+)
 
 
 def build_cli_config_payload(
@@ -34,9 +69,7 @@ def build_cli_config_payload(
 
     if engines_tokens:
         engines = [parse_engine_tokens(tokens) for tokens in engines_tokens]
-        ensure_engine_names(engines)
-        _normalize_engine_overlays(engines)
-        materialize_engine_configs(engines, label=label, output_dir=output_dir)
+        prepare_engine_payloads(engines, label=label, output_dir=output_dir)
         payload["engines"] = engines
 
     for section, tokens in sections.items():
@@ -72,7 +105,7 @@ def materialize_engine_configs(
     label: str,
     output_dir: Path | None = None,
 ) -> None:
-    _ = (label, output_dir)
+    base_output_dir = output_dir or project_dirs.output_dir
 
     for idx, engine in enumerate(engines, 1):
         if isinstance(engine.get("artifact"), str) and str(engine["artifact"]).strip():
@@ -91,30 +124,65 @@ def materialize_engine_configs(
         if not resolved_path.is_file():
             raise CliArgumentError(f"engine binary is not a file: {resolved_path}")
 
-        name = str(engine.get("name") or f"engine-{idx}")
+        name = str(engine.pop("name", None) or f"engine-{idx}")
         working_directory_raw = engine.pop("working_directory", resolved_path.parent)
-        payload: ConfigPayload = {
+        runtime_payload: ConfigPayload = {
             "name": name,
             "engine_path": str(resolved_path),
             "working_directory": str(Path(resolve_path_like(str(working_directory_raw))).resolve()),
         }
-        _merge_if_present(payload, engine, "options")
-        _merge_if_present(payload, engine, "options_overlays")
-        _merge_if_present(payload, engine, "path_options")
-        _merge_if_present(payload, engine, "engine_args")
-        _merge_if_present(payload, engine, "environment")
-        _merge_if_present(payload, engine, "go_options")
-        _merge_if_present(payload, engine, "time_control")
-        _merge_if_present(payload, engine, "build_options")
-        _merge_if_present(payload, engine, "enable_early_ponder")
-        _merge_if_present(payload, engine, "mate_default_ply_limit")
-        _merge_if_present(payload, engine, "mate_default_node_limit")
-        _merge_if_present(payload, engine, "mate_default_infinite")
-        _merge_if_present(payload, engine, "mate_wait_for_bestmove")
-        _merge_if_present(payload, engine, "isready_sync_strategy")
+        for key in _DIRECT_ENGINE_RUNTIME_KEYS:
+            _merge_if_present(runtime_payload, engine, key)
+
+        payload: ConfigPayload = {"name": name}
+        for key in _TOURNAMENT_ENGINE_KEYS:
+            _merge_if_present(payload, engine, key)
+        if engine:
+            extras = ", ".join(sorted(engine))
+            raise CliArgumentError(f"unsupported engine key(s): {extras}")
+
+        generated_config = _write_direct_engine_config(
+            runtime_payload,
+            output_dir=base_output_dir,
+            label=label,
+            index=idx,
+            name=name,
+        )
+        payload["engine_path"] = str(generated_config)
 
         engine.clear()
         engine.update(payload)
+
+
+def prepare_engine_payloads(
+    engines: list[ConfigPayload],
+    *,
+    label: str,
+    output_dir: Path | None = None,
+) -> None:
+    ensure_engine_names(engines)
+    _normalize_engine_overlays(engines)
+    materialize_engine_configs(engines, label=label, output_dir=output_dir)
+
+
+def _write_direct_engine_config(
+    payload: ConfigPayload,
+    *,
+    output_dir: Path,
+    label: str,
+    index: int,
+    name: str,
+) -> Path:
+    config_dir = output_dir / "generated_engine_configs" / _safe_filename_part(label)
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / f"{index:02d}-{_safe_filename_part(name)}.yaml"
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return config_path
+
+
+def _safe_filename_part(value: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip())
+    return normalized.strip(".-") or "engine"
 
 
 def _resolve_output_dir(raw: JsonValue | Path | None) -> Path:

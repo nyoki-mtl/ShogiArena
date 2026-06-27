@@ -1274,6 +1274,7 @@ wheels = [
 name = "rshogi-py-avx2"
 version = "0.10.3"
 source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/28/0cda815ed7cfd616c6ed30e5ff49cbd259e3604ceeb97d8953791b6be3b3/rshogi_py_avx2-0.10.3.tar.gz", hash = "sha256:ca7d95babb5b99c64dc6010fb65609870ad4640d1414409dba98353f7eefef1b", size = 379698, upload-time = "2026-06-06T06:11:34.397Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/92/8f/a457a6117e69718587345c2ab5f21e9e5bca14b8aad1e61a24113d65c25f/rshogi_py_avx2-0.10.3-cp311-cp311-macosx_10_12_x86_64.whl", hash = "sha256:605ae1e302bd45680525011cea452c5ecaec0be120faebdfdb8e4f0605bd3b61", size = 951774, upload-time = "2026-06-06T06:11:17.936Z" },
     { url = "https://files.pythonhosted.org/packages/ae/d3/ffb5e3e0cc5d4e1750c759191d17285abe505e8e460b8df774227b6973db/rshogi_py_avx2-0.10.3-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:19382aa75bdfff65341770ab5476d75937aff319e063ab9bb6059f5e9a9ffb0c", size = 966908, upload-time = "2026-06-06T06:11:19.193Z" },
@@ -1318,7 +1319,7 @@ wheels = [
 
 [[package]]
 name = "shogiarena"
-version = "0.5.3"
+version = "0.5.4"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

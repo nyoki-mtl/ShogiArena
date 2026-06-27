@@ -93,6 +93,82 @@ def test_spsa_engine_initializes_with_global_time_control(tmp_path: Path) -> Non
     assert orch is not None
 
 
+def test_spsa_engine_accepts_go_options(tmp_path: Path) -> None:
+    eng_yaml = write(
+        tmp_path,
+        "cfg/engine.yaml",
+        """
+        engine_path: "/bin/echo"
+        """,
+    )
+    space = write_space(tmp_path)
+    cfg_yaml = write(
+        tmp_path,
+        "cfg/spsa.yaml",
+        f"""
+        experiment_name: exp
+        engines:
+          - engine_path: "{eng_yaml}"
+            name: test
+            go_options:
+              nodes: 1000
+        rules:
+          initial_positions:
+            type: file
+            source: {tmp_path}/sfens.txt
+          time_control:
+            node_limit: 100
+        spsa:
+          space: {space}
+          num_updates: 1
+          num_parallel: 1
+        """,
+    )
+    write(tmp_path, "sfens.txt", "startpos\n")
+
+    cfg = load_spsa_run_config(cfg_yaml)
+
+    assert cfg.baseline[0].go_options == {"nodes": 1000}
+    assert cfg.tuned[0].go_options == {"nodes": 1000}
+
+
+def test_spsa_engine_rejects_timing_go_options(tmp_path: Path) -> None:
+    eng_yaml = write(
+        tmp_path,
+        "cfg/engine.yaml",
+        """
+        engine_path: "/bin/echo"
+        """,
+    )
+    space = write_space(tmp_path)
+    cfg_yaml = write(
+        tmp_path,
+        "cfg/spsa.yaml",
+        f"""
+        experiment_name: exp
+        engines:
+          - engine_path: "{eng_yaml}"
+            name: test
+            go_options:
+              movetime: 1000
+        rules:
+          initial_positions:
+            type: file
+            source: {tmp_path}/sfens.txt
+          time_control:
+            node_limit: 100
+        spsa:
+          space: {space}
+          num_updates: 1
+          num_parallel: 1
+        """,
+    )
+    write(tmp_path, "sfens.txt", "startpos\n")
+
+    with pytest.raises(ValueError, match="engines\\[0\\]\\.go_options\\.movetime"):
+        load_spsa_run_config(cfg_yaml)
+
+
 def test_spsa_engine_with_time_control_initializes(tmp_path: Path) -> None:
     # Engine YAML with time_control should allow orchestrator initialization
     eng_yaml = write(

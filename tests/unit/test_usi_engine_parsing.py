@@ -156,13 +156,13 @@ def test_engine_args_requires_iterable() -> None:
         )
 
 
-def test_env_requires_mapping() -> None:
+def test_environment_requires_mapping() -> None:
     with pytest.raises(TypeError):
         UsiEngineConfig.from_mapping(
             {
                 "name": "test",
                 "engine_path": "/tmp/dummy",
-                "env": ["INVALID"],
+                "environment": ["INVALID"],
             }
         )
 

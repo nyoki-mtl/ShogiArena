@@ -8,12 +8,14 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol
 
+from shogiarena._core.contexts.game_session.application.engine.option_coercion import EngineOptionMap
 from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import EngineLifecyclePolicy
 from shogiarena._core.contexts.instances.application.instance_models import Instance
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
 from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine
 from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.serialization import json_serialize
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,7 @@ class _EngineSpec(Protocol):
     instance_id: str | None
     cpu_affinity: tuple[int, ...] | None
     handshake_timeout: float | None
+    go_options: EngineOptionMap
 
 
 class EnginePool:
@@ -210,6 +213,7 @@ class EnginePool:
                     spec = self._engine_configs.get(base_name)
                     instance_id = spec.instance_id if spec is not None else None
                     affinity = spec.cpu_affinity if spec is not None else None
+                    go_options = _engine_go_options(spec)
                     if instance_override is not None:
                         instance_id = instance_override
                     instance = self._resolve_instance(engine_name, instance_override)
@@ -235,6 +239,7 @@ class EnginePool:
                                 config_path,
                                 timeout=handshake_timeout,
                                 extra_options=extra_options,
+                                go_options=go_options,
                                 engine_name=engine_name,
                                 instance_id=instance_id,
                                 instance_pool=self._instance_pool,
@@ -348,6 +353,12 @@ class EnginePool:
         if first is a:
             return (first_engine, second_engine)
         return (second_engine, first_engine)
+
+
+def _engine_go_options(spec: _EngineSpec | None) -> JsonObject | None:
+    if spec is None or not spec.go_options:
+        return None
+    return {str(key): json_serialize(value) for key, value in spec.go_options.items()}
 
 
 __all__ = [

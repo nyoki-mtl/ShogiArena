@@ -17,9 +17,10 @@ from shogiarena._core.platform.engine_runtime.config_parsing import (
     _render_template,
     _UsiEngineMappingInput,
     normalize_engine_args,
+    normalize_go_options,
     normalize_option_validation,
     to_bool,
-    to_env_dict,
+    to_environment_dict,
     to_float,
     to_string_dict,
 )
@@ -111,11 +112,11 @@ class UsiEngineConfig:
 
         engine_args = normalize_engine_args(parsed.engine_args)
 
-        environment = to_env_dict(parsed.env)
+        environment = to_environment_dict(parsed.environment)
 
         options = to_string_dict(parsed.options, field="options")
 
-        go_options = to_string_dict(parsed.go_options, field="go_options")
+        go_options = normalize_go_options(parsed.go_options, field="go_options")
 
         build_options = to_string_dict(parsed.build_options, field="build_options")
         is_early_ponder_enabled = to_bool(parsed.is_early_ponder_enabled, field="enable_early_ponder")
@@ -289,7 +290,7 @@ class UsiEngineConfig:
                 )
         new_go_options = self.go_options.copy()
         if go_options is not None:
-            go_option_overrides = to_string_dict(go_options, field="go_options overrides")
+            go_option_overrides = normalize_go_options(go_options, field="go_options overrides")
             for key, value in go_option_overrides.items():
                 new_go_options[key] = value
         new_is_early_ponder_enabled = self.is_early_ponder_enabled

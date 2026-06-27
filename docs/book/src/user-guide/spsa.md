@@ -33,6 +33,7 @@ rules:
     increment_ms: 1000
 
 sprt:
+  model: gsprt-pentanomial-v1
   elo0: 0.0
   elo1: 5.0
   alpha: 0.05
@@ -40,6 +41,12 @@ sprt:
   min_games: 0
   max_games: 1000
 ```
+
+`sprt.model` は `gsprt-trinomial-v1` または `gsprt-pentanomial-v1` です。既定は `gsprt-trinomial-v1` ですが、同じ局面を先後入れ替えで 2 局ずつ使う設定では `gsprt-pentanomial-v1` を選ぶと、color-reversed pair の五項分布を使って LLR を更新できます。
+
+`min_games` は、LLR が境界を超えていても指定局数までは判定を確定しない gate です。短いテストで偶然の序盤結果に引っ張られたくない場合に使います。
+
+SPRT の resume hash には model / definition が含まれます。途中 run を再開する場合、異なる `sprt.model` や復元不能な SPRT state では fail closed し、古い統計 model として暗黙に再開しません。
 
 結果の目安:
 

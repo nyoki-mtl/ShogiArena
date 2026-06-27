@@ -151,6 +151,22 @@ def test_time_control_validation_errors():
         GameClock(TimeControlLimits(time_ms=1000, expiry_margin_ms=-1))
 
 
+def test_time_control_rejects_depth_alias_with_actionable_hint() -> None:
+    with pytest.raises(ValueError, match="depth.*depth_limit"):
+        TimeControlLimits.model_validate(
+            {
+                "depth": 9,
+                "expiry_margin_ms": 500,
+                "max_wait_ms": 600_000,
+            }
+        )
+
+
+def test_time_control_rejects_unknown_keys() -> None:
+    with pytest.raises(ValueError, match="unexpected"):
+        TimeControlLimits.model_validate({"time_ms": 1000, "unexpected": True})
+
+
 def test_allow_timeout_uses_finite_cap():
     # Soft overtime returns a finite timeout (min(base, max_wait))
     limits = TimeControlLimits(

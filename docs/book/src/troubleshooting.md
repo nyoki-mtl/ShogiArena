@@ -76,13 +76,20 @@ chmod +x /path/to/engine
 
 **原因**: エンジンの起動に時間がかかりすぎている（ニューラルネットワークモデルの読み込みなど）。
 
-**解決**: `startup_timeout_sec` を長くする。
+**解決**: engine 設定の `handshake_timeout` を長くする。
 
 ```yaml
 # engine.yaml
 name: "SlowEngine"
 engine_path: "/path/to/engine"
-startup_timeout_sec: 60  # デフォルトは 10 秒
+handshake_timeout: 60  # 秒
+```
+
+トーナメント全体の既定値として指定したい場合は run 設定側に書きます。
+
+```yaml
+system:
+  engine_handshake_timeout: 60
 ```
 
 #### エラー: `error while loading shared libraries`
@@ -189,8 +196,8 @@ shogiarena run tournament tournament.yaml --dry-run
 
 2. エンジンのログを確認
    ```bash
-   # ログディレクトリを確認
-   cat {output_dir}/tournament/.../logs/game_*.log
+   shogiarena results summary /path/to/run --format json
+   ls /path/to/run/transcripts
    ```
 
 3. エンジンを単体でテスト
@@ -264,7 +271,7 @@ shogiarena run tournament tournament.yaml --dry-run
 
 ### ダッシュボードが更新されない
 
-**原因**: Server-Sent Events (SSE) の接続が切れている。
+**原因**: Live WebSocket または画面別の stream 接続が切れている。
 
 **解決**:
 1. ブラウザをリロード（F5）
@@ -272,8 +279,11 @@ shogiarena run tournament tournament.yaml --dry-run
 2. ブラウザのコンソールでエラーを確認
    - F12 キー → Console タブ
 
-3. ネットワークタブで SSE 接続を確認
-   - F12 キー → Network タブ → `/api/events` を確認
+3. Network タブで接続を確認
+   - Live View: `/ws`
+   - WebSocket diagnostics: `/api/ws/diagnostics`
+   - Tournament summary: `/api/tournament/summary/stream`
+   - SPSA: `/api/spsa/.../stream`
 
 ## リモート実行関連
 
@@ -349,7 +359,7 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 **解決**:
 1. データベースを削除して再実行（**データは失われます**）
    ```bash
-   rm {output_dir}/tournament/.../game.db
+   rm {output_dir}/tournament/runs/.../game.db
    ```
 
 2. またはバックアップから復元
@@ -443,7 +453,9 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 shogiarena config show
 
 # 出力ディレクトリを確認
-ls {output_dir}/runs/
+ls {output_dir}/tournament/runs/
+ls {output_dir}/spsa/runs/
+ls {output_dir}/generate/runs/
 ```
 
 デフォルトは以下の通り：

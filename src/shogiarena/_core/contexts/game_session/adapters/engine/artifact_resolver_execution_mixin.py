@@ -152,12 +152,14 @@ class ArtifactResolverBuildExecutionMixin(ArtifactResolverConfigMixin, ArtifactR
             tune_parameters(tune_path, params_file, str(source_dir))
             has_applied_tune_patch = True
 
-        env_cfg = cfg.get("env") or {}
+        if "env" in cfg:
+            raise ValueError("build_config key 'env' is not supported; use 'environment'")
+        env_cfg = cfg.get("environment") or {}
         if not isinstance(env_cfg, Mapping):
-            raise TypeError("build_config.env must be a mapping")
+            raise TypeError("build_config.environment must be a mapping")
         env_expanded = self._expand_value(env_cfg, ctx)
         if not isinstance(env_expanded, Mapping):
-            raise TypeError("build_config.env must resolve to a mapping")
+            raise TypeError("build_config.environment must resolve to a mapping")
         env = os.environ.copy()
         for key, value in env_expanded.items():
             if value is None:

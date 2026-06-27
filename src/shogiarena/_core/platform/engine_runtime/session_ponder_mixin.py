@@ -11,6 +11,7 @@ from typing import Any
 from rshogi.core import Move
 
 from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkRequest
+from shogiarena._core.platform.engine_runtime.go_options import apply_go_options_defaults
 from shogiarena._core.platform.engine_runtime.usi_engine_session_models import (
     InfoHandlerFn,
     PonderHandle,
@@ -61,6 +62,7 @@ class AsyncUsiEnginePonderMixin:
         self._ensure_state({UsiEngineState.READY})
         if self._ponder_handle is not None:
             raise RuntimeError("Pondering already active")
+        request = apply_go_options_defaults(request, getattr(self.config, "go_options", None))
         request_with_ponder = request if request.is_ponder else replace(request, is_ponder=True)
         sanitized_request = request_with_ponder
         should_require_timings = False

@@ -52,6 +52,8 @@ shogiarena dashboard serve --run-dir /path/to/run --port 9090
 
 Book タブの out-of-book は「実着手が指定 book 上の候補手集合に含まれたか」を後から観測する指標です。エンジンが実際に book 由来で指したことを断定するものではありません。
 
+`Live View` と対局詳細の timing では、持ち時間に課金された `wall_time_ms` と、engine の `think()` 呼び出しから `bestmove` 回収までを測った `engine_wall_time_ms` を分けて扱います。engine throughput や wall NPS の比較では `engine_wall_time_ms` を優先してください。
+
 ## run ディレクトリ
 
 ダッシュボードは run ディレクトリ内の成果物を読みます。代表的なファイルは次の通りです。
@@ -65,7 +67,7 @@ run/
 └── records/
 ```
 
-`game.db` がない生成系 run では、run ディレクトリのメタデータと出力ファイルを中心に表示します。
+保存済み run を `shogiarena dashboard serve` で開く場合、現行 CLI は run ディレクトリ直下の `game.db` を必要とします。自己対局生成などで dashboard を使う場合も、`game.db` を含む run ディレクトリを指定してください。
 
 ## うまく表示されないとき
 

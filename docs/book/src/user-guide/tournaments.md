@@ -155,7 +155,7 @@ rules:
 `--run-dir` を指定した場合は、そのパスが run ディレクトリとして使われます。指定しない場合は、標準出力先に次の形で作られます。
 
 ```text
-{output_dir}/runs/<experiment>-<hash8>/YYYYMMDDHHMMSS/
+{output_dir}/tournament/runs/<experiment>-<hash8>/YYYYMMDDHHMMSS/
 ├── game.db
 ├── manifest.json
 ├── state.json
@@ -170,6 +170,17 @@ rules:
 shogiarena results summary /path/to/run
 shogiarena results summary /path/to/run --format csv
 ```
+
+### timing metrics
+
+各指し手には 2 種類の wall time が記録されます。
+
+| フィールド | 意味 |
+| --- | --- |
+| `wall_time_ms` | 持ち時間管理で課金された wall time |
+| `engine_wall_time_ms` | `think()` 呼び出しから `bestmove` 回収までの engine I/O 窓 |
+
+`engine_wall_time_ms` は `game.db` の `game_move.engine_wall_time_ms`、live/detail payload の `engine_wall_times_ms`、`results summary --format json` の timing metadata から確認できます。engine throughput や wall NPS を比較するときの既定 field は `engine_wall_time_ms` です。
 
 provenance の検証:
 

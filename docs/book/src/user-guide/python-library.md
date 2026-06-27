@@ -47,6 +47,130 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## 解析結果を読む
+
+`UsiThinkResult` は `bestmove` だけでなく、探索中に受け取った PV を保持します。代表 PV を選ぶ場合は `select_pv()` を使います。
+
+```python
+import asyncio
+
+from shogiarena.engine import UsiThinkRequest, create_engine
+
+
+async def main() -> None:
+    async with await create_engine("engine.yaml") as engine:
+        result = await engine.think(
+            sfen="startpos",
+            request=UsiThinkRequest(depth=12),
+        )
+        pv = result.select_pv(depth=12, multipv=1)
+        if pv is not None and pv.eval is not None:
+            print(pv.eval.kind, pv.eval.value, pv.eval.as_dict())
+
+
+asyncio.run(main())
+```
+
+`UsiEvalValue.kind` は `cp` または `mate` です。`value` は centipawn または詰み手数を符号付きで返すため、`score` 文字列を利用側で再 parse する必要はありません。
+
+## 固定局面をまとめて解析する
+
+単一 engine process を再利用して複数局面を解析する場合は `analyze_positions()` を使います。各局面の前に `usinewgame`、`Clear Hash`、`isready` を入れるかは `UsiAnalyzeResetPolicy` で制御できます。
+
+```python
+import asyncio
+
+from shogiarena.engine import (
+    UsiAnalyzePosition,
+    UsiAnalyzeResetPolicy,
+    UsiThinkRequest,
+    create_engine,
+    move_from_usi,
+)
+
+
+async def main() -> None:
+    async with await create_engine("engine.yaml") as engine:
+        items = await engine.analyze_positions(
+            (
+                UsiAnalyzePosition(sfen="startpos"),
+                UsiAnalyzePosition(sfen="startpos", moves=(move_from_usi("7g7f"),)),
+            ),
+            request=UsiThinkRequest(depth=10),
+            reset_policy=UsiAnalyzeResetPolicy(
+                new_game=True,
+                clear_hash_if_available=True,
+                isready_before_each=True,
+            ),
+            failure_policy="collect",
+        )
+        for item in items:
+            if item.result is None:
+                print(item.index, "failed", item.error)
+                continue
+            print(item.index, item.result.bestmove, item.elapsed_ms)
+
+
+asyncio.run(main())
+```
+
+## 診断情報を集める
+
+engine process の PID や USI I/O を確認したい場合は lifecycle handler と I/O handler を登録します。handler は `async with` に入る前に登録すると、起動直後のイベントも拾えます。
+
+```python
+import asyncio
+
+from shogiarena.engine import EngineLifecycleEvent, UsiIoEvent, UsiThinkRequest, create_engine
+
+
+def on_lifecycle(event: EngineLifecycleEvent) -> None:
+    if event.name == "process_started" and event.process_info is not None:
+        print("pid", event.process_info.pid)
+
+
+def on_io(event: UsiIoEvent) -> None:
+    if event.direction == "stderr":
+        print("stderr", event.line)
+
+
+async def main() -> None:
+    engine = await create_engine(
+        "engine.yaml",
+        collect_info_strings=True,
+        collect_raw_io=True,
+        collect_stderr=True,
+    )
+    engine.register_lifecycle_handler(on_lifecycle)
+    engine.register_io_log_handler(on_io)
+
+    async with engine:
+        result = await engine.think(
+            sfen="startpos",
+            request=UsiThinkRequest(movetime=1_000),
+        )
+        print(result.bestmove)
+
+
+asyncio.run(main())
+```
+
+`UsiIoEvent` は `direction`、`line`、`phase`、`timestamp_ms` などの typed field を持ちます。Mapping 風の `dir` / `ts` / `state` key には依存しないでください。
+
+## USI option を適用する
+
+起動後に追加で option を送る場合は `apply_engine_options()` を使います。通常は strict validation が有効ですが、YaneuraOu 系の `BookFile` のように combo option の候補一覧に任意ファイル名が出ない場合だけ、option 単位で緩和できます。
+
+```python
+await engine.apply_engine_options(
+    {"BookFile": "user_book1.db"},
+    clear_hash=False,
+    validation={"BookFile": "allow_unlisted_combo_value"},
+)
+```
+
+`get_usi_options()` は `Mapping[str, UsiOption]` を返します。JSON snapshot ではないため、保存する場合は必要な field を明示して変換してください。
+
 ## トーナメントを実行する
 
 ```python

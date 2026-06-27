@@ -8,6 +8,7 @@ import types
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import pytest
 import yaml
 
 from shogiarena._core.contexts.game_session.adapters.engine import (
@@ -17,6 +18,7 @@ from shogiarena._core.contexts.game_session.adapters.engine import (
     artifact_resolver_support_mixin as resolver_support_module,
 )
 from shogiarena._core.contexts.game_session.adapters.engine.artifact_resolver import ArtifactResolver
+from shogiarena._core.contexts.game_session.adapters.engine.artifact_resolver_types import ArtifactId
 from shogiarena._core.shared.kernel.settings_loading.settings_models import RepoSettings
 
 
@@ -200,6 +202,48 @@ def test_stream_build_logs_env(monkeypatch) -> None:
     assert ArtifactResolver._stream_build_logs_enabled() is False
     monkeypatch.setenv("SHOGIARENA_STREAM_BUILD_LOGS", "1")
     assert ArtifactResolver._stream_build_logs_enabled() is True
+
+
+def test_build_config_rejects_env_key(monkeypatch, tmp_path) -> None:
+    repo_root = tmp_path / "repos" / "YaneuraOu"
+    source_dir = repo_root / "source"
+    source_dir.mkdir(parents=True)
+    engine_root = tmp_path / "engines"
+    engine_root.mkdir()
+    build_config = tmp_path / "builds" / "yaneuraou.yaml"
+    build_config.parent.mkdir(parents=True)
+    build_config.write_text("commands: []\nartifacts: []\n", encoding="utf-8")
+
+    def fake_check_output(cmd, cwd=None, env=None):
+        if cmd[:2] == ["git", "status"]:
+            return b""
+        if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return b"main\n"
+        if cmd[:2] == ["git", "rev-parse"]:
+            return b"a5ee2786\n"
+        raise AssertionError(f"unexpected check_output: {cmd}")
+
+    monkeypatch.setattr("subprocess.check_output", fake_check_output)
+    monkeypatch.setattr(ArtifactResolver, "_run_logged_subprocess", staticmethod(lambda *args, **kwargs: None))
+
+    resolver = ArtifactResolver()
+    cfg = {
+        "work_dir": "{repo.path}",
+        "source_dir": "{repo.path}/source",
+        "env": {"CUDA_HOME": "/usr/local/cuda"},
+        "commands": [],
+        "artifacts": [],
+    }
+
+    with pytest.raises(ValueError, match="build_config key 'env'"):
+        resolver._build_from_yaml(  # noqa: SLF001
+            engine_root,
+            ArtifactId.parse("YaneuraOu/a5ee2786"),
+            {"commit": "a5ee2786"},
+            repo=RepoSettings(name="YaneuraOu", path=repo_root, url=None, build_config=build_config),
+            artifact_id="YaneuraOu/a5ee2786",
+            cfg=cfg,
+        )
 
 
 def test_run_logged_subprocess_streams_output(monkeypatch, tmp_path) -> None:
