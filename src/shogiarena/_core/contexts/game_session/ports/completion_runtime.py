@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, MutableMapping, MutableSet
 from dataclasses import dataclass
 from typing import Protocol, TypedDict
 
-import rshogi.record
+import rsshogi.record
 
 from shogiarena._core.shared.kernel.service_ports import (
     DatabaseServicePort,
@@ -20,7 +20,7 @@ class CompletionRecordWriterPort(Protocol):
 
     def append_record(
         self,
-        record: rshogi.record.GameRecord,
+        record: rsshogi.record.Record,
         *,
         game_id: str | None = None,
         game_type: str | None = None,

@@ -1,15 +1,15 @@
 # Project Structure
 
-このドキュメントでは、ShogiArena の現在のディレクトリ構成と責務境界を説明します。
+ShogiArena のディレクトリ構成と、各層の責務境界をまとめます。
 
-## 現在の基本方針
+## 2 層構成
 
-ShogiArena は次の 2 層で整理しています。
+ShogiArena のパッケージは次の 2 層で整理しています。
 
-- `src/shogiarena/_core/**`: 実装正本
-- `src/shogiarena/*.py`: 利用者向け facade
+- `src/shogiarena/_core/**`：実装正本
+- `src/shogiarena/*.py`：利用者向け facade
 
-つまり、アーキテクチャ上の `contexts / platform / interfaces / shared` は残しつつ、それらを `_core` の下に置いています。
+アーキテクチャ上の区分である `contexts`、`platform`、`interfaces`、`shared` はそのまま残し、まとめて `_core` の下に置いています。
 
 ## Directory Layout
 
@@ -27,20 +27,21 @@ src/shogiarena/
     └── shared/kernel/
 ```
 
-## 公開面
+## 利用者に公開する import パス
 
-利用者向けとして説明・保証する import は次です。
+ドキュメントで説明し、互換性を保つ対象とするのは次の 4 モジュールです。
 
 - `shogiarena.engine`
 - `shogiarena.tournament`
 - `shogiarena.cli`
 - `shogiarena.composition`
 
-`shogiarena._core.*` は内部 import です。テストや実装では使ってもよいですが、外部利用者には勧めません。
+`shogiarena._core.*` は内部 import です。
+テストや実装からは使ってかまいませんが、外部利用者には勧めません。
 
-## _core の構造
+## context 内部の責務分離
 
-各 context は下記の責務分離を採用します。
+各 context は下記の構成を採用します。
 
 ```text
 _core/contexts/<name>/
@@ -52,24 +53,26 @@ _core/contexts/<name>/
 
 ## レイヤ責務
 
-- `_core.contexts`: 業務ルールとユースケース
-- `_core.platform`: DB / FS / process / network などの共通 I/O
-- `_core.interfaces`: CLI / dashboard / 境界パーサ
-- `_core.shared.kernel`: 最小共通核
+- `_core.contexts`：業務ルールとユースケース
+- `_core.platform`：DB、ファイルシステム、プロセス、ネットワークなどの共通 I/O
+- `_core.interfaces`：CLI、dashboard、境界パーサ
+- `_core.shared.kernel`：最小共通核
 
 ## facade の役割
 
 公開モジュールは薄い再 export と helper に限定します。
+これによって次を満たします。
 
 - 実装の置き場所を隠す
 - 利用者に推奨 import パスを与える
 - `_core` を public API に見せない
 
-facade で重い wiring を持ち込むことは避け、依存グラフの正本は composition root に置きます。
+facade には重い wiring を持ち込みません。
+依存グラフの正本は composition root に置きます。
 
 ## composition root
 
-標準配線の正本は次です。
+標準配線の正本は次の 2 つです。
 
 - `shogiarena.composition.build_default_root`
 - `shogiarena._core.interfaces.composition_root.default_root`

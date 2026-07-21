@@ -60,7 +60,7 @@ class _UsiEngineIoInput(BaseModel):
 
 
 class _UsiEngineMappingInput(BaseModel):
-    model_config = ConfigDict(extra="allow", populate_by_name=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     name: OptionalText = None
     engine_path: OptionalText = None
@@ -86,6 +86,11 @@ class _UsiEngineMappingInput(BaseModel):
     should_skip_isready_lock_if_exists: BoolLike = Field(default=False, alias="isready_lock_skip_if_exists")
     io: _UsiEngineIoInput = Field(default_factory=_UsiEngineIoInput)
     option_validation: _OptionValidationInput = None
+    # sealed artifact config が provenance として書き出す tournament 側の項目。
+    # USI engine の起動には使わないが、宣言しておかないと extra="forbid" が
+    # 自分たちが生成した config を拒否してしまう。
+    options_overlays: StringListLike = None
+    path_options: StringListLike = None
 
     @model_validator(mode="before")
     @classmethod

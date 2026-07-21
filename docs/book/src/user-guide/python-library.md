@@ -1,6 +1,7 @@
 # Python ライブラリ
 
-ShogiArena は CLI だけでなく Python からも利用できます。正式な公開入口は `shogiarena.engine` と `shogiarena.tournament` が中心です。
+ShogiArena は CLI だけでなく Python からも利用できます。
+公開入口の中心は `shogiarena.engine` と `shogiarena.tournament` です。
 
 ## エンジンを起動する
 
@@ -49,7 +50,8 @@ asyncio.run(main())
 
 ## 解析結果を読む
 
-`UsiThinkResult` は `bestmove` だけでなく、探索中に受け取った PV を保持します。代表 PV を選ぶ場合は `select_pv()` を使います。
+`UsiThinkResult` は `bestmove` だけでなく、探索中に受け取った PV を保持します。
+代表 PV を選ぶ場合は `select_pv()` を使います。
 
 ```python
 import asyncio
@@ -71,11 +73,13 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`UsiEvalValue.kind` は `cp` または `mate` です。`value` は centipawn または詰み手数を符号付きで返すため、`score` 文字列を利用側で再 parse する必要はありません。
+`UsiEvalValue.kind` は `cp` または `mate` です。
+`value` は centipawn または詰み手数を符号付きで返すため、`score` 文字列を利用側で再 parse する必要はありません。
 
 ## 固定局面をまとめて解析する
 
-単一 engine process を再利用して複数局面を解析する場合は `analyze_positions()` を使います。各局面の前に `usinewgame`、`Clear Hash`、`isready` を入れるかは `UsiAnalyzeResetPolicy` で制御できます。
+単一 engine process を再利用して複数局面を解析する場合は `analyze_positions()` を使います。
+各局面の前に `usinewgame`、`Clear Hash`、`isready` を入れるかどうかは `UsiAnalyzeResetPolicy` で制御します。
 
 ```python
 import asyncio
@@ -116,7 +120,8 @@ asyncio.run(main())
 
 ## 診断情報を集める
 
-engine process の PID や USI I/O を確認したい場合は lifecycle handler と I/O handler を登録します。handler は `async with` に入る前に登録すると、起動直後のイベントも拾えます。
+engine process の PID や USI I/O を確認したい場合は lifecycle handler と I/O handler を登録します。
+handler を `async with` に入る前に登録すると、起動直後のイベントも拾えます。
 
 ```python
 import asyncio
@@ -155,11 +160,14 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`UsiIoEvent` は `direction`、`line`、`phase`、`timestamp_ms` などの typed field を持ちます。Mapping 風の `dir` / `ts` / `state` key には依存しないでください。
+`UsiIoEvent` は `direction`、`line`、`phase`、`timestamp_ms` などの typed field を持ちます。
+Mapping 風の `dir`、`ts`、`state` という key は公開契約ではないため、利用側で依存しないでください。
 
 ## USI option を適用する
 
-起動後に追加で option を送る場合は `apply_engine_options()` を使います。通常は strict validation が有効ですが、YaneuraOu 系の `BookFile` のように combo option の候補一覧に任意ファイル名が出ない場合だけ、option 単位で緩和できます。
+起動後に追加で option を送る場合は `apply_engine_options()` を使います。
+通常は strict validation が有効です。
+YaneuraOu 系の `BookFile` のように、combo option の候補一覧に任意ファイル名が出ない場合だけ、option 単位で検証を緩和できます。
 
 ```python
 await engine.apply_engine_options(
@@ -169,7 +177,8 @@ await engine.apply_engine_options(
 )
 ```
 
-`get_usi_options()` は `Mapping[str, UsiOption]` を返します。JSON snapshot ではないため、保存する場合は必要な field を明示して変換してください。
+`get_usi_options()` は `Mapping[str, UsiOption]` を返します。
+JSON snapshot ではないため、保存する場合は必要な field を明示して変換してください。
 
 ## トーナメントを実行する
 
@@ -243,8 +252,9 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-## 公開対象外
+## 内部実装と未公開の領域
 
-`shogiarena._core` 配下は内部実装です。開発者向けの説明で登場することはありますが、アプリケーションコードから直接 import しないでください。
+`shogiarena._core` 配下は内部実装です。
+開発者向けの説明で登場することはありますが、アプリケーションコードから直接 import しないでください。
 
-SPSA は現時点では CLI 中心です。Python からの正式な公開 API は固定していません。
+SPSA は現時点では CLI 中心で、Python からの公開 API は固定していません。

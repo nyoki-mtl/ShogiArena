@@ -64,3 +64,70 @@ def test_usi_transcript_commands_and_info_mode_keeps_all_info(tmp_path: Path) ->
     assert "info depth 1 score cp 10 lowerbound" in text
     assert "info depth 2 score cp 20" in text
     assert "bestmove 3c3d" in text
+
+
+def test_usi_transcript_stops_at_byte_cap_with_explicit_marker(tmp_path: Path) -> None:
+    path = tmp_path / "bounded.log"
+    writer = UsiTranscriptWriter(
+        path=path,
+        game_id="g0001",
+        role="black",
+        engine_name="engine-a",
+        initial_sfen="startpos",
+        detail="commands_and_info",
+        max_bytes=512,
+    )
+
+    for index in range(100):
+        writer.handle(_event("in", f"info depth {index} string {'x' * 80}", timestamp_ms=index))
+    writer.close()
+
+    data = path.read_bytes()
+    text = data.decode("utf-8")
+    assert len(data) <= 512
+    assert "marker black truncated max_bytes=512" in text
+    assert "info depth 99" not in text
+
+
+def test_usi_transcript_never_truncates_silently_with_a_tiny_cap(tmp_path: Path) -> None:
+    # 打ち切りマーカーより小さい上限を渡されても、打ち切りの事実は必ず記録する。
+    path = tmp_path / "tiny.log"
+    writer = UsiTranscriptWriter(
+        path=path,
+        game_id="g0001",
+        role="black",
+        engine_name="engine-a",
+        initial_sfen="startpos",
+        detail="commands_and_info",
+        max_bytes=1,
+    )
+
+    for index in range(10):
+        writer.handle(_event("in", f"info depth {index}", timestamp_ms=index))
+    writer.close()
+
+    text = path.read_text(encoding="utf-8")
+    assert "marker black truncated" in text
+
+
+def test_usi_transcript_omits_close_marker_when_truncated(tmp_path: Path) -> None:
+    # 打ち切り時は close marker を書かないので、読み手は
+    # 「truncated あり + close なし」で不完全な transcript を判別できる。
+    path = tmp_path / "no-close.log"
+    writer = UsiTranscriptWriter(
+        path=path,
+        game_id="g0001",
+        role="white",
+        engine_name="engine-b",
+        initial_sfen="startpos",
+        detail="commands_and_info",
+        max_bytes=512,
+    )
+
+    for index in range(100):
+        writer.handle(_event("in", f"info depth {index} string {'x' * 80}", timestamp_ms=index))
+    writer.close()
+
+    text = path.read_text(encoding="utf-8")
+    assert "marker white truncated" in text
+    assert "marker white close" not in text

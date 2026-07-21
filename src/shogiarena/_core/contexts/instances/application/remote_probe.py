@@ -22,19 +22,22 @@ async def detect_remote_target_cpu(instance: Instance) -> str:
         return _CPU_CACHE[key]
     t = create_transport(instance)
     await t.connect()
-    rc1, text, err1 = await t.run("cat /proc/cpuinfo")
-    if rc1 != 0:
-        raise RuntimeError(f"Failed to read /proc/cpuinfo on remote: {err1}")
-    rc2, arch, err2 = await t.run("uname -m")
-    if rc2 != 0:
-        raise RuntimeError(f"Failed to read arch via uname -m on remote: {err2}")
-    arch = arch.strip()
-    info = parse_linux_cpuinfo_text(text)
-    if not info or not isinstance(info, dict):
-        raise RuntimeError("Failed to parse remote /proc/cpuinfo")
-    if arch:
-        info["arch_string_raw"] = arch
-    info["system"] = "linux"
-    cpu = map_info_to_target_cpu(info)
-    _CPU_CACHE[key] = cpu
-    return cpu
+    try:
+        rc1, text, err1 = await t.run("cat /proc/cpuinfo")
+        if rc1 != 0:
+            raise RuntimeError(f"Failed to read /proc/cpuinfo on remote: {err1}")
+        rc2, arch, err2 = await t.run("uname -m")
+        if rc2 != 0:
+            raise RuntimeError(f"Failed to read arch via uname -m on remote: {err2}")
+        arch = arch.strip()
+        info = parse_linux_cpuinfo_text(text)
+        if not info or not isinstance(info, dict):
+            raise RuntimeError("Failed to parse remote /proc/cpuinfo")
+        if arch:
+            info["arch_string_raw"] = arch
+        info["system"] = "linux"
+        cpu = map_info_to_target_cpu(info)
+        _CPU_CACHE[key] = cpu
+        return cpu
+    finally:
+        await t.close()

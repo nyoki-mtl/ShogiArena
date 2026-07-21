@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import posixpath
+import re
 import shlex
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -14,8 +16,14 @@ from asyncssh.connection import SSHClientConnection
 from asyncssh.sftp import SFTPClient
 
 from shogiarena._core.contexts.instances.application.instance_models import Instance, InstanceType
+from shogiarena._core.contexts.instances.ports.secret_transport import (
+    RemoteSecretCommandFactory,
+    RemoteSecretFileHandle,
+    RemoteSecretFileRequest,
+)
 
 logger = logging.getLogger(__name__)
+_SECRET_FILE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 
 class SshTransportError(RuntimeError):
@@ -50,6 +58,44 @@ class SshTransport:
     ) -> AsyncIterator[str]:  # pragma: no cover - interface
         raise NotImplementedError
 
+    async def run_with_secret_files(
+        self,
+        command_factory: RemoteSecretCommandFactory,
+        secret_files: Sequence[RemoteSecretFileRequest],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> tuple[int, str, str]:
+        """Run a command with transport-managed temporary secret files."""
+
+        secret_handles, temp_dir = await self._prepare_secret_files(secret_files)
+        try:
+            command = command_factory(secret_handles)
+            return await self.run(command, env=env, timeout=timeout)
+        finally:
+            await self._cleanup_secret_temp_dir(temp_dir)
+
+    async def run_stream_lines_with_secret_files(
+        self,
+        command_factory: RemoteSecretCommandFactory,
+        secret_files: Sequence[RemoteSecretFileRequest],
+        *,
+        env: dict[str, str] | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream command output with transport-managed temporary secret files."""
+
+        secret_handles, temp_dir = await self._prepare_secret_files(secret_files)
+        line_iter: AsyncIterator[str] | None = None
+        try:
+            command = command_factory(secret_handles)
+            line_iter = self.run_stream_lines(command, env=env)
+            async for line in line_iter:
+                yield line
+        finally:
+            if line_iter is not None:
+                await self._close_async_iterator(line_iter)
+            await self._cleanup_secret_temp_dir(temp_dir)
+
     async def mkdir(self, path: str, *, is_existing_ok: bool = True) -> None:  # pragma: no cover - interface
         raise NotImplementedError
 
@@ -75,6 +121,85 @@ class SshTransport:
                 Path(local_temp_path).unlink(missing_ok=True)
             except OSError as exc:
                 logger.debug("Failed to remove temporary file %s: %s", local_temp_path, exc)
+
+    async def _prepare_secret_files(
+        self, secret_files: Sequence[RemoteSecretFileRequest]
+    ) -> tuple[Mapping[str, RemoteSecretFileHandle], str | None]:
+        if not secret_files:
+            return {}, None
+        temp_dir = await self._create_secret_temp_dir()
+        handles: dict[str, RemoteSecretFileHandle] = {}
+        try:
+            for request in secret_files:
+                self._validate_secret_file_request(request)
+                remote_path = posixpath.join(temp_dir, request.file_id)
+                await self._write_secret_file(request, remote_path)
+                handles[request.file_id] = RemoteSecretFileHandle(
+                    file_id=request.file_id,
+                    remote_path=remote_path,
+                )
+            return handles, temp_dir
+        except BaseException:
+            await self._cleanup_secret_temp_dir(temp_dir)
+            raise
+
+    async def _create_secret_temp_dir(self) -> str:
+        command = (
+            'tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/shogiarena-secret.XXXXXXXXXX") '
+            '&& chmod 700 "$tmp_dir" && printf "%s" "$tmp_dir"'
+        )
+        rc, stdout, stderr = await self.run(command)
+        if rc != 0 or not stdout.strip():
+            message = stderr or stdout or "mktemp failed"
+            raise SshTransportError(f"Failed to create remote secret directory: {message}")
+        return stdout.strip()
+
+    async def _write_secret_file(self, request: RemoteSecretFileRequest, remote_path: str) -> None:
+        with NamedTemporaryFile(delete=False) as nf:
+            nf.write(request.payload)
+            local_temp_path = Path(nf.name)
+        try:
+            await self.put_file(local_temp_path, remote_path)
+            rc, out, err = await self.run(f"chmod {request.mode:o} {shlex.quote(remote_path)}")
+            if rc != 0:
+                message = err or out or "chmod failed"
+                raise SshTransportError(f"Failed to protect remote secret file: {message}")
+        finally:
+            try:
+                local_temp_path.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.debug("Failed to remove local secret temp file %s: %s", local_temp_path, exc)
+
+    async def _cleanup_secret_temp_dir(self, temp_dir: str | None) -> None:
+        if temp_dir is None:
+            return
+        try:
+            rc, out, err = await self.run(f"rm -rf -- {shlex.quote(temp_dir)}")
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.debug("Failed to remove remote secret directory: %s", exc)
+            return
+        if rc != 0:
+            logger.debug("Failed to remove remote secret directory: %s", err or out)
+
+    @staticmethod
+    def _validate_secret_file_request(request: RemoteSecretFileRequest) -> None:
+        if not _SECRET_FILE_ID_PATTERN.fullmatch(request.file_id):
+            raise ValueError(f"Invalid remote secret file id: {request.file_id}")
+        if request.mode <= 0 or request.mode > 0o700:
+            raise ValueError(f"Invalid remote secret file mode for {request.file_id}: {request.mode:o}")
+        if request.mode & 0o077:
+            raise ValueError(f"Remote secret file mode must not grant group/world access: {request.file_id}")
+        if not request.mode & 0o400:
+            raise ValueError(f"Remote secret file must be owner-readable: {request.file_id}")
+
+    @staticmethod
+    async def _close_async_iterator(iterator: AsyncIterator[str]) -> None:
+        closer = getattr(iterator, "aclose", None)
+        if closer is None:
+            return
+        close_result = closer()
+        if inspect.isawaitable(close_result):
+            await close_result
 
 
 @dataclass

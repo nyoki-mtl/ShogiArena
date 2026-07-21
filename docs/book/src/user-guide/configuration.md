@@ -24,7 +24,7 @@ shogiarena config init
 shogiarena config init --non-interactive \
   --output-dir /data/shogiarena/output \
   --engine-dir /data/shogiarena/engines \
-  --github-token ghp_xxxxxxxxxxxx
+  --github-token-env SHOGIARENA_GITHUB_TOKEN
 ```
 
 主なオプション:
@@ -35,12 +35,13 @@ shogiarena config init --non-interactive \
 | `--output-dir PATH` | 標準の出力ディレクトリ |
 | `--engine-dir PATH` | 標準のエンジン格納ディレクトリ |
 | `--settings PATH` | `settings.yaml` の出力先 |
-| `--github-token TOKEN` | private repo 用トークン |
+| `--github-token-env NAME` | private repo 用トークンを保持する環境変数名（既定 `SHOGIARENA_GITHUB_TOKEN`） |
 | `--force` | 既存ファイルを上書き |
 
 ## `config init` をしない場合
 
-`settings.yaml` がなくても動作します。このときは次のデフォルト値が使われます。
+`settings.yaml` がなくても動作します。
+絶対パスで書いた engine YAML と run YAML だけでも実行でき、このときは次のデフォルト値が使われます。
 
 | 項目 | 値 |
 | --- | --- |
@@ -67,9 +68,10 @@ overlays: (none)
 openbench: (none)
 ```
 
-## 設定を変更する方法
+## 設定の変更
 
-現在の CLI に `shogiarena config set ...` はありません。変更方法は次の 2 つです。
+現在の CLI に `shogiarena config set ...` はありません。
+変更方法は次の 2 つです。
 
 - `shogiarena config init --force ...` で再生成する
 - `settings.yaml` を直接編集する
@@ -119,18 +121,27 @@ records_output:
 
 ## GitHub トークン
 
-private repository にアクセスする場合は `github_token` を設定します。
+private repository にアクセスする場合は、トークン本体ではなく**トークンを保持する環境変数の名前**を設定します。
+`settings.yaml` にトークンそのものを書くことはできません。
 
 ```bash
-shogiarena config init --github-token ghp_xxxxxxxxxxxx
+shogiarena config init --github-token-env SHOGIARENA_GITHUB_TOKEN
 ```
 
 または `settings.yaml` を直接編集します。
 
 ```yaml
-github_token: ghp_xxxxxxxxxxxx
+github_token_env: SHOGIARENA_GITHUB_TOKEN
 ```
 
+トークン本体は実行時に環境変数から解決されます。
+
+```bash
+export SHOGIARENA_GITHUB_TOKEN=ghp_xxxxxxxxxxxx   # Linux / macOS
+$env:SHOGIARENA_GITHUB_TOKEN = "ghp_xxxxxxxxxxxx" # Windows PowerShell
+```
+
+`github_token_env` を省略した場合の既定値も `SHOGIARENA_GITHUB_TOKEN` です。
 トークンは秘密情報なので、リポジトリやログに含めないでください。
 
 ## OpenBench / ShogiBench
@@ -152,15 +163,10 @@ export OPENBENCH_PASSWORD='your-password'
 
 run 設定側に `openbench:` を書いた場合は、そちらが優先されます。
 
-## よくある質問
+## 複数の設定を使い分ける
 
-### 設定なしでも動作する？
-
-はい。絶対パスの engine YAML と run YAML だけでも実行できます。
-
-### 複数設定を切り替えたい
-
-設定ファイルパスを切り替える専用ランタイムオプションは現在ありません。通常は 1 つの `settings.yaml` を使い、run ごとの差分は `--output-dir` や個別 YAML 側で吸収します。
+設定ファイルパスを切り替える専用のランタイムオプションは現在ありません。
+通常は 1 つの `settings.yaml` を使い、run ごとの差分は `--output-dir` や個別 YAML 側で吸収します。
 
 ## 関連ドキュメント
 

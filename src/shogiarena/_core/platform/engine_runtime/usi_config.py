@@ -30,7 +30,7 @@ from shogiarena._core.shared.kernel.paths import maybe_resolve_path_option, reso
 from shogiarena._core.shared.kernel.serialization import json_serialize
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class UsiEngineConfig:
     """Normalized configuration for launching a USI engine."""
 
@@ -63,9 +63,18 @@ class UsiEngineConfig:
     should_collect_outbound: bool = True
     option_validation_default: UsiOptionValidationMode = "strict"
     option_validation_overrides: dict[str, UsiOptionValidationMode] = field(default_factory=dict)
-    _raw_engine_path: str | None = field(default=None, repr=False, compare=False)
-    _raw_working_directory: str | None = field(default=None, repr=False, compare=False)
-    _raw_options: JsonObject = field(default_factory=dict, repr=False, compare=False)
+    _raw_engine_path: str | None = field(default=None, init=False, repr=False, compare=False)
+    _raw_working_directory: str | None = field(default=None, init=False, repr=False, compare=False)
+    _raw_options: JsonObject = field(default_factory=dict, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Initialize provenance for direct keyword-only construction."""
+
+        self._set_provenance(
+            engine_path=self.engine_path,
+            working_directory=self.working_directory,
+            options=self.options,
+        )
 
     @classmethod
     def from_file(
@@ -94,7 +103,7 @@ class UsiEngineConfig:
         return instance.resolve_paths(output_dir=output_dir, engine_dir=engine_dir)
 
     @classmethod
-    def from_mapping(cls, mapping: Mapping[str, JsonValue], *, default_name: str | None = None) -> UsiEngineConfig:
+    def from_mapping(cls, mapping: Mapping[str, object], *, default_name: str | None = None) -> UsiEngineConfig:
         try:
             parsed = _UsiEngineMappingInput.model_validate(mapping)
         except ValidationError as exc:
@@ -183,7 +192,7 @@ class UsiEngineConfig:
         )
         option_validation_default, option_validation_overrides = normalize_option_validation(parsed.option_validation)
 
-        return cls(
+        instance = cls(
             name=name,
             engine_path=engine_path,
             working_directory=working_dir,
@@ -212,10 +221,26 @@ class UsiEngineConfig:
             should_collect_outbound=should_collect_outbound,
             option_validation_default=option_validation_default,
             option_validation_overrides=option_validation_overrides,
-            _raw_engine_path=engine_path,
-            _raw_working_directory=working_dir,
-            _raw_options=options.copy(),
         )
+        return instance._set_provenance(
+            engine_path=engine_path,
+            working_directory=working_dir,
+            options=options,
+        )
+
+    def _set_provenance(
+        self,
+        *,
+        engine_path: str | None,
+        working_directory: str | None,
+        options: JsonObject,
+    ) -> UsiEngineConfig:
+        """Set private unresolved values without exposing them to callers."""
+
+        self._raw_engine_path = engine_path
+        self._raw_working_directory = working_directory
+        self._raw_options = dict(options)
+        return self
 
     def resolve_paths(
         self,
@@ -249,11 +274,16 @@ class UsiEngineConfig:
             key: json_serialize(maybe_resolve_path_option(key, value, output_dir=output_dir, engine_dir=engine_dir))
             for key, value in self._raw_options.items()
         }
-        return replace(
+        resolved = replace(
             self,
             engine_path=resolved_engine_path,
             working_directory=resolved_work_dir,
             options=resolved_options,
+        )
+        return resolved._set_provenance(
+            engine_path=self._raw_engine_path,
+            working_directory=self._raw_working_directory,
+            options=self._raw_options,
         )
 
     def with_overrides(
@@ -306,7 +336,7 @@ class UsiEngineConfig:
         next_raw_engine_path = self._raw_engine_path if engine_path is None else engine_path
         next_raw_working_directory = self._raw_working_directory if working_directory is None else working_directory
 
-        return replace(
+        overridden = replace(
             self,
             name=next_name,
             engine_path=next_engine_path,
@@ -330,9 +360,11 @@ class UsiEngineConfig:
                 self.option_validation_default if option_validation_default is None else option_validation_default
             ),
             option_validation_overrides=new_option_validation_overrides,
-            _raw_engine_path=next_raw_engine_path,
-            _raw_working_directory=next_raw_working_directory,
-            _raw_options=new_raw_options,
+        )
+        return overridden._set_provenance(
+            engine_path=next_raw_engine_path,
+            working_directory=next_raw_working_directory,
+            options=new_raw_options,
         )
 
     def resolve_isready_lock_key(self) -> UsiEngineConfig:
@@ -363,8 +395,14 @@ class UsiEngineConfig:
         mapping = self._template_mapping()
         resolved_value = _render_template(template, mapping).strip()
         if not resolved_value:
-            return replace(self, isready_lock_key=None)
-        return replace(self, isready_lock_key=resolved_value)
+            resolved = replace(self, isready_lock_key=None)
+        else:
+            resolved = replace(self, isready_lock_key=resolved_value)
+        return resolved._set_provenance(
+            engine_path=self._raw_engine_path,
+            working_directory=self._raw_working_directory,
+            options=self._raw_options,
+        )
 
     def _resolve_isready_check_templates(self) -> UsiEngineConfig:
         templates: list[str] = []
@@ -383,9 +421,15 @@ class UsiEngineConfig:
                 continue
             resolved_values.append(rendered)
         if not resolved_values:
-            return replace(self, isready_lock_check_key=None, isready_lock_check_templates=())
-        return replace(
-            self,
-            isready_lock_check_key=resolved_values[0],
-            isready_lock_check_templates=tuple(resolved_values),
+            resolved = replace(self, isready_lock_check_key=None, isready_lock_check_templates=())
+        else:
+            resolved = replace(
+                self,
+                isready_lock_check_key=resolved_values[0],
+                isready_lock_check_templates=tuple(resolved_values),
+            )
+        return resolved._set_provenance(
+            engine_path=self._raw_engine_path,
+            working_directory=self._raw_working_directory,
+            options=self._raw_options,
         )

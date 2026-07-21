@@ -21,6 +21,7 @@ from shogiarena._core.contexts.game_session.application.engine.option_coercion i
 from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import EngineLifecyclePolicy
 from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_serialized
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
+from shogiarena._core.shared.kernel.network_hosts import is_loopback_host
 from shogiarena._core.shared.kernel.overlay_options import select_overlay_options
 from shogiarena._core.shared.kernel.paths import resolve_path_like
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_str
@@ -215,6 +216,8 @@ class EngineConfig(BaseModel):
 
 
 class TournamentConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     scheduler: str = "round_robin"
     games_per_pair: int = 4
     seed: int = 42
@@ -227,30 +230,46 @@ class TournamentConfig(BaseModel):
 class GenerateConfig(BaseModel):
     """Configuration for generate (selfplay) runs."""
 
+    model_config = ConfigDict(extra="forbid")
+
     games: int = Field(default=100, gt=0)
     seed: int = 42
     num_parallel: int = Field(default=4, gt=0)
 
 
 class RatingConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     initial: float = 1500.0
     k_factor: float = 16.0
 
 
 class DashboardConfig(BaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True, serialize_by_alias=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
 
     is_enabled: bool = Field(default=True, alias="enabled")
     api_port: int = 8080
+    api_host: str = "127.0.0.1"
+
+    @field_validator("api_host", mode="after")
+    @classmethod
+    def _strip_api_host(cls, v: str) -> str:
+        normalized = v.strip()
+        if not normalized:
+            raise ValueError("dashboard.api_host must not be empty")
+        if not is_loopback_host(normalized):
+            raise ValueError("dashboard.api_host must be an explicit loopback host")
+        return normalized
 
 
 class LoggingConfig(BaseModel):
     """実行時ログ artifact の出力設定。"""
 
-    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
 
     is_usi_transcript_enabled: bool = Field(default=False, alias="usi_transcript")
     usi_transcript_detail: Literal["commands", "commands_and_info"] = "commands"
+    usi_transcript_max_bytes: int = Field(default=8 * 1024 * 1024, ge=4096, le=1024 * 1024 * 1024)
 
 
 class SystemConfig(BaseModel):
@@ -272,6 +291,8 @@ class SystemConfig(BaseModel):
 
 class RecordOutputConfig(BaseModel):
     """バイナリ棋譜の出力設定。"""
+
+    model_config = ConfigDict(extra="forbid")
 
     format: Literal["psv", "sbinpack"]
     max_positions_per_file: int = Field(default=1_000_000, gt=0)

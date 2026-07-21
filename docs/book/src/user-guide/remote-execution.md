@@ -4,35 +4,35 @@ ShogiArena は SSH 経由でリモートサーバー上でエンジンを実行�
 
 ## ユースケース
 
-- **複数サーバーでの並列実行**: 対局数が多い場合、複数のサーバーに分散して高速化
-- **GPU サーバーの活用**: ニューラルネットワークエンジンを GPU サーバーで実行
-- **CI/CD 環境**: クラウド上のマシンでトーナメントを実行
+- **複数サーバーでの並列実行**：対局数が多い場合、複数のサーバーに分散して所要時間を短縮する
+- **GPU サーバーの活用**：ニューラルネットワークエンジンを GPU サーバーで実行する
+- **CI/CD 環境**：クラウド上のマシンでトーナメントを実行する
 
 ## 前提条件
 
 ### リモートサーバー側
 
-1. **SSH アクセス**: 公開鍵認証が設定されていること
-2. **bash**: コマンドシェルとして bash が利用可能
-3. **Python 3.11+**: リモート側に Python がインストールされていること
-4. **エンジンバイナリ**: リモート側にエンジンがビルド・配置されていること
+1. **SSH アクセス**：公開鍵認証が設定されていること
+2. **bash**：コマンドシェルとして bash が利用できること
+3. **Python 3.11+**：リモート側に Python がインストールされていること
+4. **エンジンバイナリ**：リモート側にエンジンがビルドされ、配置されていること
 
 ### ローカル側
 
-1. **SSH クライアント**: `ssh` コマンドが利用可能
-2. **ShogiArena**: ローカルに ShogiArena がインストール済み
+1. **SSH クライアント**：`ssh` コマンドが利用できること
+2. **ShogiArena**：ローカルに ShogiArena がインストール済みであること
 
 > **Warning: Windows リモート実行は非対応**
 >
 > リモート実行先は Linux/macOS のみサポートします。
 > ローカル（orchestrator）は Windows でも動作します。
 
-
 ## インスタンス設定ファイル
 
 リモート実行では、インスタンス定義を別 YAML に切り出し、それを run 設定の `instances:` に渡します。
 
-現在のフォーマットは **`instances:` リスト方式ではありません**。1 ファイル 1 インスタンス、または `hosts:` 展開方式を使います。
+インスタンス設定ファイル自体は、複数インスタンスを並べるリスト形式ではありません。
+1 ファイル 1 インスタンスとして書くか、`hosts:` による展開方式を使います。
 
 ### 基本的な SSH 設定
 
@@ -46,7 +46,7 @@ user: "username"
 identity_file: "~/.ssh/id_rsa"
 project_root: "$HOME/ShogiArena-remote"
 slots: 4
-strict_host_key_checking: true
+is_strict_host_key_checking: true
 ```
 
 #### 主なフィールド
@@ -62,7 +62,7 @@ strict_host_key_checking: true
 | `project_root` | リモート側の作業ディレクトリ（省略時は `~/ShogiArena-remote`） |
 | `slots` | engine thread / ponder から見積もる同時実行容量 |
 | `max_engines` | 同時起動できる engine process 数の上限 |
-| `strict_host_key_checking` | host key 検証を厳格に行うか |
+| `is_strict_host_key_checking` | host key 検証を厳格に行うか |
 | `tags` | インスタンスのタグ（任意） |
 
 ### 同じ設定を複数ホストへ展開する
@@ -79,7 +79,7 @@ hosts:
   - server2.example.com
 ```
 
-この場合、`worker-001`, `worker-002` のような名前で展開されます。
+この場合、`worker-001`、`worker-002` のような名前で展開されます。
 
 ### ローカル実行用
 
@@ -93,7 +93,8 @@ slots: 4
 
 ### tournament.yaml 側での指定
 
-CLI に `--instances` オプションはありません。run 設定ファイルの `instances:` で指定します。
+CLI に `--instances` オプションはありません。
+使用するインスタンスは、run 設定ファイルの `instances:` で指定します。
 
 ```yaml
 # tournament.yaml
@@ -127,7 +128,7 @@ rules:
     increment_ms: 300
 ```
 
-`instance_id` を指定しない場合、自動的に利用可能なインスタンスに割り当てられます。
+`instance_id` を省略した場合、ShogiArena が利用可能なインスタンスへ自動的に割り当てます。
 
 ## ファイル同期（Provisioning）
 
@@ -157,9 +158,10 @@ shogiarena run tournament tournament.yaml \
 - 開局集（`initial_positions.source` で指定されたファイル）
 - 内蔵定跡 book（`BookDir + BookFile` で解決されたファイル。下記 policy に従う）
 
-### remote book resource
+### 定跡 book の転送
 
-YaneuraOu 系の `BookDir` / `BookFile` は、remote 実行では book file 単体を content-hash 名で worker 側に配置します。巨大な book を意図せず転送しないよう、既定では 256 MiB を超える自動転送を明示エラーにします。
+YaneuraOu 系の `BookDir` / `BookFile` は、remote 実行では book file 単体を content-hash 名で worker 側に配置します。
+巨大な book を意図せず転送しないよう、既定では 256 MiB を超える自動転送を明示エラーにします。
 
 | 環境変数 | 値 | 説明 |
 | --- | --- | --- |
@@ -178,13 +180,15 @@ SHOGIARENA_REMOTE_BOOK_TRANSFER=preplaced \
   shogiarena run tournament tournament.yaml --provision none
 ```
 
-`preplaced` では転送しませんが、local 側で解決した book fingerprint は provenance に記録されます。worker 側の配置と一致していることは運用側で確認してください。
+`preplaced` では転送しませんが、local 側で解決した book fingerprint は provenance に記録されます。
+記録された fingerprint と worker 側の配置が一致していることは、運用側で確認してください。
 
 ## SSH 認証の設定
 
 ### 公開鍵認証
 
-リモート実行では公開鍵認証を使用します。パスワード認証は非対応です。
+リモート実行では公開鍵認証を使用します。
+パスワード認証は非対応です。
 
 #### 1. 鍵ペアの生成（未作成の場合）
 
@@ -224,11 +228,14 @@ ssh-add ~/.ssh/id_rsa
 
 `slots` は、各インスタンスで同時に使える実行容量です。
 
-ShogiArena は engine の `Threads` / `USI_Threads` と `Ponder` / `USI_Ponder` から必要 slot 数を見積もり、`tournament.num_parallel` 分の pending games が `slots` と `max_engines` に収まるかを開始前に検査します。自動扱いにしたい場合は `slots: null` を使います。詳細は [トーナメント](tournaments.md#並列数とインスタンス容量) を参照してください。
+ShogiArena は engine の `Threads` / `USI_Threads` と `Ponder` / `USI_Ponder` から必要 slot 数を見積もり、`tournament.num_parallel` 分の pending games が `slots` と `max_engines` に収まるかを開始前に検査します。
+見積もりを自動に任せたい場合は `slots: null` を使います。
+算出方法は [トーナメント](tournaments.md#並列数とインスタンス容量) を参照してください。
 
 ### エンジン数の制限
 
-`max_engines` で、同時起動できるエンジンプロセス数を制限します。省略した場合は上限なしとして扱われます。
+`max_engines` で、同時起動できるエンジンプロセス数を制限します。
+省略した場合は上限なしとして扱われます。
 
 ## トラブルシューティング
 
@@ -240,9 +247,9 @@ ShogiArena は engine の `Threads` / `USI_Threads` と `Ponder` / `USI_Ponder` 
 Host key verification failed
 ```
 
-**原因**: リモートサーバーのホストキーが `~/.ssh/known_hosts` に登録されていない。
+**原因**：リモートサーバーのホストキーが `~/.ssh/known_hosts` に登録されていない。
 
-**解決**:
+**解決**：
 ```bash
 # 手動で接続してホストキーを登録
 ssh user@remote-server
@@ -254,9 +261,9 @@ ssh user@remote-server
 Permission denied (publickey)
 ```
 
-**原因**: 公開鍵認証が正しく設定されていない。
+**原因**：公開鍵認証が正しく設定されていない。
 
-**解決**:
+**解決**：
 1. 公開鍵がリモートの `~/.ssh/authorized_keys` に登録されているか確認
 2. 秘密鍵のパーミッションを確認（`chmod 600 ~/.ssh/id_rsa`）
 3. SSH エージェントに鍵が登録されているか確認（`ssh-add -l`）
@@ -269,7 +276,7 @@ Permission denied (publickey)
 Remote project_root does not exist: ~/shogiarena
 ```
 
-**解決**:
+**解決**：
 ```bash
 # リモートでディレクトリを作成
 ssh user@remote-server "mkdir -p ~/shogiarena"
@@ -277,9 +284,9 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 
 #### エンジンバイナリが見つからない
 
-**原因**: リモート側にエンジンがビルドされていない。
+**原因**：リモート側にエンジンがビルドされていない。
 
-**解決**:
+**解決**：
 1. リモート側でエンジンをビルド
 2. エンジン設定の `engine_path` を確認
 
@@ -287,14 +294,14 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 
 #### 対局が遅い
 
-- **リソース不足**: `slots` や `max_engines` を減らして、サーバーの負荷を軽減
+- **リソース不足**：`slots` や `max_engines` を減らし、サーバーの負荷を下げる
 
 #### 同期に時間がかかる
 
-- `--provision none` を使用して同期を無効化（事前にファイルを配置しておく）
-- 大きなファイル（定跡データベースなど）は事前にリモートに配置
+- `--provision none` で同期を無効化する（ファイルは事前に配置しておく）
+- 定跡データベースなどの大きなファイルは、事前にリモートへ配置しておく
 
 ## 参考資料
 
-- [トーナメントガイド](tournaments.md): トーナメント設定の詳細
-- [エンジン設定](engine-configuration.md): エンジン設定ファイルの書き方
+- [トーナメントガイド](tournaments.md)：トーナメント設定の詳細
+- [エンジン設定](engine-configuration.md)：エンジン設定ファイルの書き方

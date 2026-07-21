@@ -5,13 +5,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Literal, NotRequired, TypeAlias, TypedDict
 
+from typing_extensions import ReadOnly
+
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.json_types import JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_game_result, coerce_int, coerce_str
 
 
 class _EventType(TypedDict):
-    type: str
+    # ReadOnly にすることでサブクラスが Literal へ絞り込める（PEP 705）。
+    # 可変フィールドのままだと TypedDict 継承時の再宣言は仕様違反になる。
+    type: ReadOnly[str]
 
 
 class MoveProgressEvent(_EventType):
@@ -235,7 +239,7 @@ def parse_progress_event(raw: Mapping[str, JsonValue]) -> ProgressEvent:
                 event[key] = raw[key]
         engine_status = raw.get("engine_status")
         if isinstance(engine_status, Mapping):
-            event["engine_status"] = dict(engine_status)
+            event["engine_status"] = {str(key): value for key, value in engine_status.items()}
         return event
 
     raise ValueError(f"unsupported progress event type: {event_type}")

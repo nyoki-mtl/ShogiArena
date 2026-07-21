@@ -14,7 +14,7 @@ from shogiarena._core.shared.kernel.serialization import json_serialize
 RUN_ARTIFACT_HASH_SCHEMA_VERSION = 1
 RESUME_CONTRACT_VERSION = 1
 
-_SPRT_TEST_DEFINITION_KEYS = ("model", "elo0", "elo1", "alpha", "beta")
+_SPRT_TEST_DEFINITION_KEYS = ("tested_engine", "model", "elo0", "elo1", "alpha", "beta")
 
 
 def canonical_json_bytes(value: HashInput) -> bytes:

@@ -7,8 +7,8 @@ import logging
 import time
 from typing import Any
 
-from rshogi.core import Board, Move
-from rshogi.types import Color
+from rsshogi.core import Board, Move
+from rsshogi.types import Color
 
 from shogiarena._core.contexts.match.domain.adjudication import Adjudicator
 from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort
@@ -37,6 +37,7 @@ class GameRunnerLoopMixin:
     _enqueue_clock_start: Any
     _build_ponder_hit_timings: Any
     _process_move_result: Any
+    _extract_move_source: Any
     _enqueue_terminal_progress: Any
     _apply_move_common: Any
     _enqueue_move_progress: Any
@@ -58,6 +59,7 @@ class GameRunnerLoopMixin:
         move_times_ms: list[int | None],
         wall_times_ms: list[int | None],
         engine_wall_times_ms: list[int | None],
+        move_sources: list[str | None],
         latency_deltas_ms: list[int | None],
         black_time_control: GameClock,
         white_time_control: GameClock,
@@ -246,6 +248,7 @@ class GameRunnerLoopMixin:
                 if not isinstance(move_obj, Move):
                     raise TypeError(f"Expected Move, got {type(move_obj).__name__}")
                 move = move_obj
+                move_source = self._extract_move_source(think_result)
 
                 # Prepare KI2 notation BEFORE applying the move
                 ki2_move = normalize_ki2_move_text(board.move32_from_move(move).to_ki2(board) or move.to_usi())
@@ -266,6 +269,7 @@ class GameRunnerLoopMixin:
                         think_result=think_result,
                         elapsed_ms=elapsed_ms,
                         engine_wall_time_ms=engine_wall_time_ms,
+                        move_source=move_source,
                         game_id=game_id,
                         ply_count=ply_count,
                         is_side_that_moved_black=is_side_that_moved_black,
@@ -281,6 +285,7 @@ class GameRunnerLoopMixin:
                         move_times_ms=move_times_ms,
                         wall_times_ms=wall_times_ms,
                         engine_wall_times_ms=engine_wall_times_ms,
+                        move_sources=move_sources,
                         latency_deltas_ms=latency_deltas_ms,
                         current_time_control=current_time_control,
                         black_time_control=black_time_control,
@@ -366,6 +371,7 @@ class GameRunnerLoopMixin:
                         think_result=recovered_think,
                         elapsed_ms=int((time.perf_counter() - go_start_time) * 1000),
                         engine_wall_time_ms=engine_wall_time_ms,
+                        move_source=self._extract_move_source(recovered_think),
                         current_engine_name=current_engine.name,
                         game_id=game_id,
                         ply_count=ply_count,
@@ -388,6 +394,7 @@ class GameRunnerLoopMixin:
                             move_times_ms=move_times_ms,
                             wall_times_ms=wall_times_ms,
                             engine_wall_times_ms=engine_wall_times_ms,
+                            move_sources=move_sources,
                             latency_deltas_ms=latency_deltas_ms,
                             current_time_control=current_time_control,
                             black_time_control=black_time_control,

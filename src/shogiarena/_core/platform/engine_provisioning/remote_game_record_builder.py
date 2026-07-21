@@ -1,12 +1,12 @@
-"""Builder for converting remote progress streams into GameRecord."""
+"""Builder for converting remote progress streams into Record."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
 
-import rshogi.record
-from rshogi.core import normalize_usi_position
+import rsshogi.record
+from rsshogi.core import normalize_usi_position
 
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.record_engine_metrics import attach_engine_wall_times
@@ -32,8 +32,8 @@ def build_remote_game_info(
     depth: Sequence[int | None] | None = None,
     seldepth: Sequence[int | None] | None = None,
     evals: Sequence[int | None] | None = None,
-) -> rshogi.record.GameRecord:
-    """Construct ``GameRecord`` from remote move_progress streams."""
+) -> rsshogi.record.Record:
+    """Construct ``Record`` from remote move_progress streams."""
 
     raw_moves = list(moves)
     normalized_sfen = normalize_usi_position(start_sfen)
@@ -48,7 +48,7 @@ def build_remote_game_info(
     now_iso = datetime.now().isoformat()
     tc_black_str = limits_to_record_time_spec(black_limits)
     tc_white_str = limits_to_record_time_spec(white_limits)
-    record_metadata = rshogi.record.GameRecordMetadata(
+    record_metadata = rsshogi.record.RecordMetadata(
         game_name=game_id,
         game_type="arena",
         black_player=black_name,
@@ -56,8 +56,8 @@ def build_remote_game_info(
         start_date=now_iso,
         end_date=now_iso,
         updated_date=now_iso,
-        black_time_control=rshogi.record.TimeControl.from_spec(tc_black_str),
-        white_time_control=rshogi.record.TimeControl.from_spec(tc_white_str),
+        black_time_control=rsshogi.record.TimeControl.from_spec(tc_black_str),
+        white_time_control=rsshogi.record.TimeControl.from_spec(tc_white_str),
         attributes={
             "game_name": game_id,
             "game_type": "arena",
@@ -65,7 +65,7 @@ def build_remote_game_info(
         },
     )
     try:
-        record = rshogi.record.GameRecord.from_usi_main_line(
+        record = rsshogi.record.Record.from_usi_main_line(
             normalized_sfen,
             raw_moves,
             result=game_result,

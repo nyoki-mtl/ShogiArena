@@ -1,38 +1,36 @@
 # BayesElo と引き分けモデル
 
-> **前提知識**: [Elo レーティング](./index.md)（勝率とレーティング差の関係）
+> **前提知識**：[Elo レーティング](./index.md)（勝率とレーティング差の関係）
 
 ## このページの要点
 
-- BayesElo は引き分け率を独立したパラメータ（drawelo）として明示的にモデル化する Elo の拡張
-- 標準的な Logistic Elo が勝率のみを扱うのに対し、BayesElo は勝ち・引き分け・負けの **3 つの確率**を個別にモデル化する
-- 引き分け率が高い将棋やチェスのエンジンテストでは、BayesElo がより正確な推定を可能にする
-- ShogiArena と Fishtest は現在 Logistic Elo を標準として使用しているが、BayesElo との変換を内部的にサポートしている
+- BayesElo は引き分け率を独立したパラメータ（drawelo）として扱う Elo の拡張
+- 標準的な Logistic Elo が期待スコアのみを扱うのに対し、BayesElo は勝ち、引き分け、負けの **3 つの確率**を個別に表す
+- 引き分け率の高い将棋やチェスのエンジンテストでは、BayesElo のほうが対局結果の構造をそのまま反映できる
+- ShogiArena と Fishtest はいずれも Logistic Elo を標準として使用しつつ、BayesElo との変換を内部的にサポートしている
 
-## Logistic Elo の限界
+## Logistic Elo が捨てている情報
 
-標準的な Logistic Elo では、勝率 \\(p\\) と Elo 差 \\(\Delta R\\) の関係は：
+標準的な Logistic Elo では、期待スコア \\(p\\) と Elo 差 \\(\Delta R\\) の関係は次のとおりです。
 
 \\[
 p = \frac{1}{1 + 10^{-\Delta R / 400}}
 \\]
 
-ここで \\(p\\) は **スコア**（勝ち=1.0, 引き分け=0.5, 負け=0.0）の期待値です。
-引き分けは「半分の勝ち」として扱われ、引き分け率自体は独立にモデル化されません。
+ここで \\(p\\) は**スコア**（勝ち=1.0, 引き分け=0.5, 負け=0.0）の期待値です。
+引き分けは「半分の勝ち」に潰され、引き分け率そのものはモデルに残りません。
 
-しかし、実際のエンジン対局では引き分け率は重要な情報です：
-
-- **引き分け率が高い**（将棋の長時間対局、チェスの上位エンジン同士）場合、1 局あたりの情報量が少なく、推定の分散が大きい
-- **引き分け率が低い**場合、勝ちと負けが多いため情報量が多い
-- 引き分け率は持ち時間やエンジンの特性に依存し、Elo 差の推定に影響を与える
+この潰し方は、同じスコアでも 1 局あたりに得られる情報量が違うという事実を落とします。
+引き分けの多い条件（将棋の長時間対局、チェスの上位エンジン同士）では、多くの対局が勝敗の情報を運ばないため、同じスコアに対する推定の分散が大きくなります。
+引き分け率は持ち時間やエンジンの特性に応じて動くので、この差は条件を変えるたびに現れます。
 
 ## BayesElo モデル
 
-BayesElo は、引き分けの確率を **drawelo** というパラメータで明示的に制御します。[^bayeselo-origin]
+BayesElo は、引き分けの確率を **drawelo** というパラメータで独立に持たせます。[^bayeselo-origin]
 
 ### 3 つの確率
 
-BayesElo パラメータ \\((\text{elo}, \text{drawelo})\\) から、三項分布の確率を計算します：
+BayesElo パラメータ \\((\text{elo}, \text{drawelo})\\) から、三項分布の確率を計算します。
 
 \\[
 P_{\text{win}} = \frac{1}{1 + 10^{(-\text{elo} + \text{drawelo})/400}}
@@ -46,11 +44,13 @@ P_{\text{loss}} = \frac{1}{1 + 10^{(\text{elo} + \text{drawelo})/400}}
 P_{\text{draw}} = 1 - P_{\text{win}} - P_{\text{loss}}
 \\]
 
-### drawelo の直感的理解
+### drawelo の読み方
 
-- **drawelo が大きい**: 引き分け率が高い。勝ちと負けの確率が圧縮される
-- **drawelo が小さい**: 引き分け率が低い。勝ちと負けの確率が拡大する
-- **drawelo = 0**: 引き分けがほぼ発生しない（実際にはモデル上可能）
+drawelo は、上の 2 式で勝ちと負けの確率を押し下げる向きに働きます。
+
+- **drawelo が大きい**：勝ちと負けの確率が圧縮され、引き分け率が高くなる
+- **drawelo が小さい**：勝ちと負けの確率が広がり、引き分け率が低くなる
+- **drawelo = 0**：引き分け確率が 0 になる。モデル上は取りうるが、実際の対局条件ではまず現れない
 
 ```text
 drawelo = 0 の場合:
@@ -89,7 +89,7 @@ def bayeselo_to_elo(belo: float, drawelo: float) -> float:
 
 ### Logistic Elo → BayesElo
 
-逆変換は、三項確率から BayesElo パラメータを復元します：
+逆変換は、三項確率から BayesElo パラメータを復元します。
 
 \\[
 \text{elo} = 200 \cdot \log_{10}\left(\frac{P_{\text{win}}}{P_{\text{loss}}} \cdot \frac{1 - P_{\text{loss}}}{1 - P_{\text{win}}}\right)
@@ -113,7 +113,7 @@ def proba_to_bayeselo(P: list[float]) -> tuple[float, float]:
 
 ### drawelo の推定
 
-対局結果から drawelo を推定するには、三項頻度 \\([L, D, W]\\) を正規化して確率に変換し、上記の逆変換を適用します：
+対局結果から drawelo を推定するには、三項頻度 \\([L, D, W]\\) を正規化して確率に変換し、上記の逆変換を適用します。
 
 ```python
 def draw_elo_calc(R: list[int]) -> float:
@@ -126,8 +126,8 @@ def draw_elo_calc(R: list[int]) -> float:
 
 ## LOS（Likelihood of Superiority）
 
-LOS は、あるエンジンが対戦相手よりも強い確率を直感的に表す指標です。
-厳密な仮説検定ではありませんが、「確信の度合い」を素早く把握するのに有用です。
+LOS は、あるエンジンが対戦相手よりも強い確率を表す指標です。
+厳密な仮説検定ではありませんが、対局の途中でどれだけ確信が持てているかを一つの数値で見るのに使えます。
 
 ### 計算式
 
@@ -136,24 +136,23 @@ LOS は、あるエンジンが対戦相手よりも強い確率を直感的に�
 \\]
 
 ここで \\(W\\) は勝ち数、\\(L\\) は負け数、\\(\Phi\\) は標準正規分布の累積分布関数です。
+式に現れるのは勝ち数と負け数だけで、**引き分けは LOS の計算に入りません**。
 
-等価な表現：
+誤差関数を使えば同じ値を次のようにも書けます。
 
 \\[
 \text{LOS} = \frac{1}{2}\left[1 + \text{erf}\left(\frac{W - L}{\sqrt{2(W + L)}}\right)\right]
 \\]
 
-**重要**: 引き分けは LOS の計算に含まれません。
-
 ### スコアベースの LOS
 
-スコア \\(\mu\\) と標準偏差 \\(\sigma\\) を使った LOS の表現：
+期待スコア \\(\mu\\) と標準偏差 \\(\sigma\\) を使うと、引き分けを含めたスコアの分布から LOS を書けます。
 
 \\[
 \text{LOS} = \Phi\left(\frac{\mu - 0.5}{\sigma / \sqrt{n}}\right)
 \\]
 
-ここで \\(n\\) はゲーム数（またはペア数）です。
+ここで \\(n\\) は対局数（またはペア数）です。
 
 | LOS | 解釈 |
 |:---:|:---|
@@ -162,18 +161,18 @@ LOS は、あるエンジンが対戦相手よりも強い確率を直感的に�
 | 50-75% | 不明確 |
 | < 50% | 劣位の可能性 |
 
-> **注**: LOS はあくまで目安です。統計的に厳密な判定には [SPRT](../sprt/index.md) を使用してください。
+> **注**：LOS はあくまで目安です。統計的に厳密な判定には [SPRT](../sprt/index.md) を使用してください。
 
-## Fishtest における BayesElo の歴史
+## Fishtest が BayesElo から離れた理由
 
-Fishtest は当初 BayesElo をベースにした SPRT を使用していました。
-しかし、以下の理由から Logistic Elo モデルに移行しました：
+Fishtest は当初、BayesElo をベースにした SPRT を使用していました。
+その後、次の理由から Logistic Elo モデルに移行しています。
 
-1. **シンプルさ**: Logistic Elo はパラメータが 1 つ（Elo 差）で済む
-2. **drawelo 推定のバイアス**: drawelo を「アウトオブサンプル」で推定すると、小さなバイアスが生じる
-3. **正規化 Elo の登場**: 引き分け率への依存を排除する正規化 Elo（[nElo](./nelo.md)）が開発された
+1. **パラメータが 1 つで済む**：Logistic Elo は Elo 差だけでモデルが決まる
+2. **drawelo 推定のバイアス**：drawelo を「アウトオブサンプル」で推定すると、小さなバイアスが生じる
+3. **正規化 Elo の登場**：引き分け率への依存を排除する正規化 Elo（[nElo](./nelo.md)）が開発された
 
-現在の Fishtest は以下の 3 つの Elo モデルをサポートしています：
+現在の Fishtest は 3 つの Elo モデルをサポートしています。
 
 | モデル | 特徴 | 使用状況 |
 |:---|:---|:---|
@@ -191,9 +190,9 @@ Fishtest は当初 BayesElo をベースにした SPRT を使用していまし�
 
 ## 参考文献
 
-[^bayeselo-origin]: Rémi Coulom (2005). [BayesElo Rating](https://www.remi-coulom.fr/Bayesian-Elo/) — BayesElo の原著者による解説
-- Fishtest Statistics: [stat_util.py](https://github.com/official-stockfish/fishtest/blob/master/server/fishtest/stats/stat_util.py) — Fishtest の統計計算実装
+[^bayeselo-origin]: Rémi Coulom (2005). [BayesElo Rating](https://www.remi-coulom.fr/Bayesian-Elo/)（BayesElo の原著者による解説）
+- Fishtest Statistics: [stat_util.py](https://github.com/official-stockfish/fishtest/blob/master/server/fishtest/stats/stat_util.py)（Fishtest の統計計算実装）
 
 ## 次に読む
 
-→ **[正規化 Elo（nElo）](./nelo.md)**: 引き分け率に依存しない強さの指標を解説します。
+- **[正規化 Elo（nElo）](./nelo.md)**：引き分け率に依存しない強さの指標

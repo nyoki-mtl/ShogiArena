@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -25,6 +26,14 @@ from shogiarena._core.platform.db.store.entities import Game, Player
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int
 
 logger = logging.getLogger(__name__)
+
+
+def _event_timestamp_key(item: Mapping[str, object]) -> int:
+    """イベント由来レコードの並べ替えキー（timestamp が無い/非数値なら 0）。"""
+    value = item.get("timestamp")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return 0
 
 
 class SpsaGameListingService:
@@ -125,7 +134,7 @@ class SpsaGameListingService:
             extract_variant_from_game_id=extract_variant_from_game_id,
         )
 
-        records.sort(key=lambda item: item.get("timestamp") or 0, reverse=True)
+        records.sort(key=_event_timestamp_key, reverse=True)
         total = len(records)
         paginated = records[offset : offset + limit]
         for item in paginated:

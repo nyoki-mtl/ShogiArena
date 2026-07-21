@@ -132,8 +132,7 @@ def update_index_json(
     metadata["crn_used"] = config_map.get("crn_enabled")
     metadata["update_mode"] = config_map.get("update_mode")
 
-    with open(index_path, "w", encoding="utf-8") as handle:
-        json.dump(update_data, handle, ensure_ascii=False, indent=2)
+    write_json_atomic(index_path, update_data)
 
     state_path = run_dir / "state.json"
     if not state_path.exists():
@@ -144,7 +143,7 @@ def update_index_json(
         raise ValueError("state.json must contain a JSON object")
     parsed_state = parse_spsa_run_state_boundary(state_raw, path=str(state_path))
 
-    completed_updates = max(coerce_int(parsed_state.get("completed_updates")) or 0, update_idx + 1)
+    completed_updates = max(coerce_int(parsed_state.get("completed_updates")) or 0, update_idx)
     total_updates = coerce_int(getattr(config, "num_updates", 0)) or 0
     next_state: JsonObject = {str(key): value for key, value in parsed_state.items()}
     next_state["updated_at"] = _datetime_iso_now()
@@ -203,8 +202,7 @@ def record_ltc_result(
         "sprt_decision": out_record.get("sprt_decision"),
     }
 
-    with open(index_path, "w", encoding="utf-8") as handle:
-        json.dump(index_data, handle, ensure_ascii=False, indent=2)
+    write_json_atomic(index_path, index_data)
 
 
 __all__ = ["append_event", "record_ltc_result", "update_index_json"]

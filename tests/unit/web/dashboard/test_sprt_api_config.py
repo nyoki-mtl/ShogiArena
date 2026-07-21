@@ -67,8 +67,8 @@ async def test_explicit_zero_elo1_is_preserved() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pentanomial_replay_pairs_by_round_and_decides() -> None:
-    # Two colour-reversed WW pairs (rounds 0/1 and 2/3) -> bins [0,0,0,0,2] -> accept_h1.
+async def test_pentanomial_replay_pairs_by_round_and_respects_safety_floor() -> None:
+    # Two colour-reversed WW pairs are replayed, but a tiny zero-variance sample must not decide.
     games = [
         _game("tested", "baseline", GameResult.BLACK_WIN, "g0001-x"),
         _game("baseline", "tested", GameResult.WHITE_WIN, "g0002-x"),
@@ -82,7 +82,7 @@ async def test_pentanomial_replay_pairs_by_round_and_decides() -> None:
 
     assert response.status == 200
     assert payload["config"]["model"] == "gsprt-pentanomial-v1"
-    assert payload["status"]["decision"] == "accept_h1"
+    assert payload["status"]["decision"] == "continue"
     assert payload["status"]["pending_pairs"] == 0
     assert payload["status"]["games"] == 4
 

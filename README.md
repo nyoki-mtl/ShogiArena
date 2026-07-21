@@ -6,10 +6,12 @@
 [![Python](https://img.shields.io/pypi/pyversions/shogiarena)](https://pypi.org/project/shogiarena/)
 [![License](https://img.shields.io/github/license/nyoki-mtl/ShogiArena)](https://github.com/nyoki-mtl/ShogiArena/blob/main/LICENSE)
 
-ShogiArena は、USI 将棋エンジン同士の自動対局、トーナメント管理、SPRT による統計検定、SPSA パラメータチューニングをまとめて扱うための実行基盤です。CLI からすぐ動かせることと、Python API から自動化しやすいことを重視しています。
+ShogiArena は、USI 将棋エンジン同士の自動対局、トーナメント管理、SPRT による統計検定、SPSA パラメータチューニングをまとめて扱う実行基盤です。
+設定ファイルを書いて CLI から実行することも、Python API から呼び出して自動化することもできます。
 
 > [!NOTE]
-> 本プロジェクトは開発中です。公開 API は `shogiarena.engine` / `shogiarena.tournament` を中心に整理中で、破壊的変更を含む更新が入ることがあります。変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。
+> v1.0.0以降の安定APIは、CLI、公開設定schema、および`shogiarena.engine` / `shogiarena.tournament`の通常利用向け入口です。
+> `shogiarena.composition`と高度なrunner/storage構築用型はprovisionalであり、1.xでも変更される場合があります。詳細は[公開API](https://nyoki-mtl.github.io/ShogiArena/api/index.html)を参照してください。
 
 **ドキュメント:** [https://nyoki-mtl.github.io/ShogiArena/](https://nyoki-mtl.github.io/ShogiArena/)
 
@@ -23,8 +25,8 @@ https://github.com/user-attachments/assets/1cdebe23-b1a9-4d8e-91c0-f56ca970b569
 
 - `round_robin` / `gauntlet` 形式のトーナメント実行
 - 2 エンジン間の GSPRT / SPRT 検定と早期停止
-- SPSA による USI オプション・評価パラメータのチューニング
-- 実行中・完了後の Web ダッシュボード表示
+- SPSA による USI オプションと評価パラメータのチューニング
+- 実行中と完了後の Web ダッシュボード表示
 - SFEN / KIF / CSA などの棋譜保存と結果集計
 - エンジン内蔵定跡の検証、provenance 記録、Book タブでの out-of-book 分析
 - ローカル実行と SSH インスタンスを使った分散実行
@@ -38,22 +40,25 @@ Python 3.11 以上が必要です。
 pip install shogiarena
 ```
 
+ビルド済み wheel は Windows x86_64、Linux x86_64 / arm64、macOS Intel / Apple Silicon に提供されます（Windows on ARM は対象外）。
+x86_64 で AVX2 版へ差し替える方法は[インストール](https://nyoki-mtl.github.io/ShogiArena/getting-started/installation.html)を参照してください。
+
 ソースから開発する場合は `uv` を使います。
 
 ```bash
 git clone https://github.com/nyoki-mtl/ShogiArena.git
 cd ShogiArena
-uv sync --all-extras
+uv sync
 uv run shogiarena --help
 ```
 
-必要に応じて標準の出力先やエンジン配置先を初期化します。
+出力先やエンジン配置先の既定値は、次のコマンドで初期化できます。
 
 ```bash
 shogiarena config init
 ```
 
-この設定は `{output_dir}` / `{engine_dir}` プレースホルダー、artifact ベースのエンジン解決、共有キャッシュを使う場合に便利です。
+初期化しておくと、`{output_dir}` / `{engine_dir}` プレースホルダー、artifact ベースのエンジン解決、共有キャッシュを設定ファイルから利用できます。
 
 ## クイックスタート
 
@@ -102,7 +107,7 @@ dashboard:
   api_port: 8080
 ```
 
-まず検証し、問題なければ実行します。
+`--dry-run` で設定を検証し、問題がなければそのまま実行します。
 
 ```bash
 shogiarena run tournament tournament.yaml --dry-run
@@ -112,6 +117,9 @@ shogiarena run tournament tournament.yaml
 `dashboard.enabled: true` の場合は `http://localhost:8080` でダッシュボードを開けます。
 
 ## よく使うコマンド
+
+以下の `examples/` はこのリポジトリのテンプレートです。
+pip でインストールした場合は同梱されないため、[examples ディレクトリ](https://github.com/nyoki-mtl/ShogiArena/tree/main/examples/configs)から取得してください。
 
 ```bash
 # トーナメント（テンプレートを編集してから実行）
@@ -139,7 +147,7 @@ shogiarena results summary /path/to/run --format text
 
 ## Python API
 
-正式な公開入口は次のモジュールです。
+公開入口は次のモジュールです。
 
 - `shogiarena.engine`
 - `shogiarena.tournament`
@@ -147,6 +155,8 @@ shogiarena results summary /path/to/run --format text
 - `shogiarena.composition`
 
 `shogiarena._core` 配下は内部実装です。import できても後方互換性は保証されません。
+CLI、公開設定schema、`create_engine*()`、`UsiEngineSession`、`load_tournament_config()`、`run_tournament()`、`TournamentRunResult`は安定面です。
+`shogiarena.composition`と`build_tournament_runner()`等の高度な組み立てAPIはprovisional面です。
 
 ### USI エンジンを使う
 

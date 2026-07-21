@@ -79,6 +79,8 @@ class DashboardApiServerFactory(Protocol):
         run_dir: Path | None = ...,
         instance_pool: object | None = ...,
         *,
+        host: str = ...,
+        read_only: bool = ...,
         schedule_boundary: DashboardScheduleBoundaryPort | None = ...,
     ) -> DashboardApiServerPort: ...
 

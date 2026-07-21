@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any
 
-from rshogi.core import Board, Move
+from rsshogi.core import Board, Move
 
 from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort
 from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkResultPort
@@ -17,6 +18,18 @@ from shogiarena._core.shared.kernel.time_control import GameClock
 from .runner_types import _ClockIncrementPayload, _GameMoveResult, _GameOverResult, _MoveContinue
 
 logger = logging.getLogger(__name__)
+
+_BOOK_INFO_NEGATIVE_RE = re.compile(
+    r"\b(?:no|not|without)\s+book\b|\bout\s+of\s+book\b|\bbook\s+(?:miss|missing|not\s+found|none|disabled|off)\b"
+)
+_BOOK_INFO_POSITIVE_RE = re.compile(
+    r"\b(?:hit\s+book|from\s+book|book\s+(?:hit|move|bestmove|selected|used)|book[:=]\s*(?:hit|move|true|1))\b"
+)
+
+
+def _is_positive_book_info_string(value: str) -> bool:
+    text = value.lower()
+    return _BOOK_INFO_NEGATIVE_RE.search(text) is None and _BOOK_INFO_POSITIVE_RE.search(text) is not None
 
 
 class GameRunnerFinalizeMixin:
@@ -125,6 +138,24 @@ class GameRunnerFinalizeMixin:
                 stats["time_ms"] = fallback_time_ms
 
         return stats
+
+    def _extract_move_source(self, think_result: UsiThinkResultPort) -> str:
+        """Classify the observable source of a bestmove without inferring from nodes."""
+
+        info_strings = getattr(think_result, "info_strings", ())
+        if isinstance(info_strings, tuple | list):
+            for info_string in info_strings:
+                if isinstance(info_string, str) and _is_positive_book_info_string(info_string):
+                    return "book"
+
+        last_pv = think_result.get_last_pv()
+        if last_pv is not None:
+            has_search_stat = any(
+                getattr(last_pv, attr, None) is not None for attr in ("depth", "seldepth", "nodes", "time", "eval")
+            )
+            if has_search_stat:
+                return "search"
+        return "unknown"
 
     async def _notify_clock_increment(
         self,

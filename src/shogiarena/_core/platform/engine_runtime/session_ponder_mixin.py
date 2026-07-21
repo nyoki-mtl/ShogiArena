@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
-from rshogi.core import Move
+from rsshogi.core import Move
 
 from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkRequest
 from shogiarena._core.platform.engine_runtime.go_options import apply_go_options_defaults

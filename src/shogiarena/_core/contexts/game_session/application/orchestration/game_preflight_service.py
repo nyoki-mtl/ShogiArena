@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable
 from typing import Protocol
 
-from rshogi.core import normalize_usi_position
+from rsshogi.core import normalize_usi_position
 
 from shogiarena._core.contexts.game_session.application.progress.payload_parser import enqueue_progress_event
 

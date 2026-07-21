@@ -1,6 +1,7 @@
 # エンジン設定
 
-ShogiArena は USI エンジンを YAML で定義します。トーナメント設定の `engines` からこの YAML を参照するか、`artifact` を直接指定します。
+ShogiArena は USI エンジンを YAML で定義します。
+トーナメント設定の `engines` からこの YAML を参照するか、`artifact` を直接指定します。
 
 ## ローカルエンジン
 
@@ -47,7 +48,9 @@ option_validation:
 | `option_validation` | USI option 値の検証方針 |
 
 `engine_path`、`working_directory`、`options` 内のパス値には相対パスや `{engine_dir}` を使えます。
-`go_options` は `depth` と `nodes` のみを受け付けます。`movetime`、`btime`、`wtime`、`byoyomi`、`infinite` などの時間制御は、実戦の持ち時間管理と競合するためエンジン設定では指定できません。時間制御は run 設定の `rules.time_control` で指定してください。
+`go_options` は `depth` と `nodes` のみを受け付けます。
+`movetime`、`btime`、`wtime`、`byoyomi`、`infinite` などの時間制御は、対局中の持ち時間管理と競合するためエンジン設定では指定できません。
+時間制御は run 設定の `rules.time_control` で指定してください。
 
 ## I/O 収集と option validation
 
@@ -61,7 +64,9 @@ io:
   collect_outbound: true       # ShogiArena から送った command も記録する
 ```
 
-USI option は既定で `strict` に検証されます。mode は `strict`、`warn`、`raw`、`allow_unlisted_combo_value` です。`allow_unlisted_combo_value` は combo option の候補一覧に出ないファイル名を渡す必要がある場合だけ、option 単位で指定してください。
+USI option は既定で `strict` に検証されます。
+mode は `strict`、`warn`、`raw`、`allow_unlisted_combo_value` です。
+`allow_unlisted_combo_value` は、combo option の候補一覧に出ないファイル名を渡す必要がある場合だけ option 単位で指定してください。
 
 ```yaml
 option_validation:
@@ -87,7 +92,8 @@ option_validation:
 
 ## 内蔵定跡
 
-YaneuraOu 系エンジンの `BookDir` / `BookFile` は、エンジン内蔵定跡として扱います。ShogiArena は指し手を book から選ばず、USI option をエンジンへ渡したうえで、実体ファイルの検証と provenance 記録を行います。
+YaneuraOu 系エンジンの `BookDir` / `BookFile` は、エンジン内蔵定跡として扱います。
+ShogiArena は指し手を book から選ばず、USI option をエンジンへ渡したうえで、実体ファイルの検証と provenance 記録を行います。
 
 ```yaml
 options:
@@ -97,11 +103,26 @@ options:
   BookOnTheFly: true
 ```
 
-`USI_OwnBook` が明示的に `false` でなく、`BookFile` が `no_book` でない場合、`BookDir + BookFile` の実体パスを起動前に検証します。大きな YANEURAOU-DB2016 形式の book では `BookOnTheFly: true` を使う運用を推奨します。
+`USI_OwnBook` が明示的に `false` でなく、`BookFile` が `no_book` でない場合、`BookDir + BookFile` の実体パスを起動前に検証します。
+大きな YANEURAOU-DB2016 形式の book では `BookOnTheFly: true` を使う運用を推奨します。
 
-エンジンが `BookFile` を combo option として宣言していて、任意の book ファイル名を `var` に列挙しない場合は、上の `option_validation.overrides.BookFile` で `allow_unlisted_combo_value` を指定します。これは値の送信を許可するだけで、ShogiArena の path preflight と provenance 記録は引き続き実行されます。
+YaneuraOu 系の互換挙動として、`BookFile: user_book1.db` の実体 `.db` が無く、同じ場所に `user_book1.ybb` がある場合は `.ybb` を実体 book として扱います。
+この場合も provenance には元の指定と fallback 先が記録され、remote 実行時の book 配布も `.ybb` を使います。
 
-実力比較や SPSA では、内蔵定跡をエンジンごとに変えると「エンジンではなく定跡」を比較することになります。既定のサンプル overlay は `BookFile: no_book` とし、共有開始局面集は `rules.initial_positions` で指定します。
+エンジンが `BookFile` を combo option として宣言していて、任意の book ファイル名を `var` に列挙しない場合は、上の `option_validation.overrides.BookFile` で `allow_unlisted_combo_value` を指定します。
+これは値の送信を許可するだけで、ShogiArena の path preflight と provenance 記録は引き続き実行されます。
+
+保存 DB の `game_move` には `move_source` と `book_hit` が nullable 列として記録されます。
+ShogiArena が通常の USI 出力から観測できる範囲では、book を示す info string があれば `book`、探索統計があれば `search`、断定できない手は `unknown` です。
+`search` は探索統計を観測したという意味であり、book 由来ではないことの断定ではありません。
+`mate` などの追加ラベルは外部 record extras や将来の engine-specific signal 用に保持できますが、現状の通常対局 runtime は自動生成しません。
+`book_hit` は book lookup などで明示的に判定された場合だけ入り、未測定は `null` のままです。
+
+実力比較や SPSA では、内蔵定跡をエンジンごとに変えると「エンジンではなく定跡」を比較することになります。
+既定のサンプル overlay は `BookFile: no_book` とし、共有開始局面集や pair-synchronized opening line は `rules.initial_positions` で指定します。
+`rules.initial_positions` の line は対局前に initial SFEN へ変換されるだけで、ShogiArena が engine book から指し手を選んだり、定跡手を棋譜へ挿入したりするものではありません。
+ただし engine-owned book を有効にしたままだと、その initial SFEN からさらにエンジン側の book が続く可能性があります。
+純粋な強さ比較では `BookFile: no_book` または `USI_OwnBook: false` を使ってください。
 
 ## artifact エンジン
 
@@ -118,9 +139,10 @@ options:
   USI_Hash: 2048
 ```
 
-`artifact` と `engine_path` は同時に指定できません。`artifact` を使う場合、通常は `build_options.target_cpu` が必要です。
+`artifact` と `engine_path` は同時に指定できません。
+`artifact` を使う場合、通常は `build_options.target_cpu` が必要です。
 
-## トーナメント側で上書きする
+## トーナメント側からの上書き
 
 同じエンジン YAML を使いながら、トーナメントごとに名前や USI オプションを変えられます。
 
@@ -138,7 +160,9 @@ engines:
       USI_Hash: 128
 ```
 
-`options_overlays` を使うと、USI オプション上書き用 YAML を段階的にマージできます。overlay YAML は必ず `options:` ブロック配下に書きます。旧来の flat top-level form は受け付けません。
+`options_overlays` を使うと、USI オプション上書き用 YAML を段階的にマージできます。
+overlay YAML は必ず `options:` ブロック配下に書きます。
+旧来の flat top-level form は受け付けません。
 
 ```yaml
 engines:
@@ -159,7 +183,7 @@ options:
   BookFile: no_book
 ```
 
-## 確認する
+## 動作確認
 
 単体エンジンの起動確認:
 

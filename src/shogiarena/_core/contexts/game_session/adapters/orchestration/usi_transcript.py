@@ -7,7 +7,7 @@ import threading
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import TracebackType
-from typing import Literal, Protocol
+from typing import BinaryIO, Literal, Protocol
 
 from shogiarena._core.shared.kernel.engine_io import UsiIoEvent
 from shogiarena._core.shared.kernel.usi_transcript_contract import (
@@ -17,13 +17,18 @@ from shogiarena._core.shared.kernel.usi_transcript_contract import (
 
 TranscriptDetail = Literal["commands", "commands_and_info"]
 
+DEFAULT_TRANSCRIPT_MAX_BYTES = 8 * 1024 * 1024
+
 _INFO_BOUND_TOKENS = {"lowerbound", "upperbound"}
 
 
 class UsiTranscriptEnginePort(Protocol):
     """USI transcript writer が必要とする engine runtime 契約。"""
 
-    name: str
+    # 読み取り専用（実装側は @property / frozen dataclass）。可変属性宣言だと
+    # 書き込み可能性を要求してしまい protocol 適合しない。
+    @property
+    def name(self) -> str: ...
 
     def register_io_log_handler(
         self,
@@ -31,6 +36,10 @@ class UsiTranscriptEnginePort(Protocol):
     ) -> Callable[[], None]: ...
 
     async def flush_io_log_handlers(self, *, timeout: float | None = None) -> None: ...
+
+
+def _truncation_marker(role: TranscriptRole, max_bytes: int) -> bytes:
+    return f"{0:010d}ms marker {role} truncated max_bytes={max_bytes}\n".encode()
 
 
 class UsiTranscriptWriter:
@@ -45,15 +54,23 @@ class UsiTranscriptWriter:
         engine_name: str,
         initial_sfen: str,
         detail: TranscriptDetail,
+        max_bytes: int = DEFAULT_TRANSCRIPT_MAX_BYTES,
     ) -> None:
         self._path = path
         self._role = role
         self._detail = detail
+        # 上限が打ち切りマーカーより小さいと「上限に達したこと」自体を書けず、
+        # サイレントな打ち切りになる。マーカーが必ず収まる下限まで引き上げる。
+        # マーカー本文が上限値を含むため、引き上げで桁が増える分をもう一度見る。
+        resolved_max_bytes = max(max_bytes, len(_truncation_marker(role, max_bytes)))
+        self._max_bytes = max(resolved_max_bytes, len(_truncation_marker(role, resolved_max_bytes)))
+        self._bytes_written = 0
+        self._is_truncated = False
         self._lock = threading.Lock()
         self._start_ts_ms: int | None = None
         self._pending_final_info: str | None = None
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._handle = path.open("w", encoding="utf-8")
+        self._handle: BinaryIO = path.open("wb")
         self._write_header(
             game_id=game_id,
             role=role,
@@ -109,7 +126,8 @@ class UsiTranscriptWriter:
             if self._pending_final_info is not None:
                 self._write_locked(self._pending_final_info)
                 self._pending_final_info = None
-            self._write_marker_locked("close")
+            if not self._is_truncated:
+                self._write_marker_locked("close", reserve_truncation_marker=False)
             self._handle.close()
 
     def _write_header(
@@ -121,12 +139,13 @@ class UsiTranscriptWriter:
         initial_sfen: str,
         detail: TranscriptDetail,
     ) -> None:
-        self._handle.write("# ShogiArena USI transcript\n")
-        self._handle.write(f"# game_id: {game_id}\n")
-        self._handle.write(f"# role: {role}\n")
-        self._handle.write(f"# engine: {engine_name}\n")
-        self._handle.write(f"# initial_sfen: {initial_sfen}\n")
-        self._handle.write(f"# detail: {detail}\n")
+        self._write_locked("# ShogiArena USI transcript\n")
+        self._write_locked(f"# game_id: {game_id}\n")
+        self._write_locked(f"# role: {role}\n")
+        self._write_locked(f"# engine: {engine_name}\n")
+        self._write_locked(f"# initial_sfen: {initial_sfen}\n")
+        self._write_locked(f"# detail: {detail}\n")
+        self._write_locked(f"# max_bytes: {self._max_bytes}\n")
         self._write_marker_locked("start")
 
     def _format_line(self, *, timestamp_ms: int, direction: str, state: str, line: str) -> str:
@@ -135,12 +154,28 @@ class UsiTranscriptWriter:
         elapsed_ms = max(0, timestamp_ms - self._start_ts_ms)
         return f"{elapsed_ms:010d}ms {direction} {state} {line}\n"
 
-    def _write_marker_locked(self, marker: str) -> None:
-        self._handle.write(f"{0:010d}ms marker {self._role} {marker}\n")
-        self._handle.flush()
+    def _write_marker_locked(self, marker: str, *, reserve_truncation_marker: bool = True) -> None:
+        self._write_locked(
+            f"{0:010d}ms marker {self._role} {marker}\n",
+            reserve_truncation_marker=reserve_truncation_marker,
+        )
 
-    def _write_locked(self, line: str) -> None:
-        self._handle.write(line)
+    def _write_locked(self, line: str, *, reserve_truncation_marker: bool = True) -> None:
+        if self._is_truncated:
+            return
+        encoded = line.encode("utf-8")
+        marker = _truncation_marker(self._role, self._max_bytes)
+        reserve = len(marker) if reserve_truncation_marker else 0
+        if self._bytes_written + len(encoded) + reserve > self._max_bytes:
+            remaining = self._max_bytes - self._bytes_written
+            if remaining >= len(marker):
+                self._handle.write(marker)
+                self._bytes_written += len(marker)
+            self._is_truncated = True
+            self._handle.flush()
+            return
+        self._handle.write(encoded)
+        self._bytes_written += len(encoded)
         self._handle.flush()
 
 
@@ -158,6 +193,7 @@ class GameUsiTranscriptContext:
         black_name: str,
         white_name: str,
         detail: TranscriptDetail,
+        max_bytes: int = DEFAULT_TRANSCRIPT_MAX_BYTES,
     ) -> None:
         self._run_dir = run_dir
         self._game_id = game_id
@@ -167,6 +203,7 @@ class GameUsiTranscriptContext:
         self._black_name = black_name
         self._white_name = white_name
         self._detail = detail
+        self._max_bytes = max_bytes
         self._writers: list[UsiTranscriptWriter] = []
         self._cleanups: list[Callable[[], None]] = []
 
@@ -199,6 +236,7 @@ class GameUsiTranscriptContext:
             engine_name=engine_name,
             initial_sfen=self._initial_sfen,
             detail=self._detail,
+            max_bytes=self._max_bytes,
         )
         self._writers.append(writer)
         self._cleanups.append(engine.register_io_log_handler(writer.handle))
@@ -221,6 +259,7 @@ def _is_search_terminal_line(line: str) -> bool:
 
 __all__ = [
     "GameUsiTranscriptContext",
+    "DEFAULT_TRANSCRIPT_MAX_BYTES",
     "TranscriptDetail",
     "UsiTranscriptWriter",
 ]

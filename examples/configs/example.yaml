@@ -42,8 +42,8 @@ rules:                      # 任意。未指定時は RulesConfig の既定が�
     depth_limit: null       # 任意。既定: null。探索深さ
     node_limit: null        # 任意。既定: null。ノード上限
     expiry_margin_ms: 500   # 任意。既定: 500
-    allow_timeout: false    # 任意。既定: false
-    max_wait_ms: 600000     # 任意。既定: 600000 (allow_timeout=true のとき有効)
+    should_allow_timeout: false  # 任意。既定: false
+    max_wait_ms: 600000     # 任意。既定: 600000 (should_allow_timeout=true のとき有効)
   initial_positions:        # 任意。既定: type=startpos, flip_policy=pair_both, source=None
     type: startpos
     flip_policy: pair_both

@@ -9,8 +9,8 @@ from typing import Protocol, TypeVar, runtime_checkable
 from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import (
     OrchestratorPort,
     ProgressReporterPort,
-    SessionStopControllerPort,
 )
+from shogiarena._core.shared.kernel.session_hooks import GameLifecycleHooks, SessionStopController
 
 TSessionContext = TypeVar("TSessionContext")
 TSessionResults = TypeVar("TSessionResults")
@@ -54,9 +54,9 @@ class SessionExecutionRuntimePort(Protocol[TSessionContext, TSessionResults, TSp
 
     async def init_services(self) -> None: ...
 
-    def get_dashboard_params(self) -> tuple[Path, int, int] | None: ...
+    def get_dashboard_params(self) -> tuple[Path, str, int, int] | None: ...
 
-    async def start_dashboard_server(self, run_dir: Path, preferred_port: int, num_workers: int) -> int: ...
+    async def start_dashboard_server(self, run_dir: Path, host: str, preferred_port: int, num_workers: int) -> int: ...
 
     async def seed_initial_summary(self) -> None: ...
 
@@ -99,7 +99,7 @@ class SessionExecutionServicePort(Protocol[TSessionContext, TSessionResults, TSp
         self,
         runner: SessionExecutionRuntimePort[TSessionContext, TSessionResults, TSprtStatus, TRunResult],
         *,
-        controller: SessionStopControllerPort,
+        controller: SessionStopController,
     ) -> None: ...
 
     async def finalize_session(
@@ -117,19 +117,19 @@ class SessionRunLoopRuntimePort(Protocol[TSessionContext]):
     pending_reschedule: object | None
     should_stop_when_idle: bool
 
-    def reset_stop_controller(self, controller: SessionStopControllerPort) -> None: ...
+    def reset_stop_controller(self, controller: SessionStopController) -> None: ...
 
     def has_pending_games(self) -> bool: ...
 
     def are_services_closed(self) -> bool: ...
 
-    def create_lifecycle_hooks(self, controller: SessionStopControllerPort) -> object: ...
+    def create_lifecycle_hooks(self, controller: SessionStopController) -> GameLifecycleHooks: ...
 
-    def set_lifecycle_hooks(self, hooks: object) -> None: ...
+    def set_lifecycle_hooks(self, hooks: GameLifecycleHooks) -> None: ...
 
     async def create_orchestrator(
         self,
-        hooks: object,
+        hooks: GameLifecycleHooks,
         session_context: TSessionContext | None,
     ) -> OrchestratorPort: ...
 
@@ -153,7 +153,7 @@ class SessionRunLoopServicePort(Protocol[TSessionContext]):
         self,
         runner: SessionRunLoopRuntimePort[TSessionContext],
         *,
-        controller: SessionStopControllerPort,
+        controller: SessionStopController,
         session_context: TSessionContext | None,
     ) -> None: ...
 
@@ -167,7 +167,7 @@ class SessionRunRuntimePort(
     """Runner runtime contract consumed by run service."""
 
     @property
-    def stop_controller(self) -> SessionStopControllerPort: ...
+    def stop_controller(self) -> SessionStopController: ...
 
 
 __all__ = [

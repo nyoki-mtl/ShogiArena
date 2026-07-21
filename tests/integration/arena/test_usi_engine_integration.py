@@ -1,10 +1,11 @@
 import asyncio
 import os
+import sys
 import textwrap
 from pathlib import Path
 
 import pytest
-from rshogi.core import Move
+from rsshogi.core import Move
 
 from shogiarena._core.contexts.instances.application.instance_models import Instance, InstanceConfig, InstanceType
 from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkRequest
@@ -13,7 +14,7 @@ from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
 from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine, UsiEngineState
 
 
-def _write_mock_usi_engine(script_path: Path) -> None:
+def _write_mock_usi_engine(script_path: Path) -> Path:
     script_path.write_text(
         textwrap.dedent(
             """\
@@ -86,6 +87,13 @@ def _write_mock_usi_engine(script_path: Path) -> None:
         encoding="utf-8",
     )
     os.chmod(script_path, 0o755)
+    if sys.platform.startswith("win"):
+        # Windows は shebang 付き .py を直接 CreateProcess できないため、
+        # 実エンジンバイナリと同じ「起動可能な 1 ファイル」を .bat ラッパで用意する。
+        launcher = script_path.with_suffix(".bat")
+        launcher.write_text(f'@echo off\r\n"{sys.executable}" "{script_path}" %*\r\n', encoding="utf-8")
+        return launcher
+    return script_path
 
 
 async def _wait_for_state(engine: AsyncUsiEngine, expected: UsiEngineState, timeout: float = 1.0) -> None:
@@ -100,12 +108,12 @@ async def _wait_for_state(engine: AsyncUsiEngine, expected: UsiEngineState, time
 @pytest.mark.asyncio
 async def test_async_usi_engine_state_machine_with_subprocess(tmp_path: Path) -> None:
     script_path = tmp_path / "mock_usi_engine.py"
-    _write_mock_usi_engine(script_path)
+    launch_path = _write_mock_usi_engine(script_path)
 
     config = UsiEngineConfig.from_mapping(
         {
             "name": "IntegrationMock",
-            "engine_path": str(script_path),
+            "engine_path": str(launch_path),
             "options": {"Threads": 1},
         }
     )
@@ -118,7 +126,7 @@ async def test_async_usi_engine_state_machine_with_subprocess(tmp_path: Path) ->
     )
     bridge = SpawnerBackedUSIBridge(
         instance=instance,
-        engine_path=str(script_path),
+        engine_path=str(launch_path),
         name="integration-mock",
     )
 

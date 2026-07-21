@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import rshogi.book as rs_book
-from rshogi.core import Board
-from rshogi.record import GameResult
+import rsshogi.book as rs_book
+from rsshogi.core import Board
+from rsshogi.record import GameResult
 
 from shogiarena._core.contexts.dashboard.application.book.aggregation import build_book_aggregation
 from shogiarena._core.contexts.dashboard.application.book.service import (

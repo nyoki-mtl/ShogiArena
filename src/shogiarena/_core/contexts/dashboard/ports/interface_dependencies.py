@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-import rshogi
+import rsshogi
 
 from shogiarena._core.contexts.dashboard.ports.snapshot_storage import SnapshotStoragePort
 from shogiarena._core.contexts.dashboard.ports.spsa_service_ports import (
@@ -38,7 +38,7 @@ class DashboardGameRecordLoaderFn(Protocol):
         db_path: Path,
         *,
         game_name: str,
-    ) -> rshogi.record.GameRecord | None: ...
+    ) -> rsshogi.record.Record | None: ...
 
 
 class DashboardGamesRawPayloadBuilderFn(Protocol):
@@ -130,7 +130,7 @@ class DashboardGameQueryPort(Protocol):
         db_path: Path,
         *,
         game_name: str,
-    ) -> rshogi.record.GameRecord | None: ...
+    ) -> rsshogi.record.Record | None: ...
 
     def build_games_raw_payload(
         self,

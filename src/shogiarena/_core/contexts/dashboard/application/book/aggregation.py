@@ -36,7 +36,7 @@ class BookSideInput:
 
 @dataclass(frozen=True, slots=True)
 class BookGameInput:
-    """1 局分の book 集計入力（先手・後手）。"""
+    """1 局分の book 集計入力（先手と後手）。"""
 
     black: BookSideInput
     white: BookSideInput
@@ -182,7 +182,7 @@ class _BookAccumulator:
 def build_book_aggregation(games: Sequence[BookGameInput]) -> JsonObject:
     """game 群から Book タブの集計 payload を構築する。
 
-    各 game の先手・後手それぞれについて、利用した book を fingerprint/path キーで集計する。
+    各 game の先手と後手のそれぞれについて、利用した book を fingerprint/path キーで集計する。
     勝率は draw を 0.5 とし、先後別・engine 別内訳と out-of-book ply のヒストグラムを含む。
     """
 

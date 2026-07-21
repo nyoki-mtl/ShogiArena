@@ -626,8 +626,9 @@ def main() -> int:
         "governed package __init__.py -> no runtime re-export imports."
     )
     for violation in violations:
+        # Report POSIX-style paths so output is identical on Windows and Linux.
         print(
-            f"{violation.source_file}:{violation.source_line} "
+            f"{violation.source_file.as_posix()}:{violation.source_line} "
             f"{violation.source_layer} -> {_format_layer(violation.target_layer)}: "
             f"{violation.message} ({violation.target_module}); "
             f"allowed: {describe_allowed_layers(violation.source_layer)}; "

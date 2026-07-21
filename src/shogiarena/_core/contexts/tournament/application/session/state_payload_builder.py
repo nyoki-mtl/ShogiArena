@@ -4,22 +4,31 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from shogiarena._core.contexts.tournament.domain.tournament_models import GameSpec
 from shogiarena._core.contexts.tournament.ports.session_state_runtime import (
     TournamentStateSaveContext,
 )
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
 
+def _add_schedule_metadata_fields(entry: JsonObject, spec: GameSpec) -> None:
+    for key, value in spec.to_schedule_metadata().items():
+        if key in {"schema_version", "round_num", "initial_sfen"}:
+            continue
+        entry[key] = value
+
+
 def _build_cancelled_entries(ctx: TournamentStateSaveContext) -> list[JsonObject]:
     cancelled_entries: list[JsonObject] = []
     for spec in ctx.state.cancelled_specs.values():
-        entry = {
+        entry: JsonObject = {
             "game_id": spec.game_id,
             "black": spec.black_engine,
             "white": spec.white_engine,
             "round": spec.round_num,
             "sfen": spec.initial_sfen,
         }
+        _add_schedule_metadata_fields(entry, spec)
         assignment_payload = ctx.serialize_assignment_override(spec)
         if assignment_payload:
             entry["assignment"] = assignment_payload

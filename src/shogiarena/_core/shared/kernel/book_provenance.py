@@ -16,13 +16,17 @@ import logging
 from collections.abc import Mapping
 from pathlib import Path
 
-from shogiarena._core.shared.kernel.engine_book import is_engine_book_enabled, resolve_engine_book_path
+from shogiarena._core.shared.kernel.engine_book import (
+    is_engine_book_enabled,
+    resolve_engine_book_path,
+    resolve_yaneuraou_book_fallback_path,
+)
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.serialization import json_serialize
 
 logger = logging.getLogger(__name__)
 
-# Book タブ集計・再現で意味のある主要 book option。
+# Book タブの集計と再現で意味のある主要 book option。
 KEY_BOOK_OPTIONS: tuple[str, ...] = (
     "USI_OwnBook",
     "BookDir",
@@ -115,9 +119,16 @@ def build_book_provenance(
     provenance: JsonObject = {}
     resolved = resolve_engine_book_path(options, output_dir=output_dir, engine_dir=engine_dir)
     if resolved is not None:
-        provenance["resolved_path"] = resolved
-        if Path(resolved).is_absolute():
-            provenance["fingerprint"] = fingerprint_file(resolved, full_hash=full_hash)
+        resolved_path = Path(resolved)
+        actual_path = (
+            resolve_yaneuraou_book_fallback_path(resolved_path) if resolved_path.is_absolute() else resolved_path
+        )
+        provenance["resolved_path"] = str(actual_path)
+        if actual_path != resolved_path:
+            provenance["requested_path"] = resolved
+            provenance["fallback"] = "ybb"
+        if actual_path.is_absolute():
+            provenance["fingerprint"] = fingerprint_file(actual_path, full_hash=full_hash)
 
     provenance["options"] = {key: json_serialize(options[key]) for key in KEY_BOOK_OPTIONS if key in options}
     return provenance

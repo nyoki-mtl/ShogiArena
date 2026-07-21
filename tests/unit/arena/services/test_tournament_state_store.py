@@ -19,6 +19,7 @@ from shogiarena._core.contexts.tournament.ports.session_state_runtime import (
     TournamentStateSaveContext,
     TournamentStateSetupContext,
 )
+from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 
 
@@ -81,13 +82,22 @@ class _SchedulerStub:
 
 
 class _DbStub:
-    def __init__(self, game_names: Iterable[str]) -> None:
+    def __init__(self, game_names: Iterable[str], *, result: GameResult = GameResult.DRAW_BY_REPETITION) -> None:
         self._game_names = list(game_names)
+        self._result = result
         self.game_types: list[str] = []
 
     def get_games_with_players(self, *, game_type: str) -> list[dict[str, object]]:
         self.game_types.append(game_type)
-        return [{"game_name": game_name} for game_name in self._game_names]
+        return [
+            {
+                "game_name": game_name,
+                "black_player": "EngineA",
+                "white_player": "EngineB",
+                "result": self._result,
+            }
+            for game_name in self._game_names
+        ]
 
     def load_record(self, *, game_id: int | None = None, game_name: str | None = None) -> None:
         return None
@@ -493,13 +503,227 @@ async def test_try_setup_tournament_rejects_unsealed_manifest(tmp_path: Path) ->
         resume_hash="resume-hash",
     )
 
-    resumed = await store.try_setup_tournament(ctx)
+    original_state = (tmp_path / "state.json").read_bytes()
+    with pytest.raises(RuntimeError, match="not provenance sealed.*no-resume"):
+        await store.try_setup_tournament(ctx)
 
-    assert resumed is False
+    assert (tmp_path / "state.json").read_bytes() == original_state
+    assert not (tmp_path / "completed.flag").exists()
     assert state.game_schedule == []
 
 
-def test_load_completed_game_ids_fails_fast_on_db_error() -> None:
+@pytest.mark.asyncio
+async def test_try_setup_tournament_rejects_corrupt_state_without_overwrite(tmp_path: Path) -> None:
+    corrupt_state = b"{not-json"
+    (tmp_path / "state.json").write_bytes(corrupt_state)
+    ctx = TournamentStateSetupContext(
+        run_dir=tmp_path,
+        run_options=SimpleNamespace(should_skip_resume=False),
+        config=_make_config(),
+        scheduler=cast(TournamentScheduleGeneratorPort, _SchedulerStub([_make_game("g001")])),
+        state=TournamentRunnerState(),
+        openbench=cast(TournamentOpenBenchStatePort, _OpenBenchStub()),
+        db_service=cast(Any, _DbStub([])),
+        reorder_and_shuffle=lambda games: games,
+        reset_schedule_tracking=lambda: None,
+        write_schedule_file=lambda schedule_to_write: None,
+        notify_schedule_available=lambda: None,
+        reset_display_order=lambda: None,
+        apply_assignment_override=_apply_assignment_override,
+        ensure_display_order_for_specs=lambda specs: None,
+        refresh_game_assignments=lambda: None,
+        build_save_context=lambda: _build_save_context(
+            run_dir=tmp_path,
+            config=_make_config(),
+            state=TournamentRunnerState(),
+            openbench=_OpenBenchStub(),
+        ),
+        schedule_hash="schedule-hash",
+        resume_hash="resume-hash",
+    )
+
+    with pytest.raises(RuntimeError, match="parse state.json.*no-resume"):
+        await TournamentSessionStateStore().try_setup_tournament(ctx)
+
+    assert (tmp_path / "state.json").read_bytes() == corrupt_state
+    assert not (tmp_path / "completed.flag").exists()
+
+
+@pytest.mark.asyncio
+async def test_try_setup_tournament_no_resume_replaces_corrupt_state(tmp_path: Path) -> None:
+    (tmp_path / "state.json").write_text("{not-json", encoding="utf-8")
+    state = TournamentRunnerState()
+    config = _make_config()
+    openbench = _OpenBenchStub()
+    ctx = TournamentStateSetupContext(
+        run_dir=tmp_path,
+        run_options=SimpleNamespace(should_skip_resume=True),
+        config=config,
+        scheduler=cast(TournamentScheduleGeneratorPort, _SchedulerStub([_make_game("g001")])),
+        state=state,
+        openbench=cast(TournamentOpenBenchStatePort, openbench),
+        db_service=cast(Any, _DbStub([])),
+        reorder_and_shuffle=lambda games: games,
+        reset_schedule_tracking=lambda: None,
+        write_schedule_file=lambda schedule_to_write: None,
+        notify_schedule_available=lambda: None,
+        reset_display_order=lambda: None,
+        apply_assignment_override=_apply_assignment_override,
+        ensure_display_order_for_specs=lambda specs: None,
+        refresh_game_assignments=lambda: None,
+        build_save_context=lambda: _build_save_context(
+            run_dir=tmp_path,
+            config=config,
+            state=state,
+            openbench=openbench,
+        ),
+        schedule_hash="schedule-hash",
+        resume_hash="resume-hash",
+    )
+
+    resumed = await TournamentSessionStateStore().try_setup_tournament(ctx)
+
+    assert resumed is False
+    assert [game.game_id for game in state.game_schedule] == ["g001"]
+    assert json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))["is_finished"] is False
+
+
+@pytest.mark.asyncio
+async def test_try_setup_tournament_rejects_malformed_persisted_schedule(tmp_path: Path) -> None:
+    config = _make_config()
+    saved_state = TournamentRunnerState(game_schedule=[_make_game("g001")])
+    openbench = _OpenBenchStub()
+    store = TournamentSessionStateStore()
+    _write_sealed_manifest(tmp_path)
+    store.save_run_state(_build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench))
+    (tmp_path / "schedule.json").write_text(json.dumps({"games": [{"black": "EngineA"}]}), encoding="utf-8")
+    ctx = TournamentStateSetupContext(
+        run_dir=tmp_path,
+        run_options=SimpleNamespace(should_skip_resume=False),
+        config=config,
+        scheduler=cast(TournamentScheduleGeneratorPort, _SchedulerStub([_make_game("replacement")])),
+        state=TournamentRunnerState(),
+        openbench=cast(TournamentOpenBenchStatePort, openbench),
+        db_service=cast(Any, _DbStub([])),
+        reorder_and_shuffle=lambda games: games,
+        reset_schedule_tracking=lambda: None,
+        write_schedule_file=lambda schedule_to_write: None,
+        notify_schedule_available=lambda: None,
+        reset_display_order=lambda: None,
+        apply_assignment_override=_apply_assignment_override,
+        ensure_display_order_for_specs=lambda specs: None,
+        refresh_game_assignments=lambda: None,
+        build_save_context=lambda: _build_save_context(
+            run_dir=tmp_path,
+            config=config,
+            state=TournamentRunnerState(),
+            openbench=openbench,
+        ),
+        schedule_hash="schedule-hash",
+        resume_hash="resume-hash",
+    )
+
+    with pytest.raises(RuntimeError, match="schedule.json.*game_id.*no-resume"):
+        await store.try_setup_tournament(ctx)
+
+    assert ctx.state.game_schedule == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("saved_sprt", "expected_error"),
+    [
+        (None, "SPRT state is missing"),
+        (Sprt(0.0, 5.0), "SPRT state and game.db disagree"),
+    ],
+)
+async def test_try_setup_tournament_rejects_inconsistent_sprt_resume(
+    tmp_path: Path,
+    saved_sprt: Sprt | None,
+    expected_error: str,
+) -> None:
+    config = _make_config()
+    openbench = _OpenBenchStub()
+    saved_state = TournamentRunnerState(game_schedule=[_make_game("g001")], sprt=saved_sprt)
+    store = TournamentSessionStateStore()
+    _write_sealed_manifest(tmp_path)
+    store.save_run_state(_build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench))
+    resumed_state = TournamentRunnerState(sprt=Sprt(0.0, 5.0))
+    ctx = TournamentStateSetupContext(
+        run_dir=tmp_path,
+        run_options=SimpleNamespace(should_skip_resume=False),
+        config=config,
+        scheduler=cast(TournamentScheduleGeneratorPort, _SchedulerStub([_make_game("g001")])),
+        state=resumed_state,
+        openbench=cast(TournamentOpenBenchStatePort, openbench),
+        db_service=cast(Any, _DbStub(["g001"])),
+        reorder_and_shuffle=lambda games: games,
+        reset_schedule_tracking=lambda: None,
+        write_schedule_file=lambda schedule_to_write: None,
+        notify_schedule_available=lambda: None,
+        reset_display_order=lambda: None,
+        apply_assignment_override=_apply_assignment_override,
+        ensure_display_order_for_specs=lambda specs: None,
+        refresh_game_assignments=lambda: None,
+        build_save_context=lambda: _build_save_context(
+            run_dir=tmp_path,
+            config=config,
+            state=resumed_state,
+            openbench=openbench,
+        ),
+        schedule_hash="schedule-hash",
+        resume_hash="resume-hash",
+    )
+
+    with pytest.raises(RuntimeError, match=expected_error):
+        await store.try_setup_tournament(ctx)
+
+
+@pytest.mark.asyncio
+async def test_try_setup_tournament_excludes_non_game_db_records_from_sprt_count(tmp_path: Path) -> None:
+    config = _make_config()
+    openbench = _OpenBenchStub()
+    saved_sprt = Sprt(0.0, 5.0)
+    saved_state = TournamentRunnerState(game_schedule=[_make_game("g001")], sprt=saved_sprt)
+    store = TournamentSessionStateStore()
+    _write_sealed_manifest(tmp_path)
+    store.save_run_state(_build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench))
+    resumed_state = TournamentRunnerState(sprt=Sprt(0.0, 5.0))
+    ctx = TournamentStateSetupContext(
+        run_dir=tmp_path,
+        run_options=SimpleNamespace(should_skip_resume=False),
+        config=config,
+        scheduler=cast(TournamentScheduleGeneratorPort, _SchedulerStub([_make_game("g001")])),
+        state=resumed_state,
+        openbench=cast(TournamentOpenBenchStatePort, openbench),
+        db_service=cast(Any, _DbStub(["g001"], result=GameResult.ERROR)),
+        reorder_and_shuffle=lambda games: games,
+        reset_schedule_tracking=lambda: None,
+        write_schedule_file=lambda schedule_to_write: None,
+        notify_schedule_available=lambda: None,
+        reset_display_order=lambda: None,
+        apply_assignment_override=_apply_assignment_override,
+        ensure_display_order_for_specs=lambda specs: None,
+        refresh_game_assignments=lambda: None,
+        build_save_context=lambda: _build_save_context(
+            run_dir=tmp_path,
+            config=config,
+            state=resumed_state,
+            openbench=openbench,
+        ),
+        schedule_hash="schedule-hash",
+        resume_hash="resume-hash",
+    )
+
+    resumed = await store.try_setup_tournament(ctx)
+
+    assert resumed is True
+    assert resumed_state.completed_game_ids == {"g001"}
+    assert resumed_state.sprt is not None
+    assert resumed_state.sprt.games_played == 0
+
+
+def test_load_completed_games_fails_fast_on_db_error() -> None:
     # game.db is the authoritative source of completed games on resume; a read failure must fail
     # closed rather than be treated as "zero completed" (which would re-run every game).
     class _RaisingDb:
@@ -511,4 +735,71 @@ def test_load_completed_game_ids_fails_fast_on_db_error() -> None:
         build_save_context=lambda: SimpleNamespace(is_generate_run=lambda: False),
     )
     with pytest.raises(RuntimeError, match="no-resume"):
-        TournamentSessionStateStore._load_completed_game_ids(cast(Any, ctx))
+        TournamentSessionStateStore._load_completed_games(cast(Any, ctx))
+
+
+def _write_openbench_state(run_dir: Path, openbench_state: JsonObject | None) -> None:
+    payload: JsonObject = {
+        "schedule_hash": "schedule-hash",
+        "resume_hash": "resume-hash",
+    }
+    if openbench_state is not None:
+        payload["openbench_state"] = openbench_state
+    (run_dir / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_discarding_a_run_with_submitted_openbench_results_is_refused(tmp_path: Path) -> None:
+    # 加算 API に idempotency key が無いため、送信済みカウンタを消して 0 から
+    # 再送するとサーバ側の集計が二重になる。
+    _write_openbench_state(
+        tmp_path,
+        {
+            "submitted": {"wins": 20, "losses": 20, "draws": 2},
+            "claimed_test_id": 7,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="double-count"):
+        TournamentSessionStateStore().assert_no_submitted_openbench_results(tmp_path)
+
+
+def test_discarding_a_run_with_inflight_openbench_submission_is_refused(tmp_path: Path) -> None:
+    _write_openbench_state(
+        tmp_path,
+        {
+            "submitted": {"wins": 0, "losses": 0, "draws": 0},
+            "inflight_submission": {"wins": 4, "losses": 3, "draws": 1},
+            "target_test_id": 11,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="double-count"):
+        TournamentSessionStateStore().assert_no_submitted_openbench_results(tmp_path)
+
+
+def test_discarding_a_run_without_submitted_openbench_results_is_allowed(tmp_path: Path) -> None:
+    _write_openbench_state(tmp_path, {"submitted": {"wins": 0, "losses": 0, "draws": 0}})
+
+    TournamentSessionStateStore().assert_no_submitted_openbench_results(tmp_path)
+
+
+def test_discarding_a_run_without_state_file_is_allowed(tmp_path: Path) -> None:
+    TournamentSessionStateStore().assert_no_submitted_openbench_results(tmp_path)
+
+
+def test_unreadable_state_blocks_discarding_when_openbench_is_enabled(tmp_path: Path) -> None:
+    (tmp_path / "state.json").write_text("{ this is not json", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="could not be read"):
+        TournamentSessionStateStore().assert_no_submitted_openbench_results(tmp_path)
+
+
+def test_discarding_a_run_with_only_crash_submissions_is_refused(tmp_path: Path) -> None:
+    # 全局クラッシュの run でも crashes は送信される。trinomial だけ見ると見逃す。
+    _write_openbench_state(
+        tmp_path,
+        {"submitted": {"wins": 0, "losses": 0, "draws": 0, "crashes": 6}},
+    )
+
+    with pytest.raises(RuntimeError, match="double-count"):
+        TournamentSessionStateStore().assert_no_submitted_openbench_results(tmp_path)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from shogiarena._core.shared.kernel.game_result_coercion import coerce_game_result
-from shogiarena._core.shared.kernel.scalar_coercion.boolean import coerce_bool
+from shogiarena._core.shared.kernel.scalar_coercion.boolean import coerce_bool, coerce_optional_bool
 from shogiarena._core.shared.kernel.scalar_coercion.mapping import coerce_float_dict, coerce_nested_float_dict
 from shogiarena._core.shared.kernel.scalar_coercion.numeric import (
     coerce_float,
@@ -31,6 +31,7 @@ from shogiarena._core.shared.kernel.scalar_coercion.text import (
 
 __all__ = [
     "coerce_bool",
+    "coerce_optional_bool",
     "coerce_float",
     "coerce_float_dict",
     "coerce_game_result",

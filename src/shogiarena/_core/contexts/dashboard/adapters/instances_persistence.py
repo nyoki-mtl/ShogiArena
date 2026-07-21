@@ -11,6 +11,7 @@ from shogiarena._core.platform.db.store.entities import (
     InstanceSpec,
 )
 from shogiarena._core.platform.db.store.repository_factory import SQLiteShogiDBFactory
+from shogiarena._core.shared.kernel.json_types import JsonObject
 
 
 def upsert_instance_spec(
@@ -50,7 +51,7 @@ def upsert_instance_spec(
         entity.instance_type = instance.type.value
         tags = list(instance.config.tags or [])
         entity.tags = tags if tags else None
-        entity.extra = {
+        extra: JsonObject = {
             "slots": instance.config.slots,
             "reachable": metrics.is_reachable,
             "engine_dir": instance.config.engine_dir,
@@ -58,6 +59,7 @@ def upsert_instance_spec(
             "is_local": instance.is_local,
             "is_ssh": instance.is_ssh,
         }
+        entity.extra = extra
         session.commit()
     finally:
         shogidb.close_db()

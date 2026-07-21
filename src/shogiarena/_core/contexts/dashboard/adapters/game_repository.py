@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
-import rshogi
+import rsshogi
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import aliased
 
@@ -68,7 +68,7 @@ def load_game_record(
     *,
     game_name: str | None = None,
     game_id: int | None = None,
-) -> rshogi.record.GameRecord | None:
+) -> rsshogi.record.Record | None:
     """Load a single game record from the dashboard DB."""
 
     repository = open_dashboard_repository(db_path)

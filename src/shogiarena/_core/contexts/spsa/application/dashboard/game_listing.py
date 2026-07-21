@@ -6,11 +6,11 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 
 from shogiarena._core.shared.kernel.game_results import GameResult
-from shogiarena._core.shared.kernel.json_types import JsonValue
+from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_float, coerce_game_result, coerce_int
 from shogiarena._core.shared.kernel.serialization import json_serialize
 
-GameSnapshotLoader = Callable[[str], dict[str, object] | None]
+GameSnapshotLoader = Callable[[str], JsonObject | None]
 VariantResolver = Callable[[JsonValue | None], str]
 VariantExtractor = Callable[[str], str | None]
 
@@ -63,8 +63,10 @@ def build_games_from_db_rows(
         if update_idx_value is None:
             resolved_variant = extract_variant_from_game_id(game_id) or resolved_variant
         end_time_iso: str | None = None
-        if end_date is not None:
-            end_time_iso = str(end_date.isoformat())
+        # end_date は Game.end_date (DateTime 列) 由来だが、row は object 型で来るため
+        # cast ではなく isinstance で絞る（実行時にも保証される）。
+        if isinstance(end_date, datetime):
+            end_time_iso = end_date.isoformat()
         games.append(
             {
                 "game_id": game_id,

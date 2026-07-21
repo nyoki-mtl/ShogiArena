@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Generic, TypeVar
 
 TController = TypeVar("TController")
 
 
-class RescheduleAction(str, Enum):
+class RescheduleAction(StrEnum):
     CONTINUE = "continue"
     WAIT = "wait"
     STOP = "stop"

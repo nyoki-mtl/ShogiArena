@@ -6,8 +6,9 @@ import argparse
 import asyncio
 import logging
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -17,7 +18,7 @@ from shogiarena._core.interfaces.cli.log_setup import setup_logging
 from shogiarena._core.platform.settings import facade as settings_mod
 
 CommandHandler = Callable[[argparse.Namespace], int | None]
-AsyncCommandHandler = Callable[[argparse.Namespace], Awaitable[int | None]]
+AsyncCommandHandler = Callable[[argparse.Namespace], Coroutine[Any, Any, int | None]]
 
 LOGGER = logging.getLogger("shogiarena.cli")
 

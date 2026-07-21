@@ -102,8 +102,14 @@ class SpsaLtcPostUpdateService(Generic[ParamEntryT]):
             return
 
         async with params_lock:
-            params.clear()
-            params.extend(clone_param_entries(baseline_params_for_ltc))
+            baseline_by_name = {entry.name: entry for entry in baseline_params_for_ltc}
+            if set(baseline_by_name) != {entry.name for entry in params}:
+                raise ValueError("LTC baseline parameter names do not match active parameters")
+            # ParamEntry objects are shared with SpsaRunnerState. Mutate them in place so the
+            # orchestrator, final result, and current.json keep one authoritative theta after a
+            # rejected LTC update. Replacing the list left the runner pointing at stale values.
+            for entry in params:
+                entry.value = float(baseline_by_name[entry.name].value)
             write_params(params)
             revert_params_map = _active_params_map(params)
 

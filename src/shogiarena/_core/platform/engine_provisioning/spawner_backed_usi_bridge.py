@@ -69,6 +69,7 @@ class SpawnerBackedUSIBridge:
         self._stderr_task: asyncio.Task[None] | None = None
         self._stderr_handler: Callable[[str], None] | None = None
         self._is_stopping = False
+        self._reap_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def name(self) -> str:
@@ -105,15 +106,19 @@ class SpawnerBackedUSIBridge:
             return
 
         self._is_stopping = True
-
-        if self._stderr_task and not self._stderr_task.done():
-            self._stderr_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._stderr_task
-            self._stderr_task = None
-
         proc = self.process
+
         try:
+            if self._stderr_task and not self._stderr_task.done():
+                self._stderr_task.cancel()
+                try:
+                    await self._stderr_task
+                except asyncio.CancelledError:
+                    current_task = asyncio.current_task()
+                    if current_task is not None and current_task.cancelling():
+                        raise
+                self._stderr_task = None
+
             if proc and proc.returncode is None:
                 writer = proc.stdin
                 if writer is not None and not writer.is_closing():
@@ -127,11 +132,56 @@ class SpawnerBackedUSIBridge:
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=self.KILL_WAIT_TIMEOUT_SECONDS)
                     except TimeoutError:
-                        logger.warning("Process %s did not exit after kill; giving up wait", self.name)
+                        logger.warning("Process %s did not exit after kill; continuing reap in background", self.name)
+                        self._schedule_background_reap(proc)
+        except asyncio.CancelledError:
+            # Cancellation of shutdown must not detach a live child process. Kill
+            # and reap it before preserving the caller's cancellation signal.
+            try:
+                await self._kill_and_reap_cancelled_stop(proc)
+            finally:
+                raise
         finally:
             self.process = None
             self._is_stopping = False
         logger.debug("Engine process %s stop procedure finished", self.name)
+
+    async def _kill_and_reap_cancelled_stop(self, proc: _EngineProcessPort) -> None:
+        if proc.returncode is not None:
+            return
+        logger.warning("Stop cancelled for %s; killing process before propagating cancellation", self.name)
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        except Exception as exc:  # pragma: no cover - defensive adapter boundary
+            logger.warning("Failed to kill process %s during cancelled stop: %s", self.name, exc, exc_info=exc)
+
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=self.KILL_WAIT_TIMEOUT_SECONDS)
+        except TimeoutError:
+            logger.warning("Process %s did not exit after cancelled stop; continuing reap in background", self.name)
+            self._schedule_background_reap(proc)
+        except Exception as exc:  # pragma: no cover - defensive adapter boundary
+            logger.warning("Failed to reap process %s during cancelled stop: %s", self.name, exc, exc_info=exc)
+
+    def _schedule_background_reap(self, proc: _EngineProcessPort) -> None:
+        task = asyncio.create_task(self._reap_process(proc), name=f"reap-{self.name}")
+        self._reap_tasks.add(task)
+
+        def _consume_reap_result(done_task: asyncio.Task[None]) -> None:
+            self._reap_tasks.discard(done_task)
+            if done_task.cancelled():
+                return
+            exc = done_task.exception()
+            if exc is not None:
+                logger.warning("Background reap failed for %s: %s", self.name, exc, exc_info=exc)
+
+        task.add_done_callback(_consume_reap_result)
+
+    async def _reap_process(self, proc: _EngineProcessPort) -> None:
+        await proc.wait()
+        logger.debug("Background reap completed for %s", self.name)
 
     async def send_line(self, command: str) -> None:
         proc = self.process

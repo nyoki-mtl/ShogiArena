@@ -57,9 +57,11 @@ class InstancesAPI(InstancesApiRouteMixin, InstancesApiActionMixin):
         store: InstanceConfigStore | None = None,
         db_path: Path | None = None,
         instances_port: DashboardInstancesPort | None = None,
+        is_read_only: bool = False,
     ) -> None:
         dependencies = load_dashboard_interface_dependencies() if instances_port is None else None
         self.instance_pool = instance_pool
+        self._is_read_only = bool(is_read_only)
         self.store = store or InstanceConfigStore(base_dir=_output_dir / "instances")
         self._db_path = Path(db_path).resolve() if db_path else None
         self._instances_sse_seq = 0
@@ -90,12 +92,18 @@ class InstancesAPI(InstancesApiRouteMixin, InstancesApiActionMixin):
         raise TypeError("InstancesAPI.pool must be an InstancePool instance")
 
     def _get_pool(self) -> InstancePool:
-        """Get an instance pool, ensuring a local instance exists."""
+        """Get an instance pool, ensuring a local instance exists.
+
+        read-only（archived）ダッシュボードでは、閲覧しただけでローカル
+        インスタンスを生やさない。過去の run を見るために live なプールを
+        捏造する必要はなく、空のプールが正直な表現になる。
+        """
 
         if self.instance_pool is None:
             self.instance_pool = InstancePool()
         pool = self._coerce_pool(self.instance_pool)
-        pool.ensure_local_instance()
+        if not self._is_read_only:
+            pool.ensure_local_instance()
         return pool
 
     def _next_instances_seq(self) -> int:
@@ -103,7 +111,7 @@ class InstancesAPI(InstancesApiRouteMixin, InstancesApiActionMixin):
         return self._instances_sse_seq
 
     def _queue_instances_update(self, kind: str, *, instance_ids: list[str] | None = None) -> None:
-        payload = {"kind": kind}
+        payload: JsonObject = {"kind": kind}
         if instance_ids:
             payload["instance_ids"] = list(instance_ids)
         self._update_queue.put_nowait(payload)
@@ -141,7 +149,6 @@ class InstancesAPI(InstancesApiRouteMixin, InstancesApiActionMixin):
                 "Content-Type": "text/event-stream",
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
             },
         )
         await response.prepare(request)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from rshogi.core import normalize_usi_position
+from rsshogi.core import normalize_usi_position
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_builders import detect_git_remote_and_ref
 from shogiarena._core.contexts.game_session.adapters.orchestration.remote_executor import RemoteExecutor

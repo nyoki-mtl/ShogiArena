@@ -50,7 +50,7 @@ function installBrandingAssets(documentRef: Document | null | undefined): void {
 let globalErrorHandlersInstalled = false;
 
 /**
- * 未捕捉の Promise 拒否・グローバルエラーを一元的に Diagnostics へ流すハンドラを設置する。
+ * 未捕捉の Promise 拒否とグローバルエラーを一元的に Diagnostics へ流すハンドラを設置する。
  * フロントエンドには多数の fire-and-forget な `void promise` 呼び出しがあるため、握り潰された
  * 失敗を可視化する最後の安全網として機能する。
  */

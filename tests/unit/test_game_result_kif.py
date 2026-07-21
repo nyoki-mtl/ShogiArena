@@ -1,4 +1,4 @@
-import rshogi
+import rsshogi
 
 from shogiarena._core.shared.kernel.game_record_types import Color, game_result_score
 from shogiarena._core.shared.kernel.game_results import GameResult, timeout_win_result
@@ -15,7 +15,7 @@ def test_game_result_from_kif_resign() -> None:
             "まで1手で後手の勝ち",
         ]
     )
-    assert rshogi.record.GameRecord.from_kif_str(kif).result == GameResult.WHITE_WIN
+    assert rsshogi.record.Record.from_kif_str(kif).result == GameResult.WHITE_WIN
 
 
 def test_game_result_from_kif_chudan() -> None:
@@ -29,7 +29,7 @@ def test_game_result_from_kif_chudan() -> None:
             "まで1手で中断",
         ]
     )
-    assert rshogi.record.GameRecord.from_kif_str(kif).result == GameResult.PAUSED
+    assert rsshogi.record.Record.from_kif_str(kif).result == GameResult.PAUSED
 
 
 def test_game_result_from_kif_max_plies() -> None:
@@ -43,7 +43,7 @@ def test_game_result_from_kif_max_plies() -> None:
             "まで1手で最大手数",
         ]
     )
-    assert rshogi.record.GameRecord.from_kif_str(kif).result == GameResult.DRAW_BY_MAX_PLIES
+    assert rsshogi.record.Record.from_kif_str(kif).result == GameResult.DRAW_BY_MAX_PLIES
 
 
 def test_game_result_from_kif_jishogi() -> None:
@@ -57,7 +57,7 @@ def test_game_result_from_kif_jishogi() -> None:
             "まで1手で持将棋",
         ]
     )
-    assert rshogi.record.GameRecord.from_kif_str(kif).result == GameResult.DRAW_BY_IMPASSE
+    assert rsshogi.record.Record.from_kif_str(kif).result == GameResult.DRAW_BY_IMPASSE
 
 
 def test_game_result_score_and_timeout_helpers() -> None:

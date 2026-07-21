@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from rshogi.core import Board, Move
+from rsshogi.core import Board, Move
 
 from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkRequest, UsiThinkResultPort
 from shogiarena._core.interfaces.cli.main import CliArgumentError, CliError

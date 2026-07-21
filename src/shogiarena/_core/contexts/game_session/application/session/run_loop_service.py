@@ -12,7 +12,7 @@ from shogiarena._core.contexts.game_session.application.session.reschedule_loop 
     RescheduleLoop,
 )
 from shogiarena._core.contexts.game_session.ports.run_runtime import SessionRunLoopRuntimePort
-from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import SessionStopControllerPort
+from shogiarena._core.shared.kernel.session_hooks import SessionStopController
 
 TSessionContext = TypeVar("TSessionContext")
 
@@ -26,12 +26,12 @@ class TournamentRunLoopService:
         self,
         runner: SessionRunLoopRuntimePort[TSessionContext],
         *,
-        controller: SessionStopControllerPort,
+        controller: SessionStopController,
         session_context: TSessionContext | None,
     ) -> None:
-        loop: RescheduleLoop[SessionStopControllerPort] = RescheduleLoop()
+        loop: RescheduleLoop[SessionStopController] = RescheduleLoop()
 
-        def on_reset(new_controller: SessionStopControllerPort) -> None:
+        def on_reset(new_controller: SessionStopController) -> None:
             runner.reset_stop_controller(new_controller)
 
         await loop.run(
@@ -46,7 +46,7 @@ class TournamentRunLoopService:
     async def run_iteration(
         self,
         runner: SessionRunLoopRuntimePort[TSessionContext],
-        active_controller: SessionStopControllerPort,
+        active_controller: SessionStopController,
         *,
         session_context: TSessionContext | None,
     ) -> None:
@@ -63,7 +63,7 @@ class TournamentRunLoopService:
     async def decide_next(
         self,
         runner: SessionRunLoopRuntimePort[TSessionContext],
-        active_controller: SessionStopControllerPort,
+        active_controller: SessionStopController,
     ) -> RescheduleDecision:
         if runner.are_services_closed():
             runner.session_phase = "stopped"

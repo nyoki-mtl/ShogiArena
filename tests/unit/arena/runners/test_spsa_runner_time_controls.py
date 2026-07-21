@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import rshogi
-from rshogi.initial_positions import InitialPosition
+import rsshogi
+from rsshogi.initial_positions import InitialPosition
 
 from shogiarena._core.shared.kernel.game_results import GameResult
 
 
-def _make_game_record(*, black_tc: str | None = None, white_tc: str | None = None) -> rshogi.record.GameRecord:
+def _make_game_record(*, black_tc: str | None = None, white_tc: str | None = None) -> rsshogi.record.Record:
     metadata: dict[str, object] = {
         "black_player": "black",
         "white_player": "white",
@@ -20,7 +20,7 @@ def _make_game_record(*, black_tc: str | None = None, white_tc: str | None = Non
         metadata["black_time_control"] = black_tc
     if white_tc is not None:
         metadata["white_time_control"] = white_tc
-    return rshogi.record.GameRecord.from_dict(
+    return rsshogi.record.Record.from_dict(
         {
             "metadata": metadata,
             "init_position_sfen": InitialPosition.STANDARD.value,

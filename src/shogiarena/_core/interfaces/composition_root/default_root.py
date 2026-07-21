@@ -12,7 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
 
-import rshogi.record
+import rsshogi.record
 
 from shogiarena._core.contexts.dashboard.adapters.game_repository import (
     build_games_list_raw_payload,
@@ -97,7 +97,7 @@ class DefaultRoot:
 
 
 class GameRecordLoaderFn(Protocol):
-    """run DB から GameRecord を読む callable 契約。"""
+    """run DB から Record を読む callable 契約。"""
 
     def __call__(
         self,
@@ -105,7 +105,7 @@ class GameRecordLoaderFn(Protocol):
         *,
         game_name: str | None = None,
         game_id: int | None = None,
-    ) -> rshogi.record.GameRecord | None: ...
+    ) -> rsshogi.record.Record | None: ...
 
 
 def _create_snapshot_storage(state: object, run_dir: Path) -> SnapshotStoragePort:
@@ -180,12 +180,17 @@ def _create_api_server(
     run_dir: Path | None = None,
     instance_pool: object | None = None,
     *,
+    host: str = "127.0.0.1",
+    read_only: bool = False,
     schedule_boundary: DashboardScheduleBoundaryPort | None = None,
 ) -> ArenaAPIServer:
     resolved_run_dir = run_dir or db_path.parent
     # On-demand replay engines need a real local instance; guarantee a pool so the
-    # runtime factory never has to synthesize a placeholder.
-    resolved_instance_pool = instance_pool if instance_pool is not None else InstancePool.ensure_default_local_pool()
+    # runtime factory never has to synthesize a placeholder. Archived dashboards
+    # are read-only and must not create mutable instance state just by starting.
+    resolved_instance_pool = (
+        instance_pool if instance_pool is not None or read_only else InstancePool.ensure_default_local_pool()
+    )
     interface_dependencies = load_dashboard_interface_dependencies()
     state = _create_dashboard_state(resolved_run_dir)
     game_state = GameStateUpdater(
@@ -196,9 +201,11 @@ def _create_api_server(
     event_bus: EventBus[DashboardEvent] = EventBus()
     return ArenaAPIServer(
         db_path=db_path,
+        host=host,
         port=port,
         run_dir=resolved_run_dir,
         instance_pool=resolved_instance_pool,
+        read_only=read_only,
         schedule_boundary=schedule_boundary,
         state=state,
         game_state=game_state,

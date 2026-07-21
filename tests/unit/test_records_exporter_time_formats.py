@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import rshogi
-from rshogi.initial_positions import InitialPosition
+import rsshogi
+from rsshogi.initial_positions import InitialPosition
 
 from shogiarena._core.shared.kernel.game_results import GameResult
 
@@ -12,7 +12,7 @@ def _make_record(
     *,
     result_code: GameResult = GameResult.PAUSED,
 ) -> object:
-    return rshogi.record.GameRecord.from_dict(
+    return rsshogi.record.Record.from_dict(
         {
             "metadata": {
                 "black_player": "black",
@@ -28,7 +28,7 @@ def _make_record(
     )
 
 
-def test_to_kif_uses_rshogi_serializer() -> None:
+def test_to_kif_uses_rsshogi_serializer() -> None:
     record = _make_record("900+60+0", "900+60+0")
     assert isinstance(record.to_kif(), str)
 
@@ -47,7 +47,7 @@ def test_to_kif_side_time_controls() -> None:
     assert "後手持ち時間：900+0+10" in kif
 
 
-def test_to_csa_uses_rshogi_serializer() -> None:
+def test_to_csa_uses_rsshogi_serializer() -> None:
     record = _make_record("1500+60+0", "1500+60+0")
     assert isinstance(record.to_csa(), str)
 

@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from statistics import NormalDist
 
-from rshogi.types import Color
+from rsshogi.types import Color
 
 from shogiarena._core.contexts.game_session.domain.result_summary_models import (
     EngineResultSummary,
@@ -15,6 +14,10 @@ from shogiarena._core.contexts.game_session.domain.result_summary_models import 
 from shogiarena._core.contexts.game_session.ports.result_summary_reader import ResultSummaryReaderPort
 from shogiarena._core.shared.kernel.game_record_types import game_result_score
 from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.statistics.confidence_intervals import (
+    validate_confidence,
+    wilson_score_interval,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,8 +44,7 @@ class OfflineResultSummaryService:
         reader: ResultSummaryReaderPort,
         request: OfflineResultSummaryRequest,
     ) -> OfflineResultSummary:
-        if not 0.0 < request.confidence < 1.0:
-            raise ValueError("confidence must be in the open interval (0, 1)")
+        validate_confidence(request.confidence)
 
         games = reader.read_games()
         engine_stats: dict[str, EngineResultSummary] = {}
@@ -122,16 +124,7 @@ class OfflineResultSummaryService:
         trials: int,
         confidence: float,
     ) -> tuple[float, float] | None:
-        if trials <= 0:
-            return None
-        alpha = 1.0 - confidence
-        z = NormalDist().inv_cdf(1.0 - alpha / 2.0)
-        n = float(trials)
-        phat = successes / n
-        denominator = 1.0 + (z * z / n)
-        center = (phat + (z * z) / (2.0 * n)) / denominator
-        margin = z * ((phat * (1.0 - phat) / n + (z * z) / (4.0 * n * n)) ** 0.5) / denominator
-        return max(0.0, center - margin), min(1.0, center + margin)
+        return wilson_score_interval(successes=successes, trials=trials, confidence=confidence)
 
 
 __all__ = [

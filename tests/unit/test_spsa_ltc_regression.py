@@ -4,8 +4,8 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-import rshogi
-from rshogi.initial_positions import InitialPosition
+import rsshogi
+from rsshogi.initial_positions import InitialPosition
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_core import SprtConfig
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_spsa_models import (
@@ -19,7 +19,7 @@ from shogiarena._core.shared.kernel.game_results import GameResult
 
 
 def _make_record(result: GameResult) -> object:
-    return rshogi.record.GameRecord.from_dict(
+    return rsshogi.record.Record.from_dict(
         {
             "metadata": {
                 "game_name": "test",
@@ -199,7 +199,7 @@ async def test_ltc_regression_uses_sprt_rejection(tmp_path):
 class DummySprtPentanomialPassOrchestrator(DummySpsaOrchestrator):
     def __init__(self, tmp_path) -> None:  # type: ignore[override]
         super().__init__(tmp_path)
-        self._ltc_config.total_pairs = 2  # min_pairs floor is 2 for pentanomial
+        self._ltc_config.total_pairs = 2  # below the approximation-safety floor
         self._ltc_config.pass_criteria = LtcPassCriteria(
             sprt=SprtConfig(model="gsprt-pentanomial-v1", elo0=0.0, elo1=400.0, alpha=0.49, beta=0.49)
         )
@@ -212,7 +212,8 @@ class DummySprtPentanomialPassOrchestrator(DummySpsaOrchestrator):
 @pytest.mark.asyncio
 async def test_ltc_regression_uses_pentanomial_paired_submission(tmp_path):
     # Regression: a pentanomial LTC config must use add_paired_observation, not crash on
-    # add_game_result (which is trinomial-only).
+    # add_game_result (which is trinomial-only). Two all-win pairs remain pending because the
+    # Brownian approximation is intentionally disabled for tiny/zero-variance samples.
     orch = DummySprtPentanomialPassOrchestrator(tmp_path)
     record = await run_ltc_regression(
         orch,
@@ -222,9 +223,9 @@ async def test_ltc_regression_uses_pentanomial_paired_submission(tmp_path):
         baseline_update_idx=-1,
     )
 
-    assert record["status"] == "passed"
+    assert record["status"] == "pending"
     assert record["sprt"] is not None
-    assert record["sprt"]["decision"] == "accept_h1"
+    assert record["sprt"]["decision"] == "continue"
     assert record["pairs_played"] == 2
 
 

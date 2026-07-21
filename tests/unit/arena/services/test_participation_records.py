@@ -93,3 +93,36 @@ def test_deserialize_participation_invalid_datetime_becomes_none() -> None:
     assert len(decoded) == 1
     assert decoded[0].started_at is None
     assert decoded[0].completed_at == datetime(2026, 2, 16, 1, 3, 4, tzinfo=UTC)
+
+
+def test_deserialize_participation_accepts_nested_book_extra() -> None:
+    raw = """
+    [
+      {
+        "role": "black",
+        "engine_name": "engine-a",
+        "extra": {
+          "book": {
+            "resolved_path": "/srv/book/user_book1.db",
+            "fingerprint": {
+              "basename": "user_book1.db",
+              "hash_method": "size_partial_sha256",
+              "partial_sha256": "abc"
+            },
+            "options": {"BookFile": "user_book1.db", "BookMoves": 16}
+          }
+        }
+      }
+    ]
+    """
+    decoded = deserialize_participation_records(raw)
+
+    assert len(decoded) == 1
+    assert decoded[0].extra is not None
+    book = decoded[0].extra["book"]
+    assert isinstance(book, dict)
+    assert book["fingerprint"] == {
+        "basename": "user_book1.db",
+        "hash_method": "size_partial_sha256",
+        "partial_sha256": "abc",
+    }

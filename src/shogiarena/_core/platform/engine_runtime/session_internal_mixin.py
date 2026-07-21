@@ -7,7 +7,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from rshogi.core import Move
+from rsshogi.core import Move
 
 from shogiarena._core.contexts.match.ports.usi_think_ports import PonderHitTimings
 from shogiarena._core.platform.engine_runtime.usi_engine_session_models import (

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 _TRUTHY = frozenset({"1", "true", "t", "yes", "y", "on"})
+_FALSY = frozenset({"0", "false", "f", "no", "n", "off"})
 
 
 def coerce_bool(value: object | None) -> bool:
@@ -17,4 +18,25 @@ def coerce_bool(value: object | None) -> bool:
             return False
 
 
-__all__ = ["coerce_bool"]
+def coerce_optional_bool(value: object | None) -> bool | None:
+    """Convert value to ``bool`` while preserving unknown/null values."""
+
+    match value:
+        case None:
+            return None
+        case bool() as bvalue:
+            return bvalue
+        case int() | float():
+            return bool(value)
+        case str() as svalue:
+            normalized = svalue.strip().lower()
+            if normalized in _TRUTHY:
+                return True
+            if normalized in _FALSY:
+                return False
+            return None
+        case _:
+            return None
+
+
+__all__ = ["coerce_bool", "coerce_optional_bool"]

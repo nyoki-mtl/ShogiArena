@@ -6,12 +6,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from rshogi.core import Move
+from rsshogi.core import Move
 
 from shogiarena._core.shared.kernel.time_control import TimeControlLimitsPort
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class PonderHitTimings:
     """Timings payload used when issuing ``ponderhit``."""
 
@@ -57,7 +57,7 @@ class UsiThinkResultPort(Protocol):
     def get_last_pv(self, multipv_index: int = 1) -> UsiThinkPVPort | None: ...
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class UsiThinkRequest:
     """Structured parameters for a USI ``go`` command."""
 

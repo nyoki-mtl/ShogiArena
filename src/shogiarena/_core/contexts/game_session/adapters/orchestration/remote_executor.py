@@ -15,6 +15,10 @@ from shogiarena._core.contexts.instances.application.instance_models import Inst
 from shogiarena._core.contexts.instances.application.provisioner import Provisioner
 from shogiarena._core.contexts.instances.application.remote_probe import detect_remote_target_cpu
 from shogiarena._core.contexts.instances.application.ssh_transport import SshTransport, create_transport
+from shogiarena._core.platform.engine_provisioning.provisioning_ports import (
+    RemoteSecretFileHandle,
+    RemoteSecretFileRequest,
+)
 from shogiarena._core.platform.engine_provisioning.remote_engine_config import RemoteEngineConfig
 from shogiarena._core.platform.engine_provisioning.remote_execution_config import RemoteExecutionConfig
 from shogiarena._core.platform.engine_provisioning.remote_paths import RemotePathResolver, RemoteProjectLocator
@@ -109,7 +113,8 @@ class RemoteExecutor:
 
         inflight = RemoteExecutor._prepare_tasks.get(key)
         if inflight is not None:
-            await inflight
+            # A cancelled waiter must not cancel the shared preparation result.
+            await asyncio.shield(inflight)
             return
 
         loop = asyncio.get_running_loop()
@@ -122,14 +127,19 @@ class RemoteExecutor:
             RemoteExecutor._prepared_roots.add(key)
             if not inflight.done():
                 inflight.set_result(None)
-        except (OSError, RuntimeError, ValueError) as exc:
+        except asyncio.CancelledError:
+            if not inflight.done():
+                inflight.cancel()
+            raise
+        except BaseException as exc:
             if not inflight.done():
                 inflight.set_exception(exc)
                 # Mark the exception as observed in case no other waiter is attached.
                 inflight.exception()
             raise
         finally:
-            RemoteExecutor._prepare_tasks.pop(key, None)
+            if RemoteExecutor._prepare_tasks.get(key) is inflight:
+                RemoteExecutor._prepare_tasks.pop(key, None)
 
     async def provision_engine_binary(self, local_bin: Path) -> str:
         """Upload the engine binary if needed and return its remote path."""
@@ -185,11 +195,35 @@ class RemoteExecutor:
         base_abs = await self.path_resolver.expand(remote_root)
         remote_spec = f"{base_abs}/.tmp/spec.json"
         spec_json = json.dumps(spec, ensure_ascii=False)
+        if self._config.should_export_github_token and self._config.github_token:
+            secret_files = [
+                RemoteSecretFileRequest(
+                    file_id="github_token",
+                    payload=self._config.github_token.encode("utf-8"),
+                    mode=0o600,
+                )
+            ]
+
+            def build_command(handles: Mapping[str, RemoteSecretFileHandle]) -> str:
+                token_file = handles["github_token"].remote_path
+                return build_remote_runner_command(
+                    base_abs,
+                    remote_spec,
+                    spec_json,
+                    github_token_file=token_file,
+                )
+
+            return await self.stream_consumer.collect_with_secret_files(
+                build_command,
+                secret_files,
+                timeout=timeout,
+                on_event=on_event,
+            )
+
         command = build_remote_runner_command(
             base_abs,
             remote_spec,
             spec_json,
-            github_token=self._config.github_token if self._config.should_export_github_token else None,
         )
         return await self.stream_consumer.collect(command, timeout=timeout, on_event=on_event)
 

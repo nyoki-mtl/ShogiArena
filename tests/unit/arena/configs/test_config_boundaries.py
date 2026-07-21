@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_core import InitialPositionConfig
 from shogiarena._core.interfaces.cli.config_file_loaders import (
     parse_engine_config_file,
     parse_spsa_config_boundary,
@@ -141,6 +142,35 @@ def test_parse_spsa_boundary_rejects_invalid_rules_payload(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match="rules.initial_positions.source is required"):
         parse_spsa_config_boundary(payload)
+
+
+def test_initial_position_config_usi_line_metadata_is_opt_in(tmp_path: Path) -> None:
+    source = tmp_path / "lines.usi"
+    source.write_text("7g7f 3c3d\n", encoding="utf-8")
+
+    config = InitialPositionConfig(type="file", source=str(source), source_format="usi_line")
+    entry = config.generate_entries(1, "seed")[0]
+
+    assert entry.line_moves_usi == ()
+    assert entry.source_line_no is None
+    assert entry.line_id is None
+
+
+def test_initial_position_config_preserves_usi_line_metadata_when_requested(tmp_path: Path) -> None:
+    source = tmp_path / "lines.usi"
+    source.write_text("7g7f 3c3d\n", encoding="utf-8")
+
+    config = InitialPositionConfig(
+        type="file",
+        source=str(source),
+        source_format="usi_line",
+        preserve_line_metadata=True,
+    )
+    entry = config.generate_entries(1, "seed")[0]
+
+    assert entry.line_moves_usi == ("7g7f", "3c3d")
+    assert entry.source_line_no == 1
+    assert entry.line_id == "lines.usi:1"
 
 
 def test_parse_engine_config_file_extracts_engine_path(tmp_path: Path) -> None:

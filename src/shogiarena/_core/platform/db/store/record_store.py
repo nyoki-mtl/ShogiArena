@@ -1,19 +1,30 @@
 from __future__ import annotations
 
+import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from json import JSONDecodeError
 
-import rshogi
-from rshogi.core import Board, Move, Move32
+import rsshogi
+from rsshogi.core import Board, Move, Move32
 from sqlalchemy import delete, select
 
 from shogiarena._core.shared.kernel.game_results import game_result_name
-from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_game_result, coerce_int, coerce_iso_datetime
+from shogiarena._core.shared.kernel.scalar_coercion.api import (
+    coerce_game_result,
+    coerce_int,
+    coerce_iso_datetime,
+    coerce_optional_bool,
+    coerce_str,
+)
+from shogiarena._core.shared.kernel.serialization import json_serialize
 
 from .entities import Game, GameMove, Player
 from .repository import ShogiRepositoryPort
 
 logger = logging.getLogger(__name__)
+
+_DB_METADATA_ATTRIBUTE_KEYS = {"storage", "game_name", "game_type", "updated_date"}
 
 
 def _push_record_move(board: Board, move_obj: Move | Move32) -> Move:
@@ -24,10 +35,62 @@ def _push_record_move(board: Board, move_obj: Move | Move32) -> Move:
     raise TypeError(f"db storage requires Move/Move32 payload, got {type(move_obj)!r}")
 
 
-def _engine_wall_time_from_info(engine_info: rshogi.record.MoveEngineInfo | None) -> int | None:
+def _engine_wall_time_from_info(engine_info: rsshogi.record.EngineInfo | None) -> int | None:
+    return coerce_int(_engine_info_extras(engine_info).get("engine_wall_time_ms"))
+
+
+def _engine_info_extras(engine_info: rsshogi.record.EngineInfo | None) -> Mapping[str, object]:
     if engine_info is None:
+        return {}
+    extras = engine_info.extras
+    return extras if isinstance(extras, Mapping) else {}
+
+
+def _move_source_from_info(engine_info: rsshogi.record.EngineInfo | None) -> str | None:
+    value = coerce_str(_engine_info_extras(engine_info).get("move_source"))
+    return value.strip() if value is not None and value.strip() else None
+
+
+def _book_hit_from_info(engine_info: rsshogi.record.EngineInfo | None) -> int | None:
+    extras = _engine_info_extras(engine_info)
+    if "book_hit" in extras:
+        value = coerce_optional_bool(extras.get("book_hit"))
+        return None if value is None else int(value)
+    if _move_source_from_info(engine_info) == "book":
+        return 1
+    return None
+
+
+def _serialize_metadata_attributes(attributes: object) -> str | None:
+    if not isinstance(attributes, Mapping):
         return None
-    return coerce_int(engine_info.extras.get("engine_wall_time_ms"))
+    payload = {
+        str(key): json_serialize(value)
+        for key, value in attributes.items()
+        if str(key) not in _DB_METADATA_ATTRIBUTE_KEYS
+    }
+    if not payload:
+        return None
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def _metadata_attribute_value(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(json_serialize(value), ensure_ascii=False, sort_keys=True)
+
+
+def _deserialize_metadata_attributes(raw: object) -> dict[str, str]:
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        decoded = json.loads(raw)
+    except JSONDecodeError:
+        logger.debug("Skipping invalid game metadata_attributes_json payload")
+        return {}
+    if not isinstance(decoded, Mapping):
+        return {}
+    return {str(key): _metadata_attribute_value(value) for key, value in decoded.items()}
 
 
 class DBRecordStore:
@@ -36,7 +99,13 @@ class DBRecordStore:
     def __init__(self, repository: ShogiRepositoryPort) -> None:
         self._repository = repository
 
-    def append(self, records: Iterable[rshogi.record.GameRecord | None], *, should_update: bool = False) -> None:
+    def append(self, records: Iterable[rsshogi.record.Record | None], *, should_update: bool = False) -> None:
+        """Persist a batch atomically and release its task-scoped session."""
+
+        with self._repository.operation(commit=True):
+            self._append(records, should_update=should_update)
+
+    def _append(self, records: Iterable[rsshogi.record.Record | None], *, should_update: bool = False) -> None:
         session = self._repository.session
         board = Board()
 
@@ -45,19 +114,20 @@ class DBRecordStore:
                 continue
             record = item
             metadata = record.metadata
+            metadata_attributes_json = _serialize_metadata_attributes(metadata.attributes)
             game_name = record.game_name
             game_type = record.game_type
             black_name = metadata.black_player
             white_name = metadata.white_player
             if game_name is None:
-                raise ValueError("GameRecord.game_name must be defined")
+                raise ValueError("Record.game_name must be defined")
             if game_type is None:
-                raise ValueError("GameRecord.game_type must be defined")
+                raise ValueError("Record.game_type must be defined")
             if black_name is None or white_name is None:
-                raise ValueError("GameRecord player names must be defined")
+                raise ValueError("Record player names must be defined")
             updated_date_new = coerce_iso_datetime(record.updated_date)
             if updated_date_new is None:
-                raise ValueError("GameRecord.updated_date must be ISO-8601 datetime")
+                raise ValueError("Record.updated_date must be ISO-8601 datetime")
             start_date = coerce_iso_datetime(metadata.start_date)
             end_date = coerce_iso_datetime(metadata.end_date)
             black_tc = record.black_time_control
@@ -66,14 +136,14 @@ class DBRecordStore:
             tc_white = white_tc.to_spec() if white_tc is not None else None
             result_obj = record.result
             if result_obj is None:
-                raise ValueError("GameRecord.result must be defined")
+                raise ValueError("Record.result must be defined")
             game_result = game_result_name(result_obj)
             end_time_ms = record.end_time_ms
             end_comment = record.end_comment
             move_records = list(record.moves)
             init_sfen = record.init_position_sfen
             if init_sfen is None:
-                raise ValueError("GameRecord.init_position_sfen must be defined")
+                raise ValueError("Record.init_position_sfen must be defined")
 
             existing_game_id = session.execute(select(Game.id).where(Game.game_name == game_name)).scalar_one_or_none()
             if existing_game_id is not None:
@@ -87,6 +157,7 @@ class DBRecordStore:
                         continue
                 elif existing_updated_date >= updated_date_new:
                     continue
+                session.execute(delete(GameMove).where(GameMove.game_id == existing_game_id))
                 session.execute(delete(Game).where(Game.id == existing_game_id))
                 logger.info(
                     "Update game %s %s -> %s",
@@ -111,6 +182,7 @@ class DBRecordStore:
                 end_time_ms=end_time_ms,
                 end_comment=end_comment,
                 updated_date=updated_date_new,
+                metadata_attributes_json=metadata_attributes_json,
                 black_player=black_player,
                 white_player=white_player,
             )
@@ -128,6 +200,8 @@ class DBRecordStore:
                 wall_time_ms = engine_info.wall_time_ms if engine_info is not None else None
                 engine_wall_time_ms = _engine_wall_time_from_info(engine_info)
                 latency_delta_ms = engine_info.latency_delta_ms if engine_info is not None else None
+                move_source = _move_source_from_info(engine_info)
+                book_hit = _book_hit_from_info(engine_info)
                 game_move = GameMove(
                     ply=ply,
                     next_move=int(mv),
@@ -141,6 +215,8 @@ class DBRecordStore:
                     depth=engine_info.depth if engine_info is not None else None,
                     seldepth=engine_info.seldepth if engine_info is not None else None,
                     nodes=engine_info.nodes if engine_info is not None else None,
+                    move_source=move_source,
+                    book_hit=book_hit,
                 )
                 session.add(game_move)
 
@@ -157,12 +233,18 @@ class DBRecordStore:
                 depth=None,
                 seldepth=None,
                 nodes=None,
+                move_source=None,
+                book_hit=None,
             )
             session.add(end_game_move)
 
-            session.commit()
+    def load(self, *, game_id: int | None = None, game_name: str | None = None) -> rsshogi.record.Record | None:
+        """Load one record and release its task-scoped session."""
 
-    def load(self, *, game_id: int | None = None, game_name: str | None = None) -> rshogi.record.GameRecord | None:
+        with self._repository.operation():
+            return self._load(game_id=game_id, game_name=game_name)
+
+    def _load(self, *, game_id: int | None = None, game_name: str | None = None) -> rsshogi.record.Record | None:
         if game_id is None and game_name is None:
             raise ValueError("Either game_id or game_name must be provided")
 
@@ -185,7 +267,7 @@ class DBRecordStore:
             select(Player.player_name).where(Player.id == game.white_player_id)
         ).scalar_one()
 
-        move_records: list[rshogi.record.MoveRecord] = []
+        move_records: list[rsshogi.record.MoveEntry] = []
         board = Board()
         board.set_sfen(game.initial_position_sfen)
         end_time_ms: int | None = game.end_time_ms
@@ -209,7 +291,11 @@ class DBRecordStore:
             extras: dict[str, str | int | float] = {}
             if engine_wall_time is not None:
                 extras["engine_wall_time_ms"] = int(engine_wall_time)
-            engine_info = rshogi.record.MoveEngineInfo(
+            if game_move.move_source is not None:
+                extras["move_source"] = game_move.move_source
+            if game_move.book_hit is not None:
+                extras["book_hit"] = int(game_move.book_hit)
+            engine_info = rsshogi.record.EngineInfo(
                 eval=game_move.eval,
                 depth=game_move.depth,
                 seldepth=game_move.seldepth,
@@ -219,7 +305,7 @@ class DBRecordStore:
                 extras=extras or None,
             )
             move_records.append(
-                rshogi.record.MoveRecord(
+                rsshogi.record.MoveEntry(
                     pushed_move,
                     time_ms=game_move.next_move_time_ms,
                     comment=game_move.next_move_comment,
@@ -228,16 +314,25 @@ class DBRecordStore:
             )
 
         tc_black = (
-            rshogi.record.TimeControl.from_spec(game.time_control_black)
+            rsshogi.record.TimeControl.from_spec(game.time_control_black)
             if game.time_control_black is not None
             else None
         )
         tc_white = (
-            rshogi.record.TimeControl.from_spec(game.time_control_white)
+            rsshogi.record.TimeControl.from_spec(game.time_control_white)
             if game.time_control_white is not None
             else None
         )
-        record_metadata = rshogi.record.GameRecordMetadata(
+        metadata_attributes = _deserialize_metadata_attributes(game.metadata_attributes_json)
+        metadata_attributes.update(
+            {
+                "storage": "db",
+                "game_name": game.game_name,
+                "game_type": game.game_type,
+                "updated_date": game.updated_date.isoformat(),
+            }
+        )
+        record_metadata = rsshogi.record.RecordMetadata(
             game_name=game.game_name,
             game_type=game.game_type,
             black_player=black_player_name,
@@ -247,20 +342,15 @@ class DBRecordStore:
             updated_date=game.updated_date.isoformat(),
             black_time_control=tc_black,
             white_time_control=tc_white,
-            attributes={
-                "storage": "db",
-                "game_name": game.game_name,
-                "game_type": game.game_type,
-                "updated_date": game.updated_date.isoformat(),
-            },
+            attributes=metadata_attributes,
         )
         game_result = coerce_game_result(game.game_result, is_strict=True)
-        terminal = rshogi.record.SpecialMoveRecord.from_result(
+        terminal = rsshogi.record.SpecialMoveEntry.from_result(
             game_result,
             time_ms=end_time_ms,
             comment=end_comment,
         )
-        return rshogi.record.GameRecord.from_main_line(
+        return rsshogi.record.Record.from_main_line(
             game.initial_position_sfen,
             move_records,
             terminal,

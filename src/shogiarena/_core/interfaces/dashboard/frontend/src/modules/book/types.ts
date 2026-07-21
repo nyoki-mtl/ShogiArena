@@ -36,9 +36,69 @@ export interface BookSummaryPayload {
     note?: string;
 }
 
+export type BookPairMeasurementStatus =
+    | 'measured'
+    | 'partial'
+    | 'unmeasured'
+    | 'invalid_pair'
+    | 'ambiguous'
+    | 'unpaired';
+
+export type BookPairSideMeasurementStatus = 'measured' | 'partial' | 'unmeasured';
+
+export type BookPairMeasurementSource = 'db_book_hit' | 'book_lookup' | 'mixed' | 'unmeasured';
+
+export interface BookPairSide {
+    game_id: string;
+    order: number;
+    black: string;
+    white: string;
+    book_prefix_usi: string[];
+    book_prefix_length: number;
+    measurement_source: BookPairMeasurementSource;
+    measurement_status: BookPairSideMeasurementStatus;
+}
+
+export interface BookPairSummary {
+    pairs: number;
+    measured_pairs: number;
+    partial_pairs: number;
+    unmeasured_pairs: number;
+    invalid_pairs: number;
+    ambiguous_pairs: number;
+    unpaired_games: number;
+    mean_prefix_match_rate?: number | null;
+}
+
+export interface BookPairEntry {
+    pair_key: string;
+    matchup_key: string;
+    pair_slot: number;
+    orders: number[];
+    game_ids: string[];
+    same_sfen: boolean;
+    initial_sfen?: string | null;
+    left: BookPairSide;
+    right?: BookPairSide | null;
+    measurement_status: BookPairMeasurementStatus;
+    matched_prefix_plies: number;
+    first_diff_ply?: number | null;
+    first_diff_reason: string;
+    prefix_match_rate?: number | null;
+}
+
+export interface BookPairPayload {
+    pairs: BookPairEntry[];
+    summary: BookPairSummary;
+    note?: string;
+}
+
+export type BookModuleView = 'summary' | 'pairs';
+
 export interface BookModuleState {
     active: boolean;
     timerId: number | null;
+    view: BookModuleView;
 }
 
 export interface DashboardBookApi {

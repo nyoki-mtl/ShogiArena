@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
-from rshogi.core import Move
+from rsshogi.core import Move
 
 from .usi_option_parser import parse_option_attributes, parse_option_header
 
@@ -401,7 +401,7 @@ class UsiIdField:
     value: str
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class UsiOption:
     """Structured representation of a USI ``option`` declaration."""
 

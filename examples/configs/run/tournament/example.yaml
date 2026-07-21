@@ -17,7 +17,11 @@
 # - options_overlays: USIオプション上書き用のYAMLをリスト指定（overlayの上にマージ）
 # - options: USIオプション上書き（overlay/options_overlaysの上にマージ）
 # - time_control: 片側の時間制御上書き（rules.time_control の上にマージ）
-engines: []
+engines:
+  - name: "Baseline"
+    engine_path: "../../resources/engines/local_example.yaml"
+  - name: "Candidate"
+    engine_path: "../../resources/engines/local_example.yaml"
 
 # 記述例（artifact 指定）
 # engines:
@@ -28,6 +32,7 @@ engines: []
 #       - "{eval_config_dir}/example.yaml"
 #     options:
 #       Threads: 4
+#       BookFile: no_book   # 純粋な強さ比較では engine-owned book を無効化
 #   - artifact: "yaneuraou/9f89431a"
 #     build_options:
 #       target_cpu: AVX2
@@ -60,7 +65,16 @@ rules:
   initial_positions:
     type: "startpos"   # startpos | file
     flip_policy: "pair_both"   # alternate | random | none | pair_both
-    # file の場合のみ指定（絶対パス/相対パス対応）
+    source_format: "auto"   # auto | sfen | usi_line
+    sync_scope: "game"   # game | pair; pair は flip_policy=pair_both を要求する guard
+    preserve_line_metadata: false
+    # file の場合のみ指定（絶対パス/相対パス対応）。USI line をペア同期する例:
+    # type: "file"
+    # source: "../../resources/openings/pair_lines.usi"
+    # source_format: "usi_line"
+    # flip_policy: "pair_both"
+    # sync_scope: "pair"
+    # preserve_line_metadata: true
     source: null
 
   # Adjudication（早期終了）設定
@@ -69,7 +83,7 @@ rules:
     max_plies: 320
     sync_max_plies_with_engine: true
     engine_max_ply_option_names: "auto"
-    enable_resign: false
+    resign_threshold_cp: null
   # 同一局面が何回現れたら千日手とみなすか（デフォルト: 2, 公式ルールは4）
   repetition_occurrences_to_draw: 2
   # 時間制御（指定しなければ時間制御は無効）
@@ -83,7 +97,7 @@ rules:
   #  depth_limit: null
   #  node_limit: null
   #  expiry_margin_ms: 500
-  #  allow_timeout: false
+  #  should_allow_timeout: false
   # SPRT 設定はトップレベルの sprt に移行
 
 sprt:
@@ -124,6 +138,8 @@ logging:
   # commands: 送信コマンド + bestmove + 最終 non-bound info
   # commands_and_info: すべての info line も保存
   usi_transcript_detail: "commands"
+  # 1 engine・1対局あたりの transcript 上限（bytes）
+  usi_transcript_max_bytes: 8388608
 
 # ログレベル（デフォルト: INFO）: DEBUG | INFO | WARNING | ERROR
 log_level: "INFO"

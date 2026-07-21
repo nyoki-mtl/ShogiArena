@@ -46,6 +46,11 @@ from shogiarena._core.interfaces.dashboard.generate.api import GenerateAPI
 from shogiarena._core.interfaces.dashboard.instances.api import InstancesAPI
 from shogiarena._core.interfaces.dashboard.match.api import MatchAPI
 from shogiarena._core.interfaces.dashboard.scheduler_api import SchedulerAPI
+from shogiarena._core.interfaces.dashboard.security import (
+    DASHBOARD_READ_ONLY_KEY,
+    local_dashboard_security_middleware,
+    require_loopback_bind_host,
+)
 from shogiarena._core.interfaces.dashboard.sprt.api import SprtAPI
 from shogiarena._core.interfaces.dashboard.spsa.api import SpsaAPI
 from shogiarena._core.interfaces.dashboard.static_handler import StaticAssetsHandler
@@ -66,10 +71,12 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
     def __init__(
         self,
         db_path: Path,
+        host: str = "127.0.0.1",
         port: int = 8080,
         run_dir: Path | None = None,
         instance_pool: object | None = None,
         *,
+        read_only: bool = False,
         schedule_boundary: DashboardScheduleBoundaryPort | None = None,
         state: DashboardState,
         game_state: GameStateUpdater,
@@ -78,10 +85,13 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
         game_query: DashboardGameQueryPort,
     ) -> None:
         self.db_path = db_path
+        self.host = require_loopback_bind_host(host)
         self.port = port
         self.run_dir = run_dir or db_path.parent
         self.instance_pool = instance_pool
-        self.app = web.Application(middlewares=[self._json_error_middleware])
+        self._is_read_only = bool(read_only)
+        self.app = web.Application(middlewares=[local_dashboard_security_middleware, self._json_error_middleware])
+        self.app[DASHBOARD_READ_ONLY_KEY] = self._is_read_only
         self.runner: web.AppRunner | None = None
         self.site: web.TCPSite | None = None
         self._instances_health_task: asyncio.Task[None] | None = None
@@ -96,7 +106,7 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
         self._diagnostics_retention_minutes = self._load_snapshot_retention_minutes()
         self._debug_last_get_worker: dict[int, float] = {}
 
-        self.instances_api = InstancesAPI(instance_pool, db_path=db_path)
+        self.instances_api = InstancesAPI(instance_pool, db_path=db_path, is_read_only=self._is_read_only)
         self._instances_health_interval = self._load_instances_health_interval()
 
         self.tournament_api = TournamentAPI(
@@ -192,6 +202,9 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
         self.app.router.add_get("/ws", self.ws_hub.handler)
         self.app.router.add_post("/api/diagnostics/snapshots", self.post_diagnostics_snapshot)
 
+        # read-only でも読み取りルートは残す。archived dashboard は instances タブを
+        # 表示するため、ルートごと落とすと閲覧機能まで 404 になる。mutation は
+        # local_dashboard_security_middleware が handler 到達前に 403 で止める。
         self.instances_api.register_routes(self.app)
         self.scheduler_api.register_routes(self.app)
         self._static_handler.register_routes(self.app)

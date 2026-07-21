@@ -37,6 +37,8 @@ logging:
   # commands は送信コマンド、bestmove、最後の non-bound info を保存
   # commands_and_info は全 info line も保存
   usi_transcript_detail: commands
+  # engine の大量出力によるディスク枯渇を防ぐ1ファイルあたりの上限（bytes）
+  usi_transcript_max_bytes: 8388608
 
 # トーナメントスケジュール設定
 # ------------------------------------------------------------
@@ -66,8 +68,8 @@ rules:
     depth_limit: null        # 探索深さ制限
     node_limit: null         # 探索ノード数制限
     expiry_margin_ms: 500    # タイムアウト前の安全マージン
-    allow_timeout: false     # true の場合、タイムアウトを敗北扱いしない
-    max_wait_ms: 600000      # allow_timeout=true 時の最大待機時間
+    should_allow_timeout: false  # true の場合、タイムアウトを敗北扱いしない
+    max_wait_ms: 600000      # should_allow_timeout=true 時の最大待機時間
   # 初期局面の生成。ランダム局面等を使いたい場合は type=file にし、source にファイルパス
   initial_positions:
     type: startpos
@@ -86,13 +88,13 @@ rules:
   repetition_occurrences_to_draw: 2
   # SPRT 設定はトップレベルの sprt を参照
 
-sprt:
-  # SPRT による早期判定設定。使わない場合は削除または null
-  elo0: 0.0
-  elo1: 5.0
-  alpha: 0.05
-  beta: 0.05
-  min_games: 0   # 早期終了の前に最低消化する局数（省略可）
+# SPRT はエンジンがちょうど2件の場合だけ有効にできます。
+# sprt:
+#   elo0: 0.0
+#   elo1: 5.0
+#   alpha: 0.05
+#   beta: 0.05
+#   min_games: 0   # 早期終了の前に最低消化する局数（省略可）
 
 # 参加エンジン定義（最低 2 エントリ）
 # ------------------------------------------------------------

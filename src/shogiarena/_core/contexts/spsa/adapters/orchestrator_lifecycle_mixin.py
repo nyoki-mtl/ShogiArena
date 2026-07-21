@@ -65,7 +65,7 @@ class SpsaOrchestratorLifecycleMixin:
         tuned_label = self._tuned_player_label(vtoken, phase)
         baseline_label = self._baseline_player_label(vtoken)
         variant_label = vtoken if phase == "ltc" else vtoken + phase_symbol(phase)
-        payload = {
+        payload: JsonObject = {
             "event": "game_scheduled",
             "update_idx": int(update_idx),
             "game_id": game_id,
@@ -114,10 +114,8 @@ class SpsaOrchestratorLifecycleMixin:
         if not self._sfens:
             raise RuntimeError("SpsaOrchestrator requires SFENs via set_work_items() before run()")
 
-        # Run update items concurrently using the shared scheduler
-        await self.run_items_concurrently(
-            self._update_items, self._run_one_spsa_update, concurrency_limit=self.num_workers
-        )
+        # SPSA theta updates are sequential; game-pair concurrency stays inside each update.
+        await self.run_items_concurrently(self._update_items, self._run_one_spsa_update, concurrency_limit=1)
 
     def _prepare_engine_configs(self) -> dict[str, EngineConfig]:
         """Write engine YAMLs and build name-to-spec map for baseline/tuned.

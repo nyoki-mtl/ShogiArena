@@ -16,7 +16,7 @@ from typing import Protocol, TypedDict
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
-from rshogi.types import Color
+from rsshogi.types import Color
 
 from shogiarena._core.contexts.match.application.adjudication_builders import max_plies_only_adjudication
 from shogiarena._core.contexts.match.application.engine_participant import EngineParticipant
@@ -253,7 +253,12 @@ async def run_from_spec(spec: Mapping[str, JsonValue] | _RemotePairSpec) -> int:
         except (NotImplementedError, RuntimeError, ValueError, OSError) as exc:
             sys.stderr.write(f"[signal] add_signal_handler failed for {str(sig)}: {exc}\n")
 
-    for _sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+    # SIGHUP does not exist on Windows; referencing it unconditionally raises AttributeError.
+    _signals = [signal.SIGINT, signal.SIGTERM]
+    _sighup = getattr(signal, "SIGHUP", None)
+    if _sighup is not None:
+        _signals.append(_sighup)
+    for _sig in _signals:
         _install_handler(_sig)
 
     max_plies = spec_obj.max_plies

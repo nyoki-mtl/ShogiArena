@@ -30,6 +30,13 @@ from shogiarena._core.shared.kernel.json_types import JsonObject
 logger = logging.getLogger(__name__)
 
 
+def _add_schedule_metadata_fields(entry: JsonObject, spec: GameSpec) -> None:
+    for key, value in spec.to_schedule_metadata().items():
+        if key in {"schema_version", "round_num", "initial_sfen"}:
+            continue
+        entry[key] = value
+
+
 class ScheduleMutationService:
     """Schedule mutation operations requiring runtime context."""
 
@@ -73,14 +80,34 @@ class ScheduleMutationService:
         games: list[JsonObject] = []
         for spec in schedule:
             resolved_black, resolved_white = _resolved_assignment(spec.game_id)
-            games.append(
-                {
+            entry: JsonObject = {
+                "game_id": spec.game_id,
+                "black": spec.black_engine,
+                "white": spec.white_engine,
+                "round": spec.round_num,
+                "sfen": spec.initial_sfen,
+                "status": _status(spec.game_id),
+                "assigned_instance": _combined_assignment(spec.game_id),
+                "assigned_override": shared_override_label(spec),
+                "assigned_override_black": normalize_instance_id(spec.assigned_instance_black),
+                "assigned_override_white": normalize_instance_id(spec.assigned_instance_white),
+                "should_require_install": bool(spec.should_require_install),
+                "resolved_instance_black": resolved_black,
+                "resolved_instance_white": resolved_white,
+            }
+            _add_schedule_metadata_fields(entry, spec)
+            games.append(entry)
+
+        if state.cancelled_specs:
+            for spec in state.cancelled_specs.values():
+                resolved_black, resolved_white = _resolved_assignment(spec.game_id)
+                entry = {
                     "game_id": spec.game_id,
                     "black": spec.black_engine,
                     "white": spec.white_engine,
                     "round": spec.round_num,
                     "sfen": spec.initial_sfen,
-                    "status": _status(spec.game_id),
+                    "status": "cancelled",
                     "assigned_instance": _combined_assignment(spec.game_id),
                     "assigned_override": shared_override_label(spec),
                     "assigned_override_black": normalize_instance_id(spec.assigned_instance_black),
@@ -89,28 +116,8 @@ class ScheduleMutationService:
                     "resolved_instance_black": resolved_black,
                     "resolved_instance_white": resolved_white,
                 }
-            )
-
-        if state.cancelled_specs:
-            for spec in state.cancelled_specs.values():
-                resolved_black, resolved_white = _resolved_assignment(spec.game_id)
-                games.append(
-                    {
-                        "game_id": spec.game_id,
-                        "black": spec.black_engine,
-                        "white": spec.white_engine,
-                        "round": spec.round_num,
-                        "sfen": spec.initial_sfen,
-                        "status": "cancelled",
-                        "assigned_instance": _combined_assignment(spec.game_id),
-                        "assigned_override": shared_override_label(spec),
-                        "assigned_override_black": normalize_instance_id(spec.assigned_instance_black),
-                        "assigned_override_white": normalize_instance_id(spec.assigned_instance_white),
-                        "should_require_install": bool(spec.should_require_install),
-                        "resolved_instance_black": resolved_black,
-                        "resolved_instance_white": resolved_white,
-                    }
-                )
+                _add_schedule_metadata_fields(entry, spec)
+                games.append(entry)
         payload: JsonObject = {
             "kind": "generate" if ctx.is_generate_run() else "tournament",
             "schema_version": 1,

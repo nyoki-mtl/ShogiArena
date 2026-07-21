@@ -7,12 +7,15 @@ import inspect
 import json
 import logging
 import shlex
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from shogiarena._core.platform.engine_provisioning.provisioning_ports import (
     NamedInstancePort,
+    RemoteSecretCommandFactory,
+    RemoteSecretFileRequest,
+    SshSecretFileTransportPort,
     SshStreamTransportPort,
 )
 from shogiarena._core.shared.kernel.json_types import JsonObject
@@ -47,6 +50,27 @@ class RemoteStreamConsumer:
         on_event: Callable[[JsonObject], None] | None,
     ) -> list[JsonObject]:
         line_iter = self._transport.run_stream_lines(command)
+        return await self._collect_from_lines(line_iter, timeout=timeout, on_event=on_event)
+
+    async def collect_with_secret_files(
+        self,
+        command_factory: RemoteSecretCommandFactory,
+        secret_files: Sequence[RemoteSecretFileRequest],
+        *,
+        timeout: float | None,
+        on_event: Callable[[JsonObject], None] | None,
+    ) -> list[JsonObject]:
+        secret_transport = self._secret_transport()
+        line_iter = secret_transport.run_stream_lines_with_secret_files(command_factory, secret_files)
+        return await self._collect_from_lines(line_iter, timeout=timeout, on_event=on_event)
+
+    async def _collect_from_lines(
+        self,
+        line_iter: AsyncIterator[str],
+        *,
+        timeout: float | None,
+        on_event: Callable[[JsonObject], None] | None,
+    ) -> list[JsonObject]:
         events: list[JsonObject] = []
         exit_code: int | None = None
         last_error: str | None = None
@@ -113,6 +137,11 @@ class RemoteStreamConsumer:
             raise RuntimeError(message)
         return events
 
+    def _secret_transport(self) -> SshSecretFileTransportPort:
+        if not isinstance(self._transport, SshSecretFileTransportPort):
+            raise RuntimeError("SSH stream transport does not support secret file handoff.")
+        return self._transport
+
     @staticmethod
     async def _close_iterator(iterator: AsyncIterator[str]) -> None:
         closer = getattr(iterator, "aclose", None)
@@ -124,7 +153,7 @@ class RemoteStreamConsumer:
 
 
 def build_remote_runner_command(
-    base_abs: str, remote_spec: str, spec_json: str, *, github_token: str | None = None
+    base_abs: str, remote_spec: str, spec_json: str, *, github_token_file: str | None = None
 ) -> str:
     """Construct the shell command responsible for launching the remote runner."""
     script_lines = [
@@ -138,12 +167,19 @@ def build_remote_runner_command(
         "__ARENA_SPEC_JSON__",
     ]
 
-    if github_token:
-        script_lines.append(f"export GITHUB_TOKEN={shlex.quote(github_token)}")
+    if github_token_file:
+        script_lines.extend(
+            [
+                f"GITHUB_TOKEN_FILE={shlex.quote(github_token_file)}",
+                'GITHUB_TOKEN="$(cat "$GITHUB_TOKEN_FILE")"',
+                "export GITHUB_TOKEN",
+            ]
+        )
 
     script_lines.extend(
         [
-            'uv --directory "$BASE" run -- shogiarena _internal remote-run-pair --spec-file "$SPEC" 2>&1; rc=$?',
+            'rc=0; uv --directory "$BASE" run -- '
+            'shogiarena _internal remote-run-pair --spec-file "$SPEC" 2>&1 || rc=$?',
             "echo __REMOTE_EXIT_RC:$rc",
         ]
     )

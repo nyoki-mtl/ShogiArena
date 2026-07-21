@@ -1,6 +1,0 @@
-This release rebuilds ShogiArena around a clarified public surface and a new bounded-context internal architecture.
-
-- Reorganized the Python package into `contexts`, `interfaces`, `platform`, and `shared` layers under `_core/`.
-- Formalized the public API around `shogiarena.engine`, `shogiarena.tournament`, `shogiarena.cli`, and `shogiarena.composition`.
-- Reworked the CLI, dashboard runtime, and tournament orchestration for the 0.3.x line.
-- Refreshed packaging metadata and release assets for the public repository and PyPI publication.

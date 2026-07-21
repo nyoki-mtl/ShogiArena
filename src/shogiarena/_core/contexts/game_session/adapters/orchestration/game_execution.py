@@ -11,8 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, cast
 
-import rshogi.record
-from rshogi.types import Color
+import rsshogi.record
+from rsshogi.types import Color
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.participation_records import (
     attach_participation_metadata as _attach_participation_metadata_service,
@@ -27,6 +27,7 @@ from shogiarena._core.contexts.game_session.adapters.orchestration.resource_cont
     collect_instance_usage as _collect_instance_usage_service,
 )
 from shogiarena._core.contexts.game_session.adapters.orchestration.usi_transcript import (
+    DEFAULT_TRANSCRIPT_MAX_BYTES,
     GameUsiTranscriptContext,
     TranscriptDetail,
 )
@@ -41,6 +42,7 @@ from shogiarena._core.contexts.match.application.engine_participant import Engin
 from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine
 from shogiarena._core.platform.engine_runtime.usi_engine_session_models import UsiEngineStartError
 from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.schedule_metadata import attach_schedule_metadata
 
 from .config_engine import EngineConfig
 
@@ -67,6 +69,7 @@ class _GameSpecPort(Protocol):
     white_limits: _TimeControlLimitsPort | None
     before_game_hook: BeforeGameHookPort | None
     game_round: int | None
+    schedule_metadata: JsonObject | None
     on_game_start: Callable[[], Awaitable[None]] | None
 
 
@@ -79,7 +82,17 @@ class _ResourceContext:
     white_engine_spec: EngineConfig | None
 
 
-async def execute_game(orchestrator: Any, spec: Any) -> rshogi.record.GameRecord:
+def _empty_resource_context() -> _ResourceContext:
+    return _ResourceContext(
+        resource_requirements={},
+        is_slots_reserved=False,
+        instance_role_map={},
+        black_engine_spec=None,
+        white_engine_spec=None,
+    )
+
+
+async def execute_game(orchestrator: Any, spec: Any) -> rsshogi.record.Record:
     """Acquire engines, run one game, and release resources."""
 
     owner = orchestrator
@@ -89,15 +102,14 @@ async def execute_game(orchestrator: Any, spec: Any) -> rshogi.record.GameRecord
     gr = owner.game_runner
     assert gr is not None, "GameRunner not initialized"
 
-    resource_context = await _prepare_resource_context(owner, game_spec)
-
-    b_tuple = _build_engine_tuple(game_spec.black_item)
-    w_tuple = _build_engine_tuple(game_spec.white_item)
-
+    resource_context = _empty_resource_context()
     black_engine: AsyncUsiEngine | None = None
     white_engine: AsyncUsiEngine | None = None
 
     try:
+        resource_context = await _prepare_resource_context(owner, game_spec)
+        b_tuple = _build_engine_tuple(game_spec.black_item)
+        w_tuple = _build_engine_tuple(game_spec.white_item)
         black_engine, white_engine = await ep.acquire_pair_sorted(b_tuple, w_tuple)
         return await _run_game_with_engines(
             owner,
@@ -197,53 +209,68 @@ def _classify_execution_failure(exc: BaseException) -> str:
 
 async def _prepare_resource_context(owner: Any, game_spec: _GameSpecPort) -> _ResourceContext:
     pool = owner.instance_pool
-    resource_requirements: dict[str, ResourceRequest] = {}
-    is_slots_reserved = False
-    instance_role_map: dict[str, list[InstanceActiveGameSide]] = {}
-    black_engine_spec: EngineConfig | None = None
-    white_engine_spec: EngineConfig | None = None
+    resource_context = _empty_resource_context()
 
     if pool is None:
-        return _ResourceContext(
-            resource_requirements=resource_requirements,
-            is_slots_reserved=is_slots_reserved,
-            instance_role_map=instance_role_map,
-            black_engine_spec=black_engine_spec,
-            white_engine_spec=white_engine_spec,
+        return resource_context
+
+    try:
+        resource_context.resource_requirements = _collect_instance_usage_service(
+            owner,
+            pool,
+            game_spec.black_item,
+            game_spec.white_item,
         )
+        if resource_context.resource_requirements:
+            await _await_instance_resources_service(
+                owner,
+                pool,
+                resource_context.resource_requirements,
+                game_spec.game_id,
+            )
+            resource_context.is_slots_reserved = True
 
-    resource_requirements = _collect_instance_usage_service(owner, pool, game_spec.black_item, game_spec.white_item)
-    if resource_requirements:
-        await _await_instance_resources_service(owner, pool, resource_requirements, game_spec.game_id)
-        is_slots_reserved = True
+        engine_configs = owner.engine_configs
+        if not isinstance(engine_configs, Mapping):
+            raise AttributeError("engine_configs not initialized on orchestrator")
 
-    engine_configs = owner.engine_configs
-    if not isinstance(engine_configs, Mapping):
-        raise AttributeError("engine_configs not initialized on orchestrator")
+        resource_context.black_engine_spec, resource_context.white_engine_spec = _resolve_engine_specs(
+            engine_configs,
+            game_spec,
+        )
+        black_instance_id = _resolve_instance_id(game_spec.black_item, resource_context.black_engine_spec)
+        white_instance_id = _resolve_instance_id(game_spec.white_item, resource_context.white_engine_spec)
 
-    black_engine_spec, white_engine_spec = _resolve_engine_specs(engine_configs, game_spec)
-    black_instance_id = _resolve_instance_id(game_spec.black_item, black_engine_spec)
-    white_instance_id = _resolve_instance_id(game_spec.white_item, white_engine_spec)
+        _ensure_instance_registered(pool, black_instance_id)
+        _ensure_instance_registered(pool, white_instance_id)
 
-    _ensure_instance_registered(pool, black_instance_id)
-    _ensure_instance_registered(pool, white_instance_id)
+        resource_context.instance_role_map = _build_instance_role_map(
+            game_spec,
+            resource_context.black_engine_spec,
+            resource_context.white_engine_spec,
+            black_instance_id=black_instance_id,
+            white_instance_id=white_instance_id,
+        )
+        _record_active_games(
+            pool,
+            game_spec,
+            resource_context.instance_role_map,
+            resource_context.black_engine_spec,
+            resource_context.white_engine_spec,
+        )
+    except BaseException:
+        try:
+            _release_resource_context(pool, game_spec, resource_context)
+        except (KeyError, RuntimeError, ValueError) as rollback_exc:
+            logger.warning(
+                "Resource rollback failed for game %s during setup: %s",
+                game_spec.game_id,
+                rollback_exc,
+                exc_info=True,
+            )
+        raise
 
-    instance_role_map = _build_instance_role_map(
-        game_spec,
-        black_engine_spec,
-        white_engine_spec,
-        black_instance_id=black_instance_id,
-        white_instance_id=white_instance_id,
-    )
-    _record_active_games(pool, game_spec, instance_role_map, black_engine_spec, white_engine_spec)
-
-    return _ResourceContext(
-        resource_requirements=resource_requirements,
-        is_slots_reserved=is_slots_reserved,
-        instance_role_map=instance_role_map,
-        black_engine_spec=black_engine_spec,
-        white_engine_spec=white_engine_spec,
-    )
+    return resource_context
 
 
 def _resolve_engine_specs(
@@ -342,7 +369,7 @@ async def _run_game_with_engines(
     white_engine: AsyncUsiEngine,
     black_engine_spec: EngineConfig | None,
     white_engine_spec: EngineConfig | None,
-) -> rshogi.record.GameRecord:
+) -> rsshogi.record.Record:
     black_pool_key = game_spec.black_item.pool_key
     white_pool_key = game_spec.white_item.pool_key
 
@@ -418,6 +445,10 @@ async def _run_game_with_engines(
         game_record=game_info,
         participation_records=participation_records,
     )
+    attach_schedule_metadata(
+        game_record=game_info,
+        schedule_metadata=getattr(game_spec, "schedule_metadata", None),
+    )
     return game_info
 
 
@@ -437,6 +468,7 @@ def _build_transcript_context(
         return None
     detail_raw = getattr(logging_config, "usi_transcript_detail", "commands")
     detail: TranscriptDetail = "commands_and_info" if detail_raw == "commands_and_info" else "commands"
+    max_bytes = int(getattr(logging_config, "usi_transcript_max_bytes", DEFAULT_TRANSCRIPT_MAX_BYTES))
     run_dir = getattr(owner, "run_dir", None)
     if not isinstance(run_dir, Path):
         raise RuntimeError("USI transcript mode requires a Path run_dir")
@@ -449,6 +481,7 @@ def _build_transcript_context(
         black_name=black_name,
         white_name=white_name,
         detail=detail,
+        max_bytes=max_bytes,
     )
 
 
@@ -487,11 +520,17 @@ async def _cleanup_execution(
     pool = owner.instance_pool
     if pool is None:
         return
+    _release_resource_context(pool, game_spec, resource_context)
+
+
+def _release_resource_context(pool: Any, game_spec: _GameSpecPort, resource_context: _ResourceContext) -> None:
     if resource_context.is_slots_reserved and resource_context.resource_requirements:
         pool.release_resources(resource_context.resource_requirements)
+        resource_context.is_slots_reserved = False
     if resource_context.instance_role_map:
         for inst_id in resource_context.instance_role_map:
             pool.clear_active_game(inst_id, game_spec.game_id)
+        resource_context.instance_role_map = {}
 
 
 __all__ = ["execute_game"]

@@ -1,6 +1,6 @@
 # ユーティリティ
 
-トーナメント以外でよく使う CLI をまとめます。
+トーナメント実行以外でよく使う CLI をまとめます。
 
 ## 設定確認
 
@@ -14,7 +14,8 @@ shogiarena config repo set yaneuraou \
 shogiarena config repo remove yaneuraou
 ```
 
-`config init` は `settings.yaml` と標準ディレクトリを作ります。設定なしでも動きますが、`{output_dir}` / `{engine_dir}` や artifact を使うなら初期化しておくと便利です。
+`config init` は `settings.yaml` と標準ディレクトリを作ります。
+設定なしでも動きますが、`{output_dir}` や `{engine_dir}`、artifact を使うなら初期化しておくと手間が減ります。
 
 ## 単一局面の解析
 
@@ -22,7 +23,8 @@ shogiarena config repo remove yaneuraou
 shogiarena run analyze engine.yaml startpos --nodes 100000
 ```
 
-USI の `go` を使って 1 局面を探索します。エンジン設定の確認にも使えます。
+USI の `go` を使って 1 局面を探索します。
+エンジン設定が意図通りかを確かめるときにも使えます。
 
 ## 詰み探索
 
@@ -30,7 +32,8 @@ USI の `go` を使って 1 局面を探索します。エンジン設定の確�
 shogiarena run mate engine.yaml startpos --ply-limit 5
 ```
 
-`go mate` 対応エンジンで詰み探索を行います。主な指定は `--ply-limit`、`--node-limit`、`--infinite` です。
+`go mate` 対応エンジンで詰み探索を行います。
+主な指定は `--ply-limit`、`--node-limit`、`--infinite` です。
 
 ## 棋譜生成
 
@@ -39,11 +42,12 @@ cp examples/configs/run/generate/example.yaml generate.yaml
 shogiarena run generate generate.yaml
 ```
 
-`run generate` は自己対局で棋譜や局面データを生成します。設定は tournament 系 run と同じく、`engines`、`tournament`、`rules`、`records_output` を使います。
+`run generate` は自己対局で棋譜や局面データを生成します。
+設定は tournament 系 run と同じく、`engines`、`tournament`、`rules`、`records_output` を使います。
 
 ```yaml
 records_output:
-  format: pack
+  format: sbinpack
   output_dir: "./data/records/generate"
   max_games_per_file: 500
   file_prefix: "selfplay"
@@ -59,7 +63,8 @@ shogiarena results summary /path/to/run --format json
 shogiarena results summary /path/to/game.db --format csv
 ```
 
-JSON 出力では `timing_metrics` に wall time field の意味が入ります。engine throughput 比較や wall NPS では `engine_wall_time_ms` を使い、持ち時間に課金された時間を見たい場合は `wall_time_ms` を見ます。
+JSON 出力では `timing_metrics` に wall time field の意味が入ります。
+engine throughput や wall NPS を比較するときは `engine_wall_time_ms` を、持ち時間に課金された時間を見たいときは `wall_time_ms` を使います。
 
 マニフェストの provenance 検証:
 

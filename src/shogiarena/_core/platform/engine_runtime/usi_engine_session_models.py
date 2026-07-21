@@ -9,7 +9,7 @@ from enum import Enum
 from types import TracebackType
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 
-from rshogi.core import Move
+from rsshogi.core import Move
 
 from shogiarena._core.contexts.match.ports.usi_think_ports import PonderHitTimings, UsiThinkRequest
 from shogiarena._core.platform.engine_runtime.usi_protocol_types import (
@@ -44,7 +44,7 @@ UsiOptionValidationMode = Literal["strict", "warn", "raw", "allow_unlisted_combo
 UsiAnalyzeFailurePolicy = Literal["raise", "collect"]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class EngineLifecycleEvent:
     """Engine lifecycle callback payload."""
 
@@ -55,7 +55,7 @@ class EngineLifecycleEvent:
     details: JsonObject = field(default_factory=dict)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class UsiAnalyzePosition:
     """Batch analysis target position."""
 
@@ -63,7 +63,7 @@ class UsiAnalyzePosition:
     moves: tuple[Move, ...] = ()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class UsiAnalyzeResetPolicy:
     """Per-position reset policy for lightweight analysis capture."""
 
@@ -72,7 +72,7 @@ class UsiAnalyzeResetPolicy:
     isready_before_each: bool = True
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class UsiAnalyzeItem:
     """One result item from batch analysis."""
 
@@ -130,7 +130,7 @@ class AsyncUsiProcess:
         return self._bridge.receive_lines()
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class UsiMateResult:
     """Result of a USI ``go mate`` search."""
 

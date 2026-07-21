@@ -2,7 +2,7 @@
 
 ``USI_OwnBook`` が明示的に ``false`` でなく、``BookFile`` が ``no_book`` でないとき、
 ``BookDir + BookFile`` を YaneuraOu 互換 Combine で実体パスに解決し、存在確認と
-rshogi ``YaneuraOuBook`` による bounded 健全性チェックを行う。検証失敗はエンジン起動前に
+rsshogi ``YaneuraOuBook`` による bounded 健全性チェックを行う。検証失敗はエンジン起動前に
 明確なエラーとして surface する（黙って no_book 扱いで完走するのを防ぐ）。
 
 信頼源: ``agent-docs/architecture/opening-book-and-openings.md`` §4。
@@ -27,6 +27,20 @@ _BOOK_SPEC = next(spec for spec in COMPOSITE_RESOURCE_SPECS if spec.file_key == 
 
 # ``USI_OwnBook`` を明示的に無効化したとみなす値（大文字小文字無視）。
 _FALSE_LITERALS: frozenset[str] = frozenset({"false", "0", "off", "no"})
+
+
+def resolve_yaneuraou_book_fallback_path(path: Path) -> Path:
+    """YaneuraOu 互換の ``.db`` → ``.ybb`` fallback を適用した path を返す。
+
+    YaneuraOu 系では ``BookFile=user_book1.db`` の指定に対して、同名の ``.ybb`` が
+    存在する運用がある。ShogiArena の preflight/provenance/remote 配布では、`.db` が
+    無いというだけで欠損扱いにせず、隣接する `.ybb` が存在する場合はそれを実体として扱う。
+    """
+
+    if path.exists() or path.suffix.lower() != ".db":
+        return path
+    fallback = path.with_suffix(".ybb")
+    return fallback if fallback.exists() else path
 
 
 def _is_explicitly_false(value: JsonValue) -> bool:
@@ -111,10 +125,14 @@ def collect_book_preflight_errors(
     if not candidate.is_absolute():
         base = working_dir if working_dir is not None else Path.cwd()
         candidate = base / candidate
+    candidate = resolve_yaneuraou_book_fallback_path(candidate)
 
     if not candidate.exists():
+        fallback_note = ""
+        if candidate.suffix.lower() == ".db":
+            fallback_note = f" (also checked fallback: {candidate.with_suffix('.ybb')})"
         return [
-            f"Engine '{engine_name}' opening book file does not exist: {candidate} "
+            f"Engine '{engine_name}' opening book file does not exist: {candidate}{fallback_note} "
             "(set BookFile=no_book or USI_OwnBook=false to disable the built-in book)"
         ]
 
@@ -123,16 +141,24 @@ def collect_book_preflight_errors(
 
 
 def _validate_book_health(*, engine_name: str | None, path: Path) -> str | None:
-    """rshogi で book を bounded 検証し、問題があればエラーメッセージを返す。
+    """rsshogi で book を bounded 検証し、問題があればエラーメッセージを返す。
 
     全読みは行わない（``open()`` は先頭の bounded prefix のみ検証する）。
     2.4GB 級の DB でも起動前コストを抑えられる。
     """
 
+    if path.suffix.lower() == ".ybb":
+        logger.info(
+            "Engine '%s' opening book uses .ybb fallback; skipping YaneuraOu DB2016 text diagnostics: %s",
+            engine_name,
+            path,
+        )
+        return None
+
     try:
-        from rshogi.book import YaneuraOuBook
+        from rsshogi.book import YaneuraOuBook
     except ImportError:
-        logger.debug("rshogi.book unavailable; skipping book health check for engine '%s'", engine_name)
+        logger.debug("rsshogi.book unavailable; skipping book health check for engine '%s'", engine_name)
         return None
 
     try:
@@ -165,4 +191,5 @@ __all__ = [
     "collect_book_preflight_errors",
     "is_engine_book_enabled",
     "resolve_engine_book_path",
+    "resolve_yaneuraou_book_fallback_path",
 ]

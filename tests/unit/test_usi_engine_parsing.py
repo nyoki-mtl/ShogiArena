@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from rshogi.core import Move
+from rsshogi.core import Move
 
 from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
 from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine, UsiEngineState

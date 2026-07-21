@@ -8,9 +8,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-import rshogi
-import rshogi.record
-from rshogi.core import normalize_usi_position
+import rsshogi
+import rsshogi.record
+from rsshogi.core import normalize_usi_position
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.contracts_base_orchestrator import BaseOrchestrator
 from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution import (
@@ -108,7 +108,7 @@ class SpsaOrchestratorGameplayMixin:
         baseline_option_map: JsonObject | None = None,
         event_family: str = "spsa",
         time_control_override: TimeControlLimits | None = None,
-    ) -> tuple[float, rshogi.record.GameRecord, rshogi.record.GameRecord]:
+    ) -> tuple[float, rsshogi.record.Record, rsshogi.record.Record]:
         """Play a tuned-vs-baseline pair (tuned black/white) and return mean score."""
         black_reserved = reserved_ids[0] if reserved_ids else None
         white_reserved = reserved_ids[1] if reserved_ids else None
@@ -164,10 +164,10 @@ class SpsaOrchestratorGameplayMixin:
         baseline_option_map: JsonObject | None = None,
         event_family: str = "spsa",
         time_control_override: TimeControlLimits | None = None,
-    ) -> tuple[int, rshogi.record.GameRecord]:
+    ) -> tuple[int, rsshogi.record.Record]:
         """Run a single SPSA game with structure aligned to TournamentOrchestrator.
 
-        Returns (winner_code, GameRecord) where winner_code is 1 for tuned win,
+        Returns (winner_code, Record) where winner_code is 1 for tuned win,
         0 for baseline win, 2 for draw.
         """
         if tuned_option_map is None or baseline_option_map is None:
@@ -293,7 +293,7 @@ class SpsaOrchestratorGameplayMixin:
             )
             self._append_spsa_event(running_payload)
 
-        async def _run_remote_with_instance(remote_instance: Instance) -> rshogi.record.GameRecord:
+        async def _run_remote_with_instance(remote_instance: Instance) -> rsshogi.record.Record:
             await mark_running_once()
             return await self._run_remote_game(
                 start_sfen=start_sfen,
@@ -419,7 +419,7 @@ class SpsaOrchestratorGameplayMixin:
         raise ValueError(f"LTC SPRT normalization received non-game result {game_result_name(result)}")
 
     @staticmethod
-    def _calculate_winner_code(game_info: rshogi.record.GameRecord, is_tuned_as_black: bool) -> int:
+    def _calculate_winner_code(game_info: rsshogi.record.Record, is_tuned_as_black: bool) -> int:
         result = game_info.result
         if result.is_black_win():
             return 1 if is_tuned_as_black else 0

@@ -172,13 +172,18 @@ def _safe_load_yaml(path: Path) -> Mapping[str, object] | None:
 
 
 def _candidate_paths(preferred: Path | None) -> list[Path]:
+    """探索する設定ファイルの候補を、優先度順に返す。
+
+    リポジトリ固有の開発用パスは候補に含めない。run ディレクトリ外の設定を
+    使いたい場合は ``SHOGI_ARENA_LIVE_DIAGNOSTICS_CONFIG`` で明示する。
+    """
+
     candidates: list[Path] = []
     if preferred:
         candidates.append(preferred)
     env_override = os.getenv("SHOGI_ARENA_LIVE_DIAGNOSTICS_CONFIG")
     if env_override:
         candidates.append(Path(env_override))
-    candidates.append(Path(".sandbox/configs/run/live_diagnostics.yml"))
     return candidates
 
 

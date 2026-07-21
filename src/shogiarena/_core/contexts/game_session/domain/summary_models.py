@@ -12,7 +12,7 @@ class EngineWdlCounts(WdlCounts, total=False):
     games: int
 
 
-@dataclass
+@dataclass(kw_only=True)
 class TournamentResults:
     engine_stats: dict[str, EngineWdlCounts]
     pair_results: dict[tuple[str, str], dict[str, int]]

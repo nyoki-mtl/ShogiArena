@@ -11,37 +11,41 @@ ShogiArena は、USI 将棋エンジンの自動対局、トーナメント管�
 - エンジン内蔵定跡の preflight、provenance、remote 配布を扱う
 - Python から USI エンジン操作やトーナメント実行を自動化する
 
-## 最短ルート
+## インストールから dry-run まで
 
 ```bash
 pip install shogiarena
 shogiarena config init
-cp examples/configs/run/tournament/example.yaml tournament.yaml
-# tournament.yaml の engines を自分の環境に合わせて編集
+# tournament.yaml を用意（雛形は下記リポジトリの examples/ にあります）
 shogiarena run tournament tournament.yaml --dry-run
 ```
 
-実際に動かすには USI エンジン設定が必要です。初めての場合は [クイックスタート](getting-started/quick-start.md) から進めてください。
+設定の雛形は[リポジトリの examples ディレクトリ](https://github.com/nyoki-mtl/ShogiArena/tree/main/examples/configs)にあります。
+最小構成は[クイックスタート](getting-started/quick-start.md)に載せています。
+
+実際に対局を動かすには USI エンジンの設定ファイルが必要です。
+初めて使う場合は [クイックスタート](getting-started/quick-start.md) から進めてください。
 
 ## 公開 API
 
-利用者向けに互換性を意識している import は次のモジュールです。
+利用者向けに後方互換性を保つよう努めているモジュールは次の 4 つです。
 
 - `shogiarena.engine`
 - `shogiarena.tournament`
 - `shogiarena.cli`
 - `shogiarena.composition`
 
-`shogiarena._core` 配下は内部実装です。ドキュメント内で開発者向けに触れることはありますが、通常の利用では直接 import しないでください。
+`shogiarena._core` 配下は内部実装です。
+本ドキュメントでも開発者向けの説明では登場しますが、通常の利用で直接 import することは想定していません。
 
-## 読み方
+## 目的別の読み進め方
 
-- 初めて使う: [インストール](getting-started/installation.md) → [クイックスタート](getting-started/quick-start.md)
-- 設定を書く: [エンジン設定](user-guide/engine-configuration.md) と [トーナメント](user-guide/tournaments.md)
-- 実行を監視する: [ダッシュボード](user-guide/dashboard.md)
-- 自動化する: [Python ライブラリ](user-guide/python-library.md)
-- コマンドを確認する: [CLI](api/cli.md)
-- 統計の背景を知る: [内部技術](internals/index.md)
+- **初めて使う**：[インストール](getting-started/installation.md) → [クイックスタート](getting-started/quick-start.md)
+- **設定を書く**：[エンジン設定](user-guide/engine-configuration.md) と [トーナメント](user-guide/tournaments.md)
+- **実行を監視する**：[ダッシュボード](user-guide/dashboard.md)
+- **自動化する**：[Python ライブラリ](user-guide/python-library.md)
+- **コマンドを確認する**：[CLI](api/cli.md)
+- **統計の背景を知る**：[内部技術](internals/index.md)
 
 ## 基本コマンド
 

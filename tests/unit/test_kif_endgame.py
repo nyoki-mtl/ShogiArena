@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import rshogi
-from rshogi.initial_positions import InitialPosition
+import rsshogi
+from rsshogi.initial_positions import InitialPosition
 
 from shogiarena._core.shared.kernel.game_results import GameResult
 
 
 def _record_with_result(result: GameResult) -> object:
-    return rshogi.record.GameRecord.from_dict(
+    return rsshogi.record.Record.from_dict(
         {
             "metadata": {
                 "black_player": "black",

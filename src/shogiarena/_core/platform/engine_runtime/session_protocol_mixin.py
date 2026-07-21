@@ -7,7 +7,7 @@ import logging
 from collections import deque
 from typing import Any
 
-from rshogi.core import Move
+from rsshogi.core import Move
 
 from shogiarena._core.platform.engine_runtime.usi_engine_session_models import UsiEngineState, UsiMateResult
 from shogiarena._core.platform.engine_runtime.usi_protocol_types import UsiThinkPV, move_from_usi

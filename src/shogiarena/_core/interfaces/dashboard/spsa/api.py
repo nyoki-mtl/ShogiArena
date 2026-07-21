@@ -40,6 +40,7 @@ from shogiarena._core.interfaces.dashboard.api_query_models import PaginatedSear
 from shogiarena._core.interfaces.dashboard.http_response_builder import json_error_response
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int, coerce_optional_text
+from shogiarena._core.shared.kernel.serialization import json_serialize
 
 from .api_query_models import (
     LtcLimitQuery,
@@ -167,10 +168,12 @@ class SpsaAPI:
         events: list[JsonObject] = []
         for event_data in event_entries[-limit:]:
             inner_payload = event_data.get("payload", {})
-            event_out = {k: v for k, v in event_data.items() if k != "payload"}
-            event_out["type"] = event_data.get("event", "event")
-            event_out["timestamp"] = event_data.get("ts", coerce_int(time.time() * 1000.0) or 0)
-            event_out["payload"] = inner_payload
+            event_out: JsonObject = {
+                str(key): json_serialize(value) for key, value in event_data.items() if key != "payload"
+            }
+            event_out["type"] = json_serialize(event_data.get("event", "event"))
+            event_out["timestamp"] = json_serialize(event_data.get("ts", coerce_int(time.time() * 1000.0) or 0))
+            event_out["payload"] = json_serialize(inner_payload)
             events.append(event_out)
 
         return web.json_response({"events": events})

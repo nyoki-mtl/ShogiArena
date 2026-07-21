@@ -11,9 +11,10 @@ from urllib.parse import urlparse
 
 from omegaconf import DictConfig, OmegaConf
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from rshogi.core import parse_usi_position
+from rsshogi.core import parse_usi_position
 
 from shogiarena._core.shared.kernel.game_results import STARTING_SFEN
+from shogiarena._core.shared.kernel.initial_position_entry import InitialPositionEntry
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
@@ -42,56 +43,143 @@ def parse_time_control_raw(raw: JsonValue | Mapping[str, JsonValue] | DictConfig
 class InitialPositionConfig(BaseModel):
     """Configuration for initial position generation."""
 
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["startpos", "file"] = "startpos"
     flip_policy: Literal["alternate", "random", "none", "pair_both"] = "pair_both"
     source: str | None = None
+    source_format: Literal["auto", "sfen", "usi_line"] = "auto"
+    sync_scope: Literal["game", "pair"] = "game"
+    preserve_line_metadata: bool = False
+
+    @model_validator(mode="after")
+    def _validate_sync_scope(self) -> Self:
+        if self.sync_scope == "pair" and self.flip_policy != "pair_both":
+            raise ValueError("rules.initial_positions.sync_scope='pair' requires flip_policy='pair_both'")
+        return self
 
     def generate(self, num_positions: int, seed: str) -> list[str]:
+        return [entry.initial_sfen for entry in self.generate_entries(num_positions, seed)]
+
+    def generate_entries(self, num_positions: int, seed: str) -> list[InitialPositionEntry]:
+        """Generate initial position entries with optional line provenance."""
+
         if self.type == "startpos":
-            return self.generate_startpos(num_positions)
+            return self.generate_startpos_entries(num_positions)
         if self.type == "file" and self.source:
             with open(self.source, encoding="utf-8") as f:
-                raw_lines = [line.strip() for line in f if line.strip()]
+                raw_lines = [(line_no, line.strip()) for line_no, line in enumerate(f, start=1) if line.strip()]
 
-            positions: list[str] = []
-            for line in raw_lines:
-                if line.startswith("sfen "):
-                    positions.append(line[5:].strip())
-                    continue
-                if line.startswith("position sfen "):
-                    positions.append(line[14:].strip())
-                    continue
-                if line == "startpos":
-                    positions.append(STARTING_SFEN)
-                    continue
-                if line.startswith("position startpos") or line.startswith("startpos "):
-                    b = parse_usi_position(line)
-                    positions.append(b.to_sfen())
-                    continue
-                parts = line.split()
-                if len(parts) >= 3 and "/" in parts[0]:
-                    positions.append(line)
-                    continue
-                b = parse_usi_position(line)
-                positions.append(b.to_sfen())
+            entries = [self._parse_position_line(line, line_no=line_no) for line_no, line in raw_lines]
+            if not entries:
+                raise ValueError(f"initial position file is empty: {self.source}")
 
             rng = random.Random(seed)
-            return [rng.choice(positions) for _ in range(num_positions)]
+            return [rng.choice(entries) for _ in range(num_positions)]
 
         logger.warning(
             "Unknown initial position type '%s' - falling back to startpos. Use 'startpos' or 'file'.",
             self.type,
         )
-        return self.generate_startpos(num_positions)
+        return self.generate_startpos_entries(num_positions)
 
     def generate_startpos(self, num_positions: int) -> list[str]:
         return [STARTING_SFEN] * num_positions
+
+    def generate_startpos_entries(self, num_positions: int) -> list[InitialPositionEntry]:
+        return [InitialPositionEntry(initial_sfen=STARTING_SFEN) for _ in range(num_positions)]
+
+    def _parse_position_line(self, line: str, *, line_no: int) -> InitialPositionEntry:
+        source_path = self.source
+        if self.source_format == "sfen":
+            initial_sfen = self._parse_sfen_line(line)
+            return InitialPositionEntry(
+                initial_sfen=initial_sfen,
+                source_line=line if self.preserve_line_metadata else None,
+                source_line_no=line_no if self.preserve_line_metadata else None,
+                line_id=self._line_id(line_no) if self.preserve_line_metadata else None,
+                source_path=source_path if self.preserve_line_metadata else None,
+            )
+
+        if self.source_format == "usi_line":
+            return self._parse_usi_line_entry(line, line_no=line_no)
+
+        if line.startswith("sfen ") or line.startswith("position sfen "):
+            initial_sfen = self._parse_sfen_line(line)
+            return InitialPositionEntry(
+                initial_sfen=initial_sfen,
+                source_line=line if self.preserve_line_metadata else None,
+                source_line_no=line_no if self.preserve_line_metadata else None,
+                line_id=self._line_id(line_no) if self.preserve_line_metadata else None,
+                source_path=source_path if self.preserve_line_metadata else None,
+            )
+        if line == "startpos":
+            return InitialPositionEntry(
+                initial_sfen=STARTING_SFEN,
+                source_line=line if self.preserve_line_metadata else None,
+                source_line_no=line_no if self.preserve_line_metadata else None,
+                line_id=self._line_id(line_no) if self.preserve_line_metadata else None,
+                source_path=source_path if self.preserve_line_metadata else None,
+            )
+        if line.startswith("position startpos") or line.startswith("startpos "):
+            return self._parse_usi_line_entry(line, line_no=line_no)
+        parts = line.split()
+        if len(parts) >= 3 and "/" in parts[0]:
+            return InitialPositionEntry(
+                initial_sfen=line,
+                source_line=line if self.preserve_line_metadata else None,
+                source_line_no=line_no if self.preserve_line_metadata else None,
+                line_id=self._line_id(line_no) if self.preserve_line_metadata else None,
+                source_path=source_path if self.preserve_line_metadata else None,
+            )
+        return self._parse_usi_line_entry(line, line_no=line_no)
+
+    @staticmethod
+    def _parse_sfen_line(line: str) -> str:
+        if line.startswith("sfen "):
+            return line[5:].strip()
+        if line.startswith("position sfen "):
+            return line[14:].strip()
+        return line
+
+    def _parse_usi_line_entry(self, line: str, *, line_no: int) -> InitialPositionEntry:
+        position_text = line
+        if not line.startswith("position ") and not line.startswith("startpos"):
+            position_text = f"position startpos moves {line}"
+        board = parse_usi_position(position_text)
+        return InitialPositionEntry(
+            initial_sfen=board.to_sfen(),
+            source_line=line if self.preserve_line_metadata else None,
+            source_line_no=line_no if self.preserve_line_metadata else None,
+            line_moves_usi=self._extract_line_moves(line) if self.preserve_line_metadata else (),
+            line_id=self._line_id(line_no) if self.preserve_line_metadata else None,
+            source_path=self.source if self.preserve_line_metadata else None,
+        )
+
+    @staticmethod
+    def _extract_line_moves(line: str) -> tuple[str, ...]:
+        parts = line.split()
+        if not parts:
+            return ()
+        if "moves" in parts:
+            moves_index = parts.index("moves")
+            return tuple(parts[moves_index + 1 :])
+        if parts[0] == "position":
+            return ()
+        if parts[0] == "startpos":
+            return tuple(parts[1:])
+        return tuple(parts)
+
+    def _line_id(self, line_no: int) -> str | None:
+        if self.source is None:
+            return None
+        return f"{Path(self.source).name}:{line_no}"
 
 
 class AdjudicationSettings(BaseModel):
     """Adjudication knobs controlling resign and max-move policies."""
 
-    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
 
     resign_threshold_cp: int | None = Field(default=None, gt=0)
     resign_move_count: int = 8
@@ -131,6 +219,8 @@ class AdjudicationSettings(BaseModel):
 class RulesConfig(BaseModel):
     """Game rules configuration."""
 
+    model_config = ConfigDict(extra="forbid")
+
     time_control: TimeControlLimits | None = None
     initial_positions: InitialPositionConfig = Field(default_factory=InitialPositionConfig)
     adjudication: AdjudicationSettings = Field(default_factory=AdjudicationSettings)
@@ -147,6 +237,9 @@ class RulesConfig(BaseModel):
 class SprtConfig(BaseModel):
     """SPRT early stopping configuration."""
 
+    model_config = ConfigDict(extra="forbid")
+
+    tested_engine: str | None = None
     model: Literal["gsprt-trinomial-v1", "gsprt-pentanomial-v1"] = "gsprt-trinomial-v1"
     elo0: float = 0.0
     elo1: float = 5.0
@@ -158,6 +251,10 @@ class SprtConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_sprt(self) -> Self:
+        if self.tested_engine is not None:
+            self.tested_engine = self.tested_engine.strip()
+            if not self.tested_engine:
+                raise ValueError("sprt.tested_engine must not be empty")
         if self.max_games is not None and self.max_games < self.min_games:
             raise ValueError("sprt.max_games must be >= min_games")
         if self.elo1 <= self.elo0:
@@ -167,6 +264,8 @@ class SprtConfig(BaseModel):
 
 class OpenBenchCreatePayload(BaseModel):
     """Payload template for OpenBench/ShogiBench CREATE_TEST action."""
+
+    model_config = ConfigDict(extra="forbid")
 
     dev_engine: str | None = None
     base_engine: str | None = None
@@ -268,6 +367,8 @@ class OpenBenchCreatePayload(BaseModel):
 class OpenBenchCreateConfig(BaseModel):
     """OpenBench/ShogiBench create-test settings."""
 
+    model_config = ConfigDict(extra="forbid")
+
     discovery_timeout_sec: float = Field(default=180.0, gt=0)
     payload: OpenBenchCreatePayload = Field(default_factory=OpenBenchCreatePayload)
 
@@ -275,7 +376,7 @@ class OpenBenchCreateConfig(BaseModel):
 class OpenBenchConfig(BaseModel):
     """OpenBench/ShogiBench submission configuration."""
 
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     is_enabled: bool = Field(default=False, alias="enabled")
     mode: Literal["existing_test", "create_test"] = "existing_test"

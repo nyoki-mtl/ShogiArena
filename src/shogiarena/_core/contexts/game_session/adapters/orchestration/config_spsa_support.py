@@ -207,10 +207,12 @@ def _build_rules_config(raw_rules: Mapping[str, JsonValue] | None) -> RulesConfi
     )
     if not isinstance(rr_any, dict):
         raise TypeError("rules must be a mapping")
+    # JSON 型の辞書に pydantic モデルを混ぜないよう、検証用ペイロードを別途組み立てる。
+    payload: dict[str, object] = dict(rr_any)
     tc = rr_any.get("time_control")
     if isinstance(tc, dict):
-        rr_any["time_control"] = TimeControlLimits(**tc)
-    return RulesConfig.model_validate(rr_any)
+        payload["time_control"] = TimeControlLimits(**{str(key): value for key, value in tc.items()})
+    return RulesConfig.model_validate(payload)
 
 
 def _warn_unknown_keys(section: Mapping[str, JsonValue], allowed: set[str], *, label: str) -> None:

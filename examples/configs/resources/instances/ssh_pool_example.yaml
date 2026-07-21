@@ -2,7 +2,7 @@
 # ------------------------------------------------------------------
 # - `name` / `type: ssh` / `hosts[]` / `user` は必須。`hosts` の各要素から個別インスタンスが生成され、`name-001` のような連番が自動付与されます。
 # - その他のキーは任意で、各生成インスタンスに共通設定としてコピーされます。
-# - 設定していない項目は SSH の単体定義 (ssh_example.yaml) と同じ既定値 (port=22, project_root=~/ShogiArena-remote, strict_host_key_checking=false など) が適用されます。
+# - 設定していない項目は SSH の単体定義 (ssh_example.yaml) と同じ既定値 (port=22, project_root=~/ShogiArena-remote, is_strict_host_key_checking=true など) が適用されます。
 
 name: "remote-cluster"                  # 必須。生成されるインスタンス名の接頭辞
 type: ssh                               # 必須。SSH インスタンスを表す固定値
@@ -15,4 +15,4 @@ project_root: "/opt/shogiarena"         # 任意。既定: ~/ShogiArena-remote
 slots: 6                                # 任意。null で自動判定
 max_engines: 3                          # 任意。既定: null -> slots と同値
 tags: ["remote", "cluster"]             # 任意。既定: []
-strict_host_key_checking: true          # 任意。既定: false
+is_strict_host_key_checking: true       # 任意。既定: true

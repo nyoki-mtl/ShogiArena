@@ -22,7 +22,12 @@ HashInput: TypeAlias = (
 )
 
 
-def normalize_for_hash(value: HashInput) -> JsonValue:
+def normalize_for_hash(value: HashInput | object) -> JsonValue:
+    """ハッシュ用に値を正規化する。
+
+    引数は ``HashInput`` を想定するが、コンテナ要素の静的な要素型は失われるため
+    受け口は ``object`` まで広げ、未知の型は ``case _`` で fail fast させる。
+    """
     match value:
         case BaseModel() as model:
             return normalize_for_hash(model.model_dump())

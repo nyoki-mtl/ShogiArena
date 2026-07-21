@@ -1,6 +1,7 @@
 # トラブルシューティング
 
-ShogiArena の使用中に発生する可能性のある問題と解決方法をまとめています。
+ShogiArena の使用中に起きやすい問題を、症状ごとに原因と対処の順でまとめています。
+見出しには実際に表示されるエラーメッセージを載せているので、手元のメッセージで検索してください。
 
 ## インストール関連
 
@@ -12,7 +13,7 @@ ShogiArena の使用中に発生する可能性のある問題と解決方法を
 ERROR: Package 'shogiarena' requires a different Python: 3.10.0 not in '>=3.11'
 ```
 
-**解決**: Python 3.11 以上にアップグレードしてください。
+**解決**：Python 3.11 以上にアップグレードしてください。
 
 ```bash
 # Python バージョン確認
@@ -25,7 +26,9 @@ pyenv global 3.11.0
 
 #### 依存パッケージのビルドエラー
 
-**解決**: システムライブラリが不足している可能性があります。
+**原因**：ビルドに必要なシステムライブラリやコンパイラが不足しています。
+
+**解決**：
 
 ```bash
 # Ubuntu/Debian
@@ -45,9 +48,9 @@ brew install python@3.11
 
 #### エラー: `FileNotFoundError: [Errno 2] No such file or directory`
 
-**原因**: エンジンのパスが間違っている。
+**原因**：エンジンのパスが間違っています。
 
-**解決**:
+**解決**：
 1. パスが正しいか確認
    ```bash
    ls -l /path/to/engine
@@ -65,18 +68,18 @@ brew install python@3.11
 
 #### エラー: `PermissionError: [Errno 13] Permission denied`
 
-**原因**: エンジンに実行権限がない。
+**原因**：エンジンに実行権限がありません。
 
-**解決**:
+**解決**：
 ```bash
 chmod +x /path/to/engine
 ```
 
 #### エラー: `Engine startup timeout`
 
-**原因**: エンジンの起動に時間がかかりすぎている（ニューラルネットワークモデルの読み込みなど）。
+**原因**：エンジンの起動に時間がかかりすぎています（ニューラルネットワークモデルの読み込みなど）。
 
-**解決**: engine 設定の `handshake_timeout` を長くする。
+**解決**：engine 設定の `handshake_timeout` を長くします。
 
 ```yaml
 # engine.yaml
@@ -94,9 +97,9 @@ system:
 
 #### エラー: `error while loading shared libraries`
 
-**原因**: 必要な共有ライブラリがシステムにインストールされていない。
+**原因**：必要な共有ライブラリがシステムにインストールされていません。
 
-**解決**:
+**解決**：
 ```bash
 # 不足しているライブラリを確認
 ldd /path/to/engine
@@ -108,9 +111,9 @@ brew install tbb          # macOS
 
 ### エンジンオプションが反映されない
 
-**原因**: オプション名が間違っている、またはエンジンがサポートしていない。
+**原因**：オプション名が間違っているか、エンジンがそのオプションをサポートしていません。
 
-**解決**:
+**解決**：
 1. エンジンを手動で起動してオプションを確認
    ```bash
    /path/to/engine
@@ -129,9 +132,9 @@ brew install tbb          # macOS
 
 #### エラー: `No instances available`
 
-**原因**: インスタンス設定が正しくない、またはインスタンスに空きがない。
+**原因**：インスタンス設定が正しくないか、インスタンスに空きがありません。
 
-**解決**:
+**解決**：
 1. インスタンス設定ファイルを確認
    ```bash
    cat examples/configs/resources/instances/README.md
@@ -153,9 +156,9 @@ brew install tbb          # macOS
 
 #### エラー: `Config validation failed`
 
-**原因**: 設定ファイルの構文エラーまたは必須フィールドの欠落。
+**原因**：設定ファイルに構文エラーがあるか、必須フィールドが欠けています。
 
-**解決**:
+**解決**：
 1. YAML の構文エラーを確認
    ```bash
    # Python で YAML を読み込んで確認
@@ -171,7 +174,7 @@ brew install tbb          # macOS
    cat examples/configs/run/tournament/example.yaml
    ```
 
-#### dry-run で確認
+#### dry-run で設定を検証する
 
 ```bash
 shogiarena run tournament tournament.yaml --dry-run
@@ -183,9 +186,9 @@ shogiarena run tournament tournament.yaml --dry-run
 
 #### エラー: `Engine timeout during game`
 
-**原因**: エンジンの思考時間が長すぎる、またはエンジンがクラッシュした。
+**原因**：エンジンの思考時間が長すぎるか、エンジンがクラッシュしています。
 
-**解決**:
+**解決**：
 1. 時間制御を確認
    ```yaml
    rules:
@@ -207,9 +210,9 @@ shogiarena run tournament tournament.yaml --dry-run
 
 #### 対局数が想定より少ない
 
-**原因**: `games_per_pair` の設定が小さい、または SPRT で早期停止した。
+**原因**：`games_per_pair` の設定が小さいか、SPRT が早期停止しています。
 
-**解決**:
+**解決**：
 1. `games_per_pair` を増やす
    ```yaml
    tournament:
@@ -232,9 +235,9 @@ shogiarena run tournament tournament.yaml --dry-run
 
 #### エラー: `Address already in use`
 
-**原因**: 指定したポートが既に使用されている。
+**原因**：指定したポートを別のプロセスが使用しています。
 
-**解決**:
+**解決**：
 1. 別のポートを指定
    ```yaml
    dashboard:
@@ -253,9 +256,9 @@ shogiarena run tournament tournament.yaml --dry-run
 
 #### ブラウザで接続できない
 
-**原因**: ファイアウォールまたはネットワーク設定の問題。
+**原因**：ファイアウォールまたはネットワーク設定が接続を遮っています。
 
-**解決**:
+**解決**：
 1. ローカルホストで確認
    ```
    http://localhost:8080
@@ -271,9 +274,9 @@ shogiarena run tournament tournament.yaml --dry-run
 
 ### ダッシュボードが更新されない
 
-**原因**: Live WebSocket または画面別の stream 接続が切れている。
+**原因**：Live WebSocket または画面別の stream 接続が切れています。
 
-**解決**:
+**解決**：
 1. ブラウザをリロード（F5）
 
 2. ブラウザのコンソールでエラーを確認
@@ -291,9 +294,9 @@ shogiarena run tournament tournament.yaml --dry-run
 
 #### エラー: `Host key verification failed`
 
-**原因**: リモートサーバーのホストキーが登録されていない。
+**原因**：リモートサーバーのホストキーが登録されていません。
 
-**解決**:
+**解決**：
 ```bash
 # 手動で接続してホストキーを登録
 ssh user@remote-server
@@ -304,9 +307,9 @@ ssh -o StrictHostKeyChecking=no user@remote-server
 
 #### エラー: `Permission denied (publickey)`
 
-**原因**: 公開鍵認証が正しく設定されていない。
+**原因**：公開鍵認証が正しく設定されていません。
 
-**解決**:
+**解決**：
 1. 公開鍵を登録
    ```bash
    ssh-copy-id -i ~/.ssh/id_rsa.pub user@remote-server
@@ -327,7 +330,7 @@ ssh -o StrictHostKeyChecking=no user@remote-server
 
 #### エラー: `Remote project_root does not exist`
 
-**解決**:
+**解決**：
 ```bash
 # リモートでディレクトリを作成
 ssh user@remote-server "mkdir -p ~/shogiarena"
@@ -335,9 +338,9 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 
 #### エンジンが見つからない
 
-**原因**: リモート側にエンジンが配置されていない。
+**原因**：リモート側にエンジンが配置されていません。
 
-**解決**:
+**解決**：
 1. プロビジョニングを強制
    ```bash
    shogiarena run tournament tournament.yaml --provision force
@@ -354,9 +357,9 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 
 #### エラー: `database disk image is malformed`
 
-**原因**: SQLite データベースファイルが破損している。
+**原因**：SQLite データベースファイルが破損しています。
 
-**解決**:
+**解決**：
 1. データベースを削除して再実行（**データは失われます**）
    ```bash
    rm {output_dir}/tournament/runs/.../game.db
@@ -371,9 +374,9 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 
 #### エラー: `database is locked`
 
-**原因**: 複数のプロセスが同時にデータベースにアクセスしている。
+**原因**：複数のプロセスが同時にデータベースにアクセスしています。
 
-**解決**:
+**解決**：
 1. 他のプロセスを停止
    ```bash
    # ShogiArena のプロセスを確認
@@ -389,12 +392,12 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 
 ### 対局が遅い
 
-**原因**:
+**原因**：
 - エンジンの思考時間が長い
 - 並列実行数が少ない
 - システムリソースが不足
 
-**解決**:
+**解決**：
 1. 時間制御を短縮
    ```yaml
    rules:
@@ -422,9 +425,9 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 
 #### エラー: `MemoryError` または OOM Killer
 
-**原因**: エンジンのメモリ使用量が大きい。
+**原因**：エンジンのメモリ使用量が大きすぎます。
 
-**解決**:
+**解決**：
 1. ハッシュサイズを減らす
    ```yaml
    options:
@@ -459,9 +462,9 @@ ls {output_dir}/generate/runs/
 ```
 
 デフォルトは以下の通り：
-- Linux: `~/.local/share/shogiarena/output`
-- macOS: `~/Library/Application Support/shogiarena/output`
-- Windows: `%LOCALAPPDATA%\shogiarena\output`
+- Linux：`~/.local/share/shogiarena/output`
+- macOS：`~/Library/Application Support/shogiarena/output`
+- Windows：`%LOCALAPPDATA%\shogiarena\output`
 
 ### 設定をリセットしたい
 
@@ -477,9 +480,9 @@ shogiarena config init
 
 ### プレースホルダーが展開されない
 
-**原因**: `shogiarena config init` を実行していない。
+**原因**：`shogiarena config init` を実行していません。
 
-**解決**:
+**解決**：
 1. 設定を初期化
    ```bash
    shogiarena config init
@@ -494,11 +497,14 @@ shogiarena config init
 
 問題が解決しない場合は、以下の情報を含めて GitHub Issues で報告してください。
 
-- ShogiArena のバージョン: `uv run shogiarena --version`
-- Python のバージョン: `python --version`
+- ShogiArena のバージョン：`uv run shogiarena --version`
+- Python のバージョン：`python --version`
 - OS とバージョン
 - エラーメッセージの全文
 - 再現手順
 - 設定ファイル（機密情報は削除してください）
 
 GitHub Issues: https://github.com/nyoki-mtl/ShogiArena/issues
+
+脆弱性、credential、未公開の exploit は public Issue へ投稿しないでください。
+セキュリティ上の問題は [Security Policy](https://github.com/nyoki-mtl/ShogiArena/security/policy) に従い、private vulnerability report で連絡してください。

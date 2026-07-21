@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from rshogi.initial_positions import InitialPosition
-from rshogi.record import GameResult
-from rshogi.types import Color
+from rsshogi.initial_positions import InitialPosition
+from rsshogi.record import GameResult
+from rsshogi.types import Color
 
 STARTING_SFEN: str = InitialPosition.STANDARD.value
 

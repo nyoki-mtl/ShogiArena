@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeVar
 
-import rshogi.record
+import rsshogi.record
 
 from shogiarena._core.contexts.game_session.adapters.engine.pool import EnginePool
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_builders import (
@@ -99,15 +99,14 @@ class BaseOrchestrator:
         self.engine_configs = {}
         self._progress_hub = ProgressHub(
             api_server=self.api_server,
-            preassign_worker=lambda numeric_game_id,
-            num_workers,
-            game_to_worker,
-            worker_busy: _preassign_worker_service(
-                numeric_game_id=numeric_game_id,
-                num_workers=num_workers,
-                game_to_worker=game_to_worker,
-                worker_busy=worker_busy,
-                logger=logger,
+            preassign_worker=lambda numeric_game_id, num_workers, game_to_worker, worker_busy: (
+                _preassign_worker_service(
+                    numeric_game_id=numeric_game_id,
+                    num_workers=num_workers,
+                    game_to_worker=game_to_worker,
+                    worker_busy=worker_busy,
+                    logger=logger,
+                )
             ),
         )
         self._engine_option_snapshots: EngineOptionsSnapshots = {}
@@ -222,7 +221,7 @@ class BaseOrchestrator:
         self,
         *,
         game_id: str,
-        game_info: rshogi.record.GameRecord,
+        game_info: rsshogi.record.Record,
         payload: _T,
         worker_idx: int | None,
     ) -> None:
@@ -253,6 +252,7 @@ class BaseOrchestrator:
         white_limits: TimeControlLimits | None
         before_game_hook: BeforeGameHookPort | None = None
         game_round: int | None = None
+        schedule_metadata: JsonObject | None = None
         on_game_start: Callable[[], Awaitable[None]] | None = None
 
     async def shutdown(self) -> None:

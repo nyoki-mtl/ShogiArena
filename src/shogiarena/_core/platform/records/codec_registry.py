@@ -1,9 +1,9 @@
 """Capability-separated record codec registry.
 
 Three distinct capabilities:
-- RecordSerializer: GameRecord -> bytes | str
-- RecordReader: bytes | str -> GameRecord
-- PositionStreamExporter: GameRecord -> Iterator[bytes]
+- RecordSerializer: Record -> bytes | str
+- RecordReader: bytes | str -> Record
+- PositionStreamExporter: Record -> Iterator[bytes]
 
 Public surface is module-level register/get functions only.
 No introspection API is exposed; consumers look up codecs by format_id.
@@ -14,16 +14,16 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
-import rshogi
+import rsshogi
 
-SerializeFn = Callable[[rshogi.record.GameRecord], bytes | str]
-DeserializeFn = Callable[[bytes | str], rshogi.record.GameRecord]
-StreamExportFn = Callable[[rshogi.record.GameRecord], Iterator[bytes]]
+SerializeFn = Callable[[rsshogi.record.Record], bytes | str]
+DeserializeFn = Callable[[bytes | str], rsshogi.record.Record]
+StreamExportFn = Callable[[rsshogi.record.Record], Iterator[bytes]]
 
 
 @dataclass(frozen=True, slots=True)
 class RecordSerializer:
-    """Serialize a GameRecord to a single payload."""
+    """Serialize a Record to a single payload."""
 
     format_id: str
     serialize: SerializeFn
@@ -31,7 +31,7 @@ class RecordSerializer:
 
 @dataclass(frozen=True, slots=True)
 class RecordReader:
-    """Deserialize a payload into a GameRecord."""
+    """Deserialize a payload into a Record."""
 
     format_id: str
     deserialize: DeserializeFn
@@ -39,7 +39,7 @@ class RecordReader:
 
 @dataclass(frozen=True, slots=True)
 class PositionStreamExporter:
-    """Export a GameRecord as a stream of position entries."""
+    """Export a Record as a stream of position entries."""
 
     format_id: str
     export: StreamExportFn

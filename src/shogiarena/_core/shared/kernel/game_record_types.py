@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from rshogi.types import Color
+from rsshogi.types import Color
 
 from shogiarena._core.shared.kernel.game_results import GameResult
 

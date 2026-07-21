@@ -183,7 +183,7 @@ async def _run_spsa(args: argparse.Namespace) -> None:
             raise CliError(f"Invalid SPSA config: {config_path}: {exc}") from exc
         base_config = {str(key): json_serialize(value) for key, value in parsed_file_payload.items()}
 
-    sections = {
+    sections: dict[str, list[str] | None] = {
         "dashboard": flatten_block_tokens(args.dashboard),
         "rules": flatten_block_tokens(args.rules),
         "spsa": flatten_block_tokens(args.spsa),
@@ -225,7 +225,7 @@ async def _run_sprt(args: argparse.Namespace) -> None:
 
 
 async def _run_generate(args: argparse.Namespace) -> None:
-    sections = {
+    sections: dict[str, list[str] | None] = {
         "rules": flatten_block_tokens(args.rules),
         "generate": flatten_block_tokens(args.generate),
         "dashboard": flatten_block_tokens(args.dashboard),

@@ -1,9 +1,9 @@
 """dashboard Book タブのデータ構築サービス。Task 0018。
 
-記録済み game（結果・先後エンジン・participation の book provenance・指し手）から
+記録済み game（結果、先後エンジン、participation の book provenance、指し手）から
 :func:`build_book_aggregation` 用の入力を作り、Book タブ payload を構築する。
 
-out-of-book ply の算出（rshogi book lookup）は重く book file が必要なため opt-in。
+out-of-book ply の算出（rsshogi book lookup）は重く book file が必要なため opt-in。
 大規模 book（diagnostics incomplete）や unsorted book は lookup の全読み/例外を避けるため
 スキップし、out-of-book を「未測定」として扱う。
 """
@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from rshogi.record import GameResult
+from rsshogi.record import GameResult
 
 from shogiarena._core.contexts.dashboard.application.book.aggregation import (
     BookGameInput,
@@ -63,13 +63,13 @@ def make_default_book_opener(*, allow_full_validation: bool = False) -> BookOpen
 
     `lookup_sfen` は完全なソート検証が済んでいないと例外を投げるため、bounded 検証で
     ``complete is False`` の book（2.4GB 級など）は既定でスキップする。
-    ``allow_full_validation=True`` の場合のみ ``validate_full()``（全読み・高コスト）を実行し、
+    ``allow_full_validation=True`` の場合のみ ``validate_full()``（全読みで高コスト）を実行し、
     sorted なら lookup 可能として扱う。これが大規模 book の out-of-book 算出 opt-in 経路。
     """
 
     def opener(path: str) -> BookLookup | None:
         try:
-            from rshogi.book import YaneuraOuBook
+            from rsshogi.book import YaneuraOuBook
         except ImportError:
             return None
         candidate = Path(path)
@@ -202,7 +202,7 @@ def build_book_tab_payload(
 ) -> JsonObject:
     """記録済み DB から Book タブ payload を構築する。
 
-    各 game の participation metadata から book provenance を取り出し、結果・先後エンジンと
+    各 game の participation metadata から book provenance を取り出し、結果と先後エンジンに
     合わせて集計する。``compute_out_of_book_plies`` 指定時のみ book file を開いて out-of-book を算出。
     ``allow_full_validation`` で大規模（on-the-fly）book の ``validate_full`` を許可する。
     DB アクセスは :class:`DashboardGameQueryPort` 経由で行い、adapter へ直接依存しない。

@@ -11,7 +11,7 @@ shogiarena [global-options] <command> ...
 | オプション | 説明 |
 | --- | --- |
 | `--version` | バージョンを表示する |
-| `--log-level {DEBUG,INFO,WARNING,ERROR}` | ログレベル |
+| `--log-level {DEBUG,INFO,WARNING,ERROR}` | ログレベルを指定する |
 | `--debug-logger LOGGER` | 指定 logger を DEBUG にする |
 | `--output-dir PATH` | この実行だけ標準出力先を上書きする |
 
@@ -36,7 +36,7 @@ shogiarena config repo set yaneuraou \
   --build-config ~/.config/shogiarena/builds/yaneuraou.yaml
 ```
 
-`config init` は標準の `output_dir`、`engine_dir`、artifact 用の設定を作ります。
+`config init` は標準の `output_dir`、`engine_dir`、artifact 用の設定を作成します。
 
 ## `run`
 
@@ -53,29 +53,29 @@ shogiarena run generate generate.yaml
 shogiarena run tournament [config.yaml] [options]
 ```
 
-主なオプション:
+主なオプションは次のとおりです。
 
 | オプション | 説明 |
 | --- | --- |
 | `--dry-run` | 設定を検証して実行しない |
-| `--validate-only` | 設定検証のみ |
-| `--experiment-name NAME` | 自動 run 名を上書き |
-| `--run-dir PATH` | run ディレクトリを明示指定 |
-| `--no-resume` | 再開せず新規実行 |
-| `--provision {none,force}` | SSH インスタンスへの配置制御 |
-| `--git-worktree {strict,clean,allow-dirty}` | artifact build 前の Git worktree 扱い |
-| `--path-preflight {off,warn,error}` | パス系 USI オプションの事前検査 |
-| `--engine KEY=VALUE ...` | engine 定義を CLI から追加（repeatable） |
-| `--rules KEY=VALUE ...` | `rules.*` を上書き |
-| `--tournament KEY=VALUE ...` | `tournament.*` を上書き |
-| `--rating KEY=VALUE ...` | `rating.*` を上書き |
-| `--dashboard KEY=VALUE ...` | `dashboard.*` を上書き |
-| `--logging KEY=VALUE ...` | `logging.*` を上書き |
-| `--system KEY=VALUE ...` | `system.*` を上書き |
-| `--sprt KEY=VALUE ...` | `sprt.*` を上書き |
-| `--openbench KEY=VALUE ...` | `openbench.*` を上書き |
+| `--validate-only` | 設定の検証だけを行う |
+| `--experiment-name NAME` | 自動生成の run 名を上書きする |
+| `--run-dir PATH` | run ディレクトリを明示指定する |
+| `--no-resume` | 再開せず新規に実行する |
+| `--provision {none,force}` | SSH インスタンスへの配置を制御する |
+| `--git-worktree {strict,clean,allow-dirty}` | artifact build 前の Git worktree の扱いを指定する |
+| `--path-preflight {off,warn,error}` | パス系 USI オプションを事前検査する |
+| `--engine KEY=VALUE ...` | engine 定義を CLI から追加する（repeatable） |
+| `--rules KEY=VALUE ...` | `rules.*` を上書きする |
+| `--tournament KEY=VALUE ...` | `tournament.*` を上書きする |
+| `--rating KEY=VALUE ...` | `rating.*` を上書きする |
+| `--dashboard KEY=VALUE ...` | `dashboard.*` を上書きする |
+| `--logging KEY=VALUE ...` | `logging.*` を上書きする |
+| `--system KEY=VALUE ...` | `system.*` を上書きする |
+| `--sprt KEY=VALUE ...` | `sprt.*` を上書きする |
+| `--openbench KEY=VALUE ...` | `openbench.*` を上書きする |
 
-YAML の一部は CLI から上書きできます。
+YAML 設定の一部は、次のようにコマンドラインから上書きできます。
 
 ```bash
 shogiarena run tournament tournament.yaml \
@@ -119,7 +119,7 @@ shogiarena run mate engine.yaml startpos --ply-limit 5
 shogiarena run analyze engine.yaml startpos --nodes 100000
 ```
 
-`run analyze` の主なオプション:
+`run analyze` の主なオプションは次のとおりです。
 
 | オプション | 説明 |
 | --- | --- |
@@ -131,9 +131,9 @@ shogiarena run analyze engine.yaml startpos --nodes 100000
 | `--searchmoves MOVE ...` | 探索対象手を USI move で制限する |
 | `--timeout SEC` | `bestmove` 待機の timeout |
 | `--quiet` | 中間 info line を抑制する |
-| `--option KEY=VALUE` | engine option を上書き（repeatable） |
+| `--option KEY=VALUE` | engine option を上書きする（repeatable） |
 
-`run mate` の主なオプション:
+`run mate` の主なオプションは次のとおりです。
 
 | オプション | 説明 |
 | --- | --- |
@@ -142,7 +142,7 @@ shogiarena run analyze engine.yaml startpos --nodes 100000
 | `--infinite` | `go mate infinite` を使う |
 | `--wait-bestmove` | mate result 後の trailing `bestmove` を待つ |
 | `--timeout SEC` | mate result 待機の timeout |
-| `--option KEY=VALUE` | engine option を上書き（repeatable） |
+| `--option KEY=VALUE` | engine option を上書きする（repeatable） |
 
 ## `dashboard`
 
@@ -161,11 +161,13 @@ shogiarena results summary /path/to/game.db --engine EngineA
 shogiarena results verify-provenance /path/to/run
 ```
 
-`summary --format json` には timing metadata が含まれます。`engine_wall_time_ms` は engine の `think()` 呼び出しから `bestmove` 回収までの engine I/O 窓、`wall_time_ms` は持ち時間に課金された wall time です。wall NPS の既定 field は `engine_wall_time_ms` です。
+`summary --format json` の出力には timing metadata が含まれます。
+`engine_wall_time_ms` は engine の `think()` 呼び出しから `bestmove` 回収までの engine I/O 区間、`wall_time_ms` は持ち時間に課金された wall time です。
+wall NPS の既定 field は `engine_wall_time_ms` です。
 
 ## `replay-position`
 
-保存済みの対局局面を、指定エンジンで再探索します。
+保存済みの対局局面を、指定したエンジンで再探索します。
 
 ```bash
 shogiarena replay-position --run-dir /path/to/run \

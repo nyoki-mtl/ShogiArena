@@ -38,11 +38,11 @@ class _ArenaSettingsModel(BaseModel):
     output_dir: str | None = None
     engine_dir: str | None = None
     repos: dict[str, _RepoSettingsModel] = Field(default_factory=dict)
-    github_token: str | None = None
+    github_token_env: str | None = None
     overlays: dict[str, str] = Field(default_factory=dict)
     openbench: _OpenBenchSettingsModel | None = None
 
-    @field_validator("output_dir", "engine_dir", "github_token", mode="before")
+    @field_validator("output_dir", "engine_dir", "github_token_env", mode="before")
     @classmethod
     def _coerce_optional_root_str(cls, value: object | None) -> str | None:
         return coerce_optional_text(value)

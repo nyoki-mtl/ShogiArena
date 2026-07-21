@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager
 from typing import Protocol, runtime_checkable
 
 from sqlalchemy import select
@@ -7,8 +9,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.scoping import ScopedSession
 
-from .entities import Base, ModelT, Player
-from .schema_guard import ensure_canonical_store_schema
+from .entities import ModelT, Player
+from .schema_guard import ensure_store_schema_for_query, initialize_store_schema
 
 
 @runtime_checkable
@@ -19,6 +21,7 @@ class ShogiRepositoryPort(Protocol):
     @property
     def engine(self) -> Engine: ...
 
+    def operation(self, *, commit: bool = False) -> AbstractContextManager[Session]: ...
     def close_db(self) -> None: ...
     def create_tables(self) -> None: ...
 
@@ -45,14 +48,55 @@ class ShogiRepository:
     def __init__(self, engine: Engine, session_factory: ScopedSession[Session]) -> None:
         self._engine = engine
         self._session_factory = session_factory
+        self._is_schema_ready = False
+        self._is_in_operation = False
+
+    def _ensure_schema_ready(self) -> None:
+        if not self._is_schema_ready:
+            ensure_store_schema_for_query(self._engine)
+            self._is_schema_ready = True
 
     @property
     def session(self) -> Session:
+        self._ensure_schema_ready()
         return self._session_factory()
 
     @property
     def engine(self) -> Engine:
+        self._ensure_schema_ready()
         return self._engine
+
+    @contextmanager
+    def operation(self, *, commit: bool = False) -> Iterator[Session]:
+        """Provide an isolated session boundary for one repository operation.
+
+        The scoped session is removed even when callers run in short-lived
+        asyncio tasks.  This prevents a later task whose object id is reused
+        from inheriting pending or failed transaction state.
+
+        入れ子にはできない。scoped session なので内側は外側と同じ Session を返し、
+        内側の commit が外側の未確定分まで確定させ、内側の remove が外側の
+        commit / rollback を no-op にする。原子性が静かに壊れるため、fail fast にする。
+        """
+
+        self._ensure_schema_ready()
+        if self._is_in_operation:
+            raise RuntimeError(
+                "ShogiRepository.operation() cannot be nested: the inner boundary would commit the outer "
+                "transaction and silence the outer rollback. Pass the yielded session down instead."
+            )
+        session = self._session_factory()
+        self._is_in_operation = True
+        try:
+            yield session
+            if commit:
+                session.commit()
+        except BaseException:
+            session.rollback()
+            raise
+        finally:
+            self._is_in_operation = False
+            self._session_factory.remove()
 
     def close_db(self) -> None:
         """Dispose the current scoped session."""
@@ -60,9 +104,8 @@ class ShogiRepository:
         self._session_factory.remove()
 
     def create_tables(self) -> None:
-        ensure_canonical_store_schema(self._engine)
-        Base.metadata.create_all(self._engine)
-        self.session.commit()
+        initialize_store_schema(self._engine)
+        self._is_schema_ready = True
 
     def get_record(
         self,

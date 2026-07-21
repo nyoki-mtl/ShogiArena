@@ -6,11 +6,13 @@ import logging
 import math
 import random
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from itertools import combinations
 from typing import Protocol
 
 from shogiarena._core.contexts.tournament.domain.tournament_models import GameSpec
 from shogiarena._core.contexts.tournament.ports.session_state_runtime import ScheduleSeed
+from shogiarena._core.shared.kernel.initial_position_entry import InitialPositionEntry
 from shogiarena._core.shared.kernel.schedule_color_policy import COLOR_POLICY_VERSION
 
 logger = logging.getLogger(__name__)
@@ -19,14 +21,18 @@ __all__ = ["COLOR_POLICY_VERSION"]
 
 
 class EngineSpecPort(Protocol):
-    name: str | None
-    instance_id: object | None
+    @property
+    def name(self) -> str | None: ...
+
+    @property
+    def instance_id(self) -> str | None: ...
 
 
 class InitialPositionSource(Protocol):
-    flip_policy: str
+    @property
+    def flip_policy(self) -> str: ...
 
-    def generate(self, count: int, seed: str) -> list[str]: ...
+    def generate(self, count: int, seed: str, /) -> list[str]: ...
 
 
 def _require_engine_name(spec: EngineSpecPort) -> str:
@@ -46,11 +52,11 @@ def _first_takes_black(seed_str: str, name_a: str, name_b: str, salt: str) -> bo
 
 
 class _PositionCursor:
-    def __init__(self, positions: list[str]) -> None:
+    def __init__(self, positions: list[InitialPositionEntry]) -> None:
         self._positions = positions
         self._index = 0
 
-    def next(self) -> str:
+    def next(self) -> InitialPositionEntry:
         try:
             value = self._positions[self._index]
         except IndexError as exc:
@@ -61,11 +67,60 @@ class _PositionCursor:
         return value
 
 
+def _generate_position_entries(source: InitialPositionSource, count: int, seed: str) -> list[InitialPositionEntry]:
+    generate_entries = getattr(source, "generate_entries", None)
+    if callable(generate_entries):
+        raw_entries = generate_entries(count, seed)
+        entries: list[InitialPositionEntry] = []
+        for item in raw_entries:
+            if isinstance(item, InitialPositionEntry):
+                entries.append(item)
+            else:
+                entries.append(InitialPositionEntry(initial_sfen=str(item)))
+        return entries
+    return [InitialPositionEntry(initial_sfen=sfen) for sfen in source.generate(count, seed)]
+
+
+def _matchup_key(engine_a: str, engine_b: str) -> str:
+    return "|".join(sorted((engine_a, engine_b)))
+
+
+def _create_game_spec(
+    *,
+    black: str,
+    white: str,
+    entry: InitialPositionEntry,
+    round_num: int,
+    seed: str,
+    pair_slot: int | None = None,
+    pair_index: int | None = None,
+    matchup_key: str | None = None,
+) -> GameSpec:
+    spec = GameSpec.create(
+        black=black,
+        white=white,
+        sfen=entry.initial_sfen,
+        round_num=round_num,
+        seed=seed,
+    )
+    if pair_slot is not None:
+        effective_matchup = matchup_key or _matchup_key(black, white)
+        spec.matchup_key = effective_matchup
+        spec.pair_slot = pair_slot
+        spec.pair_index = pair_index if pair_index is not None else pair_slot
+        spec.pair_key = f"{effective_matchup}|slot-{pair_slot}"
+    spec.opening_line_id = entry.line_id
+    spec.opening_line_moves_usi = entry.line_moves_usi
+    spec.opening_source = entry.source_path
+    spec.opening_source_line_no = entry.source_line_no
+    return spec
+
+
 class GameScheduler(ABC):
     @abstractmethod
     def generate_schedule(
         self,
-        engines: list[EngineSpecPort],
+        engines: Sequence[EngineSpecPort],
         games_per_pair: int,
         seed: ScheduleSeed,
         initial_positions: InitialPositionSource,
@@ -80,7 +135,7 @@ class GameScheduler(ABC):
 class SelfPlayScheduler(GameScheduler):
     def generate_schedule(
         self,
-        engines: list[EngineSpecPort],
+        engines: Sequence[EngineSpecPort],
         games_per_pair: int,
         seed: ScheduleSeed,
         initial_positions: InitialPositionSource,
@@ -94,7 +149,7 @@ class SelfPlayScheduler(GameScheduler):
         engine_name = _require_engine_name(engines[0])
         pair_both = initial_positions.flip_policy == "pair_both"
         positions_needed = math.ceil(games_per_pair / 2) if pair_both else games_per_pair
-        positions = initial_positions.generate(positions_needed, seed_str)
+        positions = _generate_position_entries(initial_positions, positions_needed, seed_str)
 
         games: list[GameSpec] = []
         position_cursor = _PositionCursor(positions)
@@ -103,38 +158,44 @@ class SelfPlayScheduler(GameScheduler):
         if pair_both:
             remaining = games_per_pair
             while remaining > 0:
-                sfen = position_cursor.next()
+                entry = position_cursor.next()
+                pair_slot = round_num // 2
+                matchup_key = _matchup_key(engine_name, engine_name)
                 games.append(
-                    GameSpec.create(
+                    _create_game_spec(
                         black=engine_name,
                         white=engine_name,
-                        sfen=sfen,
+                        entry=entry,
                         round_num=round_num,
                         seed=seed_str,
+                        pair_slot=pair_slot,
+                        matchup_key=matchup_key,
                     ),
                 )
                 round_num += 1
                 remaining -= 1
                 if remaining > 0:
                     games.append(
-                        GameSpec.create(
+                        _create_game_spec(
                             black=engine_name,
                             white=engine_name,
-                            sfen=sfen,
+                            entry=entry,
                             round_num=round_num,
                             seed=seed_str,
+                            pair_slot=pair_slot,
+                            matchup_key=matchup_key,
                         ),
                     )
                     round_num += 1
                     remaining -= 1
         else:
             for _ in range(games_per_pair):
-                sfen = position_cursor.next()
+                entry = position_cursor.next()
                 games.append(
-                    GameSpec.create(
+                    _create_game_spec(
                         black=engine_name,
                         white=engine_name,
-                        sfen=sfen,
+                        entry=entry,
                         round_num=round_num,
                         seed=seed_str,
                     ),
@@ -152,7 +213,7 @@ class SelfPlayScheduler(GameScheduler):
 class RoundRobinScheduler(GameScheduler):
     def generate_schedule(
         self,
-        engines: list[EngineSpecPort],
+        engines: Sequence[EngineSpecPort],
         games_per_pair: int,
         seed: ScheduleSeed,
         initial_positions: InitialPositionSource,
@@ -172,7 +233,7 @@ class RoundRobinScheduler(GameScheduler):
             positions_needed = pairs_count * math.ceil(games_per_pair / 2)
         else:
             positions_needed = self.get_total_games(num_engines, games_per_pair)
-        positions = initial_positions.generate(positions_needed, seed_str)
+        positions = _generate_position_entries(initial_positions, positions_needed, seed_str)
 
         games: list[GameSpec] = []
         position_cursor = _PositionCursor(positions)
@@ -185,16 +246,30 @@ class RoundRobinScheduler(GameScheduler):
             if pair_both:
                 games_remaining = games_per_pair
                 while games_remaining >= 2:
-                    sfen = position_cursor.next()
+                    entry = position_cursor.next()
+                    pair_slot = round_num // 2
+                    matchup_key = _matchup_key(engine_a_name, engine_b_name)
                     games.append(
-                        GameSpec.create(
-                            black=engine_a_name, white=engine_b_name, sfen=sfen, round_num=round_num, seed=seed_str
+                        _create_game_spec(
+                            black=engine_a_name,
+                            white=engine_b_name,
+                            entry=entry,
+                            round_num=round_num,
+                            seed=seed_str,
+                            pair_slot=pair_slot,
+                            matchup_key=matchup_key,
                         ),
                     )
                     round_num += 1
                     games.append(
-                        GameSpec.create(
-                            black=engine_b_name, white=engine_a_name, sfen=sfen, round_num=round_num, seed=seed_str
+                        _create_game_spec(
+                            black=engine_b_name,
+                            white=engine_a_name,
+                            entry=entry,
+                            round_num=round_num,
+                            seed=seed_str,
+                            pair_slot=pair_slot,
+                            matchup_key=matchup_key,
                         ),
                     )
                     round_num += 1
@@ -202,14 +277,21 @@ class RoundRobinScheduler(GameScheduler):
                 if games_remaining == 1:
                     # The single odd game gets a seeded fair colour (matching the gauntlet
                     # scheduler) instead of always handing black to the earlier-listed engine.
-                    sfen = position_cursor.next()
+                    entry = position_cursor.next()
                     a_black = _first_takes_black(seed_str, engine_a_name, engine_b_name, "odd")
                     black_name, white_name = (
                         (engine_a_name, engine_b_name) if a_black else (engine_b_name, engine_a_name)
                     )
+                    pair_slot = round_num // 2
                     games.append(
-                        GameSpec.create(
-                            black=black_name, white=white_name, sfen=sfen, round_num=round_num, seed=seed_str
+                        _create_game_spec(
+                            black=black_name,
+                            white=white_name,
+                            entry=entry,
+                            round_num=round_num,
+                            seed=seed_str,
+                            pair_slot=pair_slot,
+                            matchup_key=_matchup_key(engine_a_name, engine_b_name),
                         ),
                     )
                     round_num += 1
@@ -231,12 +313,12 @@ class RoundRobinScheduler(GameScheduler):
                 else:
                     black_name, white_name = engine_a_name, engine_b_name
 
-                sfen = position_cursor.next()
+                entry = position_cursor.next()
                 games.append(
-                    GameSpec.create(
+                    _create_game_spec(
                         black=black_name,
                         white=white_name,
-                        sfen=sfen,
+                        entry=entry,
                         round_num=round_num,
                         seed=seed_str,
                     ),
@@ -260,7 +342,7 @@ class GauntletScheduler(GameScheduler):
 
     def generate_schedule(
         self,
-        engines: list[EngineSpecPort],
+        engines: Sequence[EngineSpecPort],
         games_per_pair: int,
         seed: ScheduleSeed,
         initial_positions: InitialPositionSource,
@@ -280,7 +362,7 @@ class GauntletScheduler(GameScheduler):
             positions_needed = pairs_count * math.ceil(games_per_pair / 2)
         else:
             positions_needed = self.get_total_games(num_engines, games_per_pair)
-        positions = initial_positions.generate(positions_needed, seed_str)
+        positions = _generate_position_entries(initial_positions, positions_needed, seed_str)
 
         games: list[GameSpec] = []
         position_cursor = _PositionCursor(positions)
@@ -296,24 +378,30 @@ class GauntletScheduler(GameScheduler):
                     for challenger_engine in challenger_engines:
                         challenger_name = _require_engine_name(challenger_engine)
                         if remaining_games[challenger_name] >= 2:
-                            sfen = position_cursor.next()
+                            entry = position_cursor.next()
+                            pair_slot = round_num // 2
+                            matchup_key = _matchup_key(baseline_name, challenger_name)
                             games.append(
-                                GameSpec.create(
+                                _create_game_spec(
                                     black=baseline_name,
                                     white=challenger_name,
-                                    sfen=sfen,
+                                    entry=entry,
                                     round_num=round_num,
                                     seed=seed_str,
+                                    pair_slot=pair_slot,
+                                    matchup_key=matchup_key,
                                 ),
                             )
                             round_num += 1
                             games.append(
-                                GameSpec.create(
+                                _create_game_spec(
                                     black=challenger_name,
                                     white=baseline_name,
-                                    sfen=sfen,
+                                    entry=entry,
                                     round_num=round_num,
                                     seed=seed_str,
+                                    pair_slot=pair_slot,
+                                    matchup_key=matchup_key,
                                 ),
                             )
                             round_num += 1
@@ -321,13 +409,22 @@ class GauntletScheduler(GameScheduler):
                 for challenger_engine in challenger_engines:
                     challenger_name = _require_engine_name(challenger_engine)
                     if remaining_games[challenger_name] == 1:
-                        sfen = position_cursor.next()
+                        entry = position_cursor.next()
                         baseline_black = _first_takes_black(seed_str, baseline_name, challenger_name, "odd")
                         black, white = (
                             (baseline_name, challenger_name) if baseline_black else (challenger_name, baseline_name)
                         )
+                        pair_slot = round_num // 2
                         games.append(
-                            GameSpec.create(black=black, white=white, sfen=sfen, round_num=round_num, seed=seed_str),
+                            _create_game_spec(
+                                black=black,
+                                white=white,
+                                entry=entry,
+                                round_num=round_num,
+                                seed=seed_str,
+                                pair_slot=pair_slot,
+                                matchup_key=_matchup_key(baseline_name, challenger_name),
+                            ),
                         )
                         round_num += 1
             else:
@@ -352,12 +449,12 @@ class GauntletScheduler(GameScheduler):
                             )
                         else:
                             black, white = (baseline_name, challenger_name)
-                        sfen = position_cursor.next()
+                        entry = position_cursor.next()
                         games.append(
-                            GameSpec.create(
+                            _create_game_spec(
                                 black=black,
                                 white=white,
-                                sfen=sfen,
+                                entry=entry,
                                 round_num=round_num,
                                 seed=seed_str,
                             ),

@@ -66,6 +66,8 @@ async def wait_for_new_schedule(state: TournamentRunnerState) -> None:
 def reset_display_order(state: TournamentRunnerState) -> None:
     """Reset display ordering to match the current schedule sequence."""
     state.game_display_order = {spec.game_id: index for index, spec in enumerate(state.game_schedule, start=1)}
+    for spec in state.game_schedule:
+        spec.display_order = state.game_display_order.get(spec.game_id)
 
 
 def ensure_display_order_for_specs(state: TournamentRunnerState, specs: Iterable[GameSpec]) -> None:
@@ -76,6 +78,7 @@ def ensure_display_order_for_specs(state: TournamentRunnerState, specs: Iterable
         if gid not in state.game_display_order:
             state.game_display_order[gid] = next_index
             next_index += 1
+        spec.display_order = state.game_display_order.get(gid)
 
 
 def ensure_display_order_for_id(state: TournamentRunnerState, game_id: str) -> int:

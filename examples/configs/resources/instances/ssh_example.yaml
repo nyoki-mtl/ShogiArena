@@ -3,7 +3,7 @@
 # - `name` / `host` / `user` / `type: ssh` は必須。`identity_file` はパスワード認証を使う場合だけ任意です。
 # - `project_root` を省略すると `~/ShogiArena-remote` が既定で使用され、`engine_dir` は `{project_root}/data/engines` に自動決定されます。
 # - `slots` / `max_engines` / `tags` は任意。`slots` は null で自動判定。
-# - `strict_host_key_checking` の既定は false (SSH の KnownHosts を無視する)。本番運用では true を推奨。
+# - `is_strict_host_key_checking` の既定は true。本番運用では無効化しないでください。
 
 name: "remote-linux-01"                 # 必須。CLI の --engine instance_id=... などで参照
 type: ssh                               # 必須。SSH インスタンスを表す固定値
@@ -15,4 +15,4 @@ project_root: "/home/arena/ShogiArena"  # 任意。既定: ~/ShogiArena-remote
 slots: 8                                # 任意。null で自動判定。このマシンで許可するスロット数
 max_engines: 4                          # 任意。既定: null -> slots と同値として解釈
 tags: ["remote", "zen3"]                # 任意。既定: []
-strict_host_key_checking: true          # 任意。既定: false。セキュリティを優先する場合は true
+is_strict_host_key_checking: true       # 任意。既定: true

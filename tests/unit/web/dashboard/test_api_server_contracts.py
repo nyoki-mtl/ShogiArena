@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 
 import pytest
-from aiohttp.test_utils import make_mocked_request
+from aiohttp import WSServerHandshakeError
+from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 
 from shogiarena._core.contexts.dashboard.adapters.game_repository import (
     build_games_list_raw_payload,
@@ -38,7 +39,7 @@ from shogiarena._core.interfaces.composition_root.default_root import (
 from shogiarena._core.interfaces.dashboard.api_server.server import ArenaAPIServer
 
 
-def _build_server(tmp_path) -> ArenaAPIServer:
+def _build_server(tmp_path, *, read_only: bool = False) -> ArenaAPIServer:
     configure_dashboard_interface_dependencies(
         DashboardInterfaceDependencies(
             game_query=DashboardGameQueryAdapter(
@@ -65,6 +66,7 @@ def _build_server(tmp_path) -> ArenaAPIServer:
         db_path=tmp_path / "dashboard.sqlite3",
         port=8080,
         run_dir=tmp_path,
+        read_only=read_only,
     )
 
 
@@ -201,3 +203,127 @@ def test_instances_api_does_not_register_legacy_games_route(tmp_path) -> None:
     api_server = _build_server(tmp_path)
     routes = {route.resource.canonical for route in api_server.app.router.routes()}
     assert "/api/instances/{id}/games" not in routes
+
+
+def test_api_server_rejects_non_loopback_bind(tmp_path) -> None:
+    with pytest.raises(ValueError, match="explicit loopback address"):
+        _create_api_server(
+            db_path=tmp_path / "dashboard.sqlite3",
+            port=8080,
+            run_dir=tmp_path,
+            host="0.0.0.0",
+        )
+
+
+@pytest.mark.asyncio
+async def test_production_server_preserves_normal_loopback_requests(tmp_path) -> None:
+    api_server = _build_server(tmp_path)
+    async with TestClient(TestServer(api_server.app)) as client:
+        response = await client.get("/api/summary")
+
+    assert response.status == 200
+
+
+@pytest.mark.asyncio
+async def test_production_server_rejects_hostile_host_and_origin(tmp_path) -> None:
+    api_server = _build_server(tmp_path)
+    async with TestClient(TestServer(api_server.app)) as client:
+        hostile_host = await client.get("/api/summary", headers={"Host": "attacker.example"})
+        hostile_origin = await client.get(
+            "/api/instances/stream",
+            headers={"Origin": "https://attacker.example"},
+        )
+
+    assert hostile_host.status == 403
+    assert hostile_origin.status == 403
+
+
+@pytest.mark.asyncio
+async def test_production_server_requires_same_origin_json_for_mutations(tmp_path) -> None:
+    api_server = _build_server(tmp_path)
+    async with TestClient(TestServer(api_server.app)) as client:
+        origin = str(client.make_url("/")).rstrip("/")
+        missing_origin = await client.post(
+            "/api/diagnostics/snapshots",
+            json={"snapshot": {}},
+        )
+        hostile_origin = await client.post(
+            "/api/diagnostics/snapshots",
+            json={"snapshot": {}},
+            headers={"Origin": "https://attacker.example"},
+        )
+        unsafe_content_type = await client.post(
+            "/api/diagnostics/snapshots",
+            data='{"snapshot": {}}',
+            headers={"Content-Type": "text/plain", "Origin": origin},
+        )
+        accepted = await client.post(
+            "/api/diagnostics/snapshots",
+            json={"snapshot": {}},
+            headers={"Origin": origin},
+        )
+
+    assert missing_origin.status == 403
+    assert hostile_origin.status == 403
+    assert unsafe_content_type.status == 415
+    assert accepted.status == 201
+
+
+@pytest.mark.asyncio
+async def test_production_server_rejects_hostile_websocket_origin(tmp_path) -> None:
+    api_server = _build_server(tmp_path)
+    async with TestClient(TestServer(api_server.app)) as client:
+        with pytest.raises(WSServerHandshakeError) as exc_info:
+            await client.ws_connect("/ws", origin="https://attacker.example")
+
+    assert exc_info.value.status == 403
+
+
+@pytest.mark.asyncio
+async def test_archived_dashboard_server_allows_reads_and_rejects_mutations(tmp_path) -> None:
+    api_server = _build_server(tmp_path, read_only=True)
+    assert api_server.instance_pool is None
+    # 読み取りルートは残す。落とすと archived dashboard の instances タブが 404 になる。
+    routes = {route.resource.canonical for route in api_server.app.router.routes()}
+    assert "/api/instances" in routes
+
+    async with TestClient(TestServer(api_server.app)) as client:
+        assert api_server._instances_health_task is None  # noqa: SLF001
+        origin = str(client.make_url("/")).rstrip("/")
+        read_response = await client.get("/api/summary")
+        instances_response = await client.get("/api/instances")
+        instances_payload = await instances_response.json()
+        create_instance_response = await client.post(
+            "/api/instances",
+            json={"name": "should-not-be-created"},
+            headers={"Origin": origin},
+        )
+        create_instance_payload = await create_instance_response.json()
+        mutation_response = await client.post(
+            "/api/diagnostics/snapshots",
+            json={"snapshot": {}},
+            headers={"Origin": origin},
+        )
+        mutation_payload = await mutation_response.json()
+
+    assert read_response.status == 200
+    assert instances_response.status == 200
+    # 閲覧しただけでローカルインスタンスを生やさない。
+    assert instances_payload["instances"] == []
+    assert create_instance_response.status == 403
+    assert create_instance_payload["code"] == "dashboard_read_only"
+    assert mutation_response.status == 403
+    assert mutation_payload["code"] == "dashboard_read_only"
+    assert not (tmp_path / "diagnostics").exists()
+
+
+@pytest.mark.asyncio
+async def test_live_dashboard_server_still_materializes_a_local_instance(tmp_path) -> None:
+    api_server = _build_server(tmp_path)
+
+    async with TestClient(TestServer(api_server.app)) as client:
+        instances_response = await client.get("/api/instances")
+        instances_payload = await instances_response.json()
+
+    assert instances_response.status == 200
+    assert [instance["id"] for instance in instances_payload["instances"]] == ["local"]

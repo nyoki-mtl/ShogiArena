@@ -8,12 +8,9 @@ from pathlib import Path
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.match.ports.usi_think_ports import PonderHitTimings, UsiThinkRequest
 from shogiarena._core.interfaces.composition_root.default_root import build_default_root
-from shogiarena._core.platform.engine_provisioning.spawner_backed_usi_bridge import SpawnerBackedUSIBridge
 from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
-from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine
 from shogiarena._core.platform.engine_runtime.usi_engine_session_models import (
     AnalysisHandle,
-    AsyncUsiProcess,
     EngineLifecycleEvent,
     EngineProcessInfo,
     PonderHandle,
@@ -37,7 +34,7 @@ from shogiarena._core.platform.engine_runtime.usi_protocol_types import (
     UsiThinkResult,
     move_from_usi,
 )
-from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 
 
 def _resolve_instance_pool(instance_id: str | None, instance_pool: InstancePool | None) -> InstancePool | None:
@@ -124,14 +121,14 @@ async def create_engine_from_mapping(
 
 __all__ = [
     "AnalysisHandle",
-    "AsyncUsiEngine",
-    "AsyncUsiProcess",
     "AsyncUsiProcessBridgePort",
     "EngineLifecycleEvent",
     "EngineProcessInfo",
+    "InstancePool",
+    "JsonObject",
+    "JsonValue",
     "PonderHandle",
     "PonderHitTimings",
-    "SpawnerBackedUSIBridge",
     "UsiAnalyzeItem",
     "UsiAnalyzePosition",
     "UsiAnalyzeResetPolicy",

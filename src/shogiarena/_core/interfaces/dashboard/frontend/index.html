@@ -696,7 +696,48 @@
                             Compute out-of-book ply (slower; opens book files)
                         </label>
                     </div>
-                    <div id="bookSummaryContainer" class="book-summary" aria-live="polite">
+                    <div class="book-subview-tabs" role="tablist" aria-label="Book report views">
+                        <button
+                            type="button"
+                            class="book-subview-tab active"
+                            id="bookSummaryViewTab"
+                            data-book-view="summary"
+                            role="tab"
+                            aria-selected="true"
+                            aria-controls="bookSummaryContainer"
+                        >
+                            Summary
+                        </button>
+                        <button
+                            type="button"
+                            class="book-subview-tab"
+                            id="bookPairsViewTab"
+                            data-book-view="pairs"
+                            role="tab"
+                            aria-selected="false"
+                            aria-controls="bookPairsContainer"
+                            tabindex="-1"
+                        >
+                            Pairs
+                        </button>
+                    </div>
+                    <div
+                        id="bookSummaryContainer"
+                        class="book-summary book-view-panel"
+                        role="tabpanel"
+                        aria-labelledby="bookSummaryViewTab"
+                        aria-live="polite"
+                    >
+                        <div class="book-empty">Loading…</div>
+                    </div>
+                    <div
+                        id="bookPairsContainer"
+                        class="book-pairs book-view-panel"
+                        role="tabpanel"
+                        aria-labelledby="bookPairsViewTab"
+                        aria-live="polite"
+                        hidden
+                    >
                         <div class="book-empty">Loading…</div>
                     </div>
                 </section>

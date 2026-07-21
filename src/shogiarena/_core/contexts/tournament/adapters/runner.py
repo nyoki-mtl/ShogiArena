@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from pathlib import Path
 from shutil import rmtree
 from typing import Any
 
-import rshogi.record
+import rsshogi.record
 
 from shogiarena._core.contexts.game_session.adapters.context_factory import SessionContextFactory
 from shogiarena._core.contexts.game_session.adapters.dashboard_lifecycle import (
@@ -62,6 +63,7 @@ from shogiarena._core.contexts.game_session.application.sprt_service import (
     PENTANOMIAL_MIN_PAIRS_FOR_LLR,
     SPRT_MODEL_GSPRT_PENTANOMIAL,
     Sprt,
+    SprtResult,
     validate_pentanomial_preconditions,
 )
 from shogiarena._core.contexts.game_session.application.summary.results_service import TournamentSummaryResultsService
@@ -76,6 +78,7 @@ from shogiarena._core.contexts.game_session.application.summary.runtime_context_
     TournamentSummaryRuntimeContextService,
 )
 from shogiarena._core.contexts.game_session.application.summary.session_service import TournamentSummaryService
+from shogiarena._core.contexts.game_session.domain.summary_models import TournamentResults
 from shogiarena._core.contexts.game_session.ports.completion_runtime import CompletionRuntimeContext
 from shogiarena._core.contexts.game_session.ports.dashboard_lifecycle_factory import (
     DashboardApiServerFactory,
@@ -85,6 +88,7 @@ from shogiarena._core.contexts.game_session.ports.run_runtime import SessionRunR
 from shogiarena._core.contexts.game_session.ports.run_storage import RunStoragePort
 from shogiarena._core.contexts.game_session.ports.session_context import SessionContext
 from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import (
+    DashboardProfile,
     OrchestratorPort,
     ProgressReporterPort,
     RunOptions,
@@ -186,7 +190,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
     orchestration logic delegates to explicit collaborator services.
     """
 
-    dashboard_profiles = ("tournament",)
+    dashboard_profiles: tuple[DashboardProfile, ...] = ("tournament",)
     config: TournamentRunConfig
     scheduler: GameScheduler
 
@@ -351,7 +355,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             should_skip_resume=bool(self._run_options.should_skip_resume),
         )
 
-    def get_sprt_status(self) -> JsonObject | None:
+    def get_sprt_status(self) -> SprtResult | None:
         sprt_service = self._state.sprt
         if sprt_service is None:
             return None
@@ -404,13 +408,14 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             sync_after_game_fn=lambda: self._openbench.sync_after_game(
                 db_service=self._state.db_service,
                 stop_controller=self.stop_controller,
+                persist_state=self._save_run_state,
             ),
         )
 
     async def _handle_game_completion(
         self,
         game_spec: GameSpec,
-        game_info: rshogi.record.GameRecord,
+        game_info: rsshogi.record.Record,
         *,
         is_stop_requested: bool,
     ) -> None:
@@ -446,7 +451,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
         self,
         *,
         progress_reporter: ProgressReporterPort | None = None,
-    ) -> Any:
+    ) -> TournamentRunResult | None:
         """Run tournament orchestration with support for dashboard rescheduling."""
         if not isinstance(self, SessionRunRuntimePort):
             raise TypeError("TournamentRunner does not satisfy session run runtime contract")
@@ -459,7 +464,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
         )
         return result
 
-    async def calculate_results(self) -> Any:
+    async def calculate_results(self) -> TournamentResults:
         runtime = self._build_summary_runtime_context()
         return self._summary_results_service.calculate_results(runtime)
 
@@ -467,7 +472,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
         runtime: TournamentSummaryRuntimeContext = self._build_summary_runtime_context()
         await self._summary_service.update_dashboard(runtime)
 
-    async def finalize_tournament(self, results: Any) -> None:
+    async def finalize_tournament(self, results: TournamentResults) -> None:
         runtime: TournamentSummaryRuntimeContext = self._build_summary_runtime_context()
         await self._summary_service.finalize_tournament(runtime, results)
 
@@ -564,7 +569,9 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             is_generate_run=self._is_generate_run,
             get_schedule_snapshot=self._schedule_facade.get_schedule_snapshot,
             flush_openbench=lambda: self._openbench.flush(
-                db_service=self._state.db_service, stop_controller=self.stop_controller
+                db_service=self._state.db_service,
+                stop_controller=self.stop_controller,
+                persist_state=self._save_run_state,
             ),
             save_run_state=self._save_run_state,
             update_dashboard=self._update_dashboard,
@@ -577,13 +584,34 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
         )
 
     async def _stop_additional_services(self) -> None:
-        await self._openbench.stop()
-        if self._state.db_service:
-            self._state.db_service.close()
-            self._state.db_service = None
-        if self._record_writer is not None:
-            self._record_writer.close()
-            self._record_writer = None
+        cancellation: asyncio.CancelledError | None = None
+        try:
+            await self._openbench.stop()
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.warning("Failed to stop OpenBench service: %s", exc, exc_info=True)
+
+        db_service = self._state.db_service
+        if db_service is not None:
+            try:
+                db_service.close()
+            except (OSError, RuntimeError, ValueError) as exc:
+                logger.warning("Failed to close tournament DB service: %s", exc, exc_info=True)
+            finally:
+                self._state.db_service = None
+
+        record_writer = self._record_writer
+        if record_writer is not None:
+            try:
+                record_writer.close()
+            except (OSError, RuntimeError, ValueError) as exc:
+                logger.warning("Failed to close tournament record writer: %s", exc, exc_info=True)
+            finally:
+                self._record_writer = None
+
+        if cancellation is not None:
+            raise cancellation
 
     async def init_services(self) -> None:
         """Initialize database and rating services."""
@@ -591,50 +619,63 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
         rd = self.run_dir
         rd.mkdir(parents=True, exist_ok=True)
 
-        self._ensure_db_service()
+        try:
+            self._ensure_db_service()
 
-        rating_service = EloRatingService(
-            initial_rating=self.config.rating.initial, k_factor=self.config.rating.k_factor
-        )
-        # Rebuild ratings from the games already in the database so a resumed run reflects every
-        # completed game, not just those played after the restart (no-op on a fresh start).
-        db_service = self._state.db_service
-        if db_service is not None:
-            game_type = "generate" if self._is_generate_run() else "arena"
-            restored = rating_service.restore_from_games(db_service.get_games_with_players(game_type=game_type))
-            if restored:
-                logger.debug("Restored ratings from %d completed games", restored)
-        self._state.rating_service = rating_service
-        self._record_writer = self._create_record_writer()
-        self._backfill_records_output()
-        sprt_conf = self.config.sprt
-        if sprt_conf is not None:
-            model = str(sprt_conf.model)
-            min_pairs = PENTANOMIAL_MIN_PAIRS_FOR_LLR
-            if model == SPRT_MODEL_GSPRT_PENTANOMIAL:
-                # Fail-fast before any games run if the schedule cannot produce reversed-colour
-                # pairs of a single 1v1 matchup.
-                validate_pentanomial_preconditions(
-                    flip_policy=self.config.rules.initial_positions.flip_policy,
-                    num_engines=len(self.config.engines),
-                    games_per_pair=int(self.config.tournament.games_per_pair),
-                )
-                # Scale the pentanomial decision floor to min_games (2 games per pair).
-                min_pairs = max(PENTANOMIAL_MIN_PAIRS_FOR_LLR, math.ceil(sprt_conf.min_games / 2))
-            self._state.sprt = Sprt(
-                elo0=float(sprt_conf.elo0),
-                elo1=float(sprt_conf.elo1),
-                alpha=float(sprt_conf.alpha),
-                beta=float(sprt_conf.beta),
-                model=model,
-                min_pairs=min_pairs,
+            rating_service = EloRatingService(
+                initial_rating=self.config.rating.initial, k_factor=self.config.rating.k_factor
             )
-            self._state.sprt_min_games = sprt_conf.min_games
-            if len(self.config.engines) == 2:
-                self._state.sprt_pair = (str(self.config.engines[0].name), str(self.config.engines[1].name))
-            else:
-                self._state.sprt_pair = None
-        await self._openbench.init(stop_controller=self.stop_controller)
+            self._state.rating_service = rating_service
+            sprt_conf = self.config.sprt
+            if sprt_conf is not None:
+                model = str(sprt_conf.model)
+                min_pairs = PENTANOMIAL_MIN_PAIRS_FOR_LLR
+                if model == SPRT_MODEL_GSPRT_PENTANOMIAL:
+                    # Fail-fast before any games run if the schedule cannot produce reversed-colour
+                    # pairs of a single 1v1 matchup.
+                    validate_pentanomial_preconditions(
+                        flip_policy=self.config.rules.initial_positions.flip_policy,
+                        num_engines=len(self.config.engines),
+                        games_per_pair=int(self.config.tournament.games_per_pair),
+                    )
+                    # Scale the pentanomial decision floor to min_games (2 games per pair).
+                    min_pairs = max(PENTANOMIAL_MIN_PAIRS_FOR_LLR, math.ceil(sprt_conf.min_games / 2))
+                self._state.sprt = Sprt(
+                    elo0=float(sprt_conf.elo0),
+                    elo1=float(sprt_conf.elo1),
+                    alpha=float(sprt_conf.alpha),
+                    beta=float(sprt_conf.beta),
+                    model=model,
+                    min_pairs=min_pairs,
+                )
+                self._state.sprt_min_games = sprt_conf.min_games
+                if len(self.config.engines) == 2:
+                    self._state.sprt_pair = (str(self.config.engines[0].name), str(self.config.engines[1].name))
+                else:
+                    self._state.sprt_pair = None
+            await self._openbench.init(stop_controller=self.stop_controller)
+
+            # Resume only after every stateful dependency exists.  Restoring earlier is unsafe:
+            # SPRT initialization would overwrite the restored snapshot and OpenBench would not
+            # yet have a client to receive its snapshot.
+            await self._try_setup_tournament()
+
+            # Rebuild derived services from the database after resume has established the
+            # authoritative completed-game set.
+            self._record_writer = self._create_record_writer()
+            db_service = self._state.db_service
+            if db_service is not None:
+                game_type = "generate" if self._is_generate_run() else "arena"
+                restored = rating_service.restore_from_games(db_service.get_games_with_players(game_type=game_type))
+                if restored:
+                    logger.debug("Restored ratings from %d completed games", restored)
+            self._backfill_records_output()
+        except asyncio.CancelledError:
+            await self._stop_additional_services()
+            raise
+        except Exception:
+            await self._stop_additional_services()
+            raise
         logger.debug("Services initialized (DB/Rating/SPRT)")
 
     def _create_record_writer(self) -> RecordBinaryWriter | None:
@@ -809,17 +850,16 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             )
             self._state.sealed_schedule_hash = current_hashes.schedule_hash
             self._state.sealed_resume_hash = current_hashes.resume_hash
-            await self._try_setup_tournament()
             return
         self._state.sealed_schedule_hash = sealed.hashes.schedule_hash
         self._state.sealed_resume_hash = sealed.hashes.resume_hash
-        await self._try_setup_tournament()
 
-    def get_dashboard_params(self) -> tuple[Path, int, int] | None:
+    def get_dashboard_params(self) -> tuple[Path, str, int, int] | None:
         if not self._dashboard_enabled:
             return None
         return (
             self.run_dir,
+            str(self.config.dashboard.api_host),
             int(self.config.dashboard.api_port),
             int(self.config.tournament.num_parallel),
         )
@@ -862,6 +902,9 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
     def _cleanup_existing_run(self) -> None:
         """Remove existing run artifacts."""
         logger.debug("Cleaning up existing run")
+        openbench_config = self.config.openbench
+        if openbench_config is not None and openbench_config.is_enabled:
+            self._state_store.assert_no_submitted_openbench_results(self.run_dir)
         rd = self.run_dir
         self.cleanup_run_dir(
             rd,

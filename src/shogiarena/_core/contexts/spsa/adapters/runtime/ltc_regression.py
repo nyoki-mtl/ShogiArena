@@ -9,7 +9,7 @@ from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-import rshogi
+import rsshogi
 
 from shogiarena._core.contexts.game_session.application.sprt_service import (
     PENTANOMIAL_MIN_PAIRS_FOR_LLR,
@@ -70,7 +70,7 @@ class _LtcRunner(Protocol):
         baseline_variant_token: str | None,
         event_family: str = "spsa",
         time_control_override: TimeControlLimits | None = None,
-    ) -> Awaitable[tuple[float, rshogi.record.GameRecord, rshogi.record.GameRecord]]: ...
+    ) -> Awaitable[tuple[float, rsshogi.record.Record, rsshogi.record.Record]]: ...
 
 
 @dataclass(slots=True)
@@ -86,7 +86,7 @@ class _LtcStats:
         self.total_score += score
         self.pairs_completed += 1
 
-    def accumulate_game(self, game: rshogi.record.GameRecord, *, is_tuned_as_black: bool) -> None:
+    def accumulate_game(self, game: rsshogi.record.Record, *, is_tuned_as_black: bool) -> None:
         result = game.result
         self.total_games_played += 1
         if result.is_draw():
@@ -127,7 +127,7 @@ class _SprtTracker:
     sprt_decision: SprtDecision | None = None
     should_stop_due_to_sprt: bool = False
 
-    def submit(self, runner: _LtcRunner, game: rshogi.record.GameRecord, *, is_tuned_as_black: bool) -> None:
+    def submit(self, runner: _LtcRunner, game: rsshogi.record.Record, *, is_tuned_as_black: bool) -> None:
         if self.sprt is None:
             return
         result = game.result
@@ -138,7 +138,7 @@ class _SprtTracker:
         normalized = runner._ltc_normalize_result_for_sprt(result, is_tuned_as_black)
         self._record(self.sprt.add_game_result(normalized))
 
-    def submit_pair(self, game_black: rshogi.record.GameRecord, game_white: rshogi.record.GameRecord) -> None:
+    def submit_pair(self, game_black: rsshogi.record.Record, game_white: rsshogi.record.Record) -> None:
         """Submit a complete colour-reversed pair to the pentanomial model (no buffering)."""
         if self.sprt is None:
             return

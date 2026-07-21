@@ -26,9 +26,13 @@ SPRT_MODEL_GSPRT_TRINOMIAL = "gsprt-trinomial-v1"
 SPRT_MODEL_GSPRT_PENTANOMIAL = "gsprt-pentanomial-v1"
 _SUPPORTED_SPRT_MODELS = frozenset({SPRT_MODEL_GSPRT_TRINOMIAL, SPRT_MODEL_GSPRT_PENTANOMIAL})
 
-# Hard floor on completed pairs before the pentanomial GSPRT may produce a decision. With fewer
-# pairs the regularized variance is tiny and a one-sided streak would stop the test prematurely.
-PENTANOMIAL_MIN_PAIRS_FOR_LLR = 2
+# The pentanomial model uses a Brownian/normal approximation, not an exact finite-sample test.
+# Keep it fail-closed until there is both a conventional CLT-sized sample and enough observations
+# in two outcome classes to estimate non-zero variance without the 1e-3 regularization prior
+# dominating the result. This is an approximation-safety floor, not a claim that 30 pairs alone
+# calibrate the requested alpha/beta error rates.
+PENTANOMIAL_MIN_PAIRS_FOR_LLR = 30
+PENTANOMIAL_MIN_VARIANCE_SUPPORT = 5
 
 # Valid per-game tested-perspective scores (loss / draw / win).
 _VALID_GAME_SCORES = (0.0, 0.5, 1.0)
@@ -94,7 +98,7 @@ class SprtDecision(Enum):
     ACCEPT_H1 = "accept_h1"  # Alternative hypothesis (improvement)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SprtResult:
     """SPRT test result information."""
 
@@ -177,6 +181,13 @@ class Sprt:
         if self._is_pentanomial:
             completed_pairs = sum(self._penta_bins)
             if completed_pairs < self._min_pairs:
+                self.llr = 0.0
+                return
+            populated_counts = sorted((count for count in self._penta_bins if count > 0), reverse=True)
+            if len(populated_counts) < 2 or populated_counts[1] < PENTANOMIAL_MIN_VARIANCE_SUPPORT:
+                # A single outcome class has zero empirical variance. Requiring at least five
+                # observations in a second class prevents the numerical regularizer (rather than
+                # observed data) from manufacturing a tiny-sample decision.
                 self.llr = 0.0
                 return
             self.llr = compute_llr(self._penta_bins, elo0=self.elo0, elo1=self.elo1)

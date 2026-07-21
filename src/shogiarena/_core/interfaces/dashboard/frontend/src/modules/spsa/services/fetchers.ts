@@ -1,10 +1,10 @@
 /**
  * SPSA 用の REST フェッチャ群。
  *
- * - ネットワーク由来の一時的な失敗（接続エラー・タイムアウト・一時的な 5xx 等）は
+ * - ネットワーク由来の一時的な失敗（接続エラー、タイムアウト、一時的な 5xx など）は
  *   {@link FetcherDeps.reportRecoverableFailure} を通じて「ユーザーに見せる recoverable failure」
  *   として扱います。これらは Notice / Diagnostics に報告されますが、ダッシュボード自体は継続します。
- * - レスポンス JSON の型違反・契約違反（必須フィールド欠損・legacy フィールド混在など）は
+ * - レスポンス JSON の型違反と契約違反（必須フィールド欠損、legacy フィールド混在など）は
  *   `normalizeSpsa*` 系関数が例外を投げることで検知され、**致命的バグ (fatal)** と見なします。
  *   この種の例外は recoverable failure として握りつぶさず、呼び出し側でそのまま再送出するか、
  *   上位のエラー境界へ伝播させて fail-fast させる想定です。
@@ -96,7 +96,7 @@ import type { getState } from '../state';
  * `createSpsaFetchers` が依存する外部コンテキスト。
  *
  * - `reportRecoverableFailure` は **ネットワーク層の一時的エラー** をユーザーへ通知するためにのみ使用します。
- *   型レベル・契約レベルの不整合（`normalizeSpsa*` 起因のエラー）をここへ渡さないことを意図しています。
+ *   型レベルと契約レベルの不整合（`normalizeSpsa*` 起因のエラー）をここへ渡さないことを意図しています。
  * - `handleError` は SPSA モジュール内の一般的なエラー表示用で、REST / SSE 共通の
  *   「現在の操作を続行できない」状態をユーザーに示すために使われます。
  */
@@ -177,7 +177,7 @@ const normalizeProgressSnapshot = (raw: unknown): SpsaUpdateProgress | null =>
  *
  * - 低レベルの HTTP 要求は {@link requestJson} を経由して行い、ネットワークエラーは
  *   {@link FetcherDeps.reportRecoverableFailure} を通じて recoverable failure として扱います。
- * - レスポンスの構造・型に関する検証は `normalizeSpsa*` 系関数に委譲されており、
+ * - レスポンスの構造と型に関する検証は `normalizeSpsa*` 系関数に委譲されており、
  *   それらが投げる例外は **契約違反のシグナル** として上位へ伝播させることを意図しています。
  */
 export function createSpsaFetchers(deps: FetcherDeps) {
@@ -189,7 +189,7 @@ export function createSpsaFetchers(deps: FetcherDeps) {
      * ネットワーク層の一時的な失敗に対する簡易リトライラッパー。
      *
      * - {@link isLikelyNetworkError} が true を返すエラーのみをリトライ対象とし、
-     *   それ以外（型違反・JSON 解析失敗・契約違反など）は即座に再送出します。
+     *   それ以外（型違反、JSON 解析失敗、契約違反など）は即座に再送出します。
      * - `attempt` は Live Diagnostics 用のストップウォッチであり、リトライの有無をメトリクスに反映します。
      */
     const executeWithRetry = async <T>(
@@ -343,7 +343,7 @@ export function createSpsaFetchers(deps: FetcherDeps) {
      *
      * - `force === false` かつ有効なキャッシュが存在する場合はネットワークアクセスを行いません。
      * - ネットワークエラーは recoverable failure として扱い、UI に通知したうえでキャッシュをクリアします。
-     * - `normalizeSpsaParams` で検出された型・契約違反は fatal と見なし、
+     * - `normalizeSpsaParams` で検出された型違反と契約違反は fatal と見なし、
      *   `options.propagateError === true` の場合には呼び出し元で fail-fast できるよう再送出されます。
      */
     const requestParams = async (

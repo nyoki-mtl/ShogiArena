@@ -108,6 +108,7 @@ async def _serve_dashboard(args: argparse.Namespace) -> None:
         port=port,
         run_dir=run_dir,
         instance_pool=None,
+        read_only=True,
     )
     await server.start()
 

@@ -13,7 +13,10 @@ from shogiarena._core.platform.settings.platform_paths import (
     default_output_dir_for_init,
     default_settings_path,
 )
-from shogiarena._core.shared.kernel.settings_loading.settings_models import RepoSettings
+from shogiarena._core.shared.kernel.settings_loading.settings_models import (
+    DEFAULT_GITHUB_TOKEN_ENV,
+    RepoSettings,
+)
 
 from .repo_setup import clone_repo
 from .wizard import ensure_absolute_path, run_config_wizard
@@ -59,8 +62,20 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Path to settings.yaml (default resolves to platform config directory)",
     )
     init_parser.add_argument(
+        "--github-token-env",
+        help=(
+            "Name of the environment variable holding the GitHub token for private repos "
+            f"(default: {DEFAULT_GITHUB_TOKEN_ENV}). The token itself is never stored in settings.yaml."
+        ),
+    )
+    # argparse の前方一致では `--github-token` が `--github-token-env` に解決されてしまい、
+    # token 文字列が「環境変数名」として settings.yaml へ平文で書かれる。明示的に登録して
+    # 実行前に止める。登録しておけば完全一致が優先されるので、前方一致経路も塞がれる。
+    init_parser.add_argument(
         "--github-token",
-        help="GitHub token for private repos (stored in settings.yaml)",
+        dest="removed_github_token",
+        default=None,
+        help=argparse.SUPPRESS,
     )
     init_parser.add_argument(
         "--force",
@@ -114,13 +129,13 @@ def config_init(args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     engine_dir.mkdir(parents=True, exist_ok=True)
 
-    github_token = str(args.github_token or "").strip()
+    github_token_env = str(getattr(args, "github_token_env", "") or "").strip()
     write_settings_file(
         settings_path,
         output_dir=output_dir,
         engine_dir=engine_dir,
         repos={},
-        github_token=github_token if github_token else None,
+        github_token_env=github_token_env or None,
         overlays={},
         openbench=None,
     )
@@ -134,6 +149,14 @@ def _config_init(args: argparse.Namespace) -> None:
     Automatically falls back to non-interactive mode if TTY is not available.
     Use --non-interactive to force non-interactive mode.
     """
+    # 分岐より前に検査する。wizard 側へ回すと、指定された --github-token が
+    # 無警告で捨てられ、このリリースが禁じたはずの silent discard に戻ってしまう。
+    if getattr(args, "removed_github_token", None) is not None:
+        raise SystemExit(
+            "--github-token was removed in 1.0.0 because settings.yaml must not hold the token itself. "
+            f"Use --github-token-env to name the environment variable instead (default: {DEFAULT_GITHUB_TOKEN_ENV})."
+        )
+
     if args.non_interactive or not sys.stdin.isatty():
         config_init(args)
     else:
@@ -157,6 +180,7 @@ def _config_show(args: argparse.Namespace) -> None:
                 }
                 for name, spec in settings.repos.items()
             },
+            "github_token_env": settings.github_token_env,
             "github_token": "(set)" if settings.github_token else None,
             "overlays": {name: str(path) for name, path in settings.overlays.items()},
             "openbench": (
@@ -175,8 +199,8 @@ def _config_show(args: argparse.Namespace) -> None:
     print(f"settings_path : {settings.settings_path}")
     print(f"output_dir    : {settings.output_dir}")
     print(f"engine_dir    : {settings.engine_dir}")
-    if settings.github_token:
-        print("github_token  : (set)")
+    print(f"github_token_env : {settings.github_token_env}")
+    print(f"github_token     : {'(set)' if settings.github_token else '(unset)'}")
     if settings.repos:
         print("repos:")
         for name, spec in settings.repos.items():
@@ -217,7 +241,7 @@ def _config_repo_set(args: argparse.Namespace) -> None:
         output_dir=settings.output_dir,
         engine_dir=settings.engine_dir,
         repos=repos,
-        github_token=settings.github_token,
+        github_token_env=settings.github_token_env,
         overlays=settings.overlays,
         openbench=settings.openbench,
     )
@@ -241,7 +265,7 @@ def _config_repo_remove(args: argparse.Namespace) -> None:
         output_dir=settings.output_dir,
         engine_dir=settings.engine_dir,
         repos=repos,
-        github_token=settings.github_token,
+        github_token_env=settings.github_token_env,
         overlays=settings.overlays,
         openbench=settings.openbench,
     )

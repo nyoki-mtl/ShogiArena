@@ -1,19 +1,19 @@
 # 勾配推定と摂動
 
-> **前提知識**: [SPSA](./index.md)（アルゴリズムの概要、Rademacher 摂動）
+> **前提知識**：[SPSA](./index.md)（アルゴリズムの概要、Rademacher 摂動）
 
 ## このページの要点
 
 - 同時摂動勾配推定は、すべてのパラメータを同時に摂動して **2 回の評価**で \\(p\\) 次元の勾配を推定する
 - 推定勾配はノイズが大きいが、反復平均で真の勾配に収束する
 - 整数パラメータは小数部を「積立」することで、小さな更新を蓄積させる
-- `quantize_value()` がクランプ・丸め・ステップ整合を一括して処理する
+- `quantize_value()` がクランプ、丸め、ステップ整合を一括して処理する
 
 ## 同時摂動勾配推定の詳細
 
 ### 基本式
 
-パラメータ \\(i\\) の勾配推定:
+パラメータ \\(i\\) の勾配推定は次式で与えられます。
 
 \\[
 \hat{g}_i = \frac{L(\boldsymbol{\theta} + c_k \boldsymbol{\varepsilon}) - L(\boldsymbol{\theta} - c_k \boldsymbol{\varepsilon})}{2 c_k \varepsilon_i}
@@ -31,7 +31,8 @@ tuned_plus  = [p.value + flip * c_i for p, flip, c_i in ...]
 tuned_minus = [p.value - flip * c_i for p, flip, c_i in ...]
 ```
 
-勾配推定は、バッチ（`pairs_per_update` ペア）のスコア集計 \\(\text{step} = \sum s^+ - \sum s^-\\) を用いて:
+実装では 1 ペアごとの差分を取らず、バッチ（`pairs_per_update` ペア）ぶんのスコアをまとめた
+\\(\text{step} = \sum s^+ - \sum s^-\\) を差分として使います。
 
 \\[
 \hat{g}_i = \frac{\text{step}}{2 \cdot c_i \cdot \text{flip}_i}
@@ -39,8 +40,9 @@ tuned_minus = [p.value - flip * c_i for p, flip, c_i in ...]
 
 ### パラメータ更新式
 
-更新ゲイン \\(r_i\\)（`delta`・`step`・`A`・`alpha`・`gamma` からパラメータ単位で導出。
-[ゲインスケジュール](./gain-schedule.md) を参照）を用いて:
+更新ゲイン \\(r_i\\) は、`delta`、`step`、`A`、`alpha`、`gamma` からパラメータ単位で導出されます
+（[ゲインスケジュール](./gain-schedule.md) を参照）。
+これを使うと、1 更新ぶんの変化量は次のように書けます。
 
 \\[
 \Delta\theta_i = r_i \cdot c_i \cdot \text{step} \cdot \text{flip}_i
@@ -58,11 +60,11 @@ for index, param in enumerate(params):
     param.value = quantize_value(param, new_value, ...)
 ```
 
-> **注**: この更新式は標準的な SPSA の「2 点差分を使う一次更新」です。実装はグローバルな
+> **注**：この更新式は標準的な SPSA の「2 点差分を使う一次更新」です。実装はグローバルな
 > 学習率スカラ（かつての `mobility` / `a0`）を持たず、各パラメータの `delta` / `step` と
 > 共通の `A` / `alpha` / `gamma` から \\(r_i\\) を導出してスケーリングを制御します。
 
-## スコアの計算
+## 対局結果からスコアへの変換
 
 対局の結果は以下のようにスコアに変換されます。
 
@@ -76,31 +78,32 @@ for index, param in enumerate(params):
 
 ### SPRT 用の結果正規化
 
-SPSA オーケストレータ内で SPRT を併用する場合、結果をチューニング対象エンジンの視点に正規化します。
+ペアゲームでは先後が入れ替わるため、対局結果をそのまま SPRT に投入すると勝者の向きが揃いません。
+SPSA オーケストレータ内で SPRT を併用する場合は、結果をチューニング対象エンジンの視点に正規化します。
 
 ```python
 def _ltc_normalize_result_for_sprt(
     result: GameResult, tuned_as_black: bool
 ) -> GameResult:
     # tuned_as_black=True: 結果をそのまま使用
-    # tuned_as_black=False: 結果を反転（黒勝利 ↔ 白勝利）
+    # tuned_as_black=False: 結果を反転（先手勝ち ↔ 後手勝ち）
 ```
 
 ## 整数パラメータの扱い
 
-### 問題：小さな更新の消失
+### 丸めで消える小さな更新
 
-整数パラメータ（例: `NullMovePruning = 3`）の場合、更新量が 1 未満だと丸めによって消失します。
+整数パラメータ（例: `NullMovePruning = 3`）では、更新量が 1 未満だと丸めによって消失します。
 
 ```text
 θ = 3, Δθ = 0.3
   → round(3 + 0.3) = round(3.3) = 3  ← 更新が消失！
 ```
 
-### 解決策：小数部の「積立」
+### 小数部の「積立」
 
 ShogiArena では、整数パラメータでも内部的に**小数値を保持**します。
-小さな更新が蓄積されて 1 を超えた時点で、エンジンに渡す値が変化します。
+エンジンに渡すときだけ丸めるので、1 未満の更新も内部値には残り、累積が 1 を超えた時点でエンジンに届きます。
 
 ```text
 反復 1: θ = 3.0, Δθ = 0.3 → θ = 3.3  (エンジンには 3)
@@ -132,7 +135,8 @@ def quantize_value(e: ParamEntry, value: float,
 
 ### c_k の下限（int_ck_floor）
 
-整数パラメータの摂動スケール \\(c_k\\) が小さくなりすぎると、摂動が 0 に丸められて勾配推定が不可能になります。
+摂動スケール \\(c_k\\) は反復とともに減衰します。
+整数パラメータでは、これが小さくなりすぎると摂動そのものが 0 に丸められ、\\(\theta^+\\) と \\(\theta^-\\) が同一の値になって差分が取れなくなります。
 
 ```python
 if any(p.type == "int" and not p.not_used for p in params):
@@ -156,7 +160,7 @@ step = 0.1, v = 1.537
 
 ## バッチ処理による分散削減
 
-1 回の更新で複数のゲームペアを実行し、スコアを平均することで推定の分散を削減できます。
+1 回の更新で複数組のペアゲームを実行し、スコアを平均すると、推定の分散を削減できます。
 
 \\[
 s^+_{\text{avg}} = \frac{1}{B} \sum_{b=1}^{B} s^+_b \qquad s^-_{\text{avg}} = \frac{1}{B} \sum_{b=1}^{B} s^-_b
@@ -185,28 +189,31 @@ s_minus = total_s_minus / batch_size
 | 8-16 | 低い | 高い | 安定した最適化が必要 |
 
 バッチサイズを \\(B\\) にすると分散は \\(1/B\\) に減少しますが、計算コストは \\(B\\) 倍になります。
+CRN やペアゲームと組み合わせたときの効果は [分散削減テクニック](../variance-reduction/index.md) にまとめてあります。
 
 ## 勾配推定の性質
 
-### 不偏性
+### バイアス
 
-同時摂動勾配推定は、Rademacher 摂動の性質により**不偏推定量**です。
+Rademacher 摂動の対称性により、同時摂動勾配推定の期待値は真の勾配に一致します。
+ただし一致するのは主要項までで、テイラー展開の 3 次以降に由来する \\(O(c_k^2)\\) のバイアスが残ります。
 
 \\[
 E[\hat{g}_i] = \frac{\partial L}{\partial \theta_i} + O(c_k^2)
 \\]
 
-\\(c_k \to 0\\) のとき、バイアスは消失します。
+\\(c_k \to 0\\) のとき、このバイアスは消失します。
 
 ### 分散
 
-推定の分散は \\(c_k\\) に反比例します。
+一方、分散は \\(c_k\\) の 2 乗に反比例して増大します。
 
 \\[
 \text{Var}[\hat{g}_i] \propto \frac{1}{c_k^2}
 \\]
 
-\\(c_k\\) を小さくするとバイアスは減りますが分散が増えます。
+対局スコアの揺らぎは \\(c_k\\) の大きさに関係なく一定なので、\\(c_k\\) を小さくすると、割り算によってその揺らぎが増幅されるためです。
+\\(c_k\\) を小さくすればバイアスは減り、分散は増えます。
 このトレードオフは [ゲインスケジュール](./gain-schedule.md) で制御します。
 
 ## 実装リファレンス
@@ -219,4 +226,4 @@ E[\hat{g}_i] = \frac{\partial L}{\partial \theta_i} + O(c_k^2)
 
 ## 次に読む
 
-→ **[ゲインスケジュール](./gain-schedule.md)**: \\(a_k\\) と \\(c_k\\) の減衰系列による収束制御を解説します。
+→ **[ゲインスケジュール](./gain-schedule.md)**：\\(a_k\\) と \\(c_k\\) の減衰系列による収束制御。

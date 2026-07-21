@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from shogiarena._core.contexts.game_session.domain.summary_models import TournamentResults
 from shogiarena._core.shared.kernel.service_ports import GameRecordPlayers
 from shogiarena._core.shared.kernel.statistics.btd_rating import BTDEstimate, BTDEstimator
+from shogiarena._core.shared.kernel.statistics.confidence_intervals import normal_margin
 
 logger = logging.getLogger(__name__)
 
@@ -60,15 +61,15 @@ class TournamentSummaryReportingService:
         order = sorted(ratings_items, key=lambda x: (-float(x[1]), x[0]))
         for i, (name, rating) in enumerate(order, 1):
             se = btd.rating_se.get(name) or 0.0
-            ci = 1.96 * se
+            ci = normal_margin(se) or 0.0
             stat = stats.get(name, {"wins": 0, "draws": 0, "losses": 0})
             games_played = int(stat.get("wins", 0)) + int(stat.get("draws", 0)) + int(stat.get("losses", 0))
             points = float(stat.get("wins", 0)) + 0.5 * float(stat.get("draws", 0))
             wdl = f"{stat.get('wins', 0)}/{stat.get('draws', 0)}/{stat.get('losses', 0)}"
             logger.debug("%-6s %-20s %6.1f±%6.1f %-8d %-8.1f %-15s", i, name, rating, ci, games_played, points, wdl)
 
-        gamma_ci = 1.96 * (btd.gamma_elo_se or 0.0)
-        draw_ci = 1.96 * (btd.draw_eq_se or 0.0)
+        gamma_ci = normal_margin(btd.gamma_elo_se) or 0.0
+        draw_ci = normal_margin(btd.draw_eq_se) or 0.0
         logger.debug(
             "\nBlack advantage: %.1f±%.1f Elo | Draw(eq): %.1f%%±%.1f%%",
             btd.gamma_elo,
@@ -91,7 +92,7 @@ class TournamentSummaryReportingService:
         for (engine_a, engine_b), _n in pairs[:5]:
             pair_delta = btd.pair_delta(engine_a, engine_b, cov=btd.rating_cov)
             se = pair_delta.standard_error or 0.0
-            ci = 1.96 * se
+            ci = normal_margin(se) or 0.0
             los = pair_delta.likelihood_of_superiority
             pair_result = results.pair_results[(engine_a, engine_b)]
             wdl = (

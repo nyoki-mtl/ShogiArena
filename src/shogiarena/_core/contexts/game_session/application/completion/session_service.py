@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping
 
-import rshogi.record
+import rsshogi.record
 
 from shogiarena._core.contexts.game_session.application.sprt_service import SPRT_MODEL_GSPRT_PENTANOMIAL
 from shogiarena._core.contexts.game_session.ports.completion_runtime import (
@@ -33,7 +33,7 @@ class TournamentSessionCompletionService:
         context: CompletionRuntimeContext,
         game_spec: CompletionGameSpecPort,
         *,
-        record: rshogi.record.GameRecord,
+        record: rsshogi.record.Record,
     ) -> CompletionGameSummary:
         metadata_attrs = dict(record.metadata.attributes)
         record.update_metadata(
@@ -58,7 +58,7 @@ class TournamentSessionCompletionService:
         self,
         context: CompletionPersistenceContext,
         *,
-        record: rshogi.record.GameRecord,
+        record: rsshogi.record.Record,
         game_id: str,
         game_type: str,
         extract_participation: Callable[[object], tuple[object, ...]],
@@ -133,7 +133,7 @@ class TournamentSessionCompletionService:
         context: CompletionRuntimeContext,
         game_spec: CompletionGameSpecPort,
         *,
-        record: rshogi.record.GameRecord,
+        record: rsshogi.record.Record,
         is_stop_requested: bool,
         extract_participation: Callable[[object], tuple[object, ...]],
         openbench_error_type: type[Exception],
@@ -145,8 +145,11 @@ class TournamentSessionCompletionService:
             # filtered out before dispatch, so this only catches duplicate completion events.
             logger.debug("Skipping already-completed game %s (duplicate completion)", game_id)
             return False, record.result
-        summary = self.enrich_record_and_summarize(context, game_spec, record=record)
         result = record.result
+        if result == GameResult.PAUSED:
+            logger.debug("Skipping paused game %s; it remains eligible for resume", game_id)
+            return False, result
+        summary = self.enrich_record_and_summarize(context, game_spec, record=record)
         should_persist = self.should_persist_record(result, is_stop_requested=is_stop_requested)
         if should_persist:
             self.persist_record_outputs(
@@ -200,7 +203,7 @@ class TournamentSessionCompletionService:
             attributes["record_format"] = context.record_format
         return attributes
 
-    def summarize_game_completion(self, record: rshogi.record.GameRecord) -> CompletionGameSummary:
+    def summarize_game_completion(self, record: rsshogi.record.Record) -> CompletionGameSummary:
         result_obj = record.result
 
         total_plies = len(record.moves)

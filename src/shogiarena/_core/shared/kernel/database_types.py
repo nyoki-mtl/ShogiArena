@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Protocol, runtime_checkable
 
-import rshogi
+import rsshogi
 from typing_extensions import TypedDict
 
 from shogiarena._core.shared.kernel.game_results import GameResult
@@ -31,7 +31,7 @@ class DatabaseServicePort(Protocol):
     def close(self) -> None: ...
     def append_record_list(
         self,
-        record_list: Iterable[rshogi.record.GameRecord | None],
+        record_list: Iterable[rsshogi.record.Record | None],
         *,
         should_update: bool = False,
     ) -> None: ...
@@ -41,6 +41,6 @@ class DatabaseServicePort(Protocol):
         *,
         game_id: int | None = None,
         game_name: str | None = None,
-    ) -> rshogi.record.GameRecord | None: ...
+    ) -> rsshogi.record.Record | None: ...
     def record_game_participation(self, *, game_id: int, participation: Iterable[object]) -> None: ...
     def get_games_with_players(self, *, game_type: str) -> Sequence[GameRecordPlayers]: ...

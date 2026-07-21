@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
-import rshogi
+import rsshogi
 
 from shogiarena._core.platform.records.codec_registry import RecordSerializer
 from shogiarena._core.platform.records.codecs import get_serializer, iter_psv_entries
@@ -71,12 +71,12 @@ class RecordBinaryWriter:
 
     def append_record(
         self,
-        record: rshogi.record.GameRecord,
+        record: rsshogi.record.Record,
         *,
         game_id: str | None = None,
         game_type: str | None = None,
     ) -> None:
-        """Append GameRecord to binary output."""
+        """Append Record to binary output."""
 
         if self._closed:
             # Without this guard a rotation-triggering append after close() would silently
@@ -121,7 +121,7 @@ class RecordBinaryWriter:
 
         return set(self._written_game_ids)
 
-    def _append_psv(self, record: rshogi.record.GameRecord, *, game_id: str, game_type: str) -> None:
+    def _append_psv(self, record: rsshogi.record.Record, *, game_id: str, game_type: str) -> None:
         payloads = tuple(iter_psv_entries(record))
         incoming_positions = len(payloads)
         max_games = self._config.max_games_per_file
@@ -149,7 +149,7 @@ class RecordBinaryWriter:
             byte_end=byte_end,
         )
 
-    def _append_sbinpack(self, record: rshogi.record.GameRecord, *, game_id: str, game_type: str) -> None:
+    def _append_sbinpack(self, record: rsshogi.record.Record, *, game_id: str, game_type: str) -> None:
         incoming_positions = len(record.moves)
         max_games = self._config.max_games_per_file
         exceeds_games = max_games is not None and max_games > 0 and (self._games_in_file + 1) > max_games
@@ -270,13 +270,13 @@ class RecordBinaryWriter:
             )
 
     @staticmethod
-    def _record_game_id(record: rshogi.record.GameRecord) -> str | None:
+    def _record_game_id(record: rsshogi.record.Record) -> str | None:
         metadata = record.metadata
         attributes = metadata.attributes
         return coerce_str(attributes.get("game_name")) or coerce_str(getattr(metadata, "game_name", None))
 
     @staticmethod
-    def _record_game_type(record: rshogi.record.GameRecord) -> str:
+    def _record_game_type(record: rsshogi.record.Record) -> str:
         metadata = record.metadata
         attributes = metadata.attributes
         return coerce_str(attributes.get("game_type")) or coerce_str(getattr(metadata, "game_type", None)) or "arena"

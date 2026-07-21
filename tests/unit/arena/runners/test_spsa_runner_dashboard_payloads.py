@@ -83,7 +83,7 @@ def test_seed_spsa_initial_summary_uses_canonical_engine_catalog_helpers(tmp_pat
         f"""
         experiment_name: exp
         engines:
-          - engine_path: "{engine_yaml}"
+          - engine_path: {json.dumps(str(engine_yaml))}
             name: seed
         rules:
           initial_positions:

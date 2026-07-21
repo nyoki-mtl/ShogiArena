@@ -1,6 +1,6 @@
 [project]
 name = "shogiarena"
-version = "0.5.4"
+version = "1.0.0"
 description = "Asynchronous tournament and SPSA tuning platform for USI shogi engines"
 authors = [
     { name = "Hiroki Taniai", email = "charmer.popopo@gmail.com" }
@@ -10,11 +10,13 @@ readme = "README.md"
 requires-python = ">=3.11"
 keywords = ["shogi", "usi", "tournament", "spsa", "tuning", "engine"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -23,19 +25,17 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "aiohttp>=3.12.15",
-    "asyncssh>=2.21.0",
-    "matplotlib>=3.10.5",
-    "omegaconf>=2.3.0",
-    "pandas>=2.3.2",
-    "psutil>=6.0.0",
-    "pydantic>=2.12.5",
-    "python-dotenv>=1.1.1",
-    "pyyaml>=6.0.2",
-    "rshogi-py-avx2==0.10.3",
-    "sqlalchemy>=2.0.43",
-    "tqdm>=4.67.1",
-    "types-pyyaml>=6.0.12.20250822",
+    "aiohttp>=3.14.1",
+    "asyncssh>=2.24.0",
+    "numpy>=2.0",
+    "omegaconf>=2.3.1",
+    "psutil>=7.2.2",
+    "pydantic>=2.13.4",
+    "python-dotenv>=1.2.2",
+    "pyyaml>=6.0.3",
+    "rsshogi>=1.0.1,<2",
+    "sqlalchemy>=2.0.51",
+    "typing-extensions>=4.16.0",
 ]
 
 [project.urls]
@@ -48,23 +48,36 @@ Issues = "https://github.com/nyoki-mtl/ShogiArena/issues"
 [project.scripts]
 shogiarena = "shogiarena.cli:main"
 
+[tool.hatch.build]
+artifacts = [
+    "src/shogiarena/py.typed",
+    "src/shogiarena/_core/interfaces/dashboard/static/dist/**",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/shogiarena"]
+# dashboard の frontend は build 済みバンドル（static/dist）を同梱すれば動く。
+# ランタイムが読むのは frontend/index.html だけなので、TypeScript ソースと
+# テスト、ビルド設定は wheel に含めない。
+exclude = [
+    "/src/shogiarena/_core/interfaces/dashboard/frontend/src",
+    "/src/shogiarena/_core/interfaces/dashboard/frontend/*.ts",
+    "/src/shogiarena/_core/interfaces/dashboard/frontend/*.cjs",
+    "/src/shogiarena/_core/interfaces/dashboard/frontend/*.json",
+]
 
 [tool.hatch.build.targets.sdist]
-exclude = [
-    "/_refs",
-    "/.sandbox",
-    "/tests",
-    "/stubs",
-    "/agent-docs",
-    "/visual-tests",
-    "/.github",
-    "/.devcontainer",
-    "/.vscode",
-    "/.serena",
-    "/.claude",
-    "/node_modules",
+# 除外リスト方式だと、.gitignore の否定パターン（!.claude/settings.json など）が
+# 除外を上書きしたり、新しく増えた生成物ディレクトリが黙って同梱されたりする。
+# 公開物は許可リストで決める。追加は意図的な変更としてのみ行う。
+include = [
+    "/src",
+    "/examples",
+    "/pyproject.toml",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/SECURITY.md",
 ]
 
 [build-system]
@@ -73,11 +86,13 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "pytest-asyncio>=0.26.0",
-    "pytest>=8.3.4",
-    "ruff>=0.9.9",
-    "vulture>=2.14",
-    "ty>=0.0.11",
+    "pytest-asyncio>=1.4.0",
+    "pytest>=9.1.1",
+    "ruff>=0.15.22",
+    "vulture>=2.16",
+    "ty>=0.0.61",
+    "types-pyyaml>=6.0.12.20250822",
+    "pytest-cov>=7.0.0",
 ]
 
 [tool.pytest.ini_options]
@@ -116,15 +131,10 @@ extra-paths = ["stubs"]
 
 [tool.ty.src]
 include = ["src"]
-exclude = [
-    "_refs/**",
-    "src/shogiarena/arena/services/btd.py",
-    "src/shogiarena/tuning/spsa_tune.py",
-    "src/shogiarena/tuning/spsa_runner.py",
-]
+exclude = ["_refs/**"]
 
 [tool.ty.rules]
-# Relax rules for third-party libraries without complete type stubs (rshogi, etc.)
+# Relax rules for third-party libraries without complete type stubs (rsshogi, etc.)
 # These can be tightened as ty matures and stubs improve
 unresolved-attribute = "warn"
 # D-1 ratchet step: invalid-return-type + invalid-argument-type

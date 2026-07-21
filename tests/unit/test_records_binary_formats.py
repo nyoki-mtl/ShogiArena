@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 import pytest
-import rshogi
-from rshogi.core import Board, Move
+import rsshogi
+from rsshogi.core import Board, Move
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_engine import RecordOutputConfig
 from shogiarena._core.platform.records.binary_writer import (
@@ -24,14 +24,14 @@ _STARTPOS = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1"
 
 
 def _legal_move(board: Board, usi: str) -> Move:
-    for move in board.legal_moves_full():
+    for move in board.legal_moves_move32():
         mv = move.to_move()
         if mv.to_usi() == usi:
             return mv
     raise AssertionError(f"move not found: {usi}")
 
 
-def _sample_record() -> rshogi.record.GameRecord:
+def _sample_record() -> rsshogi.record.Record:
     board = Board()
     board.set_sfen(_STARTPOS)
 
@@ -39,7 +39,7 @@ def _sample_record() -> rshogi.record.GameRecord:
     board.apply_move(move1)
     move2 = _legal_move(board, "3c3d")
 
-    return rshogi.record.GameRecord.from_dict(
+    return rsshogi.record.Record.from_dict(
         {
             "metadata": {
                 "black_player": "black",
@@ -56,8 +56,8 @@ def _sample_record() -> rshogi.record.GameRecord:
     )
 
 
-def _sample_psv_record() -> rshogi.record.GameRecord:
-    return rshogi.record.GameRecord.from_dict(
+def _sample_psv_record() -> rsshogi.record.Record:
+    return rsshogi.record.Record.from_dict(
         {
             "metadata": {
                 "black_player": "black",
@@ -96,7 +96,8 @@ def test_sbinpack_roundtrip() -> None:
     record = _sample_record()
     payload = serializer.serialize(record)
     assert isinstance(payload, bytes)
-    assert payload[:4] == b"SBIN"
+    # rsshogi 1.0.0 emits sbinpack v2 ("SBN2"); v1 ("SBIN") is no longer produced.
+    assert payload[:4] == b"SBN2"
 
     decoded = reader.deserialize(payload)
     decoded_dict = decoded.to_dict()
@@ -254,8 +255,8 @@ def test_binary_writer_truncates_unindexed_tail_bytes_on_resume(tmp_path: Path) 
     assert data_file.stat().st_size == indexed_size
 
 
-def _record_without_eval() -> rshogi.record.GameRecord:
-    return rshogi.record.GameRecord.from_dict(
+def _record_without_eval() -> rsshogi.record.Record:
+    return rsshogi.record.Record.from_dict(
         {
             "metadata": {
                 "black_player": "black",

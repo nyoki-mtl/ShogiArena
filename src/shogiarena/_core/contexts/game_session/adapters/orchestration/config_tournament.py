@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Self
 
-from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
 from shogiarena._core.platform.settings import project_dirs
@@ -47,6 +47,8 @@ logger = logging.getLogger(__name__)
 
 
 class TournamentRunConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     experiment_name: str
     engines: list[EngineConfig]
     tournament: TournamentConfig = Field(default_factory=TournamentConfig)
@@ -146,10 +148,35 @@ class TournamentRunConfig(BaseModel):
         if self.openbench is not None and self.openbench.is_enabled and self.sprt is None:
             raise ValueError("openbench.enabled=true requires sprt configuration")
         if self.sprt is not None:
-            if self.sprt.max_games is not None and self.tournament.games_per_pair == 4:
-                self.tournament.games_per_pair = int(self.sprt.max_games)
-            if self.sprt.num_parallel is not None and self.tournament.num_parallel == 4:
-                self.tournament.num_parallel = int(self.sprt.num_parallel)
+            tested_engine = self.sprt.tested_engine
+            if tested_engine is None:
+                # Keep the CLI/list-order compatibility contract, but materialize the role in the
+                # resolved config so artifacts and diagnostics never leave it implicit.
+                self.sprt.tested_engine = engine_names[0]
+            else:
+                if tested_engine not in engine_names:
+                    raise ValueError(f"sprt.tested_engine must name one of engines: {tested_engine!r}")
+                tested_index = engine_names.index(tested_engine)
+                if tested_index != 0:
+                    self.engines.insert(0, self.engines.pop(tested_index))
+                    engine_names.insert(0, engine_names.pop(tested_index))
+
+            if self.sprt.max_games is not None:
+                max_games = int(self.sprt.max_games)
+                if (
+                    "games_per_pair" in self.tournament.model_fields_set
+                    and int(self.tournament.games_per_pair) != max_games
+                ):
+                    raise ValueError("sprt.max_games and tournament.games_per_pair must match when both are specified")
+                self.tournament.games_per_pair = max_games
+            if self.sprt.num_parallel is not None:
+                sprt_num_parallel = int(self.sprt.num_parallel)
+                if (
+                    "num_parallel" in self.tournament.model_fields_set
+                    and int(self.tournament.num_parallel) != sprt_num_parallel
+                ):
+                    raise ValueError("sprt.num_parallel and tournament.num_parallel must match when both are specified")
+                self.tournament.num_parallel = sprt_num_parallel
 
         self._preflight_path_options()
 
@@ -282,7 +309,7 @@ class TournamentRunConfig(BaseModel):
         allowed = set(cls.model_fields.keys())
         extras = sorted(k for k in data.keys() if k not in allowed)
         if extras:
-            logger.warning("Unknown keys in TournamentRunConfig data: %s", ", ".join(extras))
+            raise ValueError(f"Unknown keys in TournamentRunConfig data: {', '.join(extras)}")
         payload: _ConfigPayload = {str(k): data[k] for k in data.keys() if k in allowed}
         if "output_dir" not in payload:
             payload["output_dir"] = project_dirs.output_dir
@@ -330,6 +357,12 @@ class TournamentRunConfig(BaseModel):
                 if not isinstance(engine, Mapping):
                     continue
                 engine_map = coerce_json_object_serialized(engine, field_name="engines[]")
+                engine_path = engine_map.get("engine_path")
+                if isinstance(engine_path, str) and engine_path.strip():
+                    candidate = Path(resolve_path_like(engine_path))
+                    if not candidate.is_absolute():
+                        candidate = (base / candidate).resolve()
+                    engine_map["engine_path"] = str(candidate)
                 raw_overlays = engine_map.get("options_overlays")
                 if raw_overlays is None:
                     normalized_engines.append(engine_map)

@@ -9,10 +9,8 @@ from shogiarena._core.contexts.game_session.ports.run_runtime import (
     SessionRunResultBuilderPort,
     SessionRunResultPort,
 )
-from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import (
-    ProgressReporterPort,
-    SessionStopControllerPort,
-)
+from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import ProgressReporterPort
+from shogiarena._core.shared.kernel.session_hooks import SessionStopController
 
 TSessionContext = TypeVar("TSessionContext")
 TSessionResults = TypeVar("TSessionResults")
@@ -52,8 +50,8 @@ class TournamentSessionExecutionService:
 
         dash = runner.get_dashboard_params()
         if dash is not None:
-            run_dir, port, num_workers = dash
-            await runner.start_dashboard_server(run_dir, port, num_workers)
+            run_dir, host, port, num_workers = dash
+            await runner.start_dashboard_server(run_dir, host, port, num_workers)
             await runner.seed_initial_summary()
 
         session_context = runner.build_session_context()
@@ -64,7 +62,7 @@ class TournamentSessionExecutionService:
         self,
         runner: SessionExecutionRuntimePort[TSessionContext, TSessionResults, TSprtStatus, TRunResult],
         *,
-        controller: SessionStopControllerPort,
+        controller: SessionStopController,
     ) -> None:
         controller.request_stop(reason="cancelled")
         runner.session_phase = "stopping"

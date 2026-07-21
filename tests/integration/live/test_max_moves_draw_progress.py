@@ -4,7 +4,7 @@ from collections import deque
 from collections.abc import Sequence
 
 import pytest
-from rshogi.core import Move
+from rsshogi.core import Move
 
 from shogiarena._core.contexts.match.application.runner import GameRunner
 from shogiarena._core.contexts.match.domain.adjudication import AdjudicationConfig

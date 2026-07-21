@@ -19,6 +19,7 @@ from shogiarena._core.interfaces.dashboard.match.payloads import (
 from shogiarena._core.shared.kernel.json_coercion import to_json_object
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.serialization import json_serialize
+from shogiarena._core.shared.kernel.statistics.confidence_intervals import normal_probability_interval
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +78,10 @@ class MatchAPI(PairwiseRunnerAPI):
     @staticmethod
     def _elo_confidence_interval(win_rate: float | None, counts: WdlGamesCount) -> ConfidenceInterval:
         std = MatchAPI._score_std_error(counts)
-        if win_rate is None or std is None:
+        interval = normal_probability_interval(win_rate, std)
+        if interval is None:
             return {"lower": None, "upper": None}
-        lower = max(0.0, win_rate - 1.96 * std)
-        upper = min(1.0, win_rate + 1.96 * std)
+        lower, upper = interval
         return {
             "lower": MatchAPI._win_rate_to_elo(lower),
             "upper": MatchAPI._win_rate_to_elo(upper),
@@ -89,10 +90,10 @@ class MatchAPI(PairwiseRunnerAPI):
     @staticmethod
     def _win_rate_confidence_interval(win_rate: float | None, counts: WdlGamesCount) -> ConfidenceInterval:
         std = MatchAPI._score_std_error(counts)
-        if win_rate is None or std is None:
+        interval = normal_probability_interval(win_rate, std)
+        if interval is None:
             return {"lower": None, "upper": None}
-        lower = max(0.0, win_rate - 1.96 * std)
-        upper = min(1.0, win_rate + 1.96 * std)
+        lower, upper = interval
         return {"lower": lower, "upper": upper}
 
     @staticmethod

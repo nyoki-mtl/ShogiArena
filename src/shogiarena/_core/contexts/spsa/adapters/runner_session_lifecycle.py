@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -30,6 +31,9 @@ from shogiarena._core.contexts.game_session.ports.run_storage import RunStorageP
 from shogiarena._core.contexts.game_session.ports.session_context import SessionContext
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
+from shogiarena._core.contexts.spsa.adapters.fixed_option_preflight import (
+    run_yaneuraou_fixed_option_preflight,
+)
 from shogiarena._core.contexts.spsa.adapters.orchestrator import SpsaOrchestrator
 from shogiarena._core.contexts.spsa.application.session_state_io import load_or_init_spsa_run_state
 from shogiarena._core.contexts.spsa.application.space_spec import load_spsa_space_spec, persist_normalized_space
@@ -50,6 +54,7 @@ from shogiarena._core.shared.kernel.json_coercion import to_json_object
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.participation_records import extract_participation as _extract_participation
 from shogiarena._core.shared.kernel.run_paths import timestamp_slug
+from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int
 from shogiarena._core.shared.kernel.serialization import json_serialize
 from shogiarena._core.shared.kernel.service_ports import ArtifactResolutionPort, DatabaseServicePort
 from shogiarena._core.shared.kernel.session_hooks import (
@@ -164,22 +169,44 @@ def prepare_spsa_domain_inputs(
 ) -> tuple[list[ParamEntry], list[str], list[int]]:
     space = load_spsa_space_spec(config.space_path)
     persist_normalized_space(run_dir, space)
+    params = space.to_param_entries()
+    if not params:
+        raise ValueError("SPSA space spec has no parameters")
+    run_yaneuraou_fixed_option_preflight(
+        engines=config.tuned,
+        target_option_names=(entry.engine_option_name for entry in params if not entry.is_not_used),
+        run_dir=run_dir,
+        output_dir=project_dirs.output_dir,
+        engine_dir=project_dirs.engine_dir,
+    )
     state_path = run_dir / "state.json"
+    is_resume = state_path.exists()
     try:
-        load_or_init_spsa_run_state(
+        run_state = load_or_init_spsa_run_state(
             state_path,
             total_updates=config.num_updates,
             schedule_hash=schedule_hash,
             resume_hash=resume_hash,
         )
-    except (OSError, json.JSONDecodeError, ContractParseError, TypeError) as exc:
+    except (OSError, json.JSONDecodeError, ContractParseError, TypeError, ValueError) as exc:
         raise ValueError(f"Invalid SPSA state.json: {exc}") from exc
 
-    params = space.to_param_entries()
-    if not params:
-        raise ValueError("SPSA space spec has no parameters")
+    completed_updates = coerce_int(run_state.get("completed_updates"))
+    if completed_updates is None:
+        raise ValueError("Invalid SPSA state.json: completed_updates must be an integer")
+    if is_resume:
+        if completed_updates >= config.num_updates:
+            raise ValueError("SPSA run is already finished; use --no-resume to start a fresh run")
+        _restore_spsa_current_artifact(
+            run_dir=run_dir,
+            completed_updates=completed_updates,
+            pairs_per_update=config.pairs_per_update,
+            params=params,
+        )
+
     _write_spsa_schedule_contract(run_dir=run_dir, config=config, params=params)
-    _write_spsa_current_artifact(run_dir=run_dir, update_idx=0, pair_index_end=0, params=params)
+    if not is_resume:
+        _write_spsa_current_artifact(run_dir=run_dir, update_idx=0, pair_index_end=0, params=params)
     with open(config.start_sfens_path, encoding="utf-8") as handle:
         sfens = [line.rstrip() for line in handle if line.strip()]
     if not sfens:
@@ -187,8 +214,60 @@ def prepare_spsa_domain_inputs(
     n = config.num_updates
     if n <= 0:
         raise ValueError("SPSA requires a positive 'num_updates'")
-    update_items = list(range(1, n + 1))
+    update_items = list(range(completed_updates + 1, n + 1))
     return params, sfens, update_items
+
+
+def _restore_spsa_current_artifact(
+    *,
+    run_dir: Path,
+    completed_updates: int,
+    pairs_per_update: int,
+    params: list[ParamEntry],
+) -> None:
+    """Restore theta from the durable SPSA current-state artifact."""
+
+    current_path = run_dir / "spsa" / "current.json"
+    try:
+        raw = json.loads(current_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError("SPSA current.json is missing; use --no-resume to start a fresh run") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Invalid SPSA current.json: {exc}; use --no-resume to start a fresh run") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("Invalid SPSA current.json: root must be an object; use --no-resume to start a fresh run")
+    if raw.get("schema_version") != "shogiarena.spsa.current.v1":
+        raise ValueError("Invalid SPSA current.json schema_version; use --no-resume to start a fresh run")
+    if raw.get("update_idx") != completed_updates:
+        raise ValueError("SPSA current.json disagrees with state.json update count; use --no-resume to start fresh")
+    expected_pair_index = completed_updates * int(pairs_per_update)
+    if raw.get("pair_index_end") != expected_pair_index:
+        raise ValueError("SPSA current.json has an invalid pair index; use --no-resume to start fresh")
+
+    theta = raw.get("theta")
+    if not isinstance(theta, dict):
+        raise ValueError("Invalid SPSA current.json theta; use --no-resume to start a fresh run")
+    active_params = {entry.name: entry for entry in params if not entry.is_not_used}
+    if set(theta) != set(active_params):
+        raise ValueError(
+            "SPSA current.json parameter set does not match the SPSA space; use --no-resume to start fresh"
+        )
+
+    restored_values: dict[str, float] = {}
+    for name, value in theta.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"SPSA current.json theta.{name} must be numeric; use --no-resume to start fresh")
+        restored = float(value)
+        entry = active_params[name]
+        if not math.isfinite(restored) or restored < float(entry.min) or restored > float(entry.max):
+            raise ValueError(
+                f"SPSA current.json theta.{name} is outside its valid bounds; use --no-resume to start fresh"
+            )
+        restored_values[name] = restored
+
+    # Apply only after the complete artifact has passed validation.
+    for name, restored in restored_values.items():
+        active_params[name].value = restored
 
 
 def _write_spsa_schedule_contract(*, run_dir: Path, config: SpsaRunConfig, params: list[ParamEntry]) -> None:

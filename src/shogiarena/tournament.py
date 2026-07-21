@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_tournament import TournamentRunConfig
-from shogiarena._core.contexts.game_session.adapters.run_storage import FilesystemRunStorage, RunStorage
+from shogiarena._core.contexts.game_session.adapters.results.run_result_models import TournamentRunResult
+from shogiarena._core.contexts.game_session.adapters.run_storage import FilesystemRunStorage
+from shogiarena._core.contexts.game_session.application.sprt_service import SprtDecision, SprtResult
+from shogiarena._core.contexts.game_session.domain.summary_models import EngineWdlCounts, TournamentResults
 from shogiarena._core.contexts.game_session.ports.run_storage import RunStoragePort
 from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import ProgressReporterPort
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
@@ -16,6 +18,9 @@ from shogiarena._core.contexts.tournament.domain.tournament_models import GameSp
 from shogiarena._core.contexts.tournament.ports.tournament_runtime_port import TournamentRunConfigBuildRequest
 from shogiarena._core.interfaces.cli.config_file_loaders import parse_tournament_config_file
 from shogiarena._core.interfaces.composition_root.default_root import DefaultRoot, build_default_root
+from shogiarena._core.shared.kernel.json_types import (
+    JsonValue,  # noqa: F401 - stable result fields are annotated with Mapping[str, JsonValue]
+)
 
 
 def create_run_storage(run_dir: str | Path) -> FilesystemRunStorage:
@@ -99,7 +104,7 @@ async def run_tournament(
     is_dashboard_enabled: bool | None = None,
     should_skip_resume: bool = False,
     root: DefaultRoot | None = None,
-) -> Any:
+) -> TournamentRunResult | None:
     """Run a tournament session using the public ShogiArena API."""
 
     runtime_root = root or build_default_root()
@@ -118,10 +123,19 @@ async def run_tournament(
 
 
 __all__ = [
+    "EngineWdlCounts",
     "FilesystemRunStorage",
     "GameSpec",
-    "RunStorage",
+    "DefaultRoot",
+    "InstancePool",
+    "JsonValue",
+    "ProgressReporterPort",
+    "RunStoragePort",
+    "SprtDecision",
+    "SprtResult",
+    "TournamentResults",
     "TournamentRunConfig",
+    "TournamentRunResult",
     "TournamentRunner",
     "build_tournament_runner",
     "create_run_storage",

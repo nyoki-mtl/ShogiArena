@@ -256,7 +256,6 @@ class TournamentAPI:
                 "Content-Type": "text/event-stream",
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
             },
         )
         await response.prepare(request)

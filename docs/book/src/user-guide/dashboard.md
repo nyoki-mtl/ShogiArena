@@ -18,11 +18,21 @@ shogiarena run tournament tournament.yaml
 
 ブラウザで `http://localhost:8080` を開きます。
 
+## ローカル限定のセキュリティ境界
+
+v1 のダッシュボードは、認証を備えないローカルの single-user UI です。
+`dashboard.api_host` は `localhost`、`127.0.0.0/8`、`::1` のいずれかに限定され、`0.0.0.0` や LAN のアドレスでは起動しません。
+外部マシンからの閲覧、リバースプロキシ経由の公開、multi-user 運用には対応していません。
+そのような運用では、将来の認証対応を待ち、ポートフォワーディング等で公開しないでください。
+
 ## 保存済み run を開く
 
 ```bash
 shogiarena dashboard serve --run-dir /path/to/run
 ```
+
+`dashboard serve` は保存済み成果物を閲覧する read-only mode で起動します。
+instance の作成・変更、schedule 操作、diagnostics snapshot の保存など、状態を変更する API は拒否されます。
 
 設定ファイルから最新 run を解決したい場合:
 
@@ -50,13 +60,19 @@ shogiarena dashboard serve --run-dir /path/to/run --port 9090
 
 共通して、`Games` では保存済み対局を確認でき、`Live View` では進行中の対局盤面を見られます。
 
-Book タブの out-of-book は「実着手が指定 book 上の候補手集合に含まれたか」を後から観測する指標です。エンジンが実際に book 由来で指したことを断定するものではありません。
+Book タブの out-of-book は、「実着手が指定 book 上の候補手集合に含まれたか」を後から観測する指標です。
+エンジンが実際に book 由来で指したことを断定するものではありません。
 
-`Live View` と対局詳細の timing では、持ち時間に課金された `wall_time_ms` と、engine の `think()` 呼び出しから `bestmove` 回収までを測った `engine_wall_time_ms` を分けて扱います。engine throughput や wall NPS の比較では `engine_wall_time_ms` を優先してください。
+Book タブ内の `Pairs` subview では、schedule 上のペアごとに book prefix の一致状況、first diff ply、prefix match rate、`measurement_status` を確認できます。
+ここで表示される prefix も、明示記録された `book_hit` または opt-in の book lookup membership に基づく diagnostic です。
+
+`Live View` と対局詳細の timing では、持ち時間に課金された `wall_time_ms` と、engine の `think()` 呼び出しから `bestmove` 回収までを測った `engine_wall_time_ms` を分けて扱います。
+engine throughput や wall NPS を比較するときは `engine_wall_time_ms` を使ってください。
 
 ## run ディレクトリ
 
-ダッシュボードは run ディレクトリ内の成果物を読みます。代表的なファイルは次の通りです。
+ダッシュボードは run ディレクトリ内の成果物を読みます。
+代表的なファイルは次の通りです。
 
 ```text
 run/
@@ -67,7 +83,8 @@ run/
 └── records/
 ```
 
-保存済み run を `shogiarena dashboard serve` で開く場合、現行 CLI は run ディレクトリ直下の `game.db` を必要とします。自己対局生成などで dashboard を使う場合も、`game.db` を含む run ディレクトリを指定してください。
+保存済み run を `shogiarena dashboard serve` で開く場合、現行 CLI は run ディレクトリ直下の `game.db` を必要とします。
+自己対局生成などで dashboard を使う場合も、`game.db` を含む run ディレクトリを指定してください。
 
 ## うまく表示されないとき
 

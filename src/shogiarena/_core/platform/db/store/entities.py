@@ -60,6 +60,7 @@ class Game(Base):
     end_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     end_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    metadata_attributes_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     black_player: Mapped[Player] = relationship("Player", foreign_keys=[black_player_id])
     white_player: Mapped[Player] = relationship("Player", foreign_keys=[white_player_id])
@@ -99,6 +100,8 @@ class GameMove(Base):
     depth: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     seldepth: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     nodes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    move_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    book_hit: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
     game: Mapped[Game] = relationship(back_populates="moves")
 
@@ -108,7 +111,7 @@ class GameMove(Base):
             f"id={self.id}, game_id={self.game_id}, ply={self.ply}, next_move={self.next_move}, "
             f"next_move_time_ms={self.next_move_time_ms}, wall_time_ms={self.wall_time_ms}, "
             f"engine_wall_time_ms={self.engine_wall_time_ms}, next_move_comment={self.next_move_comment}, "
-            f"eval={self.eval})"
+            f"eval={self.eval}, move_source={self.move_source}, book_hit={self.book_hit})"
         )
 
 

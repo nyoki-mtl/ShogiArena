@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from aiohttp import web
-from rshogi.core import Board
+from rsshogi.core import Board
 
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.ki2_notation import normalize_ki2_move_text

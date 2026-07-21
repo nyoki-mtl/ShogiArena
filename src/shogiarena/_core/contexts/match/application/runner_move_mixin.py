@@ -6,8 +6,8 @@ import logging
 import time
 from typing import Any
 
-from rshogi.core import Move
-from rshogi.types import Color, RepetitionState
+from rsshogi.core import Move
+from rsshogi.types import Color, RepetitionState
 
 from shogiarena._core.shared.kernel.game_results import GameResult, timeout_win_result
 
@@ -117,6 +117,7 @@ class GameRunnerMoveMixin:
                 think_result=think_result,
                 elapsed_ms=request.elapsed_ms,
                 engine_wall_time_ms=request.engine_wall_time_ms,
+                move_source=request.move_source,
                 game_id=request.game_id,
                 ply_count=request.ply_count,
                 is_side_that_moved_black=is_side_that_moved_black,
@@ -155,12 +156,13 @@ class GameRunnerMoveMixin:
         wall_sample: int | None = int(elapsed_ms)
         state.wall_times_ms.append(wall_sample)
         state.engine_wall_times_ms.append(request.engine_wall_time_ms)
+        state.move_sources.append(request.move_source)
         state.latency_deltas_ms.append(None)
 
         # Apply move
         board.apply_move(move)
         ply_count += 1
-        # Repetition detection using rshogi native API.
+        # Repetition detection using rsshogi native API.
         # is_repetition(threshold) fires when repetition_counter >= threshold,
         # where threshold = repetition_occurrences_to_draw - 1 maps occurrences to the
         # internal counter (e.g. 2 occurrences → threshold 1, 4 occurrences → threshold 3).
@@ -216,6 +218,16 @@ class GameRunnerMoveMixin:
             winner_color = Color.WHITE if is_side_that_moved_black else Color.BLACK
             return ApplyMoveCommonResult(
                 result=timeout_win_result(winner_color),
+                ply_count=ply_count,
+                eval_value=eval_value,
+                search_stats=search_stats,
+                wall_time_ms=wall_sample,
+                engine_wall_time_ms=request.engine_wall_time_ms,
+            )
+
+        if repetition_result is not None:
+            return ApplyMoveCommonResult(
+                result=repetition_result,
                 ply_count=ply_count,
                 eval_value=eval_value,
                 search_stats=search_stats,

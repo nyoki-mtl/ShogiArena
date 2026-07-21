@@ -32,7 +32,7 @@ class _BookEntryLike(Protocol):
 
 @runtime_checkable
 class BookLookup(Protocol):
-    """``lookup_sfen`` を持つ book（rshogi ``YaneuraOuBook`` / ``MemoryBook`` 等）。"""
+    """``lookup_sfen`` を持つ book（rsshogi ``YaneuraOuBook`` / ``MemoryBook`` 等）。"""
 
     def lookup_sfen(self, sfen: str) -> _BookEntryLike | None: ...
 
@@ -67,6 +67,13 @@ def _move_usi_set(entry: _BookEntryLike) -> set[str]:
     return result
 
 
+def is_book_candidate(book: BookLookup, sfen: str, move_usi: str) -> bool:
+    """Return whether ``move_usi`` is one of the book candidates for ``sfen``."""
+
+    entry = book.lookup_sfen(sfen)
+    return entry is not None and move_usi in _move_usi_set(entry)
+
+
 def compute_out_of_book(
     moves_usi: Sequence[str],
     book: BookLookup,
@@ -89,7 +96,7 @@ def compute_out_of_book(
         :class:`OutOfBookResult`。
     """
 
-    from rshogi.core import Board
+    from rsshogi.core import Board
 
     board = Board(start_sfen) if start_sfen is not None else Board()
     in_book_plies = 0
@@ -130,4 +137,5 @@ __all__ = [
     "BookLookup",
     "OutOfBookResult",
     "compute_out_of_book",
+    "is_book_candidate",
 ]

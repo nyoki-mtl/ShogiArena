@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import rshogi.book as rs_book
-from rshogi.core import Board
+import rsshogi.book as rs_book
+from rsshogi.core import Board
 
 from shogiarena._core.shared.kernel.out_of_book import compute_out_of_book
 
@@ -22,7 +22,7 @@ def _sfen_after(moves: list[str]) -> str:
 def _build_book(tmp_path: Path, entries: list[tuple[str, str]]) -> rs_book.YaneuraOuBook:
     """(sfen, move) エントリから sorted な YaneuraOu DB を生成して開く。
 
-    rshogi の正規化順に依存しないよう、診断が ``sorted`` になる行順を探す。
+    rsshogi の正規化順に依存しないよう、診断が ``sorted`` になる行順を探す。
     """
 
     def write(order: list[tuple[str, str]]) -> Path:

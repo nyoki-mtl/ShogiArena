@@ -25,7 +25,10 @@ from .config_engine import EngineConfig
 
 
 class _ParticipantPort(Protocol):
-    name: str
+    # 読み取り専用（実装側は @property / frozen dataclass）。可変属性宣言だと
+    # 書き込み可能性を要求してしまい protocol 適合しない。
+    @property
+    def name(self) -> str: ...
 
 
 def collect_participation_records_local(

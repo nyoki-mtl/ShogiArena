@@ -1,6 +1,6 @@
 import pytest
-from rshogi.core import Board, normalize_usi_position, parse_usi_position
-from rshogi.initial_positions import InitialPosition
+from rsshogi.core import Board, normalize_usi_position, parse_usi_position
+from rsshogi.initial_positions import InitialPosition
 
 STARTING_SFEN = InitialPosition.STANDARD.value
 

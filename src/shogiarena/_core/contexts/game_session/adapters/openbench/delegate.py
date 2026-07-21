@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
 from typing import Protocol
@@ -97,22 +97,32 @@ class OpenBenchDelegate:
         self._start_heartbeat(client=client, interval_sec=cfg.heartbeat_interval_sec, stop_controller=stop_controller)
 
     async def sync_after_game(
-        self, *, db_service: DatabaseServicePort | None, stop_controller: _StopController
+        self,
+        *,
+        db_service: DatabaseServicePort | None,
+        stop_controller: _StopController,
+        persist_state: Callable[[], None],
     ) -> None:
         """Sync results to OpenBench after a game completion."""
         self.raise_pending_error()
         if self._client is None or db_service is None:
             return
-        should_stop = await self._client.try_sync(db_service)
+        should_stop = await self._client.try_sync(db_service, persist_state=persist_state)
         if should_stop:
             stop_controller.request_stop(reason="openbench-stop")
 
-    async def flush(self, *, db_service: DatabaseServicePort | None, stop_controller: _StopController) -> None:
+    async def flush(
+        self,
+        *,
+        db_service: DatabaseServicePort | None,
+        stop_controller: _StopController,
+        persist_state: Callable[[], None],
+    ) -> None:
         """Flush all pending results to OpenBench."""
         self.raise_pending_error()
         if self._client is None or db_service is None:
             return
-        should_stop = await self._client.try_flush(db_service)
+        should_stop = await self._client.try_flush(db_service, persist_state=persist_state)
         if should_stop:
             stop_controller.request_stop(reason="openbench-stop")
 

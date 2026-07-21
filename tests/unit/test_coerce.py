@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from rshogi.record import GameResult
+from rsshogi.record import GameResult
 
 from shogiarena._core.shared.kernel.scalar_coercion.api import (
     coerce_bool,
@@ -11,6 +11,7 @@ from shogiarena._core.shared.kernel.scalar_coercion.api import (
     coerce_game_result,
     coerce_int,
     coerce_int_strict,
+    coerce_optional_bool,
     coerce_str,
     coerce_str_list,
     coerce_timestamp_ms,
@@ -201,6 +202,19 @@ class TestCoerceBool:
         assert coerce_bool([]) is False
         assert coerce_bool({}) is False
         assert coerce_bool(object()) is False
+
+
+class TestCoerceOptionalBool:
+    def test_known_values(self) -> None:
+        assert coerce_optional_bool(True) is True
+        assert coerce_optional_bool(False) is False
+        assert coerce_optional_bool("yes") is True
+        assert coerce_optional_bool("off") is False
+
+    def test_unknown_values_stay_none(self) -> None:
+        assert coerce_optional_bool(None) is None
+        assert coerce_optional_bool("maybe") is None
+        assert coerce_optional_bool(object()) is None
 
 
 # ── coerce_str ──────────────────────────────────────────────────

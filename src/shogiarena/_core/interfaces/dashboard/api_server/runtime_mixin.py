@@ -12,6 +12,7 @@ from aiohttp import web
 
 from shogiarena._core.contexts.dashboard.application.state_container import DashboardState
 from shogiarena._core.interfaces.dashboard.instances.api import InstancesAPI
+from shogiarena._core.interfaces.dashboard.security import DASHBOARD_READ_ONLY_KEY
 from shogiarena._core.interfaces.dashboard.ws_server import LiveWebSocketHub
 from shogiarena._core.shared.kernel.json_types import JsonValue
 
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 class ArenaApiServerRuntimeMixin:
     app: web.Application
+    host: str
     port: int
     runner: web.AppRunner | None
     site: web.TCPSite | None
@@ -63,6 +65,8 @@ class ArenaApiServerRuntimeMixin:
             raise
 
     async def _on_startup(self, _app: web.Application) -> None:
+        if _app.get(DASHBOARD_READ_ONLY_KEY, False):
+            return
         if self._instances_health_interval <= 0:
             return
         if self._instances_health_task is not None:
@@ -117,9 +121,9 @@ class ArenaApiServerRuntimeMixin:
     async def start(self) -> None:
         self.runner = web.AppRunner(self.app, shutdown_timeout=1.0)
         await self.runner.setup()
-        self.site = web.TCPSite(self.runner, "0.0.0.0", self.port)
+        self.site = web.TCPSite(self.runner, self.host, self.port)
         await self.site.start()
-        logger.debug("Arena API server started on http://0.0.0.0:%s", self.port)
+        logger.debug("Arena API server started on http://%s:%s", self.host, self.port)
         logger.debug("Dashboard available at http://localhost:%s/", self.port)
 
     async def stop(self) -> None:

@@ -98,7 +98,7 @@ def merge_index_updates(
         enriched_copy.pop("start_time", None)
         enriched_copy.pop("end_time", None)
         if "has_ltc_regression" not in enriched_copy:
-            enriched_copy["has_ltc_regression"] = coerce_bool(enriched_copy.get("ltc_regression"))
+            enriched_copy["has_ltc_regression"] = enriched_copy.get("ltc_regression") is not None
         entries.append(enriched_copy)
 
     return entries

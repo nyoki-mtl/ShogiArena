@@ -14,24 +14,34 @@ engines:
     artifact: "yaneuraou/3570416"
     build_options:
       target_cpu: ZEN3
+    options:
+      BookFile: no_book
   - name: "engine-2"
     artifact: "yaneuraou/9f89431a"
     build_options:
       target_cpu: ZEN3
+    options:
+      BookFile: no_book
 
 rules:
   time_control:
     node_limit: 100000
   initial_positions:
-    type: startpos
-    flip_policy: alternate
+    type: file
+    source: "../../resources/openings/pair_lines.usi"
+    source_format: usi_line
+    flip_policy: pair_both
+    sync_scope: pair
+    preserve_line_metadata: true
 
 sprt:
+  tested_engine: engine-1
+  model: gsprt-pentanomial-v1
   elo0: 0.0
   elo1: 5.0
   alpha: 0.05
   beta: 0.05
-  min_games: 0
+  min_games: 60
   max_games: 400
   num_parallel: 1
 

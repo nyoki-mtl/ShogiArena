@@ -50,6 +50,7 @@ class _ClientStateSnapshotModel(BaseModel):
     claimed_test_id: int | None = Field(default=None, gt=0)
     result_id: int | None = Field(default=None, gt=0)
     blacklist: list[int] = Field(default_factory=list)
+    inflight_submission: _CountersStateModel | None = None
 
     @field_validator("target_test_id", "claimed_test_id", "result_id", mode="before")
     @classmethod
@@ -75,7 +76,10 @@ def parse_openbench_client_state_boundary(payload: Mapping[str, object], *, path
         model=_ClientStateSnapshotModel,
         path=path,
     )
-    return parsed.model_dump(mode="python")
+    result = parsed.model_dump(mode="python")
+    if result.get("inflight_submission") is None:
+        result.pop("inflight_submission", None)
+    return result
 
 
 __all__ = [

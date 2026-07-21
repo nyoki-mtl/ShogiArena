@@ -29,6 +29,7 @@ from shogiarena._core.contexts.tournament.ports.session_state_runtime import (
     TournamentEnginePort,
     TournamentInitialPositionsPort,
 )
+from shogiarena._core.shared.kernel.initial_position_entry import InitialPositionEntry
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int, coerce_str
 from shogiarena._core.shared.kernel.service_ports import (
@@ -123,25 +124,44 @@ def build_tournament_completion_runtime_context(
     )
 
 
-class _StateStoreEngineSpec(EngineSpecPort):
+class _StateStoreEngineSpec:
     name: str | None
-    instance_id: object | None
+    instance_id: str | None
 
     def __init__(self, name: str | None) -> None:
         self.name = name
         self.instance_id = None
 
 
-class _StateStoreInitialPositionSource(InitialPositionSource):
+class _StateStoreInitialPositionSource:
     flip_policy: str
     generate_fn: Callable[[int, str], list[str]]
+    generate_entries_fn: Callable[[int, str], list[object]] | None
 
-    def __init__(self, *, flip_policy: str, generate_fn: Callable[[int, str], list[str]]) -> None:
+    def __init__(
+        self,
+        *,
+        flip_policy: str,
+        generate_fn: Callable[[int, str], list[str]],
+        generate_entries_fn: Callable[[int, str], list[object]] | None = None,
+    ) -> None:
         self.flip_policy = flip_policy
         self.generate_fn = generate_fn
+        self.generate_entries_fn = generate_entries_fn
 
     def generate(self, count: int, seed: str) -> list[str]:
         return self.generate_fn(count, seed)
+
+    def generate_entries(self, count: int, seed: str) -> list[InitialPositionEntry]:
+        if self.generate_entries_fn is None:
+            return [InitialPositionEntry(initial_sfen=sfen) for sfen in self.generate_fn(count, seed)]
+        entries: list[InitialPositionEntry] = []
+        for item in self.generate_entries_fn(count, seed):
+            if isinstance(item, InitialPositionEntry):
+                entries.append(item)
+            else:
+                entries.append(InitialPositionEntry(initial_sfen=str(item)))
+        return entries
 
 
 def generate_schedule_for_state_store(
@@ -153,9 +173,11 @@ def generate_schedule_for_state_store(
 ) -> list[GameSpec]:
     """Generate schedule using state-store compatible adapters."""
     scheduler_engines: list[EngineSpecPort] = [_StateStoreEngineSpec(name=engine.name) for engine in engines]
+    generate_entries = getattr(initial_positions, "generate_entries", None)
     scheduler_initial_positions: InitialPositionSource = _StateStoreInitialPositionSource(
         flip_policy=initial_positions.flip_policy,
         generate_fn=initial_positions.generate,
+        generate_entries_fn=generate_entries if callable(generate_entries) else None,
     )
     generate_schedule = getattr(scheduler, "generate_schedule", None)
     if not callable(generate_schedule):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 
-from rshogi.core import Move
+from rsshogi.core import Move
 
 from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort
 from shogiarena._core.contexts.match.ports.usi_think_ports import (

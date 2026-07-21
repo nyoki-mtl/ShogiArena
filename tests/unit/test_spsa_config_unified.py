@@ -1,3 +1,4 @@
+import json
 import textwrap
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -5,6 +6,10 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import ValidationError
 
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_spsa_models import (
+    SpsaVariantApplyConfig,
+    SpsaVariantsConfig,
+)
 from shogiarena._core.contexts.game_session.adapters.run_storage import FilesystemRunStorage
 from shogiarena._core.contexts.game_session.ports.session_context import SessionContext
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
@@ -67,7 +72,7 @@ def test_spsa_engine_initializes_with_global_time_control(tmp_path: Path) -> Non
         f"""
         experiment_name: exp
         engines:
-          - engine_path: "{eng_yaml}"
+          - engine_path: {json.dumps(str(eng_yaml))}
             name: test
         rules:
           initial_positions:
@@ -108,7 +113,7 @@ def test_spsa_engine_accepts_go_options(tmp_path: Path) -> None:
         f"""
         experiment_name: exp
         engines:
-          - engine_path: "{eng_yaml}"
+          - engine_path: {json.dumps(str(eng_yaml))}
             name: test
             go_options:
               nodes: 1000
@@ -147,7 +152,7 @@ def test_spsa_engine_rejects_timing_go_options(tmp_path: Path) -> None:
         f"""
         experiment_name: exp
         engines:
-          - engine_path: "{eng_yaml}"
+          - engine_path: {json.dumps(str(eng_yaml))}
             name: test
             go_options:
               movetime: 1000
@@ -189,7 +194,7 @@ def test_spsa_engine_with_time_control_initializes(tmp_path: Path) -> None:
         f"""
         experiment_name: exp
         engines:
-          - engine_path: "{eng_yaml}"
+          - engine_path: {json.dumps(str(eng_yaml))}
             name: test
         rules:
           initial_positions:
@@ -229,7 +234,7 @@ def test_spsa_ltc_regression_config(tmp_path: Path) -> None:
         f"""
         experiment_name: exp
         engines:
-          - engine_path: "{eng_yaml}"
+          - engine_path: {json.dumps(str(eng_yaml))}
             name: test
         rules:
           initial_positions:
@@ -287,7 +292,7 @@ def test_ltc_regression_rejects_removed_fail_action(tmp_path):
         f"""
         experiment_name: exp
         engines:
-          - engine_path: "{engine_yaml}"
+          - engine_path: {json.dumps(str(engine_yaml))}
             name: test
         rules:
           initial_positions:
@@ -306,3 +311,18 @@ def test_ltc_regression_rejects_removed_fail_action(tmp_path):
 
     with pytest.raises(ValidationError, match="fail_action"):
         load_spsa_run_config(cfg_yaml)
+
+
+def test_alias_fields_accept_field_name_population() -> None:
+    """alias 付きフィールドをフィールド名で構築しても値が捨てられないこと。
+
+    populate_by_name がないと Pydantic v2 は alias のみを受け付け、
+    フィールド名指定を黙って無視する（`crn: false` が効かなくなる回帰の防止）。
+    """
+    variants = SpsaVariantsConfig(is_crn_enabled=False)
+    assert variants.is_crn_enabled is False
+    assert SpsaVariantsConfig(crn=False).is_crn_enabled is False
+
+    apply_config = SpsaVariantApplyConfig(is_clear_hash_enabled=False)
+    assert apply_config.is_clear_hash_enabled is False
+    assert SpsaVariantApplyConfig(clear_hash=False).is_clear_hash_enabled is False

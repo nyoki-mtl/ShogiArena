@@ -7,8 +7,8 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Protocol, runtime_checkable
 
-from rshogi.core import Move
-from rshogi.types import Color
+from rsshogi.core import Move
+from rsshogi.types import Color
 
 from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort, InfoHandler, JsonObject
 from shogiarena._core.contexts.match.ports.usi_think_ports import PonderHitTimings, UsiThinkRequest, UsiThinkResultPort

@@ -360,7 +360,7 @@ class SpsaUpdateDetailBuilder:
             "ltc_games_count": len(ltc_games_brief),
             "phase_wdl": phase_wdl,
             "ltc_regression": ltc_regression,
-            "has_ltc_regression": coerce_bool(ltc_regression),
+            "has_ltc_regression": ltc_regression is not None,
         }
         payload_data = {
             "update_idx": response_data["update_idx"],

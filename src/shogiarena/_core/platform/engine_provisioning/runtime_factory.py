@@ -10,14 +10,17 @@ import platform as _platform
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Protocol, TypeAlias
+from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from shogiarena._core.platform.engine_provisioning.provisioning_ports import EngineRuntimeInstancePort
 from shogiarena._core.platform.engine_provisioning.spawner_backed_usi_bridge import SpawnerBackedUSIBridge
 from shogiarena._core.platform.host_probe.cpu_detection import detect_target_cpu
 from shogiarena._core.platform.settings import project_dirs
-from shogiarena._core.shared.kernel.engine_book import resolve_engine_book_path
-from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.engine_book import (
+    resolve_engine_book_path,
+    resolve_yaneuraou_book_fallback_path,
+)
+from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.paths import PATH_OPTION_KEYS, resolve_path_like
 from shogiarena._core.shared.kernel.serialization import json_serialize
 from shogiarena._core.shared.kernel.service_ports import ArtifactResolutionPort
@@ -88,11 +91,11 @@ class _EngineRuntimeSupportPort(Protocol):
 
 class _BinaryResolutionConfigPort(Protocol):
     artifact: str | None
-    build_options: Mapping[str, object]
+    build_options: Mapping[str, JsonValue]
 
 
 _EngineConfigFactory = Callable[[Path], Any]
-_EngineMappingFactory = Callable[[Mapping[str, object]], Any]
+_EngineMappingFactory = Callable[[Mapping[str, JsonValue]], Any]
 _EngineSessionFactory = Callable[..., Any]
 
 
@@ -176,7 +179,9 @@ class EngineRuntimeFactory:
         *,
         artifact_resolver: ArtifactResolutionPort | None = None,
     ) -> Any:
-        config = self._mapping_config_factory(config_mapping)
+        # 呼び出し側（adapters 層）が json_serialize 済みのペイロードを渡す契約のため、
+        # ここでは実行時変換を行わず JSON 値として扱う。
+        config = self._mapping_config_factory(cast("Mapping[str, JsonValue]", config_mapping))
         config = self._apply_overrides(
             config,
             extra_options=extra_options,
@@ -321,7 +326,7 @@ class EngineRuntimeFactory:
         resolved_book = resolve_engine_book_path(options)
         if resolved_book is None:
             return
-        book_path = Path(resolved_book)
+        book_path = resolve_yaneuraou_book_fallback_path(Path(resolved_book))
         if not book_path.is_absolute() or not book_path.is_file():
             return
 

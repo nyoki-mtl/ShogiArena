@@ -1,6 +1,0 @@
-This patch release separates engine throughput timing from the existing clock-charged move wall time.
-
-- Added `engine_wall_time_ms` to tournament DB move rows, live move payloads, and game detail payloads. Array-oriented payloads expose the same data as `engine_wall_times_ms`.
-- Kept existing `wall_time_ms` semantics unchanged as the clock-charged wall time, so timeout/game-clock behavior and older downstream consumers remain compatible.
-- Added a safe nullable-column migration for existing `game_move` tables that only need the new `engine_wall_time_ms` column.
-- Result summaries now explicitly identify `engine_wall_time_ms` as the default wall-time field for wall NPS / engine throughput comparisons, while `wall_time_ms` remains the clock-charged wall field.

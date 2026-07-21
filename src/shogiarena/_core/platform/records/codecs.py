@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-import rshogi
+import rsshogi
 
 from shogiarena._core.platform.records.codec_registry import (
     PositionStreamExporter,
@@ -21,19 +21,19 @@ from shogiarena._core.platform.records.codec_registry import (
 # ── CSA ──────────────────────────────────────────────────────────────────
 
 
-def _serialize_csa(record: rshogi.record.GameRecord) -> str:
+def _serialize_csa(record: rsshogi.record.Record) -> str:
     return record.to_csa()
 
 
-def _deserialize_csa(payload: bytes | str) -> rshogi.record.GameRecord:
+def _deserialize_csa(payload: bytes | str) -> rsshogi.record.Record:
     if isinstance(payload, str):
-        return rshogi.record.GameRecord.from_csa_str(payload)
+        return rsshogi.record.Record.from_csa_str(payload)
     encoding = "cp932" if b"SHIFT_JIS" in payload or b"SHIFT-JIS" in payload else "shift_jis"
     try:
         text = payload.decode(encoding)
     except UnicodeDecodeError:
         text = payload.decode("cp932")
-    return rshogi.record.GameRecord.from_csa_str(text)
+    return rsshogi.record.Record.from_csa_str(text)
 
 
 register_serializer(
@@ -53,18 +53,18 @@ register_reader(
 # ── KIF ──────────────────────────────────────────────────────────────────
 
 
-def _serialize_kif(record: rshogi.record.GameRecord) -> str:
+def _serialize_kif(record: rsshogi.record.Record) -> str:
     return record.to_kif()
 
 
-def _deserialize_kif(payload: bytes | str) -> rshogi.record.GameRecord:
+def _deserialize_kif(payload: bytes | str) -> rsshogi.record.Record:
     if isinstance(payload, str):
-        return rshogi.record.GameRecord.from_kif_str(payload)
+        return rsshogi.record.Record.from_kif_str(payload)
     try:
         text = payload.decode("utf-8")
     except UnicodeDecodeError:
         text = payload.decode("cp932")
-    return rshogi.record.GameRecord.from_kif_str(text)
+    return rsshogi.record.Record.from_kif_str(text)
 
 
 register_serializer(
@@ -84,28 +84,32 @@ register_reader(
 # ── PSV (stream export only) ────────────────────────────────────────────
 
 
-def _require_move_evals(record: rshogi.record.GameRecord, *, format_label: str) -> None:
+def _is_missing_move_eval(move: object) -> bool:
+    """指し手ペイロードに engine_info.eval が無いかどうかを判定する。"""
+    if not isinstance(move, dict):
+        return True
+    engine_info = move.get("engine_info")
+    if not isinstance(engine_info, dict):
+        return True
+    return engine_info.get("eval") is None
+
+
+def _require_move_evals(record: rsshogi.record.Record, *, format_label: str) -> None:
     """Validate that every move carries an evaluation (required by psv/sbinpack)."""
     payload = record.to_dict()
     raw_moves = payload.get("moves")
     if not isinstance(raw_moves, list):
         raise ValueError(f"{format_label} serialization requires moves payload")
     missing_eval_index = next(
-        (
-            idx
-            for idx, move in enumerate(raw_moves)
-            if not isinstance(move, dict)
-            or not isinstance(move.get("engine_info"), dict)
-            or move.get("engine_info", {}).get("eval") is None
-        ),
+        (idx for idx, move in enumerate(raw_moves) if _is_missing_move_eval(move)),
         None,
     )
     if missing_eval_index is not None:
         raise ValueError(f"{format_label} serialization requires eval on move index {missing_eval_index}")
 
 
-def iter_psv_entries(record: rshogi.record.GameRecord) -> Iterator[bytes]:
-    """Return PSV entry iterator generated from GameRecord."""
+def iter_psv_entries(record: rsshogi.record.Record) -> Iterator[bytes]:
+    """Return PSV entry iterator generated from Record."""
     _require_move_evals(record, format_label="psv")
     try:
         return iter(record.to_psv())
@@ -124,7 +128,7 @@ register_stream_exporter(
 # ── sbinpack ─────────────────────────────────────────────────────────────
 
 
-def _serialize_sbinpack(record: rshogi.record.GameRecord) -> bytes:
+def _serialize_sbinpack(record: rsshogi.record.Record) -> bytes:
     _require_move_evals(record, format_label="sbinpack")
     try:
         return bytes(record.to_sbinpack(stem_score=0, include_main=True, include_variations=False))
@@ -132,12 +136,12 @@ def _serialize_sbinpack(record: rshogi.record.GameRecord) -> bytes:
         raise ValueError(f"sbinpack serialization failed: {exc}") from exc
 
 
-def _deserialize_sbinpack(payload: bytes | str) -> rshogi.record.GameRecord:
+def _deserialize_sbinpack(payload: bytes | str) -> rsshogi.record.Record:
     if isinstance(payload, str):
         raise TypeError("sbinpack deserialize expects bytes payload")
 
     try:
-        return rshogi.record.GameRecord.from_sbinpack(payload)
+        return rsshogi.record.Record.from_sbinpack(payload)
     except ValueError as exc:
         raise ValueError(f"sbinpack deserialization failed: {exc}") from exc
 

@@ -9,7 +9,7 @@ is passed separately as ``TournamentRunnerState``.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -54,7 +54,7 @@ class _ScheduleConfig(Protocol):
     def tournament(self) -> _ScheduleConfigTournament: ...
 
     @property
-    def engines(self) -> list[EngineSpecPort]: ...
+    def engines(self) -> Sequence[EngineSpecPort]: ...
 
     @property
     def rules(self) -> _ScheduleConfigRules: ...

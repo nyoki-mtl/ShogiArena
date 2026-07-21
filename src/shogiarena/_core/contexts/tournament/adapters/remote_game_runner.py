@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import rshogi
+import rsshogi
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_engine import EngineConfig
 from shogiarena._core.contexts.game_session.adapters.orchestration.contracts_base_orchestrator import BaseOrchestrator
@@ -32,6 +32,8 @@ from shogiarena._core.contexts.instances.ports.orchestrator_primitives import (
     max_plies_from_rules,
 )
 from shogiarena._core.contexts.tournament.domain.tournament_models import GameSpec
+from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_serialized
+from shogiarena._core.shared.kernel.schedule_metadata import attach_schedule_metadata
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
 
 logger = logging.getLogger(__name__)
@@ -49,7 +51,7 @@ async def run_remote_tournament_game(
     engine_configs: dict[str, EngineConfig],
     extra_options: Any,
     rules: Any,
-) -> rshogi.record.GameRecord:
+) -> rsshogi.record.Record:
     """Run one scheduled game with both engines on the same SSH instance."""
     instance_id = remote_instance.name
 
@@ -138,6 +140,13 @@ async def run_remote_tournament_game(
     _attach_participation_metadata_service(
         game_record=game_info,
         participation_records=participation_records,
+    )
+    attach_schedule_metadata(
+        game_record=game_info,
+        schedule_metadata=coerce_json_object_serialized(
+            game_spec.to_schedule_metadata(),
+            field_name="arena_schedule",
+        ),
     )
 
     logger.debug(

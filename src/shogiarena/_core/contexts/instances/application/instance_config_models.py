@@ -1,11 +1,11 @@
 """Configuration models for instances."""
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 
-class InstanceType(str, Enum):
+class InstanceType(StrEnum):
     """Types of instances supported."""
 
     LOCAL = "local"

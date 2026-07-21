@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.statistics.pentanomial import compute_pentanomial
 from shogiarena._core.shared.kernel.statistics.pentanomial_pairing import (
     compute_pentanomial_bins,
     is_decisive_result,
@@ -166,3 +167,28 @@ def test_compute_bins_does_not_pair_across_opponents() -> None:
     ]
     assert compute_pentanomial_bins(games, tested_engine="tested", base_engine="baseA") == [0, 0, 0, 0, 0]
     assert compute_pentanomial_bins(games, tested_engine="tested", base_engine="baseB") == [0, 0, 0, 0, 0]
+
+
+def test_compute_pentanomial_excludes_non_decided_pairs() -> None:
+    games = [
+        _game("a", "b", GameResult.ERROR, "g0001-x"),
+        _game("b", "a", GameResult.PAUSED, "g0002-x"),
+    ]
+
+    assert compute_pentanomial(games) == {
+        "pairs": 0,
+        "bins": {"2.0": 0, "1.5": 0, "1.0": 0, "0.5": 0, "0.0": 0},
+    }
+
+
+def test_compute_pentanomial_pairs_by_round_token_and_opening() -> None:
+    games = [
+        _game("a", "b", GameResult.BLACK_WIN, "g0001-x", sfen="sfenA"),
+        _game("b", "a", GameResult.WHITE_WIN, "g0002-x", sfen="sfenA"),
+        _game("a", "b", GameResult.BLACK_WIN, "g0001-y", sfen="sfenB"),
+    ]
+
+    assert compute_pentanomial(games) == {
+        "pairs": 1,
+        "bins": {"2.0": 1, "1.5": 0, "1.0": 0, "0.5": 0, "0.0": 0},
+    }

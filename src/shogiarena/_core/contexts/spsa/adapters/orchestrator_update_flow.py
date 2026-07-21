@@ -6,7 +6,7 @@ import logging
 import time
 from typing import Any
 
-import rshogi.record
+import rsshogi.record
 
 from shogiarena._core.contexts.game_session.application.orchestration.ltc_post_update_service import (
     SpsaLtcPostUpdateRequest,
@@ -136,7 +136,7 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
 
     async def _run_game_pair_for_batch(
         request: SpsaRunGamePairRequest[ParamEntry],
-    ) -> tuple[float, rshogi.record.GameRecord, rshogi.record.GameRecord]:
+    ) -> tuple[float, rsshogi.record.Record, rsshogi.record.Record]:
         return await orchestrator._run_game_pair(
             request.start_sfen,
             list(request.tuned_params),

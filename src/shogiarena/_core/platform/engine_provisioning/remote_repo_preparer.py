@@ -18,9 +18,16 @@ from shogiarena._core.platform.engine_provisioning.remote_execution_config impor
 
 
 class _RemoteExecutionConfigPort(Protocol):
-    github_token: str | None
-    override_ref: str | None
-    sync_mode: RemoteSyncMode
+    # 読み取り専用（実装側は @property / frozen dataclass）。可変属性宣言だと
+    # 書き込み可能性を要求してしまい protocol 適合しない。
+    @property
+    def github_token(self) -> str | None: ...
+
+    @property
+    def override_ref(self) -> str | None: ...
+
+    @property
+    def sync_mode(self) -> RemoteSyncMode: ...
 
 
 CopyDirectorySshFn = Callable[..., Awaitable[None]]

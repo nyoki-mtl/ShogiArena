@@ -1,6 +1,7 @@
 # クイックスタート
 
-このページでは、ローカルにある USI エンジン 2 つで最小構成のトーナメントを動かします。
+ローカルにある USI エンジン 2 つで、最小構成のトーナメントを動かします。
+インストールがまだなら[インストール](installation.md)を先に済ませてください。
 
 ## 1. エンジン設定を作る
 
@@ -24,7 +25,8 @@ options:
   USI_Hash: 256
 ```
 
-`engine_path` には USI エンジンの実行ファイルを指定します。`options` は USI の `setoption` として送られます。
+`engine_path` には USI エンジンの実行ファイルを指定します。
+`options` は USI の `setoption` として送られます。
 
 ## 2. トーナメント設定を作る
 
@@ -52,7 +54,8 @@ dashboard:
   api_port: 8080
 ```
 
-現在のスケジューラは `round_robin` と `gauntlet` です。最初は `round_robin` が扱いやすいです。
+利用できるスケジューラは `round_robin` と `gauntlet` です。
+全エンジンを総当たりさせる `round_robin` が、最初の一回には扱いやすいです。
 
 ## 3. 検証して実行する
 
@@ -65,7 +68,7 @@ shogiarena run tournament tournament.yaml
 
 ## 4. 結果を見る
 
-`--run-dir` を指定しない場合、結果は標準出力先の run ディレクトリに保存されます。
+`--run-dir` を指定しない場合、結果は[初期設定](installation.md)で決めた出力先の下の run ディレクトリに保存されます。
 
 ```text
 {output_dir}/tournament/runs/<experiment>-<hash8>/YYYYMMDDHHMMSS/
@@ -100,11 +103,12 @@ cp examples/configs/run/sprt/example.yaml sprt.yaml
 cp examples/configs/run/spsa/example.yaml spsa.yaml
 ```
 
-サンプルには artifact 参照やプレースホルダーが含まれる場合があります。実行前に自分の環境に合わせて `engines`、`instances`、評価関数や定跡のパスを調整してから `--dry-run` で確認してください。
+サンプルには artifact 参照やプレースホルダーが含まれる場合があります。
+`engines`、`instances`、評価関数や定跡のパスを自分の環境に合わせてから、`--dry-run` で確認してください。
 
 ## 次のステップ
 
-- [最初のトーナメント](first-tournament.md)
-- [トーナメント](../user-guide/tournaments.md)
-- [エンジン設定](../user-guide/engine-configuration.md)
-- [ダッシュボード](../user-guide/dashboard.md)
+- [最初のトーナメント](first-tournament.md)：同じエンジンの設定違いを比較する
+- [トーナメント](../user-guide/tournaments.md)：スケジューラと並列数の詳細
+- [エンジン設定](../user-guide/engine-configuration.md)：エンジン YAML の全項目
+- [ダッシュボード](../user-guide/dashboard.md)：画面ごとの見方

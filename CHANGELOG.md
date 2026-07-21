@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-21
+
+### Added
+- **Release artifact contract**: wheel / sdistへdashboard bundle、`py.typed`、第三者noticeを同梱し、installed-wheel runtime / consumer typing smokeと公開example全件dry-runをCIへ追加した。
+- **Persistence versioning**: SQLite `PRAGMA user_version`と物理schema検査を追加し、完全互換の未version DBだけをstampするようにした。
+- **Security policy**: `SECURITY.md`とGitHub private vulnerability reportへの導線を追加した。
+- **Book move-source metadata**: 対局 DB に `game_move.move_source` / `game_move.book_hit` と record metadata attributes を保存し、`move_source` / `book_hit` / `_arena_schedule` を record roundtrip で保持するようにした。
+- **Dashboard Book Pairs report**: `GET /api/book/pairs` と Book タブの `Pairs` subview を追加し、先後入れ替えペアごとの book prefix、first diff、match rate、measurement status を確認できるようにした。
+- **Pair-synchronized opening line configuration**: `rules.initial_positions.source_format` (`auto` / `sfen` / `usi_line`)、`sync_scope`、`preserve_line_metadata` を追加し、USI line file から到達 SFEN を生成して `pair_both` のペアへ同じ opening entry を渡せるようにした。
+
+### Changed
+- **v1 public API contract（破壊的変更）**: stable面をCLI、公開設定schema、通常利用向けengine/tournament APIに限定した。`run_tournament()`は`TournamentRunResult | None`を返す。高度なcomposition / runner / storage面はprovisionalとして明示した。
+- **公開dataclassのkeyword-only化（破壊的変更）**: public facadeが公開する全dataclassをkeyword-onlyにした。対象は`UsiEngineConfig`、`GameSpec`、`UsiThinkRequest`、`UsiOption`、`UsiIoEvent`、`EngineLifecycleEvent`、`EngineProcessInfo`、`UsiAnalyzeItem`、`UsiAnalyzePosition`、`UsiAnalyzeResetPolicy`、`UsiMateResult`、`PonderHitTimings`、`TournamentResults`、`SprtResult`。field追加を破壊的変更にしないための措置で、位置引数で構築していたコードはキーワード引数へ変更が必要。`FilesystemRunStorage`と`DefaultRoot`はprovisionalかつ単純な構築子のため対象外とした。
+- **stable戻り値のfield型を公開**: `TournamentRunResult`のfield型である`TournamentResults`、`EngineWdlCounts`、`SprtResult`、`SprtDecision`、`JsonValue`を`shogiarena.tournament`から、`JsonValue`を`shogiarena.engine`からimportできるようにした。従来は結果へ型注釈を付けるために`shogiarena._core`を直接importする必要があった。
+- **Public config strictness（破壊的変更）**: tournament設定とengine設定のuser-authored modelは未知keyを拒否する。`options` を `optiosn` と綴り間違えた設定が黙って無視され、指定したはずのUSI optionが無効のまま対局が走る事故を防ぐ。`system`の未知keyを`system.extras`へ保存する拡張契約は維持した。SPSA設定の未知keyは現状warningに留まり、1.xの間にfail closedへ揃える。
+- **rsshogi 1.0.x への移行**: 依存を `rshogi-py-avx2==0.10.3` から `rsshogi>=1.0.1,<2` に更新した（crates.io `rshogi` → `rsshogi`、PyPI `rshogi-py(-avx2)` → `rsshogi(-avx2)` のリネームに追従）。AVX2 専用ビルドではなく portable ビルドを既定依存にしたため、Windows x86_64、Linux x86_64 / arm64、macOS Intel / Apple Silicon に wheel が提供される（Windows on ARM は対象外）。x86_64 で AVX2 版が必要な場合は `rsshogi` を `rsshogi-avx2` に差し替える（import 名が同じなので同時インストール不可）。import パッケージ名も `rshogi` → `rsshogi` に変わり、record API の `GameRecord` → `Record`、`MoveRecord` → `MoveEntry`、`MoveEngineInfo` → `EngineInfo`、`SpecialMoveRecord` → `SpecialMoveEntry`、`GameRecordMetadata` → `RecordMetadata`、`Board.legal_moves_full()` → `legal_moves_move32()` に追従した。
+- **sbinpack 出力が v2 になった**: rsshogi 1.0.0 の `to_sbinpack()` はマジック `SBN2` を出力する（旧 `SBIN`）。v1 を書き出すオプションはないため、学習データを読む側は v2 対応が必要。
+- **開発環境を Windows ネイティブへ移行**: `.devcontainer/` を削除し、`make ci` / `make ci-develop` が Windows 上で通るようにした。`make clean` を `tools/clean_caches.py` に置換して `find` / `rm` 依存を解消し、`MDBOOK` の既定値から POSIX シェル依存を除いた。`.python-version` は CI に合わせて `3.11` に緩和した。
+- **`github_token` を settings ファイルに保存しなくなった**: `settings.yaml` は `github_token_env`（環境変数名。既定 `SHOGIARENA_GITHUB_TOKEN`）だけを持ち、token 本体は環境変数から解決する（`openbench.password_env` と同じ方式）。秘密を持たなくなったため `settings.yaml` の `chmod(0o600)` も廃止した（Windows では chmod が read-only ビットしか反映せず強制もできなかった）。CLI の `--github-token` は `--github-token-env` に置き換わった。
+- **リリース系スクリプトを PowerShell へ移行**: `scripts/export_public_snapshot.sh` / `promote_release_main.sh` を `.ps1` に置き換えた。export には `-DryRun` とコミット前の dev-only パス検査を追加し、`scripts/check_public_export.ps1`（`make check-public-export`）で一時リポジトリ上の dry-run による自己検証を行えるようにした。環境確認用に `make check-env` を追加。
+- **依存ライブラリを更新・整理**: numpy 1.26.4→2.4.6、pytest 8.4.1→9.1.1、ruff 0.12.10→0.15.22、ty 0.0.11→0.0.61、aiohttp 3.12.15→3.14.1、pydantic 2.12.5→2.13.4ほかを更新した。production未使用のmatplotlib / pandas / tqdmをruntime依存から除外し、型stubとpytest-covをdev依存へ分離した。
+- **`CLAUDE.md` を `AGENTS.md` へのポインタに縮小**: 両ファイルが 98% 重複していたため、`CLAUDE.md` は `@AGENTS.md` を読み込む薄い入口にした。`agent-docs/rules/README.md` を新設。
+- **`.vscode/` と `release-notes/` を公開リポジトリから除外**: エディタ個人設定とリリースノート下書きは dev 専用にした。リリースの公開正本は `CHANGELOG.md` と GitHub Release で、`release-notes/*.txt` は export コミットメッセージの入力として dev 側に残る。
+- **リリースワークフローを硬化**: タグ・`pyproject.toml`・`__init__.py` の version 一致を検証する `validate-version` ジョブを追加し、PyPI publish を `PYPI_TOKEN` から Trusted Publishing (OIDC) へ移行、release 系 actions を SHA pin した。workflow の既定権限は `contents: read` に下げた。長期の API トークンは保持しない。
+- **Opening book fallback handling**: YaneuraOu 互換の `.db` 指定に対し、隣接する `.ybb` が存在する場合は preflight / provenance / remote book transfer で実体 book として扱うようにした。
+- **Opening line docs and examples**: tournament / SPRT / SPSA の設定例とユーザーガイドに、pair-synchronized opening line の使い方、`sync_scope` は guard であること、engine-owned book と混ぜないための `BookFile: no_book` 推奨を追記した。
+
+### Fixed
+- **Resume / crash consistency**: tournament / SPRT / SPSAの復元順序とstate検証を修正し、破損・hash不一致・DB統計不一致で既存artifactを上書きしない。OpenBenchの加算POSTは送信前markerを永続化し、曖昧な応答を自動再送しない。state fileの書き込みは rename 前に fsync するため、電源断で内容だけが失われることがない。
+- **OpenBench送信済みrunの破棄を拒否**: `--no-resume` は state.json を消す前に送信実績を検査する。OpenBenchの加算APIは idempotency key を持たないため、送信済みカウンタを消して0から再送するとサーバ側の集計が二重になる。
+- **read-only媒体のrun artifactを閲覧できない問題**: 読み取り経路が version の刻印と WAL への切り替えを前提にしており、書き込めない媒体上のarchived runを開けなかった。検証が通っていれば読み取りを成功させる。破損DBの sqlite 例外も復旧手順付きの `StoreSchemaError` に包む。
+- **archived dashboardのinstancesタブが常にエラーになる問題**: read-only時に instances のルートを丸ごと未登録にしており、GETまで404になっていた。読み取りルートは登録し、mutation は security middleware が 403 で止める。閲覧しただけでローカルインスタンスは生成しない。
+- **USI transcriptのサイレント打ち切り**: 出力上限が打ち切りマーカーより小さいと、打ち切りの事実自体が記録されなかった。
+- **`--github-token` が秘密を settings.yaml へ書き込んでいた**: v1.0.0 で `--github-token` は `--github-token-env` に置き換わったが、argparse の前方一致により `--github-token ghp_xxx` がエラーにならず `github_token_env: ghp_xxx` として保存されていた。トークン文字列が環境変数名として平文で残り、参照先の環境変数も存在しないため private repo 解決は無言で失敗する。`--github-token` を明示的に受け付けて移行先を案内するエラーで停止するようにした。
+- **配布物への開発用ファイル混入**: wheel に dashboard frontend の TypeScript ソース 350 ファイル（2.8MB、テスト 37 本を含む）が同梱されていた。ランタイムが読むのは `frontend/index.html` だけなので除外し、wheel は 983→633 ファイルになった。sdist には `htmlcov`、`.claude/settings.json`、`.vscode/settings.json`、`AGENTS.md`、`release-notes` が含まれていた。sdist の対象を許可リストで宣言し、dev-only パスの否定検査を release gate に追加した。public export の秘密パス除外もリポジトリ直下限定だったものを全階層へ拡張した。
+- **SPRT / SPSA correctness**: pentanomialの極小標本判定を防ぎ、tested engine順序、試合数設定、LTC revert後parameterを単一契約へ揃えた。
+- **Dashboard / runtime safety**: dashboardをloopback限定・Host/Origin/content-type検査付きにし、archived dashboardをread-only化した。remote setupの共有Futureとengine cleanupをcancel-safeにした。
+- **DB operation isolation**: operationごとにcommit / rollback / scoped-session removalを保証し、失敗transactionが次のasync workerへ漏れる問題を修正した。
+- **Public examples and packaging**: 読み込めなかった設定example、dashboard static path、frontend build metadata、release workflow順序を修正した。
+- **Windows ネイティブでの動作**: `signal.SIGHUP` を無条件参照して CLI が Windows で `AttributeError` になる問題、`GIT_ASKPASS` ヘルパが `#!/bin/sh` のみで Windows から起動できない問題を修正した。frontend の `vitest.config.ts` は `include` glob が `path.join()` で `\` 区切りになり Windows でテストが 1 件もマッチしていなかったため、相対 glob に修正した。architecture lint の出力パスは `as_posix()` に統一した。
+- **SPSA 設定の `crn` / `snap_float_to_step` が無視されていた**: `SpsaVariantsConfig` / `SpsaRunConfig` / `SpsaVariantApplyConfig` は alias 付きフィールドを持つが `populate_by_name` が未設定だったため、パーサがフィールド名で渡した値を Pydantic が黙って捨てていた。`spsa.variants.crn: false` を指定しても CRN が有効なままになる。
+- **中断ゲーム再開時に `round` が `None` になりうる問題**: `entry.get("round", default)` はキーが存在して値が `None` のときに default を返さないため、`round: null` を含む再開ステートで `GameSpec.round_num=None` が構築されていた。
+- **`promote_release_main.ps1` が親なしコミットを作っていた**: PowerShell が `git commit-tree ... -p HEAD` の `-p` を共通パラメータ `-PipelineVariable` として前方一致で解釈し、フラグと値ごと git に渡らなくなっていた。結果として release commit が root commit になり `main` の履歴が切れる。`"-p"` と明示的にクォートして修正し、`make check-promote-release` で回帰を検出できるようにした。
+- **Book prefix diagnostics correctness**: `book_hit` の未知値を `False` に潰さず未測定として扱い、`out of book` などの否定的な `info string` を `move_source=book` と誤判定しないようにした。
+- **Opening line metadata propagation**: state-store 経由の schedule generation でも `generate_entries()` の metadata を保持し、`preserve_line_metadata=false` のときは USI line の指し手列を record metadata に残さないようにした。
+- **Tournament failure records**: plain tournament の game failure isolation で作る ERROR record に schedule metadata を付けつつ、従来の static helper 互換と未初期化 schedule state の fallback を保つようにした。
+
 ## [0.5.4]
 
 ### Fixed
@@ -71,6 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OpenBench totals**: crash-only / non-decided games を提出 totals から除外。
 
 ### Removed
+- **Accidental public implementations**: `AsyncUsiEngine`、`AsyncUsiProcess`、`SpawnerBackedUSIBridge`、不正なconstructorを露出していた`RunStorage`をpublic facadeから削除した。
 - `FallbackInstance` と runtime factory fallback を削除し、composition root / CLI から実 local instance を注入する形へ統一。
 - `SpsaUpdateDeltaService`、古い manifest helper、dead `byte_count` manifest alias、dashboard の camelCase clock fallback、旧 flat overlay 受け口など、未使用・重複・互換のためだけの surface を削除。
 - `README_ja.md` と旧 `configs/` 配下の例を削除し、`README.md` と `examples/configs/` に集約。
@@ -129,7 +177,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.4...v1.0.0
 [0.5.4]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.1...v0.5.2

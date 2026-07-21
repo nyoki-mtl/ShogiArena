@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 from shogiarena._core.interfaces.dashboard.match.api import MatchAPI
+from shogiarena._core.shared.kernel.statistics.confidence_intervals import normal_two_sided_z
 
 
 def _counts(wins: int, draws: int, losses: int) -> dict[str, int]:
@@ -33,8 +34,9 @@ def test_win_rate_ci_uses_draw_aware_interval() -> None:
     counts = _counts(wins=3, draws=4, losses=3)
     ci = MatchAPI._win_rate_confidence_interval(0.5, counts)
     std = MatchAPI._score_std_error(counts)
-    assert ci["lower"] == max(0.0, 0.5 - 1.96 * std)
-    assert ci["upper"] == min(1.0, 0.5 + 1.96 * std)
+    z = normal_two_sided_z(0.95)
+    assert ci["lower"] == max(0.0, 0.5 - z * std)
+    assert ci["upper"] == min(1.0, 0.5 + z * std)
 
 
 def test_ci_none_when_no_games() -> None:

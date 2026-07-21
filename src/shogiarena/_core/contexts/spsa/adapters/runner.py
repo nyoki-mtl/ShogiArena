@@ -32,6 +32,7 @@ from shogiarena._core.contexts.game_session.ports.result_store import ResultStor
 from shogiarena._core.contexts.game_session.ports.run_storage import RunStoragePort
 from shogiarena._core.contexts.game_session.ports.session_context import SessionContext
 from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import (
+    DashboardProfile,
     OrchestratorPort,
     ProgressReporterPort,
     RunOptions,
@@ -82,7 +83,7 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
     orchestration logic delegates to explicit collaborator services.
     """
 
-    dashboard_profiles = ("spsa",)
+    dashboard_profiles: tuple[DashboardProfile, ...] = ("spsa",)
 
     def __init__(
         self,
@@ -126,6 +127,7 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         self.config = config
         self._run_options = run_options
         self.is_dashboard_enabled = bool(is_enabled)
+        self.api_host = str(self.config.dashboard.api_host)
         self.api_port = int(self.config.dashboard.api_port)
         self.num_workers = max(1, self.config.num_workers)
         self.run_dir: Path | None = storage.run_dir
@@ -338,11 +340,11 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
             raise TypeError("SpsaRunner expected SpsaOrchestrator")
         orchestrator.set_work_items(self._state.update_items, self._state.params, self._state.sfens)
 
-    def get_dashboard_params(self) -> tuple[Path, int, int] | None:
+    def get_dashboard_params(self) -> tuple[Path, str, int, int] | None:
         if not self.is_dashboard_enabled:
             return None
         assert self.run_dir is not None
-        return (self.run_dir, int(self.api_port), int(self.num_workers))
+        return (self.run_dir, str(self.api_host), int(self.api_port), int(self.num_workers))
 
     # ======================================================================
     # Game completion

@@ -1,8 +1,0 @@
-This release exposes ShogiArena's USI engine runtime as a typed public API for engine probes, fixed-position analysis, trace capture, and profiler workflows.
-
-- Added the public `UsiEngineSession` contract for `create_engine()` and `create_engine_from_mapping()`, including lifecycle, option application, `think()`, IO logging, process metadata, and batch analysis methods.
-- Added structured score and PV helpers: `UsiEvalValue.kind/value/is_mate/is_cp/as_dict()` and `UsiThinkResult.select_pv()`.
-- Added `EngineProcessInfo`, lifecycle events, typed `UsiIoEvent`, and public IO collection options for diagnostics and profiler attach workflows.
-- Added `iter_analyze_positions()` / `analyze_positions()` for lightweight fixed-position capture with reset, timeout, and failure policies.
-- Added configurable USI option validation policies, including `allow_unlisted_combo_value` for engines that accept custom combo values.
-- This release contains breaking public API changes: `get_usi_options()` now returns `Mapping[str, UsiOption]`, and `UsiIoEvent` uses typed fields instead of Mapping-compatible `dir` / `ts` / `state` keys.

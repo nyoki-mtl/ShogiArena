@@ -37,7 +37,7 @@ class StaticAssetsHandler:
     @staticmethod
     def dashboard_static_dir() -> Path:
         """Return the built-in dashboard static directory."""
-        return Path(__file__).resolve().parent.parent / "static"
+        return Path(__file__).resolve().parent / "static"
 
     def resolve_html_root(self) -> Path:
         """Resolve the HTML root directory.

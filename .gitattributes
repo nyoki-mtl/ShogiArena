@@ -14,3 +14,18 @@
 *.xz binary
 *.zst binary
 *.tar binary
+
+# 将棋エンジン関連のバイナリ資産（評価関数・定跡・実行ファイル）
+*.bin binary
+*.nnue binary
+*.db binary
+*.ybb binary
+*.sbk binary
+*.exe binary
+*.dll binary
+
+# ダッシュボードのフォント
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary

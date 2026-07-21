@@ -1,8 +1,0 @@
-This release focuses on stronger statistical testing, safer long-running engine execution, and first-class visibility into engine opening books.
-
-- Added fishtest-style GSPRT support, including the new `gsprt-pentanomial-v1` model for color-reversed game pairs, with matching tournament, SPSA LTC, and dashboard replay behavior.
-- Added engine opening book handling: `BookDir + BookFile` composite path resolution, preflight validation, rshogi diagnostics, provenance/fingerprint metadata, remote book resource handling, and a dashboard Book tab with out-of-book distribution summaries.
-- Added `tournament.engine_lifecycle: per_game` for memory-sensitive tests that should close both USI engine processes after each game, while keeping `reuse` as the default.
-- Added `system.resource_capacity_preflight` so impossible `num_parallel` / instance slot combinations are reported before games start.
-- Hardened USI runtime cleanup, ponder/shutdown handling, game result classification, records recovery, OpenBench totals, SPSA safety checks, and dashboard error surfacing.
-- This release contains breaking changes: dashboard/artifact JSON contracts are now snake_case, the DB schema renamed `kifu` to `game_move` and `init_position_sfen` to `initial_position_sfen`, `working_directory` is the canonical engine working directory field, and overlay files must put USI options under `options:`.

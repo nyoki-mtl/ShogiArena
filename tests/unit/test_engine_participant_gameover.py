@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from rshogi.types import Color
+from rsshogi.types import Color
 
 from shogiarena._core.contexts.match.application.engine_participant import EngineParticipant
 from shogiarena._core.shared.kernel.game_results import GameResult

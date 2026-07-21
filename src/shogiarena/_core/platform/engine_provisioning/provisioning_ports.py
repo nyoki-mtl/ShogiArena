@@ -5,6 +5,13 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
+from shogiarena._core.contexts.instances.ports.secret_transport import (
+    RemoteSecretCommandFactory,
+    RemoteSecretFileHandle,
+    RemoteSecretFileRequest,
+    SshSecretFileTransportPort,
+)
+
 
 @runtime_checkable
 class SshCommandTransportPort(Protocol):
@@ -30,7 +37,10 @@ class InstanceConfigPort(Protocol):
 
 @runtime_checkable
 class NamedInstancePort(Protocol):
-    name: str
+    # 読み取り専用（実装側は @property / frozen dataclass）。可変属性宣言だと
+    # 書き込み可能性を要求してしまい protocol 適合しない。
+    @property
+    def name(self) -> str: ...
 
 
 @runtime_checkable
@@ -56,6 +66,10 @@ __all__ = [
     "EngineRuntimeInstancePort",
     "InstanceConfigPort",
     "NamedInstancePort",
+    "RemoteSecretCommandFactory",
+    "RemoteSecretFileHandle",
+    "RemoteSecretFileRequest",
     "SshCommandTransportPort",
+    "SshSecretFileTransportPort",
     "SshStreamTransportPort",
 ]

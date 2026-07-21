@@ -5,9 +5,12 @@ import types
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-import rshogi
-from rshogi.initial_positions import InitialPosition
+import rsshogi
+from rsshogi.initial_positions import InitialPosition
 
+from shogiarena._core.contexts.spsa.adapters.orchestrator_lifecycle_mixin import (
+    SpsaOrchestratorLifecycleMixin,
+)
 from shogiarena._core.contexts.spsa.adapters.runner import SpsaRunner
 from shogiarena._core.contexts.spsa.domain.spsa_models import SpsaGamePayload
 from shogiarena._core.shared.kernel.game_results import GameResult
@@ -19,7 +22,7 @@ from shogiarena._core.shared.kernel.session_hooks import (
 
 
 def _make_game_record(*, game_name: str, result: GameResult) -> object:
-    return rshogi.record.GameRecord.from_dict(
+    return rsshogi.record.Record.from_dict(
         {
             "metadata": {
                 "game_name": game_name,
@@ -94,3 +97,31 @@ async def test_spsa_runner_does_not_persist_error_result_when_stop_requested() -
     db_service.append_record_list.assert_not_called()
     runner._append_spsa_event.assert_not_called()
     progress.on_game_complete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_spsa_orchestrator_run_serializes_update_items() -> None:
+    calls: list[tuple[list[int], object, int]] = []
+
+    async def run_one(update_idx: int) -> None:
+        assert update_idx > 0
+
+    async def run_items_concurrently(
+        items: list[int],
+        run_one_update: object,
+        concurrency_limit: int,
+    ) -> None:
+        calls.append((list(items), run_one_update, concurrency_limit))
+
+    orchestrator = types.SimpleNamespace(
+        _update_items=[1, 2, 3],
+        _params=[object()],
+        _sfens=["startpos"],
+        num_workers=4,
+        run_items_concurrently=run_items_concurrently,
+        _run_one_spsa_update=run_one,
+    )
+
+    await SpsaOrchestratorLifecycleMixin.run(orchestrator)
+
+    assert calls == [([1, 2, 3], run_one, 1)]

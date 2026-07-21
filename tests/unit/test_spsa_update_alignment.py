@@ -6,8 +6,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-import rshogi
-from rshogi.initial_positions import InitialPosition
+import rsshogi
+from rsshogi.initial_positions import InitialPosition
 
 from shogiarena._core.contexts.game_session.adapters.run_storage import FilesystemRunStorage
 from shogiarena._core.contexts.game_session.application.orchestration.concurrent_executor import numeric_game_id
@@ -135,7 +135,7 @@ async def test_spsa_update_matches_reference_script(tmp_path: Path) -> None:
         f"""
         experiment_name: exp
         engines:
-          - engine_path: "{engine_cfg}"
+          - engine_path: {json.dumps(str(engine_cfg))}
             name: tuned
         rules:
           time_control:
@@ -143,9 +143,9 @@ async def test_spsa_update_matches_reference_script(tmp_path: Path) -> None:
             byoyomi_ms: 1000
           initial_positions:
             type: file
-            source: "{sfens}"
+            source: {json.dumps(str(sfens))}
         spsa:
-          space: "{space_path}"
+          space: {json.dumps(str(space_path))}
           num_updates: 1
           pairs_per_update: 1
           num_parallel: 1
@@ -221,16 +221,16 @@ async def test_spsa_int_stochastic_options_are_assigned_once_and_reused(tmp_path
         f"""
         experiment_name: exp
         engines:
-          - engine_path: "{engine_cfg}"
+          - engine_path: {json.dumps(str(engine_cfg))}
             name: tuned
         rules:
           time_control:
             node_limit: 1
           initial_positions:
             type: file
-            source: "{sfens}"
+            source: {json.dumps(str(sfens))}
         spsa:
-          space: "{space_path}"
+          space: {json.dumps(str(space_path))}
           num_updates: 1
           pairs_per_update: 1
           num_parallel: 1
@@ -314,7 +314,7 @@ async def test_spsa_completion_reports_assigned_worker(tmp_path: Path) -> None:
         f"""
         experiment_name: exp
         engines:
-          - engine_path: "{engine_cfg}"
+          - engine_path: {json.dumps(str(engine_cfg))}
             name: tuned
         rules:
           time_control:
@@ -322,9 +322,9 @@ async def test_spsa_completion_reports_assigned_worker(tmp_path: Path) -> None:
             byoyomi_ms: 1000
           initial_positions:
             type: file
-            source: "{sfens}"
+            source: {json.dumps(str(sfens))}
         spsa:
-          space: "{space_path}"
+          space: {json.dumps(str(space_path))}
           num_updates: 1
           pairs_per_update: 1
           num_parallel: 1
@@ -341,7 +341,7 @@ async def test_spsa_completion_reports_assigned_worker(tmp_path: Path) -> None:
     orch.set_work_items([1], params, ["startpos"])
 
     async def fake_execute_game(_orchestrator, spec):
-        return rshogi.record.GameRecord.from_dict(
+        return rsshogi.record.Record.from_dict(
             {
                 "metadata": {
                     "game_name": spec.game_id,
@@ -402,7 +402,7 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
         f"""
         experiment_name: exp
         engines:
-          - engine_path: "{engine_cfg}"
+          - engine_path: {json.dumps(str(engine_cfg))}
             name: tuned
         rules:
           time_control:
@@ -410,9 +410,9 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
             byoyomi_ms: 1000
           initial_positions:
             type: file
-            source: "{sfens}"
+            source: {json.dumps(str(sfens))}
         spsa:
-          space: "{space_path}"
+          space: {json.dumps(str(space_path))}
           num_updates: 1
           pairs_per_update: 1
           num_parallel: 1
@@ -433,7 +433,7 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
 
     async def fake_execute_game(_orchestrator, spec):
         orch.game_to_worker[numeric_game_id(spec.game_id)] = 1
-        return rshogi.record.GameRecord.from_dict(
+        return rsshogi.record.Record.from_dict(
             {
                 "metadata": {
                     "game_name": spec.game_id,

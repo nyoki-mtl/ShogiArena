@@ -142,7 +142,7 @@ def resolve_path_resources(
     """option mapping から scalar / composite path resource を解決する。
 
     composite を先に解決し、組に取り込まれた dir option は scalar として重複出力しない。
-    本関数は実体パスを返すのみで、存在確認・センチネル（``no_book``）除外は行わない。
+    本関数は実体パスを返すのみで、存在確認とセンチネル（``no_book``）の除外は行わない。
     それらは consumer 側（book 検証 / provenance）が担う。
 
     Args:

@@ -37,9 +37,14 @@ class _EngineConfigOwnerPort(Protocol):
 
 
 class _ResourceUsageItemPort(Protocol):
-    pool_key: str
-    instance_override: str | None
-    extra_options: JsonObject | None
+    # 読み取り専用（実装側は @property / frozen dataclass）。可変属性宣言だと
+    # 書き込み可能性を要求してしまい protocol 適合しない。
+    @property
+    def pool_key(self) -> str: ...
+    @property
+    def instance_override(self) -> str | None: ...
+    @property
+    def extra_options(self) -> JsonObject | None: ...
 
 
 class _ParallelResourceGamePort(Protocol):

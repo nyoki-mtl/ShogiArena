@@ -141,7 +141,7 @@ function normalizeDetailWindow(value: unknown, view: SpsaDetailViewMode): SpsaDe
 /**
  * サーバから送られてくる detail includes を「緩く」正規化します。
  *
- * 未知の include 名や大文字・小文字違いは静かに捨てられます。
+ * 未知の include 名や大文字と小文字の違いは静かに捨てられます。
  */
 function normalizeDetailIncludes(value: unknown): SpsaDetailInclude[] {
     const tokens: string[] = [];
@@ -354,7 +354,7 @@ function normalizeStringMap(value: unknown): Record<string, string> {
 /**
  * `SpsaSummaryResponse` を canonical contract に基づいて正規化します。
  *
- * 数値フィールドの欠損・非数値は `0` や `null` に落とし込みます。
+ * 数値フィールドの欠損や非数値は `0` や `null` に落とし込みます。
  */
 export function normalizeSpsaSummary(raw: unknown): NormalizedSpsaSummary {
     const parsed = parseSpsaSummaryResponse(raw);

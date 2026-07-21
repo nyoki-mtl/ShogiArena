@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import rshogi.record
+import rsshogi.record
 
 from shogiarena._core.contexts.game_session.adapters.engine.metadata_collector import (
     compute_engine_time_control_specs,
@@ -183,7 +183,7 @@ def append_spsa_event_record(
     run_dir: Path | None,
     payload: SpsaGamePayload,
     game_id: str,
-    game_info: rshogi.record.GameRecord,
+    game_info: rsshogi.record.Record,
     session_uuid: str,
 ) -> None:
     if run_dir is None:

@@ -1,20 +1,40 @@
 import { defineConfig } from 'vite';
+import { createHash } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+
+const staticRoot = path.resolve(__dirname, '../static');
+const distRoot = path.resolve(staticRoot, 'dist');
+
+function dashboardBuildMetadataPlugin() {
+    return {
+        name: 'dashboard-build-metadata',
+        async closeBundle() {
+            const manifest = await readFile(path.resolve(distRoot, '.vite/manifest.json'));
+            const buildId = createHash('sha256').update(manifest).digest('hex').slice(0, 12);
+            await writeFile(
+                path.resolve(staticRoot, 'build-meta.json'),
+                `${JSON.stringify({ build_id: buildId }, null, 4)}\n`,
+                'utf8',
+            );
+        },
+    };
+}
 
 export default defineConfig(({ command }) => {
     return {
         root: __dirname,
-        plugins: [],
+        plugins: command === 'build' ? [dashboardBuildMetadataPlugin()] : [],
         // The dashboard HTML is served from the run directory (`/index.html`),
         // while Vite outputs bundles under `/static/dist`. Use an absolute base for build
         // so that dynamic imports and worker chunks resolve correctly.
         base: command === 'build' ? '/static/dist/' : '/',
         build: {
-            outDir: path.resolve(__dirname, '../static/dist'),
+            outDir: distRoot,
             emptyOutDir: true,
-            // 'hidden' still emits maps for error reporting but omits the sourceMappingURL comment,
-            // so the production bundle does not advertise/expose source to casual viewers.
-            sourcemap: command === 'build' ? 'hidden' : true,
+            // Public wheels do not upload maps to an external error collector. Shipping hidden
+            // maps would only enlarge the artifact and expose source at guessable static paths.
+            sourcemap: false,
             manifest: true,
             rollupOptions: {
                 input: {

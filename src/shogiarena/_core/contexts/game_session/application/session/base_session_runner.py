@@ -49,7 +49,7 @@ class _DashboardAssetLifecyclePort(Protocol):
 
 
 class _DashboardCoordinatorPort(Protocol):
-    async def start_server(self, run_dir: Path, preferred_port: int, num_workers: int) -> int: ...
+    async def start_server(self, run_dir: Path, host: str, preferred_port: int, num_workers: int) -> int: ...
 
     async def stop_server(self) -> None: ...
 
@@ -80,7 +80,7 @@ class _NoopDashboardAssetLifecycle:
 class _NoopDashboardCoordinator:
     api_server: Any = None
 
-    async def start_server(self, _run_dir: Path, preferred_port: int, _num_workers: int) -> int:
+    async def start_server(self, _run_dir: Path, _host: str, preferred_port: int, _num_workers: int) -> int:
         return preferred_port
 
     async def stop_server(self) -> None:
@@ -132,7 +132,7 @@ class BaseSessionRunner(ABC, Generic[TFinal, TRun]):
         self._session_manager = SessionContextHolder()
         self._dashboard_manager = dashboard_manager or _NoopDashboardAssetLifecycle()
         self._dashboard = dashboard_coordinator or _NoopDashboardCoordinator()
-        self._run_controller = RunController(
+        self._run_controller: RunController[TRun] = RunController(
             attach_orchestrator=self.attach_orchestrator,
             detach_orchestrator=self._detach_orchestrator,
             stop_services=self.stop_services,
@@ -155,9 +155,9 @@ class BaseSessionRunner(ABC, Generic[TFinal, TRun]):
         raise TypeError("instance_pool must expose ensure_local_instance()")
 
     # --- Dashboard server lifecycle --------------------------------------
-    async def start_dashboard_server(self, run_dir: Path, preferred_port: int, num_workers: int) -> int:
+    async def start_dashboard_server(self, run_dir: Path, host: str, preferred_port: int, num_workers: int) -> int:
         """Start the dashboard API server with port fallback."""
-        port = await self._dashboard.start_server(run_dir, preferred_port, num_workers)
+        port = await self._dashboard.start_server(run_dir, host, preferred_port, num_workers)
         self.api_server = self._dashboard.api_server
         return port
 
@@ -211,7 +211,7 @@ class BaseSessionRunner(ABC, Generic[TFinal, TRun]):
         BaseSessionRunner._active_dashboard_manager.cleanup_dashboard_assets(run_dir)
 
     # --- Orchestrator execution wrapper ---------------------------------
-    async def run_orchestrator(self, orchestrator: _OrchestratorPort, run_coro: Awaitable[TRun]) -> TRun | None:
+    async def run_orchestrator(self, orchestrator: OrchestratorPort[Any], run_coro: Awaitable[Any]) -> TRun | None:
         """Attach and run an orchestrator with cooperative shutdown."""
         return await self._run_controller.run_orchestrator(orchestrator, run_coro)
 
@@ -240,7 +240,7 @@ class BaseSessionRunner(ABC, Generic[TFinal, TRun]):
     async def init_services(self) -> None:  # pragma: no cover - to be implemented
         raise NotImplementedError
 
-    def get_dashboard_params(self) -> tuple[Path, int, int] | None:  # (run_dir, port, num_workers)
+    def get_dashboard_params(self) -> tuple[Path, str, int, int] | None:
         return None
 
     async def seed_initial_summary(self) -> None:  # optional

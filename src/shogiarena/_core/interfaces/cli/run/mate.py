@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 
-from rshogi.core import Move
+from rsshogi.core import Move
 
 from shogiarena._core.interfaces.cli.main import CliError
 from shogiarena._core.interfaces.cli.option_parsing import parse_option_overrides

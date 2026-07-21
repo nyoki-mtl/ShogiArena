@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from rshogi.core import Board, Move
+from rsshogi.core import Board, Move
 
 from shogiarena._core.contexts.match.application.runner_finalize_mixin import GameRunnerFinalizeMixin
 from shogiarena._core.contexts.match.application.runner_move_mixin import GameRunnerMoveMixin
@@ -21,7 +21,7 @@ from shogiarena._core.shared.kernel.time_control import GameClock, TimeControlLi
 
 
 def _first_legal_move(board: Board) -> Move:
-    return next(iter(board.legal_moves_full())).to_move()
+    return next(iter(board.legal_moves_move32())).to_move()
 
 
 def _build_clock() -> GameClock:
@@ -45,6 +45,7 @@ def _build_move_state(board: Board) -> MoveApplicationStateRefs:
         move_times_ms=[],
         wall_times_ms=[],
         engine_wall_times_ms=[],
+        move_sources=[],
         latency_deltas_ms=[],
         current_time_control=current_time_control,
         black_time_control=black_time_control,
@@ -112,6 +113,7 @@ async def _adjudicate_white_move(eval_value: int) -> GameResult | None:
             think_result=think_result,
             elapsed_ms=40,
             engine_wall_time_ms=33,
+            move_source="search",
             game_id="g1",
             ply_count=1,
             is_side_that_moved_black=False,
@@ -166,6 +168,37 @@ async def test_process_move_result_treats_missing_bestmove_as_loss() -> None:
     assert result["result"] == GameResult.WHITE_WIN
 
 
+def test_extract_move_source_prefers_book_info_string() -> None:
+    harness = object.__new__(GameRunnerFinalizeMixin)
+    think_result = SimpleNamespace(info_strings=("hit book move",), get_last_pv=lambda: None)
+
+    assert harness._extract_move_source(think_result) == "book"
+
+
+def test_extract_move_source_ignores_out_of_book_info_string() -> None:
+    harness = object.__new__(GameRunnerFinalizeMixin)
+    think_result = SimpleNamespace(info_strings=("out of book",), get_last_pv=lambda: None)
+
+    assert harness._extract_move_source(think_result) == "unknown"
+
+
+def test_extract_move_source_uses_search_stats() -> None:
+    harness = object.__new__(GameRunnerFinalizeMixin)
+    think_result = SimpleNamespace(
+        info_strings=(),
+        get_last_pv=lambda: SimpleNamespace(depth=1, seldepth=None, nodes=None, time=None, eval=None),
+    )
+
+    assert harness._extract_move_source(think_result) == "search"
+
+
+def test_extract_move_source_unknown_without_observable_source() -> None:
+    harness = object.__new__(GameRunnerFinalizeMixin)
+    think_result = SimpleNamespace(info_strings=(), get_last_pv=lambda: None)
+
+    assert harness._extract_move_source(think_result) == "unknown"
+
+
 @pytest.mark.asyncio
 async def test_handle_recovered_bestmove_emits_terminal_progress_once() -> None:
     harness = _RunnerMoveHarness(move_result={"is_game_over": True, "result": GameResult.BLACK_WIN})
@@ -177,6 +210,7 @@ async def test_handle_recovered_bestmove_emits_terminal_progress_once() -> None:
             think_result=SimpleNamespace(pvs=[]),
             elapsed_ms=25,
             engine_wall_time_ms=20,
+            move_source="unknown",
             current_engine_name="engine-a",
             game_id="g1",
             ply_count=0,
@@ -211,6 +245,7 @@ async def test_handle_recovered_bestmove_returns_timeout_loss_when_clock_already
             think_result=SimpleNamespace(pvs=[]),
             elapsed_ms=30,
             engine_wall_time_ms=28,
+            move_source="unknown",
             current_engine_name="engine-a",
             game_id="g1",
             ply_count=0,
@@ -243,6 +278,7 @@ async def test_apply_move_common_updates_state_via_object_parameters() -> None:
             think_result=SimpleNamespace(pvs=[]),
             elapsed_ms=40,
             engine_wall_time_ms=31,
+            move_source="unknown",
             game_id="g1",
             ply_count=0,
             is_side_that_moved_black=True,
@@ -262,6 +298,7 @@ async def test_apply_move_common_updates_state_via_object_parameters() -> None:
     assert state.move_times_ms == [40]
     assert state.wall_times_ms == [40]
     assert state.engine_wall_times_ms == [31]
+    assert state.move_sources == ["unknown"]
     assert state.latency_deltas_ms == [None]
     assert len(harness.notify_calls) == 1
 
@@ -278,6 +315,7 @@ async def test_handle_recovered_bestmove_applies_late_bestmove_with_object_state
             think_result=SimpleNamespace(pvs=[]),
             elapsed_ms=35,
             engine_wall_time_ms=29,
+            move_source="unknown",
             current_engine_name="engine-a",
             game_id="g1",
             ply_count=0,

@@ -3,6 +3,4 @@
 Public users should import from the facade modules under `shogiarena.*`.
 """
 
-__version__ = "0.5.4"
-
 __all__: list[str] = []

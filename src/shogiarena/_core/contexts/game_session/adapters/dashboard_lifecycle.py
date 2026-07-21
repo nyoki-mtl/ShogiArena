@@ -49,7 +49,7 @@ class DashboardLifecycleCoordinator:
     def ensure_assets(self, run_dir: Path, num_workers: int) -> None:
         self._init_dashboard_html(run_dir / "dashboard", num_workers=num_workers, profiles=self._profiles)
 
-    async def start_server(self, run_dir: Path, preferred_port: int, num_workers: int) -> int:
+    async def start_server(self, run_dir: Path, host: str, preferred_port: int, num_workers: int) -> int:
         """Start dashboard API server with port fallback. Returns actual_port."""
         self.ensure_assets(run_dir, num_workers=num_workers)
 
@@ -63,7 +63,7 @@ class DashboardLifecycleCoordinator:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                     try:
-                        sock.bind(("0.0.0.0", p))
+                        sock.bind((host, p))
                         return p
                     except OSError as exc:
                         logger.debug("Dashboard port %s unavailable: %s", p, exc)
@@ -80,6 +80,7 @@ class DashboardLifecycleCoordinator:
             port,
             run_dir,
             self._instance_pool,
+            host=host,
             schedule_boundary=self._schedule_boundary,
         )
         await srv.start()
@@ -90,7 +91,8 @@ class DashboardLifecycleCoordinator:
         port_js.write_text(f"window.ARENA_API_PORT = {port};\n", encoding="utf-8")
 
         logger.debug("Output directory: %s", str(run_dir))
-        index_url = f"http://localhost:{port}/index.html"
+        index_host = "localhost" if host in {"127.0.0.1", "localhost"} else host
+        index_url = f"http://{index_host}:{port}/index.html"
         logger.info("Dashboard URL: %s", index_url)
         return port
 
@@ -138,8 +140,8 @@ class DashboardCoordinator:
     def ensure_assets(self, run_dir: Path, num_workers: int) -> None:
         self.manager.ensure_assets(run_dir, num_workers)
 
-    async def start_server(self, run_dir: Path, preferred_port: int, num_workers: int) -> int:
-        port = await self.manager.start_server(run_dir, preferred_port, num_workers)
+    async def start_server(self, run_dir: Path, host: str, preferred_port: int, num_workers: int) -> int:
+        port = await self.manager.start_server(run_dir, host, preferred_port, num_workers)
         self.api_server = self.manager.api_server
         return port
 

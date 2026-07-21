@@ -5,8 +5,8 @@ import threading
 from collections.abc import Awaitable, Callable
 
 import pytest
-from rshogi.core import Move
-from rshogi.types import Color
+from rsshogi.core import Move
+from rsshogi.types import Color
 
 from shogiarena._core.contexts.match.application.engine_participant import EngineParticipant
 from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkRequest

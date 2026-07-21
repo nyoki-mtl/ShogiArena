@@ -7,6 +7,7 @@ Notes:
 
 import asyncio
 import logging
+import re
 import shlex
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,28 @@ from .engine_process_handles import (
 from .instance_models import Instance
 
 logger = logging.getLogger(__name__)
+
+_ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _safe_remote_engine_dir_assignment(engine_dir: str) -> str:
+    raw = shlex.quote(engine_dir)
+    return (
+        f"ENGINE_DIR_RAW={raw}; "
+        'if [ "$ENGINE_DIR_RAW" = "~" ]; then '
+        'ENGINE_DIR="$HOME"; '
+        'elif [ "${ENGINE_DIR_RAW#"~/"}" != "$ENGINE_DIR_RAW" ]; then '
+        'ENGINE_DIR="$HOME/${ENGINE_DIR_RAW#"~/"}"; '
+        'elif [ "$ENGINE_DIR_RAW" = "$HOME" ]; then '
+        'ENGINE_DIR="$HOME"; '
+        "elif [ \"$ENGINE_DIR_RAW\" = '$HOME' ]; then "
+        'ENGINE_DIR="$HOME"; '
+        'elif [ "${ENGINE_DIR_RAW#\\$HOME/}" != "$ENGINE_DIR_RAW" ]; then '
+        'ENGINE_DIR="$HOME/${ENGINE_DIR_RAW#\\$HOME/}"; '
+        "else "
+        'ENGINE_DIR="$ENGINE_DIR_RAW"; '
+        "fi"
+    )
 
 
 class EngineProcessSpawner:
@@ -145,7 +168,7 @@ class EngineProcessSpawner:
 
         remote_parts: list[str] = []
         if config.engine_dir:
-            remote_parts.append(f"ENGINE_DIR=$(eval echo {shlex.quote(config.engine_dir)})")
+            remote_parts.append(_safe_remote_engine_dir_assignment(config.engine_dir))
 
         if working_dir:
             remote_wd = Path(working_dir)
@@ -158,6 +181,8 @@ class EngineProcessSpawner:
 
         if env:
             for key, value in env.items():
+                if not _ENV_KEY_PATTERN.fullmatch(key):
+                    raise ValueError(f"Invalid environment variable name for SSH engine process: {key}")
                 remote_parts.append(f"export {key}={shlex.quote(value)}")
 
         if Path(engine_path).is_absolute() or _is_remote_absolute(engine_path):

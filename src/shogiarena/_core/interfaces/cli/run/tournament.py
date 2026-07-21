@@ -52,14 +52,20 @@ async def run_tournament_command(
     git_worktree: str,
     experiment_name: str | None,
     run_dir_override: str | None,
+    config_base_dir: Path | None = None,
     config_payload: Mapping[str, object] | None = None,
     base_cmd: BaseRunCommand | None = None,
 ) -> None:
     # Helper to allow standalone usage if needed (though discouraged now)
     cmd = base_cmd or BaseRunCommand(argparse.Namespace())
+    payload_source_path = config_file if config_file.exists() else None
 
     config = (
-        load_tournament_run_config_payload(config_payload, base_dir=Path.cwd(), source_path=None)
+        load_tournament_run_config_payload(
+            config_payload,
+            base_dir=config_base_dir or Path.cwd(),
+            source_path=payload_source_path,
+        )
         if config_payload is not None
         else load_tournament_run_config(config_file)
     )
@@ -99,12 +105,12 @@ async def run_tournament_command(
     if instance_pool and provision_mode == "force" and not is_dry_run:
         await cmd.provision_engines(config.engines, instance_pool)
 
-    root = build_default_root()
-    storage = create_tournament_run_storage(run_dir, runtime=root.tournament_runtime)
-
     if is_dry_run:
         _dry_run_schedule(config)
         return
+
+    root = build_default_root()
+    storage = create_tournament_run_storage(run_dir, runtime=root.tournament_runtime)
 
     try:
         await run_tournament_session(
@@ -129,11 +135,22 @@ async def run_generate_command(
     git_worktree: str,
     experiment_name: str | None,
     run_dir_override: str | None,
+    config_base_dir: Path | None = None,
+    config_payload: Mapping[str, object] | None = None,
     base_cmd: BaseRunCommand | None = None,
 ) -> None:
     cmd = base_cmd or BaseRunCommand(argparse.Namespace())
+    payload_source_path = config_file if config_file.exists() else None
 
-    config = load_tournament_run_config(config_file)
+    config = (
+        load_tournament_run_config_payload(
+            config_payload,
+            base_dir=config_base_dir or Path.cwd(),
+            source_path=payload_source_path,
+        )
+        if config_payload is not None
+        else load_tournament_run_config(config_file)
+    )
     validate_overlays(current_settings())
 
     if should_validate_only:
@@ -170,12 +187,12 @@ async def run_generate_command(
     if instance_pool and provision_mode == "force" and not is_dry_run:
         await cmd.provision_engines(config.engines, instance_pool)
 
-    root = build_default_root()
-    storage = create_tournament_run_storage(run_dir, runtime=root.tournament_runtime)
-
     if is_dry_run:
         _dry_run_schedule(config)
         return
+
+    root = build_default_root()
+    storage = create_tournament_run_storage(run_dir, runtime=root.tournament_runtime)
 
     try:
         await run_tournament_session(

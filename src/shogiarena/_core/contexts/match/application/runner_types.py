@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, NamedTuple, Protocol, TypedDict, runtime_checkable
 
-from rshogi.core import Board, Move
+from rsshogi.core import Board, Move
 
 from shogiarena._core.contexts.match.domain.adjudication import Adjudicator
 from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkResultPort
@@ -39,6 +39,7 @@ class MoveApplicationRequest:
     think_result: UsiThinkResultPort
     elapsed_ms: int
     engine_wall_time_ms: int | None
+    move_source: str | None
     game_id: str | None
     ply_count: int
     is_side_that_moved_black: bool
@@ -58,6 +59,7 @@ class MoveApplicationStateRefs:
     move_times_ms: list[int | None]
     wall_times_ms: list[int | None]
     engine_wall_times_ms: list[int | None]
+    move_sources: list[str | None]
     latency_deltas_ms: list[int | None]
     current_time_control: GameClock
     black_time_control: GameClock
@@ -78,6 +80,7 @@ class RecoveredBestmoveRequest:
     think_result: UsiThinkResultPort
     elapsed_ms: int
     engine_wall_time_ms: int | None
+    move_source: str | None
     current_engine_name: str
     game_id: str | None
     ply_count: int

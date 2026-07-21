@@ -8,8 +8,8 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
 
-import rshogi
-from rshogi.core import Board, Move, normalize_usi_position
+import rsshogi
+from rsshogi.core import Board, Move, normalize_usi_position
 
 from shogiarena._core.contexts.match.domain.adjudication import Adjudicator
 from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort
@@ -17,7 +17,7 @@ from shogiarena._core.shared.kernel.game_results import (
     GameResult,
 )
 from shogiarena._core.shared.kernel.json_coercion import to_json_object
-from shogiarena._core.shared.kernel.record_engine_metrics import attach_engine_wall_times
+from shogiarena._core.shared.kernel.record_engine_metrics import attach_engine_wall_times, attach_move_source_metadata
 from shogiarena._core.shared.kernel.time_control import (
     GameClock,
     TimeControlLimitsPort,
@@ -51,7 +51,7 @@ class GameRunnerRunMixin:
         game_id: str | None = None,
         black_time_control_limits: TimeControlLimitsPort | None = None,
         white_time_control_limits: TimeControlLimitsPort | None = None,
-    ) -> rshogi.record.GameRecord:
+    ) -> rsshogi.record.Record:
         """
         Run a single game between two engines.
 
@@ -62,7 +62,7 @@ class GameRunnerRunMixin:
             game_id: Optional game identifier
 
         Returns:
-            GameRecord object with game results
+            Record object with game results
         """
         if game_id is None:
             game_id = f"game_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -95,6 +95,7 @@ class GameRunnerRunMixin:
         move_times_ms: list[int | None] = []
         wall_times_ms: list[int | None] = []
         engine_wall_times_ms: list[int | None] = []
+        move_sources: list[str | None] = []
         latency_deltas_ms: list[int | None] = []
 
         # Initialize time control and adjudication (time control is required)
@@ -118,6 +119,24 @@ class GameRunnerRunMixin:
         if self.adjudication_config:
             adjudicator = Adjudicator(self.adjudication_config)
             logger.debug(f"Adjudication initialized: {self.adjudication_config}")
+
+        final_result_progress_attempted = False
+
+        async def enqueue_final_game_result() -> None:
+            nonlocal final_result_progress_attempted
+            if game_result is None or result_progress_emitted[0] or final_result_progress_attempted:
+                return
+            await self._enqueue_game_result(
+                game_id=game_id,
+                moves=moves,
+                result=game_result,
+                initial_sfen=normalized_sfen,
+                final_sfen=board.to_sfen(),
+                black_name=black_engine.name,
+                white_name=white_engine.name,
+                start_ply_number=start_ply_number,
+            )
+            final_result_progress_attempted = True
 
         with (
             self._engine_io_listener_context(
@@ -153,6 +172,7 @@ class GameRunnerRunMixin:
                     move_times_ms,
                     wall_times_ms,
                     engine_wall_times_ms,
+                    move_sources,
                     latency_deltas_ms,
                     black_time_control=black_time_control,
                     white_time_control=white_time_control,
@@ -174,9 +194,11 @@ class GameRunnerRunMixin:
                     game_result = GameResult.ERROR
                 error = exc
             finally:
-                # Send gameover to both engines
-                if not is_cancelled and not self._is_shutting_down:
-                    await self._finalize_game(black_engine, white_engine, game_result)
+                should_finalize = not is_cancelled and not self._is_shutting_down
+                if should_finalize:
+                    if error is None:
+                        await enqueue_final_game_result()
+                    await self._finalize_game_safely(black_engine, white_engine, game_result, game_id)
 
         if error is not None:
             raise error
@@ -184,22 +206,12 @@ class GameRunnerRunMixin:
         end_time = datetime.now()
 
         # Send final result to progress queue (as move_progress with game_result)
-        if game_result is not None and not result_progress_emitted[0]:
-            await self._enqueue_game_result(
-                game_id=game_id,
-                moves=moves,
-                result=game_result,
-                initial_sfen=normalized_sfen,
-                final_sfen=board.to_sfen(),
-                black_name=black_engine.name,
-                white_name=white_engine.name,
-                start_ply_number=start_ply_number,
-            )
+        await enqueue_final_game_result()
 
         # Build encoded TimeControl spec strings for DB/UI
         tc_spec_black_str = limits_to_record_time_spec(black_time_control.limits)
         tc_spec_white_str = limits_to_record_time_spec(white_time_control.limits)
-        record_metadata = rshogi.record.GameRecordMetadata(
+        record_metadata = rsshogi.record.RecordMetadata(
             game_name=game_id,
             game_type="arena",
             black_player=black_engine.name,
@@ -207,8 +219,8 @@ class GameRunnerRunMixin:
             start_date=start_time.isoformat(),
             end_date=end_time.isoformat(),
             updated_date=end_time.isoformat(),
-            black_time_control=rshogi.record.TimeControl.from_spec(tc_spec_black_str),
-            white_time_control=rshogi.record.TimeControl.from_spec(tc_spec_white_str),
+            black_time_control=rsshogi.record.TimeControl.from_spec(tc_spec_black_str),
+            white_time_control=rsshogi.record.TimeControl.from_spec(tc_spec_white_str),
             attributes={
                 "game_name": game_id,
                 "game_type": "arena",
@@ -216,7 +228,7 @@ class GameRunnerRunMixin:
             },
         )
         logger.debug(f"Game {game_id} completed: {game_result}")
-        record = rshogi.record.GameRecord.from_usi_main_line(
+        record = rsshogi.record.Record.from_usi_main_line(
             normalized_sfen,
             [move.to_usi() for move in moves],
             result=game_result,
@@ -229,7 +241,22 @@ class GameRunnerRunMixin:
             latency_deltas_ms=latency_deltas_ms,
             metadata=record_metadata,
         )
-        return attach_engine_wall_times(record, engine_wall_times_ms)
+        record = attach_engine_wall_times(record, engine_wall_times_ms)
+        record = attach_move_source_metadata(record, move_sources=move_sources)
+
+        return record
+
+    async def _finalize_game_safely(
+        self,
+        black_engine: GameEnginePort,
+        white_engine: GameEnginePort,
+        game_result: GameResult,
+        game_id: str,
+    ) -> None:
+        try:
+            await self._finalize_game(black_engine, white_engine, game_result)
+        except Exception:
+            logger.exception("Game %s finalization failed after result recording; continuing", game_id)
 
     async def _prepare_engines_for_game(
         self,

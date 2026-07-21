@@ -28,8 +28,8 @@ class SessionFlow(Generic[TRunResult]):
 
         dash = runner.get_dashboard_params()
         if dash is not None:
-            run_dir, port, num_workers = dash
-            await runner.start_dashboard_server(run_dir, port, num_workers)
+            run_dir, host, port, num_workers = dash
+            await runner.start_dashboard_server(run_dir, host, port, num_workers)
             await runner.seed_initial_summary()
 
         session_context = runner.build_session_context()

@@ -1,6 +1,14 @@
-.PHONY: help test test-cov test-unit test-property test-integration format format-check lint lint-fix python-import-cycle-check ts-import-cycle-check import-cycle-check type-safety-audit-check ty-check frontend-typecheck typecheck typing-audit typing-audit-baseline typing-audit-ci architecture-lint architecture-lint-strict architecture-lint-dynamic architecture-lint-dynamic-strict architecture-lint-final architecture-lint-final-strict convention-lint convention-lint-strict frontend-test check check-full check-all ci ci-public ci-develop ci-private clean docs docs-build docs-serve
+.PHONY: help test test-cov test-unit test-property test-integration format format-check lint lint-fix python-import-cycle-check ts-import-cycle-check import-cycle-check type-safety-audit-check ty-check frontend-typecheck typecheck typing-audit typing-audit-baseline typing-audit-ci architecture-lint architecture-lint-strict architecture-lint-dynamic architecture-lint-dynamic-strict architecture-lint-final architecture-lint-final-strict convention-lint convention-lint-strict frontend-test check check-powershell-encoding check-full ci ci-public ci-develop ci-private clean check-distribution-artifacts check-examples check-public-export check-promote-release check-env docs docs-build docs-serve
 
-MDBOOK ?= $(shell command -v mdbook 2>/dev/null || printf "%s/.cargo/bin/mdbook" "$$HOME")
+# PATH 上の mdbook を使う。別の場所にある場合は `make docs MDBOOK=/path/to/mdbook` で上書きする。
+MDBOOK ?= mdbook
+
+# Windows では Windows PowerShell、それ以外では pwsh を使う。
+ifeq ($(OS),Windows_NT)
+POWERSHELL := powershell -NoProfile -ExecutionPolicy Bypass -File
+else
+POWERSHELL := pwsh -NoProfile -File
+endif
 
 # デフォルトターゲット
 help:
@@ -28,11 +36,12 @@ help:
 	@echo "  convention-lint-strict - 命名/構成規約違反を失敗扱い"
 	@echo "  check        - format 後に lint, convention-lint, typecheck, check-js を並列実行（テストなし）"
 	@echo "  check-full   - check + test + frontend:test"
-	@echo "  check-all    - check-full + pre-commitで全ファイルをチェック"
 	@echo "  ci           - GitHub Actions の public CI と同等の検証"
 	@echo "  ci-public    - public CI と同等の検証（ci の別名）"
 	@echo "  ci-develop   - GitHub Actions の develop CI と同等の検証（typing-audit含む）"
 	@echo "  ci-private   - develop CI と同等の検証（ci-develop の別名）"
+	@echo "  check-distribution-artifacts - wheelのdashboard・型情報・第三者noticeを検証"
+	@echo "  check-examples - 公開example設定をproduction CLIのdry-runで検証"
 	@echo "  clean        - キャッシュファイルの削除"
 
 sync:
@@ -156,10 +165,13 @@ frontend-test:
 # 統合チェック
 check: format
 	$(MAKE) --no-print-directory -j8 \
-		lint convention-lint check-js \
+		lint convention-lint check-js check-powershell-encoding \
 		python-import-cycle-check ts-import-cycle-check \
 		architecture-lint-strict architecture-lint-dynamic-strict architecture-lint-final-strict \
 		type-safety-audit-check ty-check frontend-typecheck
+
+check-powershell-encoding:
+	uv run python tools/check_powershell_encoding.py
 
 check-full: check test frontend-test
 
@@ -167,11 +179,10 @@ check-js:
 	npm run frontend:check-static
 	npm run frontend:check-html
 
-check-all: check-full
-	uv run pre-commit run --all-files
-
 ci:
 	uv run shogiarena --version
+	$(MAKE) check-examples
+	$(MAKE) check-powershell-encoding
 	$(MAKE) format-check
 	uv run ruff check . --config=pyproject.toml
 	$(MAKE) import-cycle-check
@@ -185,6 +196,7 @@ ci:
 	npm run frontend:test
 	npm run frontend:build
 	uv build
+	$(MAKE) check-distribution-artifacts
 
 ci-public: ci
 
@@ -194,19 +206,30 @@ ci-develop:
 
 ci-private: ci-develop
 
+check-distribution-artifacts:
+	uv run python tools/check_distribution_artifacts.py dist
+
+check-examples:
+	uv run python tools/check_example_configs.py
+
 docs-build:
 	$(MDBOOK) build docs/book
 
 docs docs-serve:
 	$(MDBOOK) serve docs/book --open
 
-# クリーンアップ
+# public export に dev-only ファイルが混入しないことを検証する
+check-public-export:
+	$(POWERSHELL) scripts/check_public_export.ps1
+
+# release commit 作成（dev -> main）が正しく動くことを検証する
+check-promote-release:
+	$(POWERSHELL) scripts/check_promote_release.ps1
+
+# 開発に必要なツールが揃っているかを確認する
+check-env:
+	$(POWERSHELL) scripts/windows/check-env.ps1
+
+# クリーンアップ（find/rm に依存せず Windows でも動く）
 clean:
-	find . -type d -name "__pycache__" -exec rm -rf {} +
-	find . -type f -name "*.pyc" -delete
-	find . -type d -name ".pytest_cache" -exec rm -rf {} +
-	find . -type d -name ".mypy_cache" -exec rm -rf {} +
-	find . -type d -name ".ty" -exec rm -rf {} +
-	find . -type d -name ".ruff_cache" -exec rm -rf {} +
-	find . -type d -name "htmlcov" -exec rm -rf {} +
-	find . -type f -name ".coverage" -delete
+	uv run python tools/clean_caches.py

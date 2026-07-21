@@ -1,0 +1,26 @@
+[
+  {
+    "config": "examples/configs/example.yaml",
+    "command": ["run", "tournament"]
+  },
+  {
+    "config": "examples/configs/arena_full_reference.yaml",
+    "command": ["run", "tournament"]
+  },
+  {
+    "config": "examples/configs/run/tournament/example.yaml",
+    "command": ["run", "tournament"]
+  },
+  {
+    "config": "examples/configs/run/generate/example.yaml",
+    "command": ["run", "generate"]
+  },
+  {
+    "config": "examples/configs/run/sprt/example.yaml",
+    "command": ["run", "sprt"]
+  },
+  {
+    "config": "examples/configs/run/spsa/example.yaml",
+    "command": ["run", "spsa"]
+  }
+]

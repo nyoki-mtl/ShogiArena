@@ -17,7 +17,11 @@ dashboard:
 rules:
   initial_positions:
     type: "file"
-    source: "./data/initial_sfens/start_sfens_ply24.txt"
+    # run spsa reads start_sfens_path as raw SFEN rows; convert USI lines before using this file.
+    source: "../../resources/openings/pair_positions.sfen"
+    source_format: "sfen"
+    flip_policy: "pair_both"
+    sync_scope: "pair"  # Intent/validation guard for pair_both; the SPSA loop consumes SFEN rows.
   # 千日手扱いとする同一局面の出現回数（SPSAでも調整可能）
   repetition_occurrences_to_draw: 2
 

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Generic, Protocol, TypeVar
+from typing import Generic, Protocol, TypeVar, cast
 
-import rshogi.record
+import rsshogi.record
 
 
 class SessionStopController:
@@ -53,7 +53,7 @@ class GameCompletionEvent(Generic[PayloadT]):
     """Domain-agnostic payload passed to lifecycle hooks on game completion."""
 
     game_id: str
-    game_info: rshogi.record.GameRecord
+    game_info: rsshogi.record.Record
     payload: PayloadT
     worker_idx: int | None = None
     is_stop_requested: bool = False
@@ -113,7 +113,10 @@ class CallbackGameLifecycleHooks(NoopGameLifecycleHooks, Generic[_PayloadT_inv])
         payload = event.payload
         if not isinstance(payload, self._payload_type):
             raise TypeError(f"expected {self._payload_type.__name__}, got {type(payload).__name__}")
-        await self._on_game_complete_fn(event)  # type: ignore[arg-type]
+        # payload の型は直前の isinstance で実行時保証済み。event 自体は不変ジェネリックのため
+        # 絞り込みが伝播せず、同一オブジェクトのまま型だけを付け替える。
+        narrowed_event = cast("GameCompletionEvent[_PayloadT_inv]", event)
+        await self._on_game_complete_fn(narrowed_event)
 
 
 __all__ = [

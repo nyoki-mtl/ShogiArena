@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 *.so
 .coverage
+htmlcov/
 .pytest_cache/
 .mypy_cache/
 .ty/
@@ -60,5 +61,14 @@ src/shogiarena/web/dashboard/static/dist/
 .claude/*
 !.claude/settings.json
 
+# ツールが生成するサブディレクトリの CLAUDE.md は追跡しない（ルートのみ正本）
+**/CLAUDE.md
+!/CLAUDE.md
+
 # Generated reports (typing audit, etc.)
 agent-docs/reports/
+
+# 参照用に置く第三者リポジトリ。公開スナップショットへ混入させない。
+_refs/
+shogiarena_output/
+site/

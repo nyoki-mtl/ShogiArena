@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import platform
 import uuid
+from collections.abc import Callable
 from logging import getLogger
 from typing import Protocol, cast
 
@@ -44,10 +45,20 @@ class OpenBenchClientSubmissionMixin(OpenBenchClientHttpMixin):
     _worker_tokens: dict[str, bool]
     _client_version: int
 
-    async def _submit_results(self, delta: OpenBenchCounters) -> bool:
-        return await self._submit_results_once(delta, should_allow_recovery=True)
+    async def _submit_results(self, delta: OpenBenchCounters, *, persist_state: Callable[[], None]) -> bool:
+        return await self._submit_results_once(
+            delta,
+            should_allow_recovery=True,
+            persist_state=persist_state,
+        )
 
-    async def _submit_results_once(self, delta: OpenBenchCounters, *, should_allow_recovery: bool) -> bool:
+    async def _submit_results_once(
+        self,
+        delta: OpenBenchCounters,
+        *,
+        should_allow_recovery: bool,
+        persist_state: Callable[[], None],
+    ) -> bool:
         if self._workload_test_id is None or self._result_id is None:
             raise OpenBenchError("OpenBench workload is not assigned")
         payload: dict[str, str | int] = {
@@ -62,7 +73,17 @@ class OpenBenchClientSubmissionMixin(OpenBenchClientHttpMixin):
             error = coerce_str(response.get("error")) or "unknown_error"
             if should_allow_recovery and self._is_recoverable_worker_error(error):
                 await self._recover_worker_assignment(error=error, endpoint="clientSubmitResults")
-                return await self._submit_results_once(delta, should_allow_recovery=False)
+                try:
+                    persist_state()
+                except Exception as exc:
+                    raise OpenBenchError(
+                        f"Failed to persist recovered OpenBench assignment before result retry: {exc}"
+                    ) from exc
+                return await self._submit_results_once(
+                    delta,
+                    should_allow_recovery=False,
+                    persist_state=persist_state,
+                )
             raise OpenBenchError(f"OpenBench result submission failed: {error}")
         stop = response.get("stop")
         return coerce_bool(stop)

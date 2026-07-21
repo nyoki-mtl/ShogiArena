@@ -1,1 +1,1 @@
-export { installBookModule, renderBookSummary } from './services/main';
+export { installBookModule, renderBookPairs, renderBookSummary } from './services/main';

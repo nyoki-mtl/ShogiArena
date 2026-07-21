@@ -44,7 +44,9 @@ def test_public_composition_module_exports_expected_surface() -> None:
 
 def test_public_engine_module_exports_expected_symbols() -> None:
     exported = set(shogiarena.engine.__all__)
-    assert "AsyncUsiEngine" in exported
+    assert "AsyncUsiEngine" not in exported
+    assert "AsyncUsiProcess" not in exported
+    assert "SpawnerBackedUSIBridge" not in exported
     assert "EngineLifecycleEvent" in exported
     assert "EngineProcessInfo" in exported
     assert "UsiAnalyzePosition" in exported
@@ -53,6 +55,8 @@ def test_public_engine_module_exports_expected_symbols() -> None:
     assert "UsiEvalValue" in exported
     assert "UsiIoEvent" in exported
     assert "UsiThinkRequest" in exported
+    assert "InstancePool" in exported
+    assert "JsonObject" in exported
     assert "create_engine" in exported
     assert "create_engine_from_mapping" in exported
 
@@ -72,6 +76,9 @@ def test_public_tournament_module_exports_expected_symbols() -> None:
     assert "build_tournament_runner" in exported
     assert "load_tournament_config" in exported
     assert "run_tournament" in exported
+    assert "RunStorage" not in exported
+    assert "RunStoragePort" in exported
+    assert "TournamentRunResult" in exported
 
 
 @pytest.mark.parametrize(

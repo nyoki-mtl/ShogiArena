@@ -26,7 +26,7 @@ class WdlGamesCount(TypedDict):
 
 
 class ColorTimelineEntry(TypedDict):
-    """タイムラインエントリ内の先手・後手別統計。"""
+    """タイムラインエントリ内の先手と後手それぞれの統計。"""
 
     wins: int
     losses: int

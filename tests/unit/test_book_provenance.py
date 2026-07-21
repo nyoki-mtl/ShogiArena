@@ -73,5 +73,21 @@ class TestBuildBookProvenance:
     def test_relative_path_has_no_fingerprint(self) -> None:
         provenance = build_book_provenance({"BookDir": "book", "BookFile": "user_book1.db"})
         assert provenance is not None
-        assert provenance["resolved_path"] == "book/user_book1.db"
+        # Windows では Path 経由で区切りが os.sep になるため正規化して比較する。
+        assert str(provenance["resolved_path"]).replace("\\", "/") == "book/user_book1.db"
         assert "fingerprint" not in provenance
+
+    def test_absolute_db_records_ybb_fallback(self, tmp_path: Path) -> None:
+        fallback = tmp_path / "user_book1.ybb"
+        fallback.write_bytes(b"binary-placeholder")
+        requested = tmp_path / "user_book1.db"
+
+        provenance = build_book_provenance({"BookFile": str(requested)})
+
+        assert provenance is not None
+        assert provenance["requested_path"] == str(requested)
+        assert provenance["resolved_path"] == str(fallback)
+        assert provenance["fallback"] == "ybb"
+        fingerprint = provenance["fingerprint"]
+        assert isinstance(fingerprint, dict)
+        assert fingerprint["basename"] == "user_book1.ybb"

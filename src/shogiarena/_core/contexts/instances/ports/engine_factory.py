@@ -62,7 +62,7 @@ class EngineFactoryPort(Protocol):
 class EngineFactoryService:
     """Injectable engine factory replacing the former static EngineFactory facade.
 
-    すべての engine 生成・リモートオプション書換を担当する。
+    すべての engine 生成とリモートオプション書換を担当する。
     composition root で構築し、必要な consumer に注入する。
     """
 

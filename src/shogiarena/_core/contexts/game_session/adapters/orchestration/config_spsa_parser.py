@@ -159,11 +159,14 @@ def parse_spsa_config_mapping(
     dashboard_payload: _DashboardPayload = {}
     num_workers = 4
     if isinstance(dash, Mapping):
-        _warn_unknown_keys(dash, allowed={"enabled", "api_port"}, label="dashboard")
+        _warn_unknown_keys(dash, allowed={"enabled", "api_port", "api_host"}, label="dashboard")
         dashboard_payload["is_enabled"] = coerce_bool(dash.get("enabled", True))
         port = coerce_int(dash.get("api_port"))
         if port is not None:
             dashboard_payload["api_port"] = port
+        api_host = dash.get("api_host")
+        if isinstance(api_host, str) and api_host.strip():
+            dashboard_payload["api_host"] = api_host.strip()
     parsed_np = coerce_int(spsa_node_map.get("num_parallel"))
     if parsed_np is not None:
         num_workers = parsed_np

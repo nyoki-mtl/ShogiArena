@@ -1,5 +1,5 @@
 import pytest
-from rshogi.core import Move
+from rsshogi.core import Move
 
 from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkRequest, normalize_searchmoves
 

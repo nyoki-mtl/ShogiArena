@@ -17,6 +17,16 @@ from shogiarena._core.shared.kernel.path_resources import (
 BOOK_SPEC = CompositeResourceSpec(file_key="BookFile", dir_key="BookDir", default_dir="book")
 
 
+def _posix(path: str) -> str:
+    """比較用に区切り文字を ``/`` へ揃える。
+
+    ``resolve_path_like`` は ``Path`` を経由するため、Windows では POSIX 絶対パス
+    ``/srv/book`` が ``\\srv\\book``（Windows 上では等価なドライブ相対パス）になる。
+    ここで検証したいのは結合ロジックであって区切り文字ではないため正規化する。
+    """
+    return path.replace("\\", "/")
+
+
 def _resource_by_keys(resources: list[PathResource], keys: tuple[str, ...]) -> PathResource:
     for resource in resources:
         if resource.option_keys == keys:
@@ -66,11 +76,11 @@ class TestCombinePath:
 class TestResolveCompositePath:
     def test_relative_file_combined_with_dir(self) -> None:
         resolved = resolve_composite_path(BOOK_SPEC, file_value="user_book1.db", dir_value="/srv/book")
-        assert resolved == "/srv/book/user_book1.db"
+        assert _posix(resolved) == "/srv/book/user_book1.db"
 
     def test_absolute_file_ignores_dir(self) -> None:
         resolved = resolve_composite_path(BOOK_SPEC, file_value="/abs/user_book1.db", dir_value="/srv/book")
-        assert resolved == "/abs/user_book1.db"
+        assert _posix(resolved) == "/abs/user_book1.db"
 
     def test_missing_dir_uses_engine_default(self) -> None:
         resolved = resolve_composite_path(BOOK_SPEC, file_value="user_book1.db", dir_value=None)
@@ -83,7 +93,7 @@ class TestResolveCompositePath:
             dir_value="{engine_dir}/book",
             engine_dir=Path("/opt/engines"),
         )
-        assert resolved == "/opt/engines/book/user_book1.db"
+        assert _posix(resolved) == "/opt/engines/book/user_book1.db"
 
     def test_file_placeholder_yielding_absolute(self) -> None:
         resolved = resolve_composite_path(
@@ -92,7 +102,7 @@ class TestResolveCompositePath:
             dir_value="/ignored",
             engine_dir=Path("/opt/engines"),
         )
-        assert resolved == "/opt/engines/book/user_book1.db"
+        assert _posix(resolved) == "/opt/engines/book/user_book1.db"
 
 
 class TestResolvePathResources:
@@ -100,7 +110,7 @@ class TestResolvePathResources:
         resources = resolve_path_resources({"BookDir": "/srv/book", "BookFile": "user_book1.db"})
         composite = _resource_by_keys(resources, ("BookDir", "BookFile"))
         assert composite.kind == "composite"
-        assert composite.resolved_path == "/srv/book/user_book1.db"
+        assert _posix(composite.resolved_path) == "/srv/book/user_book1.db"
         assert composite.original_values == {"BookDir": "/srv/book", "BookFile": "user_book1.db"}
         # BookDir は composite に取り込まれ scalar として重複出力されない。
         assert not any(r.kind == "scalar" and r.option_keys == ("BookDir",) for r in resources)
@@ -109,7 +119,7 @@ class TestResolvePathResources:
         resources = resolve_path_resources({"BookDir": "/srv/book"})
         scalar = _resource_by_keys(resources, ("BookDir",))
         assert scalar.kind == "scalar"
-        assert scalar.resolved_path == "/srv/book"
+        assert _posix(scalar.resolved_path) == "/srv/book"
 
     def test_book_file_alone_uses_default_dir(self) -> None:
         resources = resolve_path_resources({"BookFile": "user_book1.db"})
@@ -120,15 +130,15 @@ class TestResolvePathResources:
     def test_eval_dir_and_file_composite(self) -> None:
         resources = resolve_path_resources({"EvalDir": "/srv/eval", "EvalFile": "nn.bin"})
         composite = _resource_by_keys(resources, ("EvalDir", "EvalFile"))
-        assert composite.resolved_path == "/srv/eval/nn.bin"
+        assert _posix(composite.resolved_path) == "/srv/eval/nn.bin"
 
     def test_custom_scalar_path_option(self) -> None:
         resources = resolve_path_resources(
             {"DNN_Model": "/srv/model.onnx", "MyPath": "/srv/extra"},
             extra_scalar_keys=("MyPath",),
         )
-        assert _resource_by_keys(resources, ("DNN_Model",)).resolved_path == "/srv/model.onnx"
-        assert _resource_by_keys(resources, ("MyPath",)).resolved_path == "/srv/extra"
+        assert _posix(_resource_by_keys(resources, ("DNN_Model",)).resolved_path) == "/srv/model.onnx"
+        assert _posix(_resource_by_keys(resources, ("MyPath",)).resolved_path) == "/srv/extra"
 
     def test_non_string_and_blank_values_ignored(self) -> None:
         resources = resolve_path_resources({"BookDir": "   ", "Threads": 4})

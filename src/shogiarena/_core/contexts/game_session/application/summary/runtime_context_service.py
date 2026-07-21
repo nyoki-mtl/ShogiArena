@@ -36,7 +36,10 @@ class SummaryRuntimeRecordWriterSourcePort(Protocol):
 class SummaryRuntimeOpenBenchClientPort(Protocol):
     """Minimal OpenBench client contract required by strict-mode wiring."""
 
-    is_strict: bool
+    # 読み取り専用（実装側は @property / frozen dataclass）。可変属性宣言だと
+    # 書き込み可能性を要求してしまい protocol 適合しない。
+    @property
+    def is_strict(self) -> bool: ...
 
 
 @dataclass(slots=True)

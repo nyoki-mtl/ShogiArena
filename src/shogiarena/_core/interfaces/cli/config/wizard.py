@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import getpass
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -18,6 +18,7 @@ from shogiarena._core.platform.settings.platform_paths import (
     default_settings_path,
 )
 from shogiarena._core.shared.kernel.settings_loading.settings_models import (
+    DEFAULT_GITHUB_TOKEN_ENV,
     OpenBenchSettings,
     RepoSettings,
 )
@@ -50,20 +51,23 @@ def run_config_wizard(args: argparse.Namespace) -> None:
     if engine_dir is None:
         raise SystemExit("Engine cache directory is required")
 
-    default_token = args.github_token if args.github_token else settings.github_token
-    github_token = _prompt_github_token(default_token)
+    github_token_env = _prompt_github_token_env(
+        str(getattr(args, "github_token_env", "") or "") or settings.github_token_env
+    )
+    # token 本体は環境変数から解決する（settings.yaml には保存しない）。
+    github_token = os.environ.get(github_token_env, "").strip() or None
     repos = dict(settings.repos)
     overlays = dict(settings.overlays)
     openbench = _prompt_openbench_settings(settings.openbench)
-    yaneuraou_repo_path = _maybe_add_yaneuraou_repo(repos, overlays, token=github_token or settings.github_token)
+    yaneuraou_repo_path = _maybe_add_yaneuraou_repo(repos, overlays, token=github_token)
     if yaneuraou_repo_path is not None:
         _maybe_add_fukauraou_repo(
             repos,
             overlays,
-            token=github_token or settings.github_token,
+            token=github_token,
             base_repo_path=yaneuraou_repo_path,
         )
-    _maybe_add_deeplearningshogi_repo(repos, overlays, token=github_token or settings.github_token)
+    _maybe_add_deeplearningshogi_repo(repos, overlays, token=github_token)
     if _prompt_yes_no("他の repo を追加しますか？", is_default=False):
         while True:
             repo_input = _prompt_optional("Repo path or URL (blank to finish)")
@@ -95,7 +99,7 @@ def run_config_wizard(args: argparse.Namespace) -> None:
             )
             ensure_build_config(build_config, repo_name=name, confirm_overwrite_fn=_confirm_build_config_overwrite)
             if repo_url:
-                _clone_repo_or_exit(repos[name], token=github_token or settings.github_token)
+                _clone_repo_or_exit(repos[name], token=github_token)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     engine_dir.mkdir(parents=True, exist_ok=True)
@@ -105,7 +109,7 @@ def run_config_wizard(args: argparse.Namespace) -> None:
         output_dir=output_dir,
         engine_dir=engine_dir,
         repos=repos,
-        github_token=github_token or settings.github_token,
+        github_token_env=github_token_env,
         overlays=overlays,
         openbench=openbench,
     )
@@ -262,17 +266,26 @@ def _prompt_optional(label: str) -> str:
     return input(f"{label}: ").strip()
 
 
-def _prompt_secret(label: str) -> str:
-    return getpass.getpass(f"{label}: ").strip()
+def _prompt_github_token_env(existing: str) -> str:
+    """GitHub token を読む環境変数名を尋ねる。
 
+    token 自体は settings.yaml に保存しない（`openbench.password_env` と同じ方式）。
 
-def _prompt_github_token(existing: str | None) -> str | None:
-    if not _prompt_yes_no("private repo を使うなら GitHub token を設定しますか？", is_default=False):
-        return None
+    Args:
+        existing: 現在設定されている環境変数名。
+
+    Returns:
+        使用する環境変数名。
+    """
+    default_env = existing or DEFAULT_GITHUB_TOKEN_ENV
+    print("private repo を使う場合は GitHub token を環境変数に設定してください。")
     print("トークン作成ページ: https://github.com/settings/personal-access-tokens")
     print("必要権限: 対象リポジトリの Contents (Read-only で OK)")
-    token = _prompt_secret("GitHub token")
-    return token or existing
+    entered = _prompt_optional(f"GitHub token env var (blank to keep: {default_env})")
+    resolved = entered or default_env
+    if not os.environ.get(resolved, "").strip():
+        print(f"注意: 環境変数 {resolved} は未設定です。private repo の clone 時に認証が必要になります。")
+    return resolved
 
 
 def _prompt_openbench_settings(existing: OpenBenchSettings | None) -> OpenBenchSettings | None:
@@ -308,7 +321,7 @@ def _clone_repo_or_exit(repo: RepoSettings, *, token: str | None) -> None:
         clone_repo(repo.url, repo.path, token=token)
     except SystemExit as exc:
         print("git clone に失敗しました。private repo の場合は GitHub の認証が必要です。")
-        print("settings.yaml の github_token を設定してください。")
+        print("GitHub token を環境変数に設定してください（settings.yaml の github_token_env が示す名前）。")
         raise exc
 
 

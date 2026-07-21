@@ -56,44 +56,48 @@ def _extract_overlay_options(payload: Mapping[str, JsonValue], *, path: Path) ->
     return result
 
 
-def _apply_engine_overlay(engine_spec: Any, payload: Mapping[str, JsonValue]) -> None:
+_ENGINE_OVERLAY_KEYS: tuple[str, ...] = (
+    "mate_default_ply_limit",
+    "mate_default_node_limit",
+    "mate_default_infinite",
+    "mate_wait_for_bestmove",
+    "isready_sync_strategy",
+    "isready_lock_key",
+    "isready_lock_template",
+    "isready_lock_check_key",
+    "isready_lock_check_template",
+    "isready_lock_check_templates",
+    "isready_lock_skip_if_exists",
+)
+
+_BOOL_ENGINE_OVERLAY_KEYS = frozenset(
+    {"mate_default_infinite", "mate_wait_for_bestmove", "isready_lock_skip_if_exists"}
+)
+_INT_ENGINE_OVERLAY_KEYS = frozenset({"mate_default_ply_limit", "mate_default_node_limit"})
+
+
+def _engine_overlay_target_field(key: str) -> str | None:
+    for field_name, field_info in EngineConfig.model_fields.items():
+        if key == field_name or key == field_info.alias:
+            return field_name
+    return None
+
+
+def _apply_engine_overlay(engine_spec: EngineConfig, payload: Mapping[str, JsonValue]) -> None:
     engine_payload = payload.get("engine")
     if not isinstance(engine_payload, Mapping):
         return
     engine_values = {str(key): value for key, value in engine_payload.items()}
-    for key in (
-        "mate_default_ply_limit",
-        "mate_default_node_limit",
-        "mate_default_infinite",
-        "mate_wait_for_bestmove",
-        "isready_sync_strategy",
-        "isready_lock_key",
-        "isready_lock_template",
-        "isready_lock_check_key",
-        "isready_lock_check_template",
-        "isready_lock_check_templates",
-        "isready_lock_skip_if_exists",
-    ):
-        target_attr = "should_skip_isready_lock_if_exists" if key == "isready_lock_skip_if_exists" else key
-        current = getattr(engine_spec, target_attr, None)
-        if isinstance(current, str) and current.strip():
-            continue
-        if (
-            key in {"mate_default_infinite", "mate_wait_for_bestmove", "isready_lock_skip_if_exists"}
-            and current is not None
-        ):
-            continue
-        if key in {"mate_default_ply_limit", "mate_default_node_limit"} and current is not None and current > 0:
+    for key in _ENGINE_OVERLAY_KEYS:
+        target_attr = _engine_overlay_target_field(key)
+        if target_attr is None or target_attr in engine_spec.model_fields_set:
             continue
         value = engine_values.get(key)
         if isinstance(value, str) and value.strip():
             setattr(engine_spec, target_attr, value.strip())
-        elif key in {"mate_default_infinite", "mate_wait_for_bestmove", "isready_lock_skip_if_exists"} and isinstance(
-            value,
-            bool,
-        ):
+        elif key in _BOOL_ENGINE_OVERLAY_KEYS and isinstance(value, bool):
             setattr(engine_spec, target_attr, value)
-        elif key in {"mate_default_ply_limit", "mate_default_node_limit"} and isinstance(value, int) and value > 0:
+        elif key in _INT_ENGINE_OVERLAY_KEYS and isinstance(value, int) and value > 0:
             setattr(engine_spec, target_attr, value)
         elif key == "isready_lock_check_templates" and isinstance(value, list):
             cleaned = [item for item in value if isinstance(item, str) and item.strip()]

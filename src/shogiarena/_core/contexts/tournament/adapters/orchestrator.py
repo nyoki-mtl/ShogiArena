@@ -10,8 +10,8 @@ import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-import rshogi
-from rshogi.core import parse_usi_position_parts
+import rsshogi
+from rsshogi.core import parse_usi_position_parts
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_builders import (
     build_engine_config_map,
@@ -83,6 +83,9 @@ from shogiarena._core.contexts.instances.application.instance_models import Inst
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
 from shogiarena._core.contexts.tournament.domain.tournament_models import GameSpec
 from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_serialized
+from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.schedule_metadata import attach_schedule_metadata
 from shogiarena._core.shared.kernel.service_ports import DatabaseServicePort
 from shogiarena._core.shared.kernel.session_hooks import GameLifecycleHooks
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
@@ -173,6 +176,9 @@ class TournamentOrchestrator(BaseOrchestrator):
 
     def set_work_items(self, schedule: list[GameSpec], completed: set[str]) -> None:
         """Provide game schedule and completed set prior to run()."""
+        for index, spec in enumerate(schedule, start=1):
+            if spec.display_order is None:
+                spec.display_order = index
         self._pending_runtime_service.reset_schedule(self._pending_runtime_state, schedule=schedule)
         self._completed_game_ids = set(completed)
 
@@ -247,18 +253,20 @@ class TournamentOrchestrator(BaseOrchestrator):
             )
             await self._emit_game_completion(
                 game_id=item.game_id,
-                game_info=self._build_error_game_record(item),
+                game_info=self._build_error_game_record(item, schedule_metadata=self._schedule_metadata_for(item)),
                 payload=item,
                 worker_idx=None,
             )
 
     @staticmethod
-    def _build_error_game_record(game_spec: GameSpec) -> rshogi.record.GameRecord:
+    def _build_error_game_record(
+        game_spec: GameSpec, *, schedule_metadata: JsonObject | None = None
+    ) -> rsshogi.record.Record:
         # Expand "startpos" / USI position notation to a full board SFEN (from_dict rejects
         # "startpos"), and stamp the date fields the DB persistence path requires.
         initial_sfen = parse_usi_position_parts(game_spec.initial_sfen).initial_sfen
         now = datetime.now(UTC).isoformat()
-        return rshogi.record.GameRecord.from_dict(
+        record = rsshogi.record.Record.from_dict(
             {
                 "metadata": {
                     "game_name": str(game_spec.game_id),
@@ -278,6 +286,28 @@ class TournamentOrchestrator(BaseOrchestrator):
                 "moves": [],
                 "result": {"result": GameResult.ERROR.name, "ply_count": 0},
             }
+        )
+        attach_schedule_metadata(
+            game_record=record,
+            schedule_metadata=(
+                schedule_metadata
+                if schedule_metadata is not None
+                else coerce_json_object_serialized(game_spec.to_schedule_metadata(), field_name="arena_schedule")
+            ),
+        )
+        return record
+
+    def _schedule_metadata_for(self, game_spec: GameSpec) -> JsonObject:
+        order = game_spec.display_order
+        if order is None:
+            state = getattr(self, "_pending_runtime_state", None)
+            schedule = getattr(state, "schedule", None)
+            display_order_by_game_id = getattr(schedule, "display_order_by_game_id", {})
+            order_index = display_order_by_game_id.get(game_spec.game_id)
+            order = order_index + 1 if order_index is not None else None
+        return coerce_json_object_serialized(
+            game_spec.to_schedule_metadata(display_order=order),
+            field_name="arena_schedule",
         )
 
     def _prepare_engine_configs(self) -> dict[str, EngineConfig]:
@@ -356,7 +386,7 @@ class TournamentOrchestrator(BaseOrchestrator):
         def _mark_install_complete() -> None:
             game_spec.should_require_install = False
 
-        async def _run_remote_with_instance(remote_instance: Instance) -> rshogi.record.GameRecord:
+        async def _run_remote_with_instance(remote_instance: Instance) -> rsshogi.record.Record:
             return await self._run_remote_game(
                 game_spec=game_spec,
                 black_limits=black_limits,
@@ -382,6 +412,7 @@ class TournamentOrchestrator(BaseOrchestrator):
                     black_limits=black_limits,
                     white_limits=white_limits,
                     game_round=game_spec.round_num,
+                    schedule_metadata=self._schedule_metadata_for(game_spec),
                 ),
             ),
             game_execution_spec_factory=BaseOrchestrator.GameExecutionSpec,
@@ -427,7 +458,7 @@ class TournamentOrchestrator(BaseOrchestrator):
         remote_instance: Instance,
         black_item: BaseOrchestrator.EngineGameSpec,
         white_item: BaseOrchestrator.EngineGameSpec,
-    ) -> rshogi.record.GameRecord:
+    ) -> rsshogi.record.Record:
         return await run_remote_tournament_game(
             orchestrator=self,
             game_spec=game_spec,

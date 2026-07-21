@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 
 import pytest
-import rshogi
+import rsshogi
 from aiohttp.test_utils import make_mocked_request
-from rshogi.record import GameResult
+from rsshogi.record import GameResult
 
 from shogiarena._core.interfaces.dashboard.book.api import BookAPI
 
@@ -20,13 +20,16 @@ class _GameQueryStub:
     def load_games(self, db_path: Path, *, game_type: str = "arena") -> list[dict[str, object]]:
         return self._games
 
-    def load_game_record(self, db_path: Path, *, game_name: str) -> rshogi.record.GameRecord | None:
+    def load_game_record(self, db_path: Path, *, game_name: str) -> rsshogi.record.Record | None:
         return None
 
 
 class _RaisingGameQueryStub:
     def load_games(self, db_path: Path, *, game_type: str = "arena") -> list[dict[str, object]]:
         raise ValueError("game.db is corrupt")
+
+    def load_game_record(self, db_path: Path, *, game_name: str) -> rsshogi.record.Record | None:
+        return None
 
 
 @pytest.mark.asyncio
@@ -50,5 +53,24 @@ async def test_book_summary_returns_aggregation_shape(tmp_path: Path) -> None:
 async def test_book_summary_converts_failure_to_500(tmp_path: Path) -> None:
     api = BookAPI(db_path=tmp_path / "game.db", game_query=_RaisingGameQueryStub())  # type: ignore[arg-type]
     response = await api.get_summary(make_mocked_request("GET", "/api/book/summary"))
+
+    assert response.status == 500
+
+
+@pytest.mark.asyncio
+async def test_book_pairs_returns_empty_report_shape(tmp_path: Path) -> None:
+    api = BookAPI(db_path=tmp_path / "game.db", game_query=_GameQueryStub([]))  # type: ignore[arg-type]
+    response = await api.get_pairs(make_mocked_request("GET", "/api/book/pairs"))
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["pairs"] == []
+    assert payload["summary"]["pairs"] == 0
+
+
+@pytest.mark.asyncio
+async def test_book_pairs_converts_failure_to_500(tmp_path: Path) -> None:
+    api = BookAPI(db_path=tmp_path / "game.db", game_query=_RaisingGameQueryStub())  # type: ignore[arg-type]
+    response = await api.get_pairs(make_mocked_request("GET", "/api/book/pairs"))
 
     assert response.status == 500

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 
-from rshogi.core import Move, normalize_usi_position, parse_usi_position_parts
+from rsshogi.core import Move, normalize_usi_position, parse_usi_position_parts
 
 from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkPVPort, UsiThinkRequest, UsiThinkResultPort
 from shogiarena._core.interfaces.cli.main import CliArgumentError

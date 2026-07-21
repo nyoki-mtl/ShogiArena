@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -40,12 +41,14 @@ def test_from_mapping_accepts_usi_transcript_logging_section(tmp_path: Path) -> 
     payload["logging"] = {
         "usi_transcript": True,
         "usi_transcript_detail": "commands_and_info",
+        "usi_transcript_max_bytes": 65536,
     }
 
     cfg = TournamentRunConfig.from_mapping(payload, base_dir=tmp_path)
 
     assert cfg.logging.is_usi_transcript_enabled is True
     assert cfg.logging.usi_transcript_detail == "commands_and_info"
+    assert cfg.logging.usi_transcript_max_bytes == 65536
 
 
 def test_from_mapping_defaults_engine_lifecycle_to_reuse(tmp_path: Path) -> None:
@@ -64,6 +67,43 @@ def test_from_mapping_accepts_per_game_engine_lifecycle(tmp_path: Path) -> None:
     cfg = TournamentRunConfig.from_mapping(payload, base_dir=tmp_path)
 
     assert cfg.tournament.engine_lifecycle == "per_game"
+
+
+def test_sprt_tested_engine_is_normalized_to_first_runtime_engine(tmp_path: Path) -> None:
+    payload = _minimal_tournament_mapping()
+    payload["sprt"] = {"tested_engine": "base", "elo0": 0.0, "elo1": 5.0}
+
+    cfg = TournamentRunConfig.from_mapping(payload, base_dir=tmp_path)
+
+    assert cfg.sprt is not None
+    assert cfg.sprt.tested_engine == "base"
+    assert [engine.name for engine in cfg.engines] == ["base", "dev"]
+
+
+def test_sprt_rejects_unknown_tested_engine(tmp_path: Path) -> None:
+    payload = _minimal_tournament_mapping()
+    payload["sprt"] = {"tested_engine": "missing", "elo0": 0.0, "elo1": 5.0}
+
+    with pytest.raises(ValueError, match="sprt.tested_engine"):
+        TournamentRunConfig.from_mapping(payload, base_dir=tmp_path)
+
+
+def test_sprt_rejects_conflicting_explicit_game_budget(tmp_path: Path) -> None:
+    payload = _minimal_tournament_mapping()
+    payload["sprt"] = {"tested_engine": "dev", "elo0": 0.0, "elo1": 5.0, "max_games": 1000}
+
+    with pytest.raises(ValueError, match="max_games.*games_per_pair"):
+        TournamentRunConfig.from_mapping(payload, base_dir=tmp_path)
+
+
+def test_sprt_budget_populates_implicit_tournament_default(tmp_path: Path) -> None:
+    payload = _minimal_tournament_mapping()
+    payload.pop("tournament")
+    payload["sprt"] = {"tested_engine": "dev", "elo0": 0.0, "elo1": 5.0, "max_games": 1000}
+
+    cfg = TournamentRunConfig.from_mapping(payload, base_dir=tmp_path)
+
+    assert cfg.tournament.games_per_pair == 1000
 
 
 def test_from_mapping_rejects_unknown_engine_lifecycle(tmp_path: Path) -> None:
@@ -86,6 +126,31 @@ def test_from_mapping_rejects_unknown_engine_keys(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="environment"):
         TournamentRunConfig.from_mapping(payload, base_dir=tmp_path)
+
+
+def test_from_mapping_rejects_unknown_top_level_keys(tmp_path: Path) -> None:
+    payload = _minimal_tournament_mapping()
+    payload["work_dir"] = str(tmp_path)
+
+    with pytest.raises(ValueError, match="Unknown keys.*work_dir"):
+        TournamentRunConfig.from_mapping(payload, base_dir=tmp_path)
+
+
+def test_from_mapping_resolves_engine_config_relative_to_source_file(tmp_path: Path) -> None:
+    config_dir = tmp_path / "configs"
+    engine_dir = tmp_path / "engines"
+    config_dir.mkdir()
+    engine_dir.mkdir()
+    engine_config = engine_dir / "engine.yaml"
+    engine_config.write_text("name: engine\nengine_path: engine.exe\n", encoding="utf-8")
+    payload = _minimal_tournament_mapping()
+    engines = payload["engines"]
+    assert isinstance(engines, list)
+    engines[0] = {"name": "dev", "engine_path": "../engines/engine.yaml"}
+
+    cfg = TournamentRunConfig.from_mapping(payload, source_path=config_dir / "tournament.yaml")
+
+    assert cfg.engines[0].engine_path == engine_config.resolve()
 
 
 def test_from_mapping_accepts_engine_go_options(tmp_path: Path) -> None:
@@ -142,12 +207,12 @@ def test_path_preflight_error_rejects_missing_builtin_path_option(tmp_path: Path
     engine_config.write_text(
         """
 name: engine-a
-engine_path: "{engine_path}"
+engine_path: {engine_path}
 options:
-  EvalDir: "{missing_eval}"
+  EvalDir: {missing_eval}
         """.format(
-            engine_path=engine_binary,
-            missing_eval=tmp_path / "missing-eval",
+            engine_path=json.dumps(str(engine_binary)),
+            missing_eval=json.dumps(str(tmp_path / "missing-eval")),
         ).strip()
         + "\n",
         encoding="utf-8",
@@ -177,7 +242,7 @@ def _book_engine_payload(tmp_path: Path) -> dict[str, object]:
     engine_config = tmp_path / "engine-a.yaml"
     engine_config.write_text(
         "name: engine-a\n"
-        f'engine_path: "{engine_binary}"\n'
+        f"engine_path: {json.dumps(str(engine_binary))}\n"
         "options:\n"
         "  BookDir: book\n"
         "  BookFile: user_book1.db\n"

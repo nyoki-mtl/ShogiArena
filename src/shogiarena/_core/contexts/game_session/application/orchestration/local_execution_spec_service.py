@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Generic, TypeVar
 
 from shogiarena._core.contexts.game_session.ports.session_runner_ports import BeforeGameHookPort
+from shogiarena._core.shared.kernel.json_types import JsonObject
 
 TEngineItem = TypeVar("TEngineItem")
 TGameExecutionSpec = TypeVar("TGameExecutionSpec")
@@ -26,6 +27,7 @@ class LocalExecutionSpecRequest(Generic[TEngineItem]):
     black_limits: object
     white_limits: object
     game_round: int | None = None
+    schedule_metadata: JsonObject | None = None
     before_game_hook: BeforeGameHookPort | None = None
     on_game_start: OnGameStartHook | None = None
 
@@ -47,6 +49,8 @@ def build_local_execution_spec(
     }
     if request.game_round is not None:
         payload["game_round"] = request.game_round
+    if request.schedule_metadata is not None:
+        payload["schedule_metadata"] = request.schedule_metadata
     if request.before_game_hook is not None:
         payload["before_game_hook"] = request.before_game_hook
     if request.on_game_start is not None:

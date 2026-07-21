@@ -87,7 +87,8 @@ class SpsaSnapshotCompositionService:
         ltc_limit: int = 200,
     ) -> JsonObject:
         """Convergence スナップショットに LTC 結果を統合する。"""
-        result: JsonObject = dict(convergence_snapshot)  # type: ignore[arg-type]
+        # TypedDict スナップショットも受け取るため、JSON 安全な dict へ正規化してから合成する。
+        result: JsonObject = to_json_object(convergence_snapshot)
         if result.get("status") == "ready":
             ltc_snapshot = self.compose_ltc_results_snapshot(limit=ltc_limit)
             if ltc_snapshot is not None:

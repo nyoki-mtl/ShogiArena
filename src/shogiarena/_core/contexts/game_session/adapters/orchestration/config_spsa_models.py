@@ -17,6 +17,7 @@ from .config_engine import DashboardConfig, EngineConfig, SystemConfig
 class _DashboardPayload(TypedDict, total=False):
     is_enabled: bool
     api_port: int
+    api_host: str
 
 
 class _EngineCommonKwargs(TypedDict):
@@ -97,12 +98,18 @@ class SpsaAlgorithmBlock(BaseModel):
 class SpsaVariantApplyConfig(BaseModel):
     """Variant option application behavior."""
 
+    # alias 付きフィールドは populate_by_name がないとフィールド名指定が黙って捨てられる。
+    model_config = ConfigDict(populate_by_name=True)
+
     is_clear_hash_enabled: bool = Field(default=True, alias="clear_hash")
     after_setoption: Literal["isready", "none"] = "isready"
 
 
 class SpsaVariantsConfig(BaseModel):
     """SPSA variant generation and pairing configuration."""
+
+    # alias 付きフィールドは populate_by_name がないとフィールド名指定が黙って捨てられる。
+    model_config = ConfigDict(populate_by_name=True)
 
     pairing: Literal["plus_minus"] = "plus_minus"
     is_crn_enabled: bool = Field(default=True, alias="crn")
@@ -113,6 +120,9 @@ class SpsaVariantsConfig(BaseModel):
 
 class SpsaRunConfig(BaseModel):
     """SPSA run configuration."""
+
+    # alias 付きフィールドは populate_by_name がないとフィールド名指定が黙って捨てられる。
+    model_config = ConfigDict(populate_by_name=True)
 
     # Required inputs
     start_sfens_path: str

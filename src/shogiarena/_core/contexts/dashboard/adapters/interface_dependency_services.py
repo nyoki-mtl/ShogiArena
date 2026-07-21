@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-import rshogi
+import rsshogi
 
 from shogiarena._core.contexts.dashboard.ports.interface_dependencies import (
     DashboardGameRecordLoaderFn,
@@ -51,7 +51,7 @@ class DashboardGameQueryAdapter:
         db_path: Path,
         *,
         game_name: str,
-    ) -> rshogi.record.GameRecord | None:
+    ) -> rsshogi.record.Record | None:
         return self.game_record_loader(db_path, game_name=game_name)
 
     def build_games_raw_payload(

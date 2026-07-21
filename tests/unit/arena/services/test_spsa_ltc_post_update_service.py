@@ -104,3 +104,38 @@ async def test_process_reverts_params_when_ltc_fails() -> None:
     assert params_map == {"p": 1.0}
     assert extra_fields["ltc_rejected"] is True
     assert extra_fields["ltc_reverted_to"] == 5
+
+
+@pytest.mark.asyncio
+async def test_process_reverts_shared_runner_parameter_objects_in_place() -> None:
+    service = SpsaLtcPostUpdateService()
+    shared_param = _param(3.0)
+    runner_params = [shared_param]
+    orchestrator_params = [shared_param]
+
+    async def _run_ltc(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return {"status": "failed"}
+
+    await service.process(
+        request=SpsaLtcPostUpdateRequest(
+            update_idx=8,
+            should_run_ltc_after_update=True,
+            pre_update_snapshot=[_param(2.0)],
+            post_update_snapshot=[_param(3.0)],
+            baseline_snapshot=[_param(1.0)],
+            baseline_update_idx=5,
+        ),
+        orchestrator=object(),
+        params=orchestrator_params,
+        params_lock=asyncio.Lock(),
+        stop_event=asyncio.Event(),
+        run_ltc_regression=_run_ltc,
+        clone_param_entries=_clone,
+        store_ltc_baseline=lambda _snapshot, _idx: None,
+        append_spsa_event=lambda _payload: None,
+        write_params=lambda _entries: None,
+        persist_revert_index=lambda _p, _ts, _extra: None,
+    )
+
+    assert runner_params[0] is orchestrator_params[0]
+    assert runner_params[0].value == 1.0

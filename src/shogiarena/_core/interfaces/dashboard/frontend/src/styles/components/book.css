@@ -11,6 +11,26 @@
         @apply mb-3 text-xs text-dashboard-neutral;
     }
 
+    .book-subview-tabs {
+        @apply flex flex-wrap gap-2 border-b border-white/10;
+    }
+
+    .book-subview-tab {
+        @apply border-b-2 border-transparent bg-transparent px-3 py-2 text-xs font-medium text-dashboard-neutral transition;
+    }
+
+    .book-subview-tab:hover {
+        @apply text-white;
+    }
+
+    .book-subview-tab.active {
+        @apply border-dashboard-accent text-white;
+    }
+
+    .book-view-panel[hidden] {
+        display: none;
+    }
+
     .book-cards {
         @apply grid gap-4;
         grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -92,5 +112,79 @@
 
     .book-engines th {
         @apply text-left font-normal text-dashboard-neutral;
+    }
+
+    .book-pair-summary {
+        @apply mb-3 grid gap-2 text-xs;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    }
+
+    .book-pair-summary > div {
+        @apply flex flex-col rounded-lg border border-white/10 bg-white/5 px-3 py-2;
+    }
+
+    .book-pair-table-wrap {
+        @apply overflow-x-auto rounded-lg border border-white/10;
+    }
+
+    .book-pair-table {
+        @apply w-full min-w-[1040px] border-collapse text-left text-xs;
+    }
+
+    .book-pair-table th {
+        @apply border-b border-white/10 bg-white/5 px-3 py-2 font-normal text-dashboard-neutral;
+    }
+
+    .book-pair-table td {
+        @apply border-b border-white/5 px-3 py-2 align-top text-dashboard-foreground;
+    }
+
+    .book-pair-table tbody tr:last-child td {
+        @apply border-b-0;
+    }
+
+    .book-pair-key {
+        @apply break-all font-medium text-white;
+    }
+
+    .book-pair-muted {
+        @apply mt-1 break-all text-[11px] text-dashboard-neutral;
+    }
+
+    .book-pair-side {
+        @apply flex min-w-40 flex-col gap-1 text-[11px] text-dashboard-foreground;
+    }
+
+    .book-pair-side-title {
+        @apply break-all font-medium text-white;
+    }
+
+    .book-pair-side-empty {
+        @apply text-dashboard-neutral;
+    }
+
+    .book-status {
+        @apply inline-flex rounded border border-white/10 bg-white/5 px-2 py-0.5 font-mono text-[11px] text-dashboard-foreground;
+    }
+
+    .book-status[data-status="measured"] {
+        @apply border-emerald-400/30 bg-emerald-400/10 text-emerald-200;
+    }
+
+    .book-status[data-status="partial"] {
+        @apply border-sky-400/30 bg-sky-400/10 text-sky-200;
+    }
+
+    .book-status[data-status="unmeasured"] {
+        @apply border-zinc-400/30 bg-zinc-400/10 text-zinc-200;
+    }
+
+    .book-status[data-status="invalid_pair"],
+    .book-status[data-status="ambiguous"] {
+        @apply border-amber-400/30 bg-amber-400/10 text-amber-200;
+    }
+
+    .book-status[data-status="unpaired"] {
+        @apply border-rose-400/30 bg-rose-400/10 text-rose-200;
     }
 }

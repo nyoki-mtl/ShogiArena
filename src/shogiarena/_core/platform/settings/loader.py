@@ -17,6 +17,7 @@ from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.overlay_options import select_overlay_options
 from shogiarena._core.shared.kernel.serialization import json_serialize
 from shogiarena._core.shared.kernel.settings_loading.settings_models import (
+    DEFAULT_GITHUB_TOKEN_ENV,
     ArenaSettings,
     OpenBenchSettings,
     RepoSettings,
@@ -143,17 +144,17 @@ def load_settings(
     repos = _load_repos(data)
     overlays = _load_overlays(data)
     openbench = _load_openbench(data)
-    github_token_raw = data.get("github_token")
-    github_token = str(github_token_raw).strip() if github_token_raw else None
+    github_token_env_raw = data.get("github_token_env")
+    github_token_env = str(github_token_env_raw).strip() if github_token_env_raw else DEFAULT_GITHUB_TOKEN_ENV
 
     return ArenaSettings(
         output_dir=output_dir,
         engine_dir=engine_dir,
         settings_path=settings_path,
         repos=repos,
-        github_token=github_token,
         overlays=overlays,
         openbench=openbench,
+        github_token_env=github_token_env,
     )
 
 
@@ -163,7 +164,7 @@ def write_settings_file(
     output_dir: Path,
     engine_dir: Path,
     repos: dict[str, RepoSettings] | None = None,
-    github_token: str | None = None,
+    github_token_env: str | None = None,
     overlays: dict[str, Path] | None = None,
     openbench: OpenBenchSettings | None = None,
 ) -> None:
@@ -172,8 +173,9 @@ def write_settings_file(
         "output_dir": str(output_dir),
         "engine_dir": str(engine_dir),
     }
-    if github_token:
-        payload["github_token"] = github_token
+    # token 本体は保存せず、環境変数名だけを持つ（openbench.password_env と同じ方式）。
+    if github_token_env and github_token_env != DEFAULT_GITHUB_TOKEN_ENV:
+        payload["github_token_env"] = github_token_env
     if repos:
         payload["repos"] = {
             name: {
@@ -191,6 +193,8 @@ def write_settings_file(
             "username": openbench.username,
             "password_env": openbench.password_env,
         }
+    # settings ファイルは秘密を含まないため、パーミッションを絞る必要はない
+    # （Windows では chmod が read-only ビットしか反映せず強制もできない）。
     with open(settings_path, "w", encoding="utf-8") as handle:
         yaml.safe_dump(payload, handle, allow_unicode=True, sort_keys=True)
 

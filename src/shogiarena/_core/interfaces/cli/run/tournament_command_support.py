@@ -51,6 +51,7 @@ async def run_tournament_like(
             raise CliError(f"Invalid tournament config: {config_path}: {exc}") from exc
         base_config = {str(key): json_serialize(value) for key, value in parsed_file_payload.items()}
 
+    sections: dict[str, list[str] | None]
     if sections_override is not None:
         sections = sections_override
     else:
@@ -115,6 +116,7 @@ async def run_tournament_like(
         git_worktree=args.git_worktree,
         experiment_name=args.experiment_name,
         run_dir_override=args.run_dir,
+        config_base_dir=config_path.parent if config_path is not None else Path.cwd(),
         config_payload=payload if has_cli_overrides else None,
     )
 

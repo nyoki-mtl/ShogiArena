@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import rshogi.record
+import rsshogi.record
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.remote_control import (
     prepare_remote_game_spec as _prepare_remote_game_spec_service,
@@ -48,7 +48,7 @@ class SpsaOrchestratorRemoteGameMixin:
         baseline_label: str,
         tuned_options: JsonObject,
         baseline_options: JsonObject,
-    ) -> rshogi.record.GameRecord:
+    ) -> rsshogi.record.Record:
         """Execute a single SPSA game by delegating both engines to one remote instance."""
         # Keep parameters in signature for parity with local flow.
         _ = tuned_params, current_params

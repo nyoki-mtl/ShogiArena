@@ -111,7 +111,7 @@ def _state_to_payload(state: _UpdateState) -> JsonObject:
         "ended_at": timestamp_to_iso(state.end_time),
         "games": [state.games_meta[gid] for gid in state.games_order if gid in state.games_meta],
         "ltc_regression": state.ltc_regression,
-        "has_ltc_regression": coerce_bool(state.ltc_regression) if state.has_ltc_regression else False,
+        "has_ltc_regression": state.has_ltc_regression and state.ltc_regression is not None,
         "btd_elo": coerce_float(state.ltc_regression.get("elo")) if isinstance(state.ltc_regression, Mapping) else None,
     }
     if state.has_ltc_rejected:

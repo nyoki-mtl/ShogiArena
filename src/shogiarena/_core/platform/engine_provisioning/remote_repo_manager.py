@@ -4,11 +4,28 @@ from __future__ import annotations
 
 import logging
 import shlex
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
 
 from shogiarena._core.platform.engine_provisioning.file_hashing import sha256_file
-from shogiarena._core.platform.engine_provisioning.provisioning_ports import SshCommandTransportPort
+from shogiarena._core.platform.engine_provisioning.provisioning_ports import (
+    RemoteSecretFileHandle,
+    RemoteSecretFileRequest,
+    SshCommandTransportPort,
+    SshSecretFileTransportPort,
+)
+
+_GIT_ASKPASS_SCRIPT = """#!/bin/sh
+case "$1" in
+  *Username*) printf "%s\\n" "x-access-token" ;;
+  *)
+    token=$(cat "$SHOGIARENA_GIT_TOKEN_FILE") || exit 1
+    printf "%s\\n" "$token"
+    ;;
+esac
+"""
 
 
 @dataclass(frozen=True)
@@ -85,24 +102,27 @@ class RemoteRepoSynchronizer:
     async def _clone_repository(self, base_path: str, token: str | None) -> None:
         if await self._path_exists(base_path):
             raise RuntimeError(f"Remote path {base_path} exists but is not a Git repository; remove it manually.")
-        clone_url = self._auth_url(token)
         parent_dir = str(PurePosixPath(base_path).parent)
         await self._ensure_directory(parent_dir)
-        cmd = f"git clone {shlex.quote(clone_url)} {shlex.quote(base_path)}"
-        rc, out, err = await self._transport.run(cmd)
+        cmd = f"git clone {shlex.quote(self._spec.url)} {shlex.quote(base_path)}"
+        rc, out, err = await self._run_git_command(cmd, token=token)
         if rc != 0:
             message = err or out or "git clone failed"
             raise RuntimeError(f"git clone failed on remote: {message}")
+        rc_url, _out_url, err_url = await self._transport.run(
+            f"git -C {shlex.quote(base_path)} remote set-url origin {shlex.quote(self._spec.url)}"
+        )
+        if rc_url != 0:
+            raise RuntimeError(f"Failed to reset remote origin URL after clone: {err_url}")
         self._logger.debug("[%s] cloned repository", base_path)
 
     async def _fetch_updates(self, base_path: str, token: str | None) -> None:
-        fetch_url = self._auth_url(token)
         cmd = (
-            f"git -C {shlex.quote(base_path)} fetch --prune "
-            f"{shlex.quote(fetch_url)} +refs/heads/*:refs/remotes/origin/*"
+            f"{self._git_command(base_path=base_path)} fetch --prune "
+            f"{shlex.quote(self._spec.url)} +refs/heads/*:refs/remotes/origin/*"
         )
         self._logger.debug("[%s] git fetch --prune", base_path)
-        rc, out, err = await self._transport.run(cmd)
+        rc, out, err = await self._run_git_command(cmd, token=token)
         if rc != 0:
             message = err or out or "git fetch failed"
             raise RuntimeError(f"git fetch failed on remote: {message}")
@@ -116,8 +136,9 @@ class RemoteRepoSynchronizer:
             raise RuntimeError(f"git checkout failed on remote: {message}")
 
     async def _reset_ref(self, base_path: str, ref: str) -> None:
-        cmd = f"git -C {shlex.quote(base_path)} reset --hard {shlex.quote(ref)}"
-        self._logger.debug("[%s] git reset --hard %s", base_path, ref)
+        reset_ref = ref if self._looks_like_commit(ref) else f"refs/remotes/origin/{ref}"
+        cmd = f"git -C {shlex.quote(base_path)} reset --hard {shlex.quote(reset_ref)}"
+        self._logger.debug("[%s] git reset --hard %s", base_path, reset_ref)
         rc, out, err = await self._transport.run(cmd)
         if rc != 0:
             message = err or out or "git reset --hard failed"
@@ -140,10 +161,44 @@ class RemoteRepoSynchronizer:
         parent = PurePosixPath(base_path).parent
         await self._ensure_directory(str(parent))
 
-    def _auth_url(self, token: str | None) -> str:
-        if token and self._spec.url.startswith("https://"):
-            return self._spec.url.replace("https://", f"https://x-access-token:{token}@", 1)
-        return self._spec.url
+    async def _run_git_command(self, command: str, *, token: str | None) -> tuple[int, str, str]:
+        if not token or not self._should_use_github_token():
+            return await self._transport.run(command)
+        secret_transport = self._secret_transport()
+        secret_files = [
+            RemoteSecretFileRequest(file_id="github_token", payload=token.encode("utf-8"), mode=0o600),
+            RemoteSecretFileRequest(file_id="git_askpass", payload=_GIT_ASKPASS_SCRIPT.encode("utf-8"), mode=0o700),
+        ]
+
+        def build_secret_command(handles: Mapping[str, RemoteSecretFileHandle]) -> str:
+            token_path = handles["github_token"].remote_path
+            askpass_path = handles["git_askpass"].remote_path
+            return (
+                f"GIT_ASKPASS={shlex.quote(askpass_path)} "
+                "GIT_TERMINAL_PROMPT=0 "
+                f"SHOGIARENA_GIT_TOKEN_FILE={shlex.quote(token_path)} "
+                f"{command}"
+            )
+
+        return await secret_transport.run_with_secret_files(build_secret_command, secret_files)
+
+    def _secret_transport(self) -> SshSecretFileTransportPort:
+        if not isinstance(self._transport, SshSecretFileTransportPort):
+            raise RuntimeError("SSH transport does not support secret file handoff.")
+        return self._transport
+
+    def _git_command(self, *, base_path: str | None = None) -> str:
+        parts = ["git"]
+        if base_path is not None:
+            parts.extend(["-C", shlex.quote(base_path)])
+        return " ".join(parts)
+
+    def _should_use_github_token(self) -> bool:
+        parsed = urlparse(self._spec.url)
+        if parsed.scheme not in {"http", "https"}:
+            return False
+        host = parsed.hostname or ""
+        return host == "github.com" or host.endswith(".github.com")
 
     async def _require_git(self) -> None:
         rc, _out, _err = await self._transport.run("command -v git")
@@ -167,7 +222,8 @@ class RemoteRepoSynchronizer:
         base_cmd = f"git -C {shlex.quote(base_path)} checkout -f"
         if is_commit:
             return f"{base_cmd} --detach {quoted_ref}"
-        return f"{base_cmd} {quoted_ref}"
+        quoted_remote_ref = shlex.quote(f"refs/remotes/origin/{ref}")
+        return f"git -C {shlex.quote(base_path)} checkout -B {quoted_ref} {quoted_remote_ref}"
 
     @staticmethod
     def _looks_like_commit(ref: str) -> bool:

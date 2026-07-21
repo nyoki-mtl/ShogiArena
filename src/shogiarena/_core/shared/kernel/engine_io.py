@@ -8,7 +8,7 @@ from typing import Literal, TypeAlias
 UsiIoDirection: TypeAlias = Literal["in", "out", "stderr"]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class UsiIoEvent:
     """Typed USI I/O event."""
 

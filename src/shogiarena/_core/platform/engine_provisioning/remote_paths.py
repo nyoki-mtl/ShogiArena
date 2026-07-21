@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 from pathlib import Path
 
@@ -53,16 +54,42 @@ class RemotePathResolver:
     async def expand(self, expression: str) -> str:
         if "$" not in expression and not expression.startswith("~"):
             return expression
-        command = "p=$(eval echo " + shlex.quote(expression) + '); printf %s "$p"'
-        rc, stdout, stderr = await self._transport.run(command)
+        rc, stdout, stderr = await self._transport.run('printf "__HOME__=%s\\n" "$HOME"; env')
         if rc != 0 or not stdout:
             raise RuntimeError(f"Failed to resolve remote path: {expression}: {stderr or stdout}")
-        return stdout
+        return _expand_shell_path(expression, _parse_env(stdout))
 
     async def file_exists(self, remote_path: str) -> bool:
         command = f"test -f {shlex.quote(remote_path)}"
         rc, _, _ = await self._transport.run(command)
         return rc == 0
+
+
+_ENV_VAR_PATTERN = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+
+
+def _parse_env(raw: str) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for line in raw.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key:
+            env[key] = value
+    return env
+
+
+def _expand_shell_path(expression: str, env: dict[str, str]) -> str:
+    expanded = expression
+    home = env.get("__HOME__") or env.get("HOME") or ""
+    if expanded == "~":
+        expanded = home
+    elif expanded.startswith("~/"):
+        expanded = f"{home}/{expanded[2:]}"
+
+    def replace_var(match: re.Match[str]) -> str:
+        name = match.group(1) or match.group(2)
+        return env.get(name, "")
+
+    return _ENV_VAR_PATTERN.sub(replace_var, expanded)
 
 
 __all__ = ["RemotePathResolver", "RemoteProjectLocator"]

@@ -79,6 +79,26 @@ async def test_enabled_book_transfers_file_not_whole_dir(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_db_bookfile_uses_ybb_fallback_for_remote_transfer(tmp_path: Path) -> None:
+    support = _FakeSupport()
+    factory = _make_factory(support)
+    instance = _ssh_instance(tmp_path)
+
+    book_dir = tmp_path / "books"
+    book_dir.mkdir()
+    (book_dir / "user_book1.ybb").write_bytes(b"binary-placeholder")
+
+    options = {"BookDir": str(book_dir), "BookFile": "user_book1.db", "USI_OwnBook": "true"}
+    await factory._rewrite_options_for_remote(instance, options)
+
+    assert len(support.file_transfers) == 1
+    local_file, remote_file = support.file_transfers[0]
+    assert local_file == book_dir / "user_book1.ybb"
+    assert options["BookFile"] == Path(remote_file).name
+    assert "user_book1-01234567.ybb" == Path(remote_file).name
+
+
+@pytest.mark.asyncio
 async def test_large_book_hard_blocks_by_default(tmp_path: Path, monkeypatch) -> None:
     support = _FakeSupport()
     factory = _make_factory(support)

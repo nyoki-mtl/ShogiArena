@@ -5,11 +5,11 @@ import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from json import JSONDecodeError
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, ValidationError, field_validator
 
-from shogiarena._core.shared.kernel.json_types import JsonObject, JsonScalar, JsonValue
+from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int, coerce_iso_datetime, coerce_str
 from shogiarena._core.shared.kernel.serialization import json_serialize
 
@@ -22,11 +22,10 @@ def _to_mapping_or_none(value: JsonValue | Mapping[str, JsonValue] | None) -> Js
     return {str(key): json_serialize(item) for key, item in value.items()}
 
 
-_JsonMappingValue: TypeAlias = JsonScalar | list[JsonScalar] | dict[str, JsonScalar]
-JsonMapping: TypeAlias = Mapping[str, _JsonMappingValue]
-
 _CoercedOptionalStr = Annotated[str | None, BeforeValidator(coerce_str)]
-_CoercedOptionalMapping = Annotated[JsonMapping | None, BeforeValidator(_to_mapping_or_none)]
+# NOTE: ここを JsonObject にすると pydantic が再帰型 JsonValue のスキーマ生成で
+# RecursionError になる（JsonValue は暗黙の再帰エイリアス）。境界では object のままにする。
+_CoercedOptionalMapping = Annotated[Mapping[str, object] | None, BeforeValidator(_to_mapping_or_none)]
 
 
 class EngineArtifactSnapshot(BaseModel):

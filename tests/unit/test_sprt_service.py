@@ -103,6 +103,16 @@ def test_sprt_test_definition_includes_model_for_resume_boundary() -> None:
     assert without_model is not None and "model" not in without_model
 
 
+def test_sprt_test_definition_includes_tested_engine_role() -> None:
+    tested_dev = build_sprt_test_definition(
+        {"tested_engine": "dev", "model": "gsprt-trinomial-v1", "elo0": 0.0, "elo1": 5.0}
+    )
+    tested_base = build_sprt_test_definition(
+        {"tested_engine": "base", "model": "gsprt-trinomial-v1", "elo0": 0.0, "elo1": 5.0}
+    )
+    assert tested_dev != tested_base
+
+
 # --- Pentanomial mode -------------------------------------------------------------------------
 def _penta() -> Sprt:
     return Sprt(elo0=0.0, elo1=5.0, model=SPRT_MODEL_GSPRT_PENTANOMIAL)
@@ -110,20 +120,43 @@ def _penta() -> Sprt:
 
 def test_pentanomial_paired_observation_feeds_bins_and_llr() -> None:
     sprt = _penta()
-    for _ in range(3):
+    for _ in range(25):
         sprt.add_paired_observation(black_score=1.0, white_score=1.0)  # WW (bin 4)
-    sprt.add_paired_observation(black_score=0.5, white_score=0.0)  # score 0.5 -> bin 1 (LD)
-    assert sprt.games_played == 8  # 4 pairs * 2 games
-    expected = compute_llr([0, 1, 0, 0, 3], elo0=0.0, elo1=5.0)
+    for _ in range(5):
+        sprt.add_paired_observation(black_score=0.5, white_score=0.0)  # score 0.5 -> bin 1 (LD)
+    assert sprt.games_played == 60  # 30 pairs * 2 games
+    expected = compute_llr([0, 5, 0, 0, 25], elo0=0.0, elo1=5.0)
     assert sprt.llr == pytest.approx(expected)
 
 
-def test_pentanomial_min_pairs_guard_blocks_single_pair() -> None:
+def test_pentanomial_guard_blocks_known_two_pair_false_acceptance() -> None:
     sprt = _penta()
-    sprt.add_paired_observation(black_score=1.0, white_score=1.0)  # 1 pair < floor 2
+    for _ in range(2):
+        sprt.add_paired_observation(black_score=1.0, white_score=1.0)
     assert sprt.llr == 0.0
     assert not sprt.is_finished()
-    sprt.add_paired_observation(black_score=1.0, white_score=1.0)  # 2 pairs -> decision allowed
+
+
+def test_pentanomial_guard_blocks_known_seven_pair_two_bin_false_decision() -> None:
+    sprt = _penta()
+    for _ in range(6):
+        sprt.add_paired_observation(black_score=0.0, white_score=0.0)  # LL
+    sprt.add_paired_observation(black_score=0.0, white_score=0.5)  # LD
+    assert sprt.llr == 0.0
+    assert not sprt.is_finished()
+
+
+def test_pentanomial_guard_blocks_support_poor_sample_after_pair_floor() -> None:
+    sprt = _penta()
+    for _ in range(30):
+        sprt.add_paired_observation(black_score=1.0, white_score=1.0)
+    assert sprt.llr == 0.0
+    assert not sprt.is_finished()
+
+    for _ in range(4):
+        sprt.add_paired_observation(black_score=0.5, white_score=0.5)
+    assert sprt.llr == 0.0
+    sprt.add_paired_observation(black_score=0.5, white_score=0.5)
     assert sprt.llr != 0.0
 
 
@@ -160,17 +193,16 @@ def test_pentanomial_snapshot_roundtrip_with_pending() -> None:
 
 
 def test_pentanomial_min_pairs_survives_snapshot_roundtrip() -> None:
-    # Regression: min_pairs must be restored, otherwise resume reverts to the default floor (2)
-    # and would stop a run early that was configured for a larger min_pairs.
-    sprt = Sprt(elo0=0.0, elo1=5.0, model=SPRT_MODEL_GSPRT_PENTANOMIAL, min_pairs=10)
+    # Regression: min_pairs must be restored rather than reverting to the default safety floor.
+    sprt = Sprt(elo0=0.0, elo1=5.0, model=SPRT_MODEL_GSPRT_PENTANOMIAL, min_pairs=100)
     for _ in range(3):
-        sprt.add_paired_observation(black_score=1.0, white_score=1.0)  # 3 pairs < 10 -> no decision
+        sprt.add_paired_observation(black_score=1.0, white_score=1.0)  # 3 pairs < 100 -> no decision
     assert sprt.llr == 0.0
     assert not sprt.is_finished()
 
     restored = Sprt.from_snapshot(sprt.to_snapshot())
     assert restored.llr == 0.0
-    assert not restored.is_finished()  # still gated by min_pairs=10, not reverted to 2
+    assert not restored.is_finished()  # still gated by min_pairs=100, not reverted to 30
 
 
 def test_pentanomial_rejects_off_grid_scores() -> None:

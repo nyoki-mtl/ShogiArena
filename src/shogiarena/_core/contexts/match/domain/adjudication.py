@@ -57,11 +57,18 @@ class ResignTracker:
         self.is_two_sided = is_two_sided
         self.consecutive_losing_moves_black = 0
         self.consecutive_losing_moves_white = 0
+        self._two_sided_winner: str | None = None
+        self._two_sided_agreement_count = 0
         logger.debug(
             f"ResignTracker initialized: score={resign_score_cp}cp, moves={move_count}, is_two_sided={is_two_sided}"
         )
 
-    def update(self, eval_cp: int, score_type: str | None, is_side_to_move_black: bool) -> AdjudicationResult | None:
+    def update(
+        self,
+        eval_cp: int | None,
+        score_type: str | None,
+        is_side_to_move_black: bool,
+    ) -> AdjudicationResult | None:
         """
         Update resign tracking with evaluation.
 
@@ -90,6 +97,39 @@ class ResignTracker:
             # Reset counters if no valid eval
             self.consecutive_losing_moves_black = 0
             self.consecutive_losing_moves_white = 0
+            self._two_sided_winner = None
+            self._two_sided_agreement_count = 0
+            return None
+
+        if self.is_two_sided:
+            if abs(eval_cp) < self.resign_score_cp:
+                self.consecutive_losing_moves_black = 0
+                self.consecutive_losing_moves_white = 0
+                self._two_sided_winner = None
+                self._two_sided_agreement_count = 0
+                return None
+
+            winner = "black" if eval_cp > 0 else "white"
+            if winner == self._two_sided_winner:
+                self._two_sided_agreement_count += 1
+            else:
+                self._two_sided_winner = winner
+                self._two_sided_agreement_count = 1
+
+            if winner == "black":
+                self.consecutive_losing_moves_white = self._two_sided_agreement_count
+                self.consecutive_losing_moves_black = 0
+            else:
+                self.consecutive_losing_moves_black = self._two_sided_agreement_count
+                self.consecutive_losing_moves_white = 0
+
+            required = self.required_move_count * 2
+            if self._two_sided_agreement_count >= required:
+                if winner == "black":
+                    logger.debug("Resign (2-sided): White resigns after %s agreed moves", required)
+                    return AdjudicationResult.RESIGN_WHITE
+                logger.debug("Resign (2-sided): Black resigns after %s agreed moves", required)
+                return AdjudicationResult.RESIGN_BLACK
             return None
 
         # Convert eval to perspective of side to move
@@ -97,42 +137,19 @@ class ResignTracker:
 
         # Check if moving side is losing badly
         if eval_from_moving_side <= -self.resign_score_cp:
-            if self.is_two_sided:
-                # Two-sided mode: count moves from both sides
-                if is_side_to_move_black:
-                    self.consecutive_losing_moves_black += 1
-                else:
-                    self.consecutive_losing_moves_white += 1
-
-                # Check if combined count reaches threshold
-                total_losing_moves = self.consecutive_losing_moves_black + self.consecutive_losing_moves_white
-
-                if total_losing_moves >= self.required_move_count * 2:
-                    # Determine who should resign based on current eval
-                    if eval_cp > 0:  # Black is winning
-                        logger.debug(f"Resign (2-sided): White resigns after {total_losing_moves} moves")
-                        return AdjudicationResult.RESIGN_WHITE
-                    else:  # White is winning
-                        logger.debug(f"Resign (2-sided): Black resigns after {total_losing_moves} moves")
-                        return AdjudicationResult.RESIGN_BLACK
+            # One-sided mode: separate counters for each side
+            if is_side_to_move_black:
+                self.consecutive_losing_moves_black += 1
+                self.consecutive_losing_moves_white = 0
+                if self.consecutive_losing_moves_black >= self.required_move_count:
+                    logger.info(f"Resign adjudication: Black losing for {self.consecutive_losing_moves_black} moves")
+                    return AdjudicationResult.RESIGN_BLACK
             else:
-                # One-sided mode: separate counters for each side
-                if is_side_to_move_black:
-                    self.consecutive_losing_moves_black += 1
-                    self.consecutive_losing_moves_white = 0
-                    if self.consecutive_losing_moves_black >= self.required_move_count:
-                        logger.info(
-                            f"Resign adjudication: Black losing for {self.consecutive_losing_moves_black} moves"
-                        )
-                        return AdjudicationResult.RESIGN_BLACK
-                else:
-                    self.consecutive_losing_moves_white += 1
-                    self.consecutive_losing_moves_black = 0
-                    if self.consecutive_losing_moves_white >= self.required_move_count:
-                        logger.info(
-                            f"Resign adjudication: White losing for {self.consecutive_losing_moves_white} moves"
-                        )
-                        return AdjudicationResult.RESIGN_WHITE
+                self.consecutive_losing_moves_white += 1
+                self.consecutive_losing_moves_black = 0
+                if self.consecutive_losing_moves_white >= self.required_move_count:
+                    logger.info(f"Resign adjudication: White losing for {self.consecutive_losing_moves_white} moves")
+                    return AdjudicationResult.RESIGN_WHITE
         else:
             # Reset counters if not losing badly
             if not self.is_two_sided:
@@ -220,7 +237,7 @@ class Adjudicator:
             GameResult if game should be adjudicated, None to continue
         """
         # Check resign adjudication (handles both cp and mate scores)
-        if self.resign_tracker and eval_cp is not None:
+        if self.resign_tracker:
             result = self.resign_tracker.update(eval_cp, score_type, is_side_to_move_black)
             if result == AdjudicationResult.RESIGN_BLACK:
                 return GameResult.WHITE_WIN

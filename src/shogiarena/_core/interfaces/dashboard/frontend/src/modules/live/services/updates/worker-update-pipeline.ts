@@ -35,7 +35,7 @@ interface PipelineDeps {
 }
 
 /**
- * ワーカーごとの更新を適用し、状態・カード・イベントを同期する。
+ * ワーカーごとの更新を適用し、状態、カード、イベントを同期する。
  * SSE 契約に沿った正規化済みペイロードを前提とする。
  */
 export function createWorkerUpdatePipeline(deps: PipelineDeps) {

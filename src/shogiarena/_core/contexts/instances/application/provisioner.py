@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import posixpath
+import re
 import shlex
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -33,6 +34,7 @@ class ProvisionError(RuntimeError):
 class Provisioner:
     # Per-remote-binary path locks to avoid duplicated concurrent uploads within a process
     _binary_locks: dict[str, asyncio.Lock] = {}
+    _env_var_pattern = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 
     @staticmethod
     async def _resolve_remote_path(instance: Instance, path_str: str) -> str:
@@ -45,16 +47,40 @@ class Provisioner:
         t = create_transport(instance)
         await t.connect()
         try:
-            cmd = "p=$(eval echo " + shlex.quote(path_str) + '); printf %s "$p"'
+            cmd = 'printf "__HOME__=%s\\n" "$HOME"; env'
             rc, out, err = await t.run(cmd)
             if rc != 0 or not out:
                 raise ProvisionError(f"Failed to resolve remote path: {path_str}: {err or out}")
-            return out
+            return Provisioner._expand_shell_path(path_str, Provisioner._parse_env(out))
         finally:
             try:
                 await t.close()
             except (asyncssh.Error, OSError) as exc:
                 logger.debug("Failed to close SSH transport after path resolve: %s", exc)
+
+    @staticmethod
+    def _parse_env(raw: str) -> dict[str, str]:
+        env: dict[str, str] = {}
+        for line in raw.splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key:
+                env[key] = value
+        return env
+
+    @staticmethod
+    def _expand_shell_path(path_str: str, env: Mapping[str, str]) -> str:
+        expanded = path_str
+        home = env.get("__HOME__") or env.get("HOME") or ""
+        if expanded == "~":
+            expanded = home
+        elif expanded.startswith("~/"):
+            expanded = f"{home}/{expanded[2:]}"
+
+        def replace_var(match: re.Match[str]) -> str:
+            name = match.group(1) or match.group(2)
+            return env.get(name, "")
+
+        return Provisioner._env_var_pattern.sub(replace_var, expanded)
 
     @staticmethod
     async def copy_directory_scp(instance: Instance, local_dir: Path, remote_dir: str) -> None:

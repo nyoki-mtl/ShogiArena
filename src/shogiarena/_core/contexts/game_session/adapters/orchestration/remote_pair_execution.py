@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-import rshogi.record
+import rsshogi.record
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.remote_executor import RemoteExecutor
 from shogiarena._core.contexts.game_session.application.orchestration.remote_move_aggregation import (
@@ -23,7 +23,7 @@ from shogiarena._core.shared.kernel.time_control import TimeControlLimits
 class RemotePairGameExecutionResult:
     """Result bundle returned from one remote pair execution."""
 
-    game_info: rshogi.record.GameRecord
+    game_info: rsshogi.record.Record
     started_at: datetime
     completed_at: datetime
 

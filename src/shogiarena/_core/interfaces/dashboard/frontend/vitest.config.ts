@@ -15,8 +15,10 @@ export default defineConfig({
     test: {
         environment: 'jsdom',
         globals: true,
-        setupFiles: [path.join(__dirname, 'src/test/setup.ts')],
-        include: [path.join(__dirname, 'src/**/*.{test,spec}.{ts,tsx,js,jsx}')],
+        // glob は `root` からの相対パスかつスラッシュ区切りで指定する。
+        // path.join() は Windows で `\` を返し、glob 上ではエスケープ扱いになりマッチしない。
+        setupFiles: ['src/test/setup.ts'],
+        include: ['src/**/*.{test,spec}.{ts,tsx,js,jsx}'],
         exclude: ['**/node_modules/**', '**/dist/**'],
         testTimeout: 15_000,
         hookTimeout: 15_000,

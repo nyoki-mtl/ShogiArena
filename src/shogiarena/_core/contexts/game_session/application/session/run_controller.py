@@ -7,7 +7,7 @@ import logging
 import os
 import signal
 from collections.abc import Awaitable, Callable, Mapping, Sized
-from typing import Protocol, TypeVar, runtime_checkable
+from typing import Generic, Protocol, TypeVar, runtime_checkable
 
 from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import OrchestratorPort
 
@@ -59,7 +59,7 @@ class _ShutdownInspectableOrchestratorPort(Protocol):
     engine_pool: object | None
 
 
-class RunController:
+class RunController(Generic[TRunFlow]):
     """Coordinate orchestrator execution and shutdown behavior."""
 
     def __init__(

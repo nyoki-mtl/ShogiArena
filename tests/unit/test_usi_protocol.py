@@ -1,5 +1,5 @@
 import pytest
-from rshogi.core import Move
+from rsshogi.core import Move
 
 from shogiarena._core.platform.engine_runtime.usi_protocol_types import (
     UsiIdField,

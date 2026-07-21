@@ -33,7 +33,12 @@ export function resolveApiBase(): string {
     }
 
     if (location.protocol === 'file:') {
-        return `http://localhost:${port}`;
+        // ダッシュボードは same-origin 限定なので、file:// から localhost を叩くと
+        // すべてのリクエストが 403 になる。原因の分かる形で先に失敗させる。
+        throw new Error(
+            `Failed to resolve dashboard API base URL: open http://localhost:${port} instead of the local file. ` +
+                'The dashboard only accepts same-origin requests.',
+        );
     }
 
     if (location.origin === 'null') {
@@ -82,14 +87,20 @@ function isBodyInit(value: unknown): value is BodyInit {
 export async function requestJson<T = unknown>(url: string, options: JsonRequestOptions = {}): Promise<T> {
     const { body: optionBody, headers, validate, ...rest } = options;
     const init: RequestInit = { ...rest };
+    const method = (init.method ?? 'GET').toUpperCase();
+    const requiresJsonContentType = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
 
     if (optionBody !== undefined) {
         init.body = isBodyInit(optionBody) ? optionBody : JSON.stringify(optionBody);
     }
 
     if (headers) {
-        init.headers = headers;
-    } else if (init.body && !isBodyInit(optionBody)) {
+        const normalizedHeaders = new Headers(headers);
+        if (requiresJsonContentType && !normalizedHeaders.has('Content-Type')) {
+            normalizedHeaders.set('Content-Type', 'application/json');
+        }
+        init.headers = normalizedHeaders;
+    } else if (requiresJsonContentType || (init.body && !isBodyInit(optionBody))) {
         init.headers = { 'Content-Type': 'application/json' };
     }
 

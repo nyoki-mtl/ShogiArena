@@ -4,12 +4,13 @@ from collections.abc import Iterable
 from datetime import UTC
 from types import TracebackType
 
-import rshogi
+import rsshogi
 from pydantic import ValidationError
 from sqlalchemy import select
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import Session, aliased
 
 from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.json_coercion import to_json_object
 from shogiarena._core.shared.kernel.json_types import JsonValue
 from shogiarena._core.shared.kernel.participation_records import (
     EngineArtifactSnapshot,
@@ -50,39 +51,40 @@ class ArenaDBAdapter:
 
     def get_games_with_players(self, *, game_type: str) -> list[GameRecordPlayers]:
         db = self._get_db()
-        black_player = aliased(Player)
-        white_player = aliased(Player)
+        with db.operation() as session:
+            black_player = aliased(Player)
+            white_player = aliased(Player)
 
-        stmt = (
-            select(
-                Game.id,
-                Game.game_name,
-                black_player.player_name.label("black_player"),
-                white_player.player_name.label("white_player"),
-                Game.game_result,
-                Game.initial_position_sfen,
+            stmt = (
+                select(
+                    Game.id,
+                    Game.game_name,
+                    black_player.player_name.label("black_player"),
+                    white_player.player_name.label("white_player"),
+                    Game.game_result,
+                    Game.initial_position_sfen,
+                )
+                .join(black_player, Game.black_player_id == black_player.id)
+                .join(white_player, Game.white_player_id == white_player.id)
+                .where(Game.game_type == game_type)
+                .order_by(Game.id.asc())
             )
-            .join(black_player, Game.black_player_id == black_player.id)
-            .join(white_player, Game.white_player_id == white_player.id)
-            .where(Game.game_type == game_type)
-            .order_by(Game.id.asc())
-        )
-        result = db.session.execute(stmt)
+            result = session.execute(stmt)
 
-        games: list[GameRecordPlayers] = []
-        for game_id, game_name, black_name, white_name, raw_result, initial_sfen in result:
-            game_result = self._coerce_game_result(raw_result)
-            games.append(
-                {
-                    "game_id": game_id,
-                    "game_name": game_name,
-                    "black_player": black_name,
-                    "white_player": white_name,
-                    "result": game_result,
-                    "initial_sfen": initial_sfen,
-                }
-            )
-        return games
+            games: list[GameRecordPlayers] = []
+            for game_id, game_name, black_name, white_name, raw_result, initial_sfen in result:
+                game_result = self._coerce_game_result(raw_result)
+                games.append(
+                    {
+                        "game_id": game_id,
+                        "game_name": game_name,
+                        "black_player": black_name,
+                        "white_player": white_name,
+                        "result": game_result,
+                        "initial_sfen": initial_sfen,
+                    }
+                )
+            return games
 
     def ensure_schema(self) -> None:
         """Create the database tables if they do not yet exist."""
@@ -92,19 +94,20 @@ class ArenaDBAdapter:
     def get_game_id_by_name(self, game_name: str) -> int | None:
         db = self._get_db()
         stmt = select(Game.id).where(Game.game_name == game_name)
-        return db.session.execute(stmt).scalar_one_or_none()
+        with db.operation() as session:
+            return session.execute(stmt).scalar_one_or_none()
 
     def load_record(
         self,
         *,
         game_id: int | None = None,
         game_name: str | None = None,
-    ) -> rshogi.record.GameRecord | None:
+    ) -> rsshogi.record.Record | None:
         return self._get_record_store().load(game_id=game_id, game_name=game_name)
 
     def append_record_list(
         self,
-        record_list: Iterable[rshogi.record.GameRecord | None],
+        record_list: Iterable[rsshogi.record.Record | None],
         *,
         should_update: bool = False,
     ) -> None:
@@ -114,12 +117,16 @@ class ArenaDBAdapter:
         if snapshot is None:
             return None
         db = self._get_db()
-        session = db.session
+        with db.operation(commit=True) as session:
+            return self._upsert_engine_artifact(session, snapshot)
+
+    @staticmethod
+    def _upsert_engine_artifact(session: Session, snapshot: EngineArtifactSnapshot) -> EngineArtifact:
         existing = session.execute(
             select(EngineArtifact).where(EngineArtifact.logical_name == snapshot.logical_name)
         ).scalar_one_or_none()
-        build_flags = dict(snapshot.build_flags) if snapshot.build_flags is not None else None
-        metadata_payload = dict(snapshot.metadata) if snapshot.metadata is not None else None
+        build_flags = to_json_object(snapshot.build_flags) if snapshot.build_flags is not None else None
+        metadata_payload = to_json_object(snapshot.metadata) if snapshot.metadata is not None else None
         if existing is None:
             entity = EngineArtifact(
                 logical_name=snapshot.logical_name,
@@ -129,28 +136,30 @@ class ArenaDBAdapter:
                 metadata_json=metadata_payload,
             )
             session.add(entity)
-            session.commit()
-            session.refresh(entity)
+            session.flush()
             return entity
 
         existing.artifact = snapshot.artifact
         existing.binary_path = snapshot.binary_path
         existing.build_flags = build_flags
         existing.metadata_json = metadata_payload
-        session.commit()
         return existing
 
     def upsert_instance_spec(self, snapshot: InstanceSnapshot | None) -> InstanceSpec | None:
         if snapshot is None:
             return None
         db = self._get_db()
-        session = db.session
+        with db.operation(commit=True) as session:
+            return self._upsert_instance_spec(session, snapshot)
+
+    @staticmethod
+    def _upsert_instance_spec(session: Session, snapshot: InstanceSnapshot) -> InstanceSpec:
         existing = session.execute(
             select(InstanceSpec).where(InstanceSpec.instance_id == snapshot.instance_id)
         ).scalar_one_or_none()
 
         tags = list(snapshot.tags) if snapshot.tags else None
-        extra = dict(snapshot.extra) if snapshot.extra is not None else None
+        extra = to_json_object(snapshot.extra) if snapshot.extra is not None else None
 
         def _apply(entity: InstanceSpec) -> None:
             entity.display_name = snapshot.display_name
@@ -173,17 +182,24 @@ class ArenaDBAdapter:
             entity = InstanceSpec(instance_id=snapshot.instance_id)
             _apply(entity)
             session.add(entity)
-            session.commit()
-            session.refresh(entity)
+            session.flush()
             return entity
 
         _apply(existing)
-        session.commit()
         return existing
 
     def record_game_participation(self, *, game_id: int, participation: Iterable[object]) -> None:
         db = self._get_db()
-        session = db.session
+        with db.operation(commit=True) as session:
+            self._record_game_participation(session, game_id=game_id, participation=participation)
+
+    def _record_game_participation(
+        self,
+        session: Session,
+        *,
+        game_id: int,
+        participation: Iterable[object],
+    ) -> None:
         for raw_record in participation:
             if isinstance(raw_record, GameParticipationRecord):
                 record = raw_record
@@ -193,15 +209,20 @@ class ArenaDBAdapter:
                 except ValidationError as exc:
                     raise TypeError("participation entries must be GameParticipationRecord-compatible") from exc
 
-            artifact_entity = self.upsert_engine_artifact(record.engine_artifact)
-            self.upsert_instance_spec(record.instance)
+            artifact_entity = (
+                self._upsert_engine_artifact(session, record.engine_artifact)
+                if record.engine_artifact is not None
+                else None
+            )
+            if record.instance is not None:
+                self._upsert_instance_spec(session, record.instance)
             instance_name = None
             instance_id = None
             if record.instance is not None:
                 instance_name = record.instance.display_name or record.instance.instance_id
                 instance_id = record.instance.instance_id
-            build_flags = dict(record.build_flags) if record.build_flags is not None else None
-            extra = dict(record.extra) if record.extra is not None else None
+            build_flags = to_json_object(record.build_flags) if record.build_flags is not None else None
+            extra = to_json_object(record.extra) if record.extra is not None else None
             existing = session.execute(
                 select(GameInstanceParticipation)
                 .where(GameInstanceParticipation.game_id == game_id)
@@ -244,7 +265,6 @@ class ArenaDBAdapter:
                 existing.completed_at = completed_at
                 existing.run_id = record.run_id
                 existing.extra = extra
-        session.commit()
 
     def close(self) -> None:
         if self._db is not None:

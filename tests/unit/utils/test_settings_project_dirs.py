@@ -55,7 +55,6 @@ def test_apply_settings_syncs_project_dirs_from_arena_settings() -> None:
             repos={
                 "local": RepoSettings(name="local", path=Path("/tmp/repo")),
             },
-            github_token="token",
             overlays={"overlay": Path("/tmp/overlay.yaml")},
             openbench=None,
         )

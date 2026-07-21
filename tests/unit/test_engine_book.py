@@ -8,6 +8,7 @@ from shogiarena._core.shared.kernel.engine_book import (
     collect_book_preflight_errors,
     is_engine_book_enabled,
     resolve_engine_book_path,
+    resolve_yaneuraou_book_fallback_path,
 )
 
 _HEADER = "#YANEURAOU-DB2016 1.00\n"
@@ -42,10 +43,23 @@ class TestIsEngineBookEnabled:
 class TestResolveEngineBookPath:
     def test_composite_resolution_with_absolute_dir(self) -> None:
         resolved = resolve_engine_book_path({"BookDir": "/srv/book", "BookFile": "user_book1.db"})
-        assert resolved == "/srv/book/user_book1.db"
+        # Windows では Path 経由で区切りが os.sep になるため正規化して比較する。
+        assert resolved is not None
+        assert resolved.replace("\\", "/") == "/srv/book/user_book1.db"
 
     def test_disabled_returns_none(self) -> None:
         assert resolve_engine_book_path({"BookFile": "no_book"}) is None
+
+
+class TestResolveYaneuraouBookFallbackPath:
+    def test_db_uses_adjacent_ybb_when_db_is_missing(self, tmp_path: Path) -> None:
+        fallback = _write_book(tmp_path, "user_book1.ybb", "binary-placeholder")
+        assert resolve_yaneuraou_book_fallback_path(tmp_path / "user_book1.db") == fallback
+
+    def test_existing_db_wins_over_ybb(self, tmp_path: Path) -> None:
+        db = _write_book(tmp_path, "user_book1.db", _HEADER + _ENTRY)
+        _write_book(tmp_path, "user_book1.ybb", "binary-placeholder")
+        assert resolve_yaneuraou_book_fallback_path(db) == db
 
 
 class TestCollectBookPreflightErrors:
@@ -105,6 +119,17 @@ class TestCollectBookPreflightErrors:
         errors = collect_book_preflight_errors(
             {"BookDir": "book", "BookFile": "user_book1.db"},
             engine_name="e6",
+            working_dir=tmp_path,
+        )
+        assert errors == []
+
+    def test_missing_db_uses_ybb_fallback(self, tmp_path: Path) -> None:
+        book_dir = tmp_path / "book"
+        book_dir.mkdir()
+        _write_book(book_dir, "user_book1.ybb", "binary-placeholder")
+        errors = collect_book_preflight_errors(
+            {"BookDir": "book", "BookFile": "user_book1.db"},
+            engine_name="e7",
             working_dir=tmp_path,
         )
         assert errors == []

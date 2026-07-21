@@ -1,9 +1,20 @@
 import { requestJson } from '@/modules/shared/services/api';
-import type { BookEntry, BookSummaryPayload, BookWdl, BookWindow, DashboardBookApi } from '../types';
+import type {
+    BookEntry,
+    BookModuleView,
+    BookPairEntry,
+    BookPairPayload,
+    BookPairSide,
+    BookSummaryPayload,
+    BookWdl,
+    BookWindow,
+    DashboardBookApi,
+} from '../types';
 
 const defaultWindow = window as BookWindow;
 
 const BOOK_REFRESH_INTERVAL_MS = 8000;
+const DEFAULT_BOOK_VIEW: BookModuleView = 'summary';
 
 function escapeHtml(value: string): string {
     return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -17,6 +28,36 @@ function formatPercent(value: number | null | undefined): string {
 function formatWdl(counts: BookWdl | undefined | null): string {
     if (!counts) return '-';
     return `${counts.wins}-${counts.losses}-${counts.draws} (${counts.games})`;
+}
+
+function formatReason(value: string | null | undefined): string {
+    if (!value) return '-';
+    return value;
+}
+
+function formatFirstDiff(pair: BookPairEntry): string {
+    if (pair.first_diff_ply == null) {
+        return formatReason(pair.first_diff_reason);
+    }
+    return `ply ${pair.first_diff_ply} · ${formatReason(pair.first_diff_reason)}`;
+}
+
+function formatSide(side: BookPairSide | null | undefined, label: string): string {
+    if (!side) {
+        return '<span class="book-pair-side-empty">-</span>';
+    }
+    const prefix = side.book_prefix_usi.join(' ');
+    const title = prefix ? ` title="${escapeHtml(prefix)}"` : '';
+    return `
+        <div class="book-pair-side"${title}>
+            <span class="book-pair-side-title">${escapeHtml(label)} #${side.order} · ${escapeHtml(side.game_id)}</span>
+            <span>${escapeHtml(side.black)} vs ${escapeHtml(side.white)}</span>
+            <span>prefix ${side.book_prefix_length} · ${escapeHtml(side.measurement_source)} · ${escapeHtml(side.measurement_status)}</span>
+        </div>`;
+}
+
+function statusBadge(status: string): string {
+    return `<span class="book-status" data-status="${escapeHtml(status)}">${escapeHtml(status)}</span>`;
 }
 
 function renderHistogram(histogram: Record<string, number>): string {
@@ -99,21 +140,96 @@ export function renderBookSummary(payload: BookSummaryPayload, container: HTMLEl
     container.innerHTML = `${note}<div class="book-cards">${cards}</div>`;
 }
 
-function urlHasOutOfBook(owner: BookWindow): boolean {
+function renderPairSummary(payload: BookPairPayload): string {
+    const summary = payload.summary;
+    return `
+        <div class="book-pair-summary" aria-label="Book pair summary">
+            <div><span class="book-stat-label">Pairs</span><span class="book-stat-value">${summary.pairs}</span></div>
+            <div><span class="book-stat-label">Measured</span><span class="book-stat-value">${summary.measured_pairs}</span></div>
+            <div><span class="book-stat-label">Partial</span><span class="book-stat-value">${summary.partial_pairs}</span></div>
+            <div><span class="book-stat-label">Unmeasured</span><span class="book-stat-value">${summary.unmeasured_pairs}</span></div>
+            <div><span class="book-stat-label">Invalid</span><span class="book-stat-value">${summary.invalid_pairs}</span></div>
+            <div><span class="book-stat-label">Ambiguous</span><span class="book-stat-value">${summary.ambiguous_pairs}</span></div>
+            <div><span class="book-stat-label">Unpaired</span><span class="book-stat-value">${summary.unpaired_games}</span></div>
+            <div><span class="book-stat-label">Mean match</span><span class="book-stat-value">${formatPercent(summary.mean_prefix_match_rate)}</span></div>
+        </div>`;
+}
+
+function renderPairRow(pair: BookPairEntry): string {
+    const orders = pair.orders.map((order) => `#${order}`).join(' / ');
+    const gameIds = pair.game_ids.map(escapeHtml).join(' / ');
+    const sfen = pair.initial_sfen ? `<div class="book-pair-muted">${escapeHtml(pair.initial_sfen)}</div>` : '';
+    return `
+        <tr class="book-pair-row" data-pair-key="${escapeHtml(pair.pair_key)}">
+            <td>
+                <div class="book-pair-key">${escapeHtml(pair.matchup_key)}</div>
+                <div class="book-pair-muted">slot ${pair.pair_slot} · ${escapeHtml(orders)}</div>
+                <div class="book-pair-muted">${gameIds}</div>
+                ${sfen}
+            </td>
+            <td>${statusBadge(pair.measurement_status)}</td>
+            <td>${pair.same_sfen ? 'yes' : 'no'}</td>
+            <td>${pair.matched_prefix_plies}</td>
+            <td>${escapeHtml(formatFirstDiff(pair))}</td>
+            <td>${formatPercent(pair.prefix_match_rate)}</td>
+            <td>${formatSide(pair.left, 'L')}</td>
+            <td>${formatSide(pair.right, 'R')}</td>
+        </tr>`;
+}
+
+export function renderBookPairs(payload: BookPairPayload, container: HTMLElement): void {
+    if (!payload.pairs.length) {
+        const note = payload.note ? `<p class="book-note">${escapeHtml(payload.note)}</p>` : '';
+        container.innerHTML = `${note}<div class="book-empty">No paired book prefix diagnostics recorded for this run.</div>`;
+        return;
+    }
+    const note = payload.note ? `<p class="book-note">${escapeHtml(payload.note)}</p>` : '';
+    const rows = payload.pairs.map(renderPairRow).join('');
+    container.innerHTML = `
+        ${note}
+        ${renderPairSummary(payload)}
+        <div class="book-pair-table-wrap">
+            <table class="book-pair-table">
+                <thead>
+                    <tr>
+                        <th>Pair</th>
+                        <th>Status</th>
+                        <th>same_sfen</th>
+                        <th>Matched</th>
+                        <th>First diff</th>
+                        <th>Match%</th>
+                        <th>Left</th>
+                        <th>Right</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>`;
+}
+
+function urlOutOfBookMode(owner: BookWindow): 'off' | 'bounded' | 'full' {
     try {
-        return new URLSearchParams(owner.location.search).get('out_of_book') === '1';
+        const value = new URLSearchParams(owner.location.search).get('out_of_book')?.trim().toLowerCase();
+        if (value === 'full') return 'full';
+        if (value === '1' || value === 'true' || value === 'yes' || value === 'on') return 'bounded';
+        return 'off';
     } catch {
-        return false;
+        return 'off';
     }
 }
 
-function isOutOfBookEnabled(owner: BookWindow): boolean {
+function outOfBookQuery(owner: BookWindow): string {
+    const urlMode = urlOutOfBookMode(owner);
     const toggle = owner.document.getElementById('bookOutOfBookToggle');
     if (toggle instanceof HTMLInputElement) {
-        return toggle.checked;
+        if (!toggle.checked) {
+            return '';
+        }
+        return urlMode === 'full' ? '?out_of_book=full' : '?out_of_book=1';
     }
-    // Fallback to the page URL (?out_of_book=1) when the toggle is absent.
-    return urlHasOutOfBook(owner);
+    if (urlMode === 'full') return '?out_of_book=full';
+    if (urlMode === 'bounded') return '?out_of_book=1';
+    return '';
 }
 
 async function fetchSummary(owner: BookWindow): Promise<void> {
@@ -126,11 +242,28 @@ async function fetchSummary(owner: BookWindow): Promise<void> {
         return;
     }
     const apiBase = core.getApiBase();
-    const query = isOutOfBookEnabled(owner) ? '?out_of_book=1' : '';
+    const query = outOfBookQuery(owner);
     const payload = await requestJson<BookSummaryPayload>(`${apiBase}/api/book/summary${query}`, {
         cache: 'no-cache',
     });
     renderBookSummary(payload, container);
+}
+
+async function fetchPairs(owner: BookWindow): Promise<void> {
+    const core = owner.DashboardCore;
+    if (!core) {
+        throw new Error('DashboardCore must be initialized before Book module');
+    }
+    const container = owner.document.getElementById('bookPairsContainer');
+    if (!container) {
+        return;
+    }
+    const apiBase = core.getApiBase();
+    const query = outOfBookQuery(owner);
+    const payload = await requestJson<BookPairPayload>(`${apiBase}/api/book/pairs${query}`, {
+        cache: 'no-cache',
+    });
+    renderBookPairs(payload, container);
 }
 
 export function installBookModule(owner: BookWindow = defaultWindow): DashboardBookApi {
@@ -142,6 +275,8 @@ export function installBookModule(owner: BookWindow = defaultWindow): DashboardB
         active: false,
         timerId: null as number | null,
         toggleWired: false,
+        viewWired: false,
+        view: DEFAULT_BOOK_VIEW,
     };
 
     function wireToggle(): void {
@@ -153,7 +288,7 @@ export function installBookModule(owner: BookWindow = defaultWindow): DashboardB
             return;
         }
         state.toggleWired = true;
-        if (urlHasOutOfBook(owner)) {
+        if (urlOutOfBookMode(owner) !== 'off') {
             toggle.checked = true;
         }
         toggle.addEventListener('change', () => {
@@ -161,11 +296,59 @@ export function installBookModule(owner: BookWindow = defaultWindow): DashboardB
         });
     }
 
+    function applyView(view: BookModuleView): void {
+        state.view = view;
+        const buttons = owner.document.querySelectorAll<HTMLButtonElement>('[data-book-view]');
+        buttons.forEach((button) => {
+            const isActive = button.dataset.bookView === view;
+            button.classList.toggle('active', isActive);
+            button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            button.tabIndex = isActive ? 0 : -1;
+        });
+        const summary = owner.document.getElementById('bookSummaryContainer');
+        const pairs = owner.document.getElementById('bookPairsContainer');
+        summary?.toggleAttribute('hidden', view !== 'summary');
+        pairs?.toggleAttribute('hidden', view !== 'pairs');
+    }
+
+    function toBookView(value: string | undefined): BookModuleView | null {
+        if (value === 'summary' || value === 'pairs') {
+            return value;
+        }
+        return null;
+    }
+
+    function wireViewTabs(): void {
+        if (state.viewWired) {
+            return;
+        }
+        const buttons = Array.from(owner.document.querySelectorAll<HTMLButtonElement>('[data-book-view]'));
+        if (!buttons.length) {
+            return;
+        }
+        state.viewWired = true;
+        buttons.forEach((button) => {
+            const view = toBookView(button.dataset.bookView);
+            if (!view) {
+                return;
+            }
+            button.addEventListener('click', () => {
+                if (state.view === view) {
+                    return;
+                }
+                applyView(view);
+                api.refresh();
+            });
+        });
+        applyView(state.view);
+    }
+
     const api: DashboardBookApi = {
         setActive(active: boolean) {
             state.active = !!active;
             if (state.active) {
                 wireToggle();
+                wireViewTabs();
                 api.refresh();
                 if (state.timerId == null) {
                     state.timerId = Number(
@@ -180,6 +363,12 @@ export function installBookModule(owner: BookWindow = defaultWindow): DashboardB
             }
         },
         refresh() {
+            if (state.view === 'pairs') {
+                fetchPairs(owner).catch((error) => {
+                    owner.DashboardCore?.showApiError('Book pairs failed', error);
+                });
+                return;
+            }
             fetchSummary(owner).catch((error) => {
                 owner.DashboardCore?.showApiError('Book summary failed', error);
             });
