@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import pytest
+
 from shogiarena._core.shared.kernel.database_types import GameRecordPlayers
 from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.statistics.btd_estimation.game_encoding import (
+    aggregate_encoded_games,
+    encode_games,
+)
+from shogiarena._core.shared.kernel.statistics.btd_estimation.likelihood import ll_and_grad
 from shogiarena._core.shared.kernel.statistics.btd_rating import BTDEstimator
 
 _DRAW = GameResult.DRAW_BY_REPETITION
@@ -95,3 +102,55 @@ def test_disconnected_graph_reports_none_standard_errors() -> None:
     # rating_cov must be None too, otherwise pair_delta() would report a misleading 0.0 pair SE.
     assert result.rating_cov is None
     assert result.pair_delta("B", "C", cov=result.rating_cov).standard_error is None
+
+
+def test_pair_aggregation_matches_per_game_likelihood_exactly() -> None:
+    # Aggregating by ordered pair is an identity on the BTD objective, not an approximation:
+    # every term depends on a game only through its (black, white) pair.
+    games = (
+        _repeat("A", "B", GameResult.BLACK_WIN, 37)
+        + _repeat("A", "B", _DRAW, 23)
+        + _repeat("A", "B", GameResult.WHITE_WIN, 11)
+        + _repeat("B", "A", GameResult.BLACK_WIN, 29)
+        + _repeat("B", "A", _DRAW, 17)
+        + _repeat("B", "A", GameResult.WHITE_WIN, 13)
+    )
+    per_game = encode_games(games)
+    aggregated = aggregate_encoded_games(per_game)
+
+    assert len(per_game) == 130
+    assert len(aggregated) == 2
+
+    theta = [0.31, 0.047, -0.22]
+    ll_per_game, grad_per_game = ll_and_grad(theta, per_game, ["A", "B"], {"A": 0}, "B")
+    ll_aggregated, grad_aggregated = ll_and_grad(theta, aggregated, ["A", "B"], {"A": 0}, "B")
+
+    assert ll_aggregated == pytest.approx(ll_per_game, rel=1e-12)
+    for expected, actual in zip(grad_per_game, grad_aggregated, strict=True):
+        assert actual == pytest.approx(expected, rel=1e-9, abs=1e-9)
+
+
+def test_estimator_cost_does_not_grow_with_the_number_of_games() -> None:
+    # The optimizer loops up to _MAX_OPT_STEPS times over the encoded rows. Keeping that list
+    # per-game made every dashboard summary refresh block the event loop for longer as the run
+    # progressed, which surfaced as engine timeout losses.
+    small = _repeat("A", "B", GameResult.BLACK_WIN, 5) + _repeat("B", "A", GameResult.BLACK_WIN, 5)
+    large = _repeat("A", "B", GameResult.BLACK_WIN, 5000) + _repeat("B", "A", GameResult.BLACK_WIN, 5000)
+
+    assert len(aggregate_encoded_games(encode_games(small))) == 2
+    assert len(aggregate_encoded_games(encode_games(large))) == 2
+
+
+def test_aggregation_keeps_distinct_pairings_separate() -> None:
+    games = [
+        _game("A", "B", GameResult.BLACK_WIN),
+        _game("A", "B", _DRAW),
+        _game("B", "A", GameResult.WHITE_WIN),
+        _game("A", "C", GameResult.BLACK_WIN),
+    ]
+    aggregated = dict.fromkeys([(row[0], row[1]) for row in aggregate_encoded_games(encode_games(games))])
+
+    assert set(aggregated) == {("A", "B"), ("B", "A"), ("A", "C")}
+    by_pair = {(row[0], row[1]): row[2:] for row in aggregate_encoded_games(encode_games(games))}
+    assert by_pair[("A", "B")] == (1, 0, 1)
+    assert by_pair[("B", "A")] == (0, 1, 0)

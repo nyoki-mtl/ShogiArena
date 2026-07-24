@@ -73,6 +73,7 @@ class SpsaOrchestratorGameplayMixin:
     game_to_worker: dict[int, int]
     worker_busy: set[int]
     progress_queue: Any
+    progress_sink: Any
     instance_pool: Any
     engine_configs: dict[str, Any]
     baseline_config: Path
@@ -234,7 +235,7 @@ class SpsaOrchestratorGameplayMixin:
             time_control_override=time_control_override,
         )
         emit_game_assigned_event(
-            progress_queue=self.progress_queue,
+            progress_queue=self.progress_sink,
             game_id=game_id,
             initial_sfen=start_sfen,
             black_name=context.black_player_label,

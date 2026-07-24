@@ -285,6 +285,8 @@ class AsyncUsiEngine(
             return
         if direction == "out" and not self._should_collect_outbound:
             return
+        if not self._io_log_handlers:
+            return
         if not state:
             state = self._state.value
         event_direction: UsiIoDirection = "stderr" if direction == "stderr" else "out" if direction == "out" else "in"
@@ -295,8 +297,6 @@ class AsyncUsiEngine(
             phase=state,
             timestamp_ms=int(time.time() * 1000),
         )
-        if not self._io_log_handlers:
-            return
         self._ensure_io_log_dispatcher()
         queue = self._io_log_dispatch_queue
         if queue is None:

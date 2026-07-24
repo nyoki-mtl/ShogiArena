@@ -302,7 +302,9 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
             hooks=hooks,
             db_service=self._state.db_service,
             engine_factory_service=self._engine_factory_service,
-            summary_updater=self._update_dashboard,
+            # See TournamentRunner._create_orchestrator: a summary refresh is dashboard-only work
+            # whose cost grows with the run, so it must not stay wired when the dashboard is off.
+            summary_updater=self._update_dashboard if self.is_dashboard_enabled else None,
             api_server=self.api_server,
         )
 

@@ -13,6 +13,7 @@ from rsshogi.types import Color
 from shogiarena._core.contexts.match.domain.adjudication import Adjudicator
 from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort
 from shogiarena._core.contexts.match.ports.usi_think_ports import request_from_time_controls
+from shogiarena._core.shared.kernel.engine_errors import UsiHandshakeTimeoutError
 from shogiarena._core.shared.kernel.game_results import GameResult, timeout_win_result
 from shogiarena._core.shared.kernel.ki2_notation import normalize_ki2_move_text
 from shogiarena._core.shared.kernel.time_control import GameClock
@@ -343,6 +344,18 @@ class GameRunnerLoopMixin:
                     current_time_control=current_time_control,
                     enemy_time_control=enemy_time_control,
                 )
+
+            except UsiHandshakeTimeoutError:
+                # A handshake stall happens before the engine is asked to think, so there is no
+                # thinking time to exceed. Scoring it as a loss on time misattributes an
+                # orchestrator or transport stall to the engine, and produces 0-move "timeouts".
+                if self._is_shutting_down:
+                    raise asyncio.CancelledError() from None
+                logger.warning(
+                    "Engine %s handshake timed out before go; recording as error, not a loss on time",
+                    current_engine.name,
+                )
+                raise
 
             except TimeoutError:
                 if engine_wall_time_ms is None and engine_wall_start is not None:

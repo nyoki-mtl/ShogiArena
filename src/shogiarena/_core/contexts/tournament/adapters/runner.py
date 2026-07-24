@@ -377,7 +377,10 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             hooks=hooks,
             db_service=self._state.db_service,
             engine_factory_service=self._engine_factory_service,
-            summary_updater=self._update_dashboard,
+            # A summary refresh only feeds the dashboard, but it recomputes statistics over every
+            # completed game. Leaving it wired with the dashboard off blocks the event loop for
+            # progressively longer as the run grows, which shows up as engine timeout losses.
+            summary_updater=self._update_dashboard if self._dashboard_enabled else None,
             api_server=self.api_server,
             cancelled_provider=lambda: set(self._state.cancelled_game_ids),
         )

@@ -60,4 +60,25 @@ def encode_games(records: Iterable[GameRecordPlayers]) -> list[EncodedGame]:
     return encoded_games
 
 
-__all__ = ["EncodedGame", "collect_engines", "encode_games"]
+def aggregate_encoded_games(encoded_games: Iterable[EncodedGame]) -> list[EncodedGame]:
+    """Collapse per-game rows into one row per ordered ``(black, white)`` pair.
+
+    Every term of the BTD log-likelihood and its gradient depends on a game only through its
+    ordered pair, so summing the win/draw counts per pair is exact rather than an approximation.
+    It makes the optimizer's cost depend on the number of distinct pairings instead of the number
+    of games played, which otherwise grows without bound over a long run.
+    """
+
+    totals: dict[tuple[str, str], list[int]] = {}
+    for black_player, white_player, black_wins, white_wins, draws in encoded_games:
+        counts = totals.get((black_player, white_player))
+        if counts is None:
+            totals[(black_player, white_player)] = [black_wins, white_wins, draws]
+            continue
+        counts[0] += black_wins
+        counts[1] += white_wins
+        counts[2] += draws
+    return [(black, white, counts[0], counts[1], counts[2]) for (black, white), counts in totals.items()]
+
+
+__all__ = ["EncodedGame", "aggregate_encoded_games", "collect_engines", "encode_games"]

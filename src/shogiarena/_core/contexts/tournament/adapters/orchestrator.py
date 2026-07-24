@@ -362,7 +362,7 @@ class TournamentOrchestrator(BaseOrchestrator):
         # Prepare items and time controls
         black_item, white_item, black_limits, white_limits = self._prepare_game_items(game_spec)
         emit_game_assigned_event(
-            progress_queue=self.progress_queue,
+            progress_queue=self.progress_sink,
             game_id=game_spec.game_id,
             initial_sfen=game_spec.initial_sfen,
             black_name=str(game_spec.black_engine),

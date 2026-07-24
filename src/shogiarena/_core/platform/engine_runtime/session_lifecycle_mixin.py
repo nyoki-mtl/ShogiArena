@@ -13,6 +13,7 @@ from shogiarena._core.platform.engine_runtime.usi_engine_session_models import (
     ReadyTimeout,
     UsiEngineStartError,
     UsiEngineState,
+    UsiHandshakeTimeoutError,
 )
 
 logger = logging.getLogger(__name__)
@@ -276,7 +277,7 @@ class AsyncUsiEngineLifecycleMixin:
                 if deadline is None:
                     continue
         self._readyok_future = None
-        raise TimeoutError("USI handshake timed out waiting for readyok")
+        raise UsiHandshakeTimeoutError("USI handshake timed out waiting for readyok")
 
     async def _perform_handshake(self) -> None:
         loop = asyncio.get_running_loop()
@@ -311,4 +312,4 @@ class AsyncUsiEngineLifecycleMixin:
                 if now - last_notice >= 2.0:
                     last_notice = now
         self._usiok_future = None
-        raise TimeoutError("USI handshake timed out waiting for usiok")
+        raise UsiHandshakeTimeoutError("USI handshake timed out waiting for usiok")

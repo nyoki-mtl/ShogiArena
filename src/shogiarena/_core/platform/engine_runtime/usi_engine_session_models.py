@@ -19,6 +19,7 @@ from shogiarena._core.platform.engine_runtime.usi_protocol_types import (
     UsiThinkResult,
     find_last_pv,
 )
+from shogiarena._core.shared.kernel.engine_errors import UsiHandshakeTimeoutError
 from shogiarena._core.shared.kernel.engine_io import UsiIoDirection, UsiIoEvent
 from shogiarena._core.shared.kernel.engine_process import EngineProcessInfo
 from shogiarena._core.shared.kernel.json_types import JsonObject
@@ -369,6 +370,7 @@ __all__ = [
     "UsiAnalyzeResetPolicy",
     "UsiEngineStartError",
     "UsiEngineSession",
+    "UsiHandshakeTimeoutError",
     "UsiEngineState",
     "UsiIoDirection",
     "UsiIoEvent",

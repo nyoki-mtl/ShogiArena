@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-07-24
+
+dashboard 無効の長時間 run で event loop が秒単位で停止し、進行中の対局が一斉に時間切れ負けとして
+記録される問題を修正した。dummy engine による 500 局の controlled A/B は次のとおり。
+
+| Arm | wall time | loop lag p95 | 500ms超 lag | timeout / ERROR | progress queue 最大 | RSS 最大 |
+|---|---:|---:|---:|---:|---:|---:|
+| 1.0.0 相当 | 795.23s | 1466.95ms | 400 | 45 | 406,755 | 301.1MiB |
+| 主因のみ無効化 | 356.04s | 70.58ms | 0 | 0 | 445,791 | 327.1MiB |
+| 1.0.2 | 344.72s | 49.84ms | 0 | 0 | 0 | 115.1MiB |
+
+影響を受けた run の対局結果には、engine の実力差ではなく orchestrator の停止に由来する
+時間切れ負けが含まれる。該当 run の Elo / SPRT の結論は信頼できないため、再実行を推奨する。
+
+### Known Issues
+- **dashboard 有効時の raw engine I/O 配信コスト**: engine の state が変わるたびに worker snapshot 全体が再構築され、8〜11 回走査される。snapshot は手数に比例する履歴配列と最大400件の I/O tail を含むため、1局あたりのコストが手数の二乗に近い形で増える。24局の A/B では engine I/O listener を無効にした場合と比べて wall time が 5.72 倍だった。1.0.0 から存在する問題で本リリースでの悪化はない（137.87s→137.85s）。event loop の停止は最大 262ms に留まり時間切れ負けは発生しないため、対局結果は歪まない。次リリースで対応する。
+
+### Fixed
+- **長時間 run で対局が一斉に時間切れ負けになる問題**: engine options の callback から起動される summary 更新が dashboard の有効・無効に関わらず配線されており、完了済み全対局を入力とする BTD 最尤推定を event loop 上で同期実行していた。1回の推定コストが完了局数に比例するため、run 後半で event loop が秒単位で停止し、進行中の全対局が同時に bestmove 待ちの deadline を割っていた。500局の A/B 計測では loop lag p95 が 1466.95ms→70.58ms、timeout が 45局→0局、wall time が 2.23倍高速になった。dashboard 無効時は summary 更新を配線せず、有効時も options が実際に変化した場合だけ起動して更新を coalesce する。
+- **BTD 推定が完了局数に比例して遅くなる問題**: 最適化ループが1対局1要素のまま最大2000 iteration 走査していた。対数尤度と勾配の各項は対局を (先手, 後手) のペアを通じてのみ参照するため、ペア単位のカウント集約は厳密な同値変換である。集約により推定コストは distinct pairing 数に固定され、局数に依存しなくなった（2 engine / 1000局で 1.30s→0.004s）。
+- **handshake timeout が時間切れ負けとして記録される問題**: `go` 送信前の `usi` / `isready` timeout も game loop の広い `except TimeoutError` に捕捉され、`*_WIN_BY_TIMEOUT` として Elo / SPRT へ架空の勝敗が算入されていた。0手 timeout の主な発生源でもある。専用の `UsiHandshakeTimeoutError` を導入し、時間切れ負けではなく ERROR として扱う（rating / SPRT の sample から除外される）。`go` 送信後に bestmove が返らない本来の timeout は従来どおり時間切れ負けとする。
+- **progress queue が無制限に蓄積する問題**: queue と producer は dashboard の有無に関わらず接続される一方、consumer は dashboard 有効時しか起動しないため、USI I/O 1行ごとの JSON 文字列が回収されずに溜まり続けていた（500局で 445,791件 / RSS 343MB）。consumer が起動しないときは producer 側へ queue を渡さず、engine I/O listener も登録しない。consumer が遅れた場合は engine I/O event のみ破棄し、対局の状態を持つ move / clock / result は破棄しない。
+
+### Changed
+- **USI I/O log handler の dispatch**: progress 用 handler がコルーチンを返す通常の `def` だったため、`asyncio.to_thread` 経由で USI 1行ごとに thread 往復が発生していた。`async def` にして event loop 上で直接実行する。
+
 ## [1.0.0] - 2026-07-21
 
 ### Added

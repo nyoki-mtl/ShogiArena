@@ -8,7 +8,7 @@ from shogiarena._core.shared.kernel.service_ports import GameRecordPlayers
 
 from .btd_models import BTDEstimate
 from .constants import _ELO_TO_LOGIT, _MAX_OPT_STEPS
-from .game_encoding import collect_engines, encode_games
+from .game_encoding import aggregate_encoded_games, collect_engines, encode_games
 from .likelihood import ll_and_grad
 from .matrix_ops import invert_neg_def, numerical_hessian
 
@@ -96,7 +96,9 @@ class BTDEstimator:
             log_draw_tendency = theta_values[len(free_names) + 1] if param_count >= 3 else 0.0
             return ratings, gamma, log_draw_tendency
 
-        encoded_games = encode_games(records)
+        # Aggregate before optimizing: the loop below runs up to _MAX_OPT_STEPS times over this
+        # list, so keeping it per-game makes every estimate cost O(steps * games played).
+        encoded_games = aggregate_encoded_games(encode_games(records))
         if not encoded_games:
             return BTDEstimate(
                 ratings=dict.fromkeys(engines, 0.0),

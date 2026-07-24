@@ -111,6 +111,10 @@ class BaseOrchestrator:
         )
         self._engine_option_snapshots: EngineOptionsSnapshots = {}
         self._engine_info_snapshots: EngineInfoSnapshots = {}
+        self._summary_refresh_task: asyncio.Task[None] | None = None
+        self._is_summary_refresh_pending = False
+        # Set by _initialize_common_components: the queue when a consumer is running, else None.
+        self.progress_sink: asyncio.Queue[tuple[int, int, str | None]] | None = None
 
     async def run(self) -> None:  # pragma: no cover - to be implemented by subclasses
         raise NotImplementedError
@@ -128,7 +132,8 @@ class BaseOrchestrator:
         self.game_to_worker: dict[int, int] = {}
         self.worker_busy: set[int] = set()
         self.worker_snapshots: dict[int, WorkerSnapshotModel] = {}
-        if self.api_server and should_start_progress:
+        is_consumer_active = bool(self.api_server) and should_start_progress
+        if is_consumer_active:
             self.start_progress_consumer(
                 num_workers=self.num_workers,
                 progress_queue=self.progress_queue,
@@ -137,10 +142,15 @@ class BaseOrchestrator:
                 worker_snapshots=self.worker_snapshots,
                 on_summary_update=self._summary_updater,
             )
+        # Producers publish one event per USI line, so leaving them attached without a consumer
+        # grows the queue without bound for the whole run.
+        self.progress_sink: asyncio.Queue[tuple[int, int, str | None]] | None = (
+            self.progress_queue if is_consumer_active else None
+        )
         self.game_runner = create_game_runner_from_rules(
             rules,
             list(engines),
-            self.progress_queue,
+            self.progress_sink,
         )
         self.game_runner.set_engine_options_callback(self._handle_engine_options)
         self.extra_options = compute_max_ply_extra_options(rules)
@@ -158,9 +168,18 @@ class BaseOrchestrator:
         except (TypeError, ValueError):
             logger.debug("Failed to serialise USI options for %s", engine_name, exc_info=True)
             return
+        normalized_info = {str(k): str(v) for k, v in info.items()} if info else None
+        has_changed = self._engine_option_snapshots.get(engine_name) != serialized
+        if normalized_info is not None and self._engine_info_snapshots.get(engine_name) != normalized_info:
+            has_changed = True
         self._engine_option_snapshots[engine_name] = serialized
-        if info:
-            self._engine_info_snapshots[engine_name] = {str(k): str(v) for k, v in info.items()}
+        if normalized_info is not None:
+            self._engine_info_snapshots[engine_name] = normalized_info
+        # Engines re-send their option set on every handshake, so most callbacks carry no new
+        # information. Refreshing on an unchanged snapshot re-runs statistics over every completed
+        # game for nothing.
+        if not has_changed:
+            return
         if self.api_server:
             try:
                 self.api_server.update_engine_options(
@@ -175,20 +194,40 @@ class BaseOrchestrator:
                     exc,
                     exc_info=True,
                 )
-        if self._summary_updater is not None:
-            cb = self._summary_updater
+        self._request_summary_refresh()
 
-            async def _trigger_summary() -> None:
-                try:
-                    await cb()
-                except (RuntimeError, OSError, ValueError, TypeError) as exc:
-                    logger.debug("Summary updater failed after engine option change: %s", exc, exc_info=True)
+    def _request_summary_refresh(self) -> None:
+        """Schedule a coalesced summary refresh.
 
+        A refresh recomputes summary statistics over every completed game, so its cost grows with
+        run length. Option callbacks can arrive far faster than that, so concurrent requests are
+        collapsed into one in-flight run with at most one queued follow-up.
+        """
+
+        if self._summary_updater is None:
+            return
+        if self._summary_refresh_task is not None and not self._summary_refresh_task.done():
+            self._is_summary_refresh_pending = True
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug("No running event loop; skipping summary refresh")
+            return
+        self._summary_refresh_task = loop.create_task(self._run_summary_refresh())
+
+    async def _run_summary_refresh(self) -> None:
+        cb = self._summary_updater
+        if cb is None:
+            return
+        while True:
+            self._is_summary_refresh_pending = False
             try:
-                asyncio.get_running_loop().create_task(_trigger_summary())
-            except RuntimeError:
-                logger.warning("No running event loop; executing summary updater synchronously")
-                asyncio.run(_trigger_summary())
+                await cb()
+            except (RuntimeError, OSError, ValueError, TypeError) as exc:
+                logger.debug("Summary updater failed after engine option change: %s", exc, exc_info=True)
+            if not self._is_summary_refresh_pending:
+                return
 
     def get_engine_option_snapshots(self) -> EngineOptionsSnapshots:
         return copy.deepcopy(self._engine_option_snapshots)
@@ -261,6 +300,13 @@ class BaseOrchestrator:
         if gr is not None:
             gr.request_shutdown()
         await self._progress_hub.shutdown()
+
+        srt = self._summary_refresh_task
+        if srt is not None:
+            self._is_summary_refresh_pending = False
+            srt.cancel()
+            await asyncio.gather(srt, return_exceptions=True)
+            self._summary_refresh_task = None
 
         wt = self._worker_tasks
         if wt:

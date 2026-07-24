@@ -16,6 +16,7 @@ from shogiarena._core.platform.engine_runtime.usi_engine_session_models import (
     ReadyTimeout,
     TFutureResult,
     UsiEngineState,
+    UsiHandshakeTimeoutError,
     UsiMateResult,
 )
 from shogiarena._core.platform.engine_runtime.usi_protocol_types import UsiThinkResult
@@ -169,7 +170,7 @@ class AsyncUsiEngineInternalMixin:
             except TimeoutError:
                 if deadline is None:
                     continue
-        raise TimeoutError("Timed out waiting for ongoing search to finish before isready")
+        raise UsiHandshakeTimeoutError("Timed out waiting for ongoing search to finish before isready")
 
     async def _ponder_hit(
         self,

@@ -45,7 +45,7 @@ async def execute_remote_pair_game(
     """Execute remote pair runner, stream progress events, and build a game record."""
 
     owner = orchestrator
-    progress_q = owner.progress_queue
+    progress_q = owner.progress_sink
     last_ply_seen = 0
     agg_moves: list[str] = []
     agg_move_times: list[int | None] = []

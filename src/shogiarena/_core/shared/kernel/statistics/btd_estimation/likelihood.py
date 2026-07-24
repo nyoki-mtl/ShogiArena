@@ -34,6 +34,10 @@ def ll_and_grad(
         xb = rating_black * inv_scale + gamma
         xw = rating_white * inv_scale - gamma
 
+        game_count = black_wins + white_wins + draws
+        if game_count <= 0:
+            continue
+
         exp_black = math.exp(xb)
         exp_white = math.exp(xw)
         geom_mean = math.sqrt(exp_black * exp_white)
@@ -41,16 +45,19 @@ def ll_and_grad(
         if partition <= 0:
             continue
 
+        # Counts, not flags: rows may be aggregated per ordered pair, so each outcome contributes
+        # its own multiple of the corresponding term.
+        log_partition = math.log(partition)
         if black_wins:
-            log_likelihood += math.log(exp_black) - math.log(partition)
-        elif white_wins:
-            log_likelihood += math.log(exp_white) - math.log(partition)
-        elif draws:
-            log_likelihood += (math.log(2.0) + math.log(nu) + 0.5 * (xb + xw)) - math.log(partition)
+            log_likelihood += black_wins * (xb - log_partition)
+        if white_wins:
+            log_likelihood += white_wins * (xw - log_partition)
+        if draws:
+            log_likelihood += draws * (math.log(2.0) + log_draw_tendency + 0.5 * (xb + xw) - log_partition)
 
-        dl_dxb = float(black_wins) + 0.5 * float(draws) - (exp_black + nu * geom_mean) / partition
-        dl_dxw = float(white_wins) + 0.5 * float(draws) - (exp_white + nu * geom_mean) / partition
-        dl_dz = float(draws) - (2.0 * nu * geom_mean) / partition
+        dl_dxb = float(black_wins) + 0.5 * float(draws) - game_count * (exp_black + nu * geom_mean) / partition
+        dl_dxw = float(white_wins) + 0.5 * float(draws) - game_count * (exp_white + nu * geom_mean) / partition
+        dl_dz = float(draws) - game_count * (2.0 * nu * geom_mean) / partition
 
         if black_player != anchor:
             grad[idx[black_player]] += dl_dxb * inv_scale

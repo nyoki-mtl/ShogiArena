@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import zlib
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any, Literal
 
@@ -25,18 +26,41 @@ from .runner_types import (
     _ProgressPayload,
 )
 
+logger = logging.getLogger(__name__)
+
+# Raw USI transcript is telemetry: one event per engine output line. When a consumer falls behind,
+# dropping transcript lines keeps the run correct, whereas dropping move/clock/result events would
+# leave the dashboard with an incomplete game.
+ENGINE_IO_QUEUE_BACKLOG_LIMIT = 50_000
+
 
 class GameRunnerProgressMixin:
     progress_queue: asyncio.Queue[tuple[int, int, str | None]] | None
 
     _extract_evaluation: Any
     _extract_search_statistics: Any
+    _dropped_engine_io_events: int = 0
 
     async def _enqueue_progress(self, game_id: str | None, ply: int, payload: _ProgressPayload) -> None:
         if self.progress_queue is None or game_id is None:
             return
         numeric_id = self._progress_numeric_id(game_id)
         await self.progress_queue.put((numeric_id, ply, json.dumps(payload, ensure_ascii=False)))
+
+    def _should_drop_engine_io(self) -> bool:
+        queue = self.progress_queue
+        if queue is None:
+            return True
+        if queue.qsize() < ENGINE_IO_QUEUE_BACKLOG_LIMIT:
+            return False
+        self._dropped_engine_io_events += 1
+        if self._dropped_engine_io_events % ENGINE_IO_QUEUE_BACKLOG_LIMIT == 1:
+            logger.warning(
+                "Progress consumer is behind; dropped %d engine I/O event(s) (queue=%d)",
+                self._dropped_engine_io_events,
+                queue.qsize(),
+            )
+        return True
 
     async def _enqueue_clock_start(
         self,
@@ -162,7 +186,7 @@ class GameRunnerProgressMixin:
         black_name: str,
         white_name: str,
     ) -> None:
-        if game_id is None:
+        if game_id is None or self._should_drop_engine_io():
             return
         timestamp = entry.timestamp_ms if entry.timestamp_ms is not None else int(time.time() * 1000)
         payload: _EngineIoPayload = {
@@ -189,11 +213,15 @@ class GameRunnerProgressMixin:
         black_name: str,
         white_name: str,
     ) -> Callable[[], None]:
-        if game_id is None:
+        # Without a progress consumer the transcript has nowhere to go, and registering the handler
+        # would still pay per-line dispatch for every engine output line.
+        if game_id is None or self.progress_queue is None:
             return lambda: None
 
-        def handler(entry: UsiIoEvent) -> Awaitable[None] | None:
-            return self._enqueue_engine_io_event(
+        # Declared with ``async def`` on purpose: the session dispatches a plain ``def`` handler
+        # through ``asyncio.to_thread``, which would cost a thread round-trip per USI line.
+        async def handler(entry: UsiIoEvent) -> None:
+            await self._enqueue_engine_io_event(
                 game_id=game_id,
                 role=role,
                 entry=entry,
