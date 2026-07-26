@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from test_tournament_composition_timeout import (
+    _block_after_parallel_bestmove_observations,
     _run_tournament,
     _timeout_origins_in_db,
 )
@@ -44,15 +45,15 @@ async def test_in_flight_completion_after_breaker_stop_is_still_committed(
             ),
         )
 
+    _block_after_parallel_bestmove_observations(monkeypatch, observation_count=2, block_s=0.75)
+
     status = await _run_tournament(
         tmp_path,
         delay_s=0.0,
-        time_ms=900,
+        time_ms=500,
         margin_ms=0,
         games_per_pair=2,
         num_parallel=2,
-        stall_s=0.3,
-        stall_interval_s=0.002,
     )
 
     # 最初の completion で breaker が立つ。2件目はその後着なので、completed=2 と

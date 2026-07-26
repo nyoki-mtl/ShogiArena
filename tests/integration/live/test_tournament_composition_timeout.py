@@ -33,10 +33,13 @@ import textwrap
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
 
+from shogiarena._core.contexts.match.application.runner_finalize_mixin import GameRunnerFinalizeMixin
+from shogiarena._core.contexts.match.application.runner_loop_mixin import GameRunnerLoopMixin
 from shogiarena.tournament import build_tournament_runner, create_run_storage, load_tournament_config
 
 _ENGINE_SOURCE = """\
@@ -180,6 +183,55 @@ async def _loop_stalls(*, stall_s: float, interval_s: float) -> AsyncIterator[No
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+
+def _block_after_first_bestmove_observation(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    block_s: float,
+) -> None:
+    """最初の bestmove 観測後だけ event loop を塞ぎ、処理側の時間切れを作る。"""
+    original = GameRunnerLoopMixin._observation_of
+    blocked = False
+
+    def block_once(think_result: object) -> tuple[float | None, str | None]:
+        nonlocal blocked
+        observation = original(think_result)
+        if not blocked:
+            blocked = True
+            time.sleep(block_s)
+        return observation
+
+    monkeypatch.setattr(GameRunnerLoopMixin, "_observation_of", staticmethod(block_once))
+
+
+def _block_after_parallel_bestmove_observations(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    observation_count: int,
+    block_s: float,
+) -> None:
+    """並列局の bestmove が揃ってから event loop を塞ぎ、全局を in-flight に保つ。"""
+    original = GameRunnerFinalizeMixin._process_move_result
+    arrived = 0
+    observations_ready = asyncio.Event()
+
+    async def wait_and_block(
+        self: Any,
+        board: Any,
+        think_result: Any,
+        engine_name: str,
+    ) -> Any:
+        nonlocal arrived
+        arrived += 1
+        if arrived == observation_count:
+            time.sleep(block_s)
+            observations_ready.set()
+        elif arrived < observation_count:
+            await asyncio.wait_for(observations_ready.wait(), timeout=5.0)
+        return await original(self, board, think_result, engine_name)
+
+    monkeypatch.setattr(GameRunnerFinalizeMixin, "_process_move_result", wait_and_block)
 
 
 def _write_config(
@@ -375,7 +427,10 @@ async def test_production_composition_does_not_blame_the_engine_when_the_loop_st
 
 
 @pytest.mark.asyncio
-async def test_production_composition_records_a_positive_orchestrator_stall(tmp_path: Path) -> None:
+async def test_production_composition_records_a_positive_orchestrator_stall(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """orchestrator 側の停滞を positive に立証できること。
 
     engine は即答するので観測時刻は deadline より前にある。それでも clock が尽きるのは
@@ -383,14 +438,14 @@ async def test_production_composition_records_a_positive_orchestrator_stall(tmp_
     ``unknown``（因果不明）とは別の、証拠のある分類であることを production 配線で確認する。
     """
 
+    _block_after_first_bestmove_observation(monkeypatch, block_s=0.75)
+
     status = await _run_tournament(
         tmp_path,
         delay_s=0.0,
-        time_ms=900,
+        time_ms=500,
         margin_ms=0,
-        games_per_pair=4,
-        stall_s=0.3,
-        stall_interval_s=0.002,
+        games_per_pair=2,
     )
 
     origins = status.get("timeouts_by_origin")
