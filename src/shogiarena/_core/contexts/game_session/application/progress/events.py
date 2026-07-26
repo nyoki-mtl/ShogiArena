@@ -90,6 +90,36 @@ class EngineIoEvent(_EventType):
     state: NotRequired[str]
 
 
+class EngineIoBatchEntry(TypedDict):
+    direction: NotRequired[str]
+    line: str
+    ts: NotRequired[int]
+    state: NotRequired[str]
+
+
+class EngineIoBatchEvent(_EventType):
+    type: Literal["engine_io_batch"]
+    game_id: NotRequired[str]
+    initial_sfen: NotRequired[str]
+    black_name: NotRequired[str]
+    white_name: NotRequired[str]
+    role: str
+    entries: list[EngineIoBatchEntry]
+
+
+class EngineStateEvent(_EventType):
+    type: Literal["engine_state"]
+    game_id: NotRequired[str]
+    initial_sfen: NotRequired[str]
+    black_name: NotRequired[str]
+    white_name: NotRequired[str]
+    role: str
+    state: NotRequired[str]
+    ts: NotRequired[int]
+    direction: NotRequired[str]
+    line: NotRequired[str]
+
+
 class GameAssignedEvent(_EventType):
     type: Literal["game_assigned"]
     game_id: NotRequired[str]
@@ -102,7 +132,14 @@ class GameAssignedEvent(_EventType):
 
 
 ProgressEvent: TypeAlias = (
-    MoveProgressEvent | ClockStartEvent | ClockIncrementEvent | HandshakeLogEvent | EngineIoEvent | GameAssignedEvent
+    MoveProgressEvent
+    | ClockStartEvent
+    | ClockIncrementEvent
+    | HandshakeLogEvent
+    | EngineIoEvent
+    | EngineIoBatchEvent
+    | EngineStateEvent
+    | GameAssignedEvent
 )
 
 
@@ -226,6 +263,52 @@ def parse_progress_event(raw: Mapping[str, JsonValue]) -> ProgressEvent:
             event["ts"] = ts
         return event
 
+    if event_type == "engine_io_batch":
+        role = coerce_str(raw.get("role"))
+        if role is None:
+            raise ValueError("engine_io_batch event requires role")
+        raw_entries = raw.get("entries")
+        if not isinstance(raw_entries, list):
+            raise ValueError("engine_io_batch event requires entries list")
+        entries: list[EngineIoBatchEntry] = []
+        for raw_entry in raw_entries:
+            if not isinstance(raw_entry, Mapping):
+                continue
+            line = coerce_str(raw_entry.get("line"))
+            if line is None:
+                continue
+            batch_entry: EngineIoBatchEntry = {"line": line}
+            direction = coerce_str(raw_entry.get("direction"))
+            if direction is not None:
+                batch_entry["direction"] = direction
+            entry_ts = coerce_int(raw_entry.get("ts"))
+            if entry_ts is not None:
+                batch_entry["ts"] = entry_ts
+            entry_state = coerce_str(raw_entry.get("state"))
+            if entry_state is not None:
+                batch_entry["state"] = entry_state
+            entries.append(batch_entry)
+        event: EngineIoBatchEvent = {"type": "engine_io_batch", "role": role, "entries": entries}
+        for key in ("game_id", "initial_sfen", "black_name", "white_name"):
+            value = coerce_str(raw.get(key))
+            if value is not None:
+                event[key] = value
+        return event
+
+    if event_type == "engine_state":
+        role = coerce_str(raw.get("role"))
+        if role is None:
+            raise ValueError("engine_state event requires role")
+        event: EngineStateEvent = {"type": "engine_state", "role": role}
+        for key in ("game_id", "initial_sfen", "black_name", "white_name", "state", "direction", "line"):
+            value = coerce_str(raw.get(key))
+            if value is not None:
+                event[key] = value
+        ts = coerce_int(raw.get("ts"))
+        if ts is not None:
+            event["ts"] = ts
+        return event
+
     if event_type == "game_assigned":
         event: GameAssignedEvent = {"type": "game_assigned"}
         for key in ("game_id", "initial_sfen", "black_name", "white_name"):
@@ -248,7 +331,10 @@ def parse_progress_event(raw: Mapping[str, JsonValue]) -> ProgressEvent:
 __all__ = [
     "ClockIncrementEvent",
     "ClockStartEvent",
+    "EngineIoBatchEntry",
+    "EngineIoBatchEvent",
     "EngineIoEvent",
+    "EngineStateEvent",
     "GameAssignedEvent",
     "HandshakeLogEvent",
     "MoveProgressEvent",

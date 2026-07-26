@@ -17,7 +17,10 @@ from shogiarena._core.contexts.match.application.runner_types import (
 from shogiarena._core.contexts.match.domain.adjudication import AdjudicationConfig, Adjudicator
 from shogiarena._core.platform.engine_runtime.usi_protocol_types import UsiEvalValue
 from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.game_results import timeout_win_result as _timeout_win_result
 from shogiarena._core.shared.kernel.time_control import GameClock, TimeControlLimits
+from shogiarena._core.shared.kernel.timeout_attribution import TimeoutAttributionDecision as _TimeoutAttributionDecision
+from shogiarena._core.shared.kernel.timeout_attribution import TimeoutOrigin as _TimeoutOrigin
 
 
 def _first_legal_move(board: Board) -> Move:
@@ -59,6 +62,7 @@ class _RunnerMoveHarness(GameRunnerMoveMixin):
         self._move_result = move_result
         self.notify_calls: list[dict[str, object]] = []
         self.terminal_events: list[dict[str, object]] = []
+        self.timeout_calls: list[dict[str, object]] = []
 
     def _extract_evaluation(self, think_result: object) -> int | None:
         del think_result
@@ -82,6 +86,16 @@ class _RunnerMoveHarness(GameRunnerMoveMixin):
 
     async def _notify_clock_increment(self, **payload: object) -> None:
         self.notify_calls.append(dict(payload))
+
+    def _timeout_result_or_error(
+        self, *, winner_color: object, decision_holder: list[object], site: str = "", **_kw: object
+    ) -> object:
+        # Test double: no watchdog, so timeouts stay a loss on time (legacy behavior).
+        self.timeout_calls.append({"site": site, **_kw})
+        decision_holder[0] = _TimeoutAttributionDecision(
+            origin=_TimeoutOrigin.UNATTRIBUTED, site=site, reason="attribution-disabled"
+        )
+        return _timeout_win_result(winner_color)  # type: ignore[arg-type]
 
 
 def _resign_adjudicator() -> Adjudicator:
@@ -335,3 +349,43 @@ async def test_handle_recovered_bestmove_applies_late_bestmove_with_object_state
     assert result.ply_count == 1
     assert move_state.moves == [move]
     assert move_state.eval_values == [42]
+
+
+@pytest.mark.asyncio
+async def test_handle_recovered_bestmove_preserves_timeout_observation_until_expiry_classification() -> None:
+    """recovery request の local-pipe 観測を共通の expiry 判定まで失わないこと。"""
+
+    board = Board()
+    move = _first_legal_move(board)
+    move_state = _build_move_state(board)
+    assert move_state.current_time_control.last_move_start_time is not None
+    move_state.current_time_control.last_move_start_time -= 2.0
+    harness = _RunnerMoveHarness(move_result={"is_game_over": False, "move": move})
+
+    result = await harness._handle_recovered_bestmove(
+        request=RecoveredBestmoveRequest(
+            think_result=SimpleNamespace(pvs=[]),
+            elapsed_ms=2_000,
+            engine_wall_time_ms=1_950,
+            move_source="search",
+            current_engine_name="engine-a",
+            game_id="recovered-timeout",
+            ply_count=0,
+            start_ply_number=1,
+            initial_sfen=board.to_sfen(),
+            black_name="black",
+            white_name="white",
+            player_name="Black",
+            is_black_turn=True,
+            repetition_occurrences_to_draw=4,
+            observed_at_s=123.456,
+            observation_basis="local_pipe",
+        ),
+        state=RecoveredBestmoveStateRefs(move_state=move_state),
+        dependencies=MoveApplicationDependencies(adjudicator=None),
+    )
+
+    assert result.result == GameResult.WHITE_WIN_BY_TIMEOUT
+    assert harness.timeout_calls[-1]["site"] == "update_after_move_expired"
+    assert harness.timeout_calls[-1]["observed_at_s"] == 123.456
+    assert harness.timeout_calls[-1]["observation_basis"] == "local_pipe"

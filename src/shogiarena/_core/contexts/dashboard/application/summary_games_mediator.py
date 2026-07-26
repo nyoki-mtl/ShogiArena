@@ -65,7 +65,8 @@ class SummaryGamesMediator:
 
         now_ms = time.time() * 1000
         last_sent = self._last_summary_publish_at.get(source)
-        if last_sent is not None and now_ms - last_sent < MIN_SUMMARY_PUBLISH_INTERVAL_MS:
+        is_terminal = payload.get("tournament_ended") is True
+        if not is_terminal and last_sent is not None and now_ms - last_sent < MIN_SUMMARY_PUBLISH_INTERVAL_MS:
             return
         self._publish(f"live.summary.snapshot.{source}", to_json_object(sanitised))
         self._last_summary_publish_at[source] = now_ms

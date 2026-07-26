@@ -45,8 +45,9 @@ class TestSprtStateSnapshot:
             "pending",
         }
 
-    def test_no_optional_keys(self) -> None:
-        assert _optional_keys(SprtStateSnapshot) == set()
+    def test_optional_keys_are_the_backward_compatible_additions(self) -> None:
+        """1.1.0 で足した停止判定ラッチ（task 0052）。古い state.json には無いので optional。"""
+        assert _optional_keys(SprtStateSnapshot) == {"is_decision_latched", "late_games"}
 
     def test_key_count(self) -> None:
         assert len(_required_keys(SprtStateSnapshot)) == 13

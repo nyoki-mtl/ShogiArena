@@ -32,6 +32,10 @@ class TournamentRunnerState:
     game_assignments: dict[str, dict[str, str | None]] = field(default_factory=dict)
     game_display_order: dict[str, int] = field(default_factory=dict)
     original_total_games: int = 0
+    # timeout breaker の counter（task 0052）。completion context は局ごとに組み直されるため、
+    # counter を context 側に持つと毎回リセットされて閾値へ到達しない。run-scoped state で保持する。
+    consecutive_invalid_timeouts_by_origin: dict[str, int] = field(default_factory=dict)
+    invalid_timeouts_by_origin: dict[str, int] = field(default_factory=dict)
 
     # -- Execution control -------------------------------------------------
     session_phase: str = "starting"

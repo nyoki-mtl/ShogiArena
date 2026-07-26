@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Generic, Protocol, TypeVar, cast, runtime_checkable
 
@@ -12,6 +13,7 @@ from shogiarena._core.contexts.game_session.application.progress.reporters impor
 from shogiarena._core.contexts.game_session.application.session.context_holder import SessionContextHolder
 from shogiarena._core.contexts.game_session.application.session.flow import SessionFlow
 from shogiarena._core.contexts.game_session.application.session.run_controller import RunController
+from shogiarena._core.contexts.game_session.domain.run_health import RunTerminationReason
 from shogiarena._core.contexts.game_session.ports.result_store import ResultStorePort
 from shogiarena._core.contexts.game_session.ports.run_storage import RunStoragePort
 from shogiarena._core.contexts.game_session.ports.session_context import SessionContext
@@ -23,6 +25,7 @@ from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import
     SessionRunnerPort,
 )
 from shogiarena._core.contexts.game_session.ports.session_runner_ports import DashboardServerPort
+from shogiarena._core.shared.kernel.runtime_watchdog import LoopLagProbePort, RuntimeWatchdog
 from shogiarena._core.shared.kernel.session_hooks import GameLifecycleHooks, SessionStopController
 from shogiarena._core.shared.kernel.snapshots import EngineInfoSnapshots, EngineOptionsSnapshots
 
@@ -38,6 +41,11 @@ class _OrchestratorPort(OrchestratorPort[Any], Protocol):
     def get_engine_option_snapshots(self) -> EngineOptionsSnapshots: ...
 
     def get_engine_info_snapshots(self) -> EngineInfoSnapshots: ...
+
+
+@runtime_checkable
+class _WatchdogAwareOrchestrator(Protocol):
+    def set_runtime_watchdog(self, probe: LoopLagProbePort | None) -> None: ...
 
 
 class _DashboardAssetLifecyclePort(Protocol):
@@ -139,6 +147,8 @@ class BaseSessionRunner(ABC, Generic[TFinal, TRun]):
         )
         self._session_flow = SessionFlow(cast(SessionRunnerPort[TRun], self))
         self._result_store = result_store
+        # Production stall watchdog for the run's event loop (task 0047, log-only for now).
+        self._watchdog: RuntimeWatchdog | None = None
         # Write to the base class because the static cleanup helpers read
         # BaseSessionRunner._active_dashboard_manager; writing to type(self) (the concrete
         # subclass) left those reads on the no-op default, so asset cleanup never ran. (One
@@ -170,6 +180,9 @@ class BaseSessionRunner(ABC, Generic[TFinal, TRun]):
         if not isinstance(orch, _OrchestratorPort):
             raise TypeError("orchestrator must expose engine snapshot accessors")
         self._orchestrator = orch
+        # Hand the run's stall watchdog to the orchestrator so timeout attribution can use it (0047).
+        if isinstance(orch, _WatchdogAwareOrchestrator):
+            orch.set_runtime_watchdog(self._watchdog)
 
     def _detach_orchestrator(self) -> None:
         self._orchestrator = None
@@ -187,14 +200,27 @@ class BaseSessionRunner(ABC, Generic[TFinal, TRun]):
     async def stop_services(self) -> None:
         if self._has_closed_services:
             return
-        await self.stop_dashboard_server()
+        cleanup_error: Exception | None = None
+        try:
+            await self.stop_dashboard_server()
+        except (OSError, RuntimeError, ValueError, TimeoutError) as exc:
+            logger.warning("Failed to stop dashboard server: %s", exc, exc_info=True)
+            cleanup_error = exc
         run_dir = self._resolve_dashboard_run_dir()
         if run_dir is not None:
             try:
                 self.cleanup_dashboard_assets(run_dir)
             except (OSError, RuntimeError) as exc:
                 logger.warning("Failed to clean dashboard assets in %s: %s", run_dir, exc)
-        await self._stop_additional_services()
+                if cleanup_error is None:
+                    cleanup_error = exc
+        try:
+            await self._stop_additional_services()
+        except (OSError, RuntimeError, ValueError) as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if cleanup_error is not None:
+            raise cleanup_error
         self._has_closed_services = True
 
     async def _stop_additional_services(self) -> None:  # to be overridden
@@ -226,9 +252,26 @@ class BaseSessionRunner(ABC, Generic[TFinal, TRun]):
         if progress_reporter is not None:
             self._progress = progress_reporter
         try:
-            return cast(TFinal | None, await self._session_flow.run())
+            async with self.runtime_watchdog_session():
+                return cast(TFinal | None, await self._session_flow.run())
         finally:
             self._progress = previous
+
+    @asynccontextmanager
+    async def runtime_watchdog_session(self) -> AsyncIterator[None]:
+        """run の間だけ stall watchdog を動かす（task 0047）。
+
+        ``run`` を上書きするサブクラスも必ずこれで包むこと。包み忘れると watchdog が
+        None のままになり、timeout attribution が黙って UNATTRIBUTED に倒れる。
+        """
+
+        watchdog = RuntimeWatchdog()
+        self._watchdog = watchdog
+        watchdog.start()
+        try:
+            yield
+        finally:
+            await watchdog.stop()
 
     # --- Hook methods to be implemented/overridden ----------------------
     async def prepare_run_dir(self) -> None:  # pragma: no cover - to be implemented
@@ -313,6 +356,14 @@ class BaseSessionRunner(ABC, Generic[TFinal, TRun]):
         if run_result is not None:
             raise TypeError("BaseSessionRunner.finalize_and_persist requires subclass override for non-None run_result")
         return None
+
+    def write_interrupted_run_health(self, reason: RunTerminationReason) -> None:  # optional
+        """run-health artifact を持つ runner だけが override する（task 0052）。
+
+        SPSA など `completion_status.json` を出力しない session では no-op でよい。
+        """
+        del reason
+        return
 
 
 __all__ = [

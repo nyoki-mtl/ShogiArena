@@ -89,6 +89,13 @@ class CompletionStateContext:
     is_dashboard_enabled: bool
     total_games: int
     save_run_state: Callable[[], None]
+    # origin ごとの連続無効 timeout 数と累計（task 0052）。breaker は result 値ではなく
+    # timeout policy を入力にするため、origin 別に独立した counter を持つ。
+    #
+    # **この context は局ごとに組み直される**。既定値を持たせると毎回新しい dict になり、
+    # 閾値へ到達しなくなるため、run-scoped な mapping を必ず注入させる（既定値を置かない）。
+    consecutive_invalid_timeouts_by_origin: MutableMapping[str, int]
+    invalid_timeouts_by_origin: MutableMapping[str, int]
 
 
 @dataclass(slots=True)

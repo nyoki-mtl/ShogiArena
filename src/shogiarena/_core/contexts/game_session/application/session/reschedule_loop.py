@@ -32,7 +32,7 @@ class RescheduleLoop(Generic[TController]):
         new_controller: Callable[[], TController],
         run_iteration: Callable[[TController], Awaitable[None]],
         decide_next: Callable[[TController], Awaitable[RescheduleDecision]],
-        on_wait: Callable[[], Awaitable[None]],
+        on_wait: Callable[[TController], Awaitable[None]],
         on_reset: Callable[[TController], None] | None = None,
     ) -> None:
         active = controller
@@ -48,7 +48,7 @@ class RescheduleLoop(Generic[TController]):
                     on_reset(active)
 
             if decision.action is RescheduleAction.WAIT:
-                await on_wait()
+                await on_wait(active)
                 continue
 
             if decision.action is RescheduleAction.CONTINUE:

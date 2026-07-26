@@ -9,13 +9,18 @@ import pytest
 import rsshogi
 from rsshogi.initial_positions import InitialPosition
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 
 from shogiarena._core.contexts.dashboard.adapters.result_summary_reader import SQLiteResultSummaryReader
 from shogiarena._core.platform.db.store.arena_db_adapter import ArenaDBAdapter
 from shogiarena._core.platform.db.store.entities import Base
 from shogiarena._core.platform.db.store.record_store import DBRecordStore
 from shogiarena._core.platform.db.store.repository_factory import SQLiteShogiDBFactory
-from shogiarena._core.platform.db.store.schema_guard import CURRENT_STORE_SCHEMA_VERSION, StoreSchemaError
+from shogiarena._core.platform.db.store.schema_guard import (
+    _TOLERATED_ADDITIVE_TABLES,
+    CURRENT_STORE_SCHEMA_VERSION,
+    StoreSchemaError,
+)
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.participation_records import EngineArtifactSnapshot, InstanceSnapshot
 from shogiarena._core.shared.kernel.schedule_metadata import extract_schedule_metadata, serialize_schedule_metadata
@@ -68,6 +73,47 @@ def _create_unversioned_canonical_db(db_path: Path) -> None:
         Base.metadata.create_all(engine)
     finally:
         engine.dispose()
+
+
+def _create_db_without_tolerated_tables(db_path: Path, *, version: int | None = None) -> None:
+    """許容対象の additive table を持たない、それ以外は canonical な DB を作る。
+
+    その table を追加する前のソフトが生成した DB を再現する（task 0049）。
+    """
+
+    engine = create_engine(f"sqlite+pysqlite:///{db_path.as_posix()}")
+    try:
+        tables = [table for table in Base.metadata.sorted_tables if table.name not in _TOLERATED_ADDITIVE_TABLES]
+        Base.metadata.create_all(engine, tables=tables)
+    finally:
+        engine.dispose()
+    if version is not None:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(f"PRAGMA user_version={version}")
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _table_names(db_path: Path) -> set[str]:
+    conn = sqlite3.connect(db_path)
+    try:
+        return {
+            str(row[0])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+            if not str(row[0]).startswith("sqlite_")
+        }
+    finally:
+        conn.close()
+
+
+def _schema_version(db_path: Path) -> int:
+    conn = sqlite3.connect(db_path)
+    try:
+        return int(conn.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        conn.close()
 
 
 def test_db_record_store_load_roundtrip_keeps_metadata_attributes_string_typed(tmp_path) -> None:
@@ -196,21 +242,34 @@ def test_create_tables_rejects_partial_legacy_schema_before_filling_missing_tabl
         conn.close()
 
     repo = SQLiteShogiDBFactory(db_path).create()
-    with pytest.raises(RuntimeError, match="partial legacy schema has missing managed tables"):
+    with pytest.raises(RuntimeError, match="partial legacy schema has missing managed tables") as exc_info:
         repo.create_tables()
 
-    conn = sqlite3.connect(db_path)
-    try:
-        tables = {
-            str(row[0])
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-            if not str(row[0]).startswith("sqlite_")
-        }
-        version = conn.execute("PRAGMA user_version").fetchone()[0]
-    finally:
-        conn.close()
-    assert tables == {"player"}
-    assert version == 0
+    # 許容対象の additive table は「欠けていて当然」なので、欠落一覧に混ぜてはならない。
+    for tolerated in _TOLERATED_ADDITIVE_TABLES:
+        assert tolerated not in str(exc_info.value)
+    assert _table_names(db_path) == {"player"}
+    assert _schema_version(db_path) == 0
+
+
+def test_repository_close_is_terminal_and_idempotent(tmp_path) -> None:
+    """dispose 後に同じ repository が暗黙再接続しないこと。"""
+
+    repo = SQLiteShogiDBFactory(tmp_path / "closed.sqlite3").create()
+    repo.create_tables()
+
+    repo.close_db()
+    repo.close_db()
+
+    with pytest.raises(RuntimeError, match="ShogiRepository is closed"):
+        _ = repo.session
+    with pytest.raises(RuntimeError, match="ShogiRepository is closed"):
+        _ = repo.engine
+    with pytest.raises(RuntimeError, match="ShogiRepository is closed"):
+        repo.create_tables()
+    with pytest.raises(RuntimeError, match="ShogiRepository is closed"):
+        with repo.operation():
+            pass
 
 
 @pytest.mark.asyncio
@@ -290,6 +349,38 @@ async def test_record_store_failure_rolls_back_and_removes_worker_task_session(
     assert games == {"successful-game"}
 
 
+def test_arena_adapter_exposes_timeout_origin_with_games(tmp_path) -> None:
+    db_path = tmp_path / "db.sqlite3"
+    adapter = ArenaDBAdapter(SQLiteShogiDBFactory(db_path))
+    adapter.ensure_schema()
+    timed_out = _make_record(game_name="game-timeout")
+    timed_out.set_metadata_attribute("timeout_origin", "orchestrator_stall")
+    adapter.append_record_list([timed_out, _make_record(game_name="game-plain")])
+
+    games = {str(game["game_name"]): game for game in adapter.get_games_with_players(game_type="arena")}
+
+    assert games["game-timeout"].get("timeout_origin") == "orchestrator_stall"
+    assert "timeout_origin" not in games["game-plain"]
+
+
+def test_arena_adapter_degrades_when_timeout_attribution_table_is_absent(tmp_path) -> None:
+    """table を持たない read-only DB でも、origin なしで一覧を読めること（task 0049）。"""
+
+    db_path = tmp_path / "legacy-shape.sqlite3"
+    _create_db_without_tolerated_tables(db_path, version=CURRENT_STORE_SCHEMA_VERSION)
+    seed = SQLiteShogiDBFactory(db_path).create()
+    DBRecordStore(seed).append([_make_record(game_name="game-legacy")])
+    seed.close_db()
+    db_path.chmod(stat.S_IREAD)
+    try:
+        games = ArenaDBAdapter(SQLiteShogiDBFactory(db_path)).get_games_with_players(game_type="arena")
+    finally:
+        db_path.chmod(stat.S_IWRITE | stat.S_IREAD)
+
+    assert [game["game_name"] for game in games] == ["game-legacy"]
+    assert "timeout_origin" not in games[0]
+
+
 def test_arena_adapter_upserts_return_readable_detached_entities(tmp_path) -> None:
     adapter = ArenaDBAdapter(SQLiteShogiDBFactory(tmp_path / "db.sqlite3"))
 
@@ -364,6 +455,67 @@ def test_db_record_store_roundtrips_arena_schedule_metadata(tmp_path) -> None:
     assert "_arena_schedule" in stored
     assert '"game_name"' not in stored
     assert '"updated_date"' not in stored
+
+
+def _timeout_attribution_rows(db_path: Path) -> list[tuple[object, ...]]:
+    conn = sqlite3.connect(db_path)
+    try:
+        return [
+            tuple(row)
+            for row in conn.execute(
+                "SELECT g.game_name, a.origin FROM game_timeout_attribution a JOIN game g ON g.id = a.game_id"
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+
+
+def test_db_record_store_projects_timeout_origin_and_keeps_it_in_metadata_blob(tmp_path) -> None:
+    """timeout origin は集計用に列へ投影しつつ、blob 側にも残して roundtrip を保つこと（task 0049）。"""
+
+    db_path = tmp_path / "db.sqlite3"
+    repo = SQLiteShogiDBFactory(db_path).create()
+    repo.create_tables()
+    store = DBRecordStore(repo)
+    record = _make_record(game_name="game-timeout")
+    record.set_metadata_attribute("timeout_origin", "orchestrator_stall")
+
+    store.append([record])
+
+    assert _timeout_attribution_rows(db_path) == [("game-timeout", "orchestrator_stall")]
+    loaded = store.load(game_name="game-timeout")
+    assert loaded is not None
+    assert loaded.metadata.attributes["timeout_origin"] == "orchestrator_stall"
+
+
+def test_db_record_store_omits_timeout_attribution_row_without_origin(tmp_path) -> None:
+    db_path = tmp_path / "db.sqlite3"
+    repo = SQLiteShogiDBFactory(db_path).create()
+    repo.create_tables()
+
+    DBRecordStore(repo).append([_make_record(game_name="game-plain")])
+
+    assert _timeout_attribution_rows(db_path) == []
+
+
+def test_db_record_store_update_replaces_timeout_attribution_row(tmp_path) -> None:
+    """更新時に古い投影が残らないこと（game 行の削除に追随する）。"""
+
+    db_path = tmp_path / "db.sqlite3"
+    repo = SQLiteShogiDBFactory(db_path).create()
+    repo.create_tables()
+    store = DBRecordStore(repo)
+    first = _make_record(game_name="game-timeout-update")
+    first.set_metadata_attribute("timeout_origin", "orchestrator_stall")
+    store.append([first])
+
+    payload = _make_record(game_name="game-timeout-update").to_dict()
+    payload["metadata"]["updated_date"] = "2026-01-01T00:02:00"
+    payload["metadata"]["attributes"]["updated_date"] = "2026-01-01T00:02:00"
+    payload["metadata"]["attributes"]["timeout_origin"] = "engine_deadline"
+    store.append([rsshogi.record.Record.from_dict(payload, strict=True)], should_update=True)
+
+    assert _timeout_attribution_rows(db_path) == [("game-timeout-update", "engine_deadline")]
 
 
 def test_db_record_store_append_requires_game_name_and_type_in_attributes(tmp_path) -> None:
@@ -619,6 +771,183 @@ def test_corrupt_database_file_reports_repair_guidance(tmp_path) -> None:
         repo.create_tables()
 
 
+def test_write_path_backfills_missing_tolerated_table_and_keeps_data(tmp_path) -> None:
+    """許容対象 table を持たない現行版 DB は、書き込み経路で補完されデータが保全されること。"""
+
+    db_path = tmp_path / "backfill.sqlite3"
+    _create_db_without_tolerated_tables(db_path, version=CURRENT_STORE_SCHEMA_VERSION)
+    seed = SQLiteShogiDBFactory(db_path).create()
+    DBRecordStore(seed).append([_make_record(game_name="pre-existing")])
+    seed.close_db()
+
+    repo = SQLiteShogiDBFactory(db_path).create()
+    repo.create_tables()
+
+    assert _TOLERATED_ADDITIVE_TABLES <= _table_names(db_path)
+    assert _schema_version(db_path) == CURRENT_STORE_SCHEMA_VERSION
+    assert DBRecordStore(repo).load(game_name="pre-existing") is not None
+
+
+def test_write_path_accepts_read_only_database_without_tolerated_table(tmp_path) -> None:
+    """read-only 媒体では、許容対象 table を作れなくても書き込み経路が成功すること。
+
+    dashboard は archived run も `create_tables()` 経由で開くため、ここで失敗すると閲覧できなくなる。
+    """
+
+    db_path = tmp_path / "read-only-current.sqlite3"
+    _create_db_without_tolerated_tables(db_path, version=CURRENT_STORE_SCHEMA_VERSION)
+    db_path.chmod(stat.S_IREAD)
+    try:
+        repo = SQLiteShogiDBFactory(db_path).create()
+        repo.create_tables()
+        games = repo.session.execute(text("SELECT COUNT(*) FROM game")).scalar_one()
+    finally:
+        db_path.chmod(stat.S_IWRITE | stat.S_IREAD)
+
+    assert games == 0
+    assert not (_TOLERATED_ADDITIVE_TABLES & _table_names(db_path))
+
+
+def test_query_path_reads_database_without_tolerated_table_and_does_not_create_it(tmp_path) -> None:
+    """読み取り経路は許容対象 table を作らず、欠落したまま読めること。"""
+
+    db_path = tmp_path / "read-current.sqlite3"
+    _create_db_without_tolerated_tables(db_path, version=CURRENT_STORE_SCHEMA_VERSION)
+
+    assert list(SQLiteResultSummaryReader(db_path).read_games()) == []
+    assert not (_TOLERATED_ADDITIVE_TABLES & _table_names(db_path))
+
+
+def test_offline_reader_does_not_stamp_unversioned_database_without_tolerated_table(tmp_path) -> None:
+    """offline results reader は、書き込み可能な場所でも archived DB を刻印しない。"""
+
+    db_path = tmp_path / "legacy-shape.sqlite3"
+    _create_db_without_tolerated_tables(db_path)
+
+    assert list(SQLiteResultSummaryReader(db_path).read_games()) == []
+    assert _schema_version(db_path) == 0
+    assert not (_TOLERATED_ADDITIVE_TABLES & _table_names(db_path))
+
+
+def test_unmanaged_extra_table_is_accepted_on_both_paths(tmp_path) -> None:
+    """管理外の余分な table があっても両経路で受理されること。
+
+    「旧ソフトが新 DB を開ける」という additive table 方式の前提そのものを固定する。
+    """
+
+    db_path = tmp_path / "extra-table.sqlite3"
+    _create_unversioned_canonical_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("CREATE TABLE future_feature (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT)")
+        conn.commit()
+    finally:
+        conn.close()
+
+    repo = SQLiteShogiDBFactory(db_path).create()
+    repo.create_tables()
+
+    assert list(SQLiteResultSummaryReader(db_path).read_games()) == []
+    assert "future_feature" in _table_names(db_path)
+
+
+def test_malformed_tolerated_table_is_rejected_on_both_paths(tmp_path) -> None:
+    """許容対象 table が存在する場合は、形状不正を fail closed で拒否すること。"""
+
+    db_path = tmp_path / "malformed-tolerated.sqlite3"
+    _create_unversioned_canonical_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("DROP INDEX game_timeout_attribution_game_idx")
+        conn.commit()
+    finally:
+        conn.close()
+
+    repo = SQLiteShogiDBFactory(db_path).create()
+    with pytest.raises(StoreSchemaError, match="missing or incompatible index: game_timeout_attribution_game_idx"):
+        repo.create_tables()
+    with pytest.raises(StoreSchemaError, match="missing or incompatible index: game_timeout_attribution_game_idx"):
+        SQLiteResultSummaryReader(db_path).read_games()
+
+
+def test_concurrent_tolerated_table_creation_revalidates(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """別プロセスが先に table を作った競合下でも、再検証されて成功すること。"""
+
+    db_path = tmp_path / "concurrent.sqlite3"
+    _create_db_without_tolerated_tables(db_path, version=CURRENT_STORE_SCHEMA_VERSION)
+    original_create_all = Base.metadata.create_all
+
+    def create_then_conflict(bind, **kwargs) -> None:
+        # 「有無の確認と CREATE の間に別プロセスが作り終えた」状況を決定的に再現する。
+        original_create_all(bind, **kwargs)
+        raise OperationalError("CREATE TABLE", {}, Exception("table game_timeout_attribution already exists"))
+
+    monkeypatch.setattr(Base.metadata, "create_all", create_then_conflict)
+    repo = SQLiteShogiDBFactory(db_path).create()
+    repo.create_tables()
+    monkeypatch.undo()
+
+    assert _TOLERATED_ADDITIVE_TABLES <= _table_names(db_path)
+    assert _schema_version(db_path) == CURRENT_STORE_SCHEMA_VERSION
+
+
+def test_concurrent_legacy_schema_creation_revalidates(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """未 version DB の初期化でも、競合時に再検証されて成功すること。"""
+
+    db_path = tmp_path / "concurrent-legacy.sqlite3"
+    original_create_all = Base.metadata.create_all
+
+    def create_then_conflict(bind, **kwargs) -> None:
+        original_create_all(bind, **kwargs)
+        raise OperationalError("CREATE TABLE", {}, Exception("table game already exists"))
+
+    monkeypatch.setattr(Base.metadata, "create_all", create_then_conflict)
+    repo = SQLiteShogiDBFactory(db_path).create()
+    repo.create_tables()
+    monkeypatch.undo()
+
+    assert _TOLERATED_ADDITIVE_TABLES <= _table_names(db_path)
+    assert _schema_version(db_path) == CURRENT_STORE_SCHEMA_VERSION
+
+
+def test_create_tables_rejects_database_with_only_a_tolerated_table(tmp_path) -> None:
+    """許容対象 table しか持たない DB は partial legacy として拒否されること。"""
+
+    db_path = tmp_path / "tolerated-only.sqlite3"
+    engine = create_engine(f"sqlite+pysqlite:///{db_path.as_posix()}")
+    try:
+        Base.metadata.create_all(
+            engine,
+            tables=[table for table in Base.metadata.sorted_tables if table.name in _TOLERATED_ADDITIVE_TABLES],
+        )
+    finally:
+        engine.dispose()
+
+    repo = SQLiteShogiDBFactory(db_path).create()
+    with pytest.raises(StoreSchemaError, match="partial legacy schema has missing managed tables"):
+        repo.create_tables()
+
+
+def test_write_path_accepts_read_only_unversioned_canonical_database(tmp_path) -> None:
+    """canonical だが read-only な未 version DB を、書き込み経路が未刻印のまま受理すること。
+
+    dashboard は archived run も `create_tables()` 経由で開くため、ここで失敗すると閲覧できなくなる。
+    """
+
+    db_path = tmp_path / "read-only-canonical.sqlite3"
+    _create_unversioned_canonical_db(db_path)
+    db_path.chmod(stat.S_IREAD)
+    try:
+        repo = SQLiteShogiDBFactory(db_path).create()
+        repo.create_tables()
+        games = repo.session.execute(text("SELECT COUNT(*) FROM game")).scalar_one()
+    finally:
+        db_path.chmod(stat.S_IWRITE | stat.S_IREAD)
+
+    assert games == 0
+    assert _schema_version(db_path) == 0
+
+
 def test_query_path_reads_unversioned_database_on_read_only_media(tmp_path) -> None:
     """read-only な媒体の legacy DB は、version 刻印に失敗しても読み取れること。"""
 
@@ -638,3 +967,139 @@ def test_query_path_reads_unversioned_database_on_read_only_media(tmp_path) -> N
     finally:
         conn.close()
     assert version == 0
+
+
+# --- Additive table の error 分類（task 0052 / review finding M1） -----------------
+
+
+class _FakeSqliteError(Exception):
+    """``sqlite_errorname`` を持つ driver 例外の代役。"""
+
+    def __init__(self, error_name: str, error_code: int = 1) -> None:
+        super().__init__(error_name)
+        self.sqlite_errorname = error_name
+        self.sqlite_errorcode = error_code
+
+
+def _operational_error(error_name: str | None) -> OperationalError:
+    orig: Exception = (
+        Exception("driver without sqlite error codes") if error_name is None else _FakeSqliteError(error_name)
+    )
+    return OperationalError("CREATE TABLE", {}, orig)
+
+
+@pytest.mark.parametrize(
+    "error_name",
+    [
+        "SQLITE_BUSY",
+        "SQLITE_LOCKED",
+        "SQLITE_IOERR",
+        "SQLITE_IOERR_WRITE",
+        "SQLITE_FULL",
+        "SQLITE_CORRUPT",
+        "SQLITE_ERROR",
+        None,  # driver が error code を公開しない場合は分類不能として fail closed
+    ],
+)
+def test_writable_backfill_failure_is_fail_closed(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_name: str | None,
+) -> None:
+    """read-only 以外の理由で additive table を作れなかった DB を成功扱いにしないこと。"""
+
+    db_path = tmp_path / f"backfill-{error_name or 'unclassified'}.sqlite3"
+    _create_db_without_tolerated_tables(db_path, version=CURRENT_STORE_SCHEMA_VERSION)
+
+    def failing_create_all(bind, **kwargs) -> None:
+        del bind, kwargs
+        raise _operational_error(error_name)
+
+    monkeypatch.setattr(Base.metadata, "create_all", failing_create_all)
+    repo = SQLiteShogiDBFactory(db_path).create()
+    with pytest.raises(StoreSchemaError, match="could not be created"):
+        repo.create_tables()
+    monkeypatch.undo()
+
+    assert not (_TOLERATED_ADDITIVE_TABLES & _table_names(db_path))
+
+
+def test_readonly_backfill_failure_still_degrades(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``SQLITE_READONLY`` 系だけは欠落のまま閲覧を許すこと。"""
+
+    db_path = tmp_path / "backfill-readonly.sqlite3"
+    _create_db_without_tolerated_tables(db_path, version=CURRENT_STORE_SCHEMA_VERSION)
+
+    def failing_create_all(bind, **kwargs) -> None:
+        del bind, kwargs
+        raise _operational_error("SQLITE_READONLY_DBMOVED")
+
+    monkeypatch.setattr(Base.metadata, "create_all", failing_create_all)
+    repo = SQLiteShogiDBFactory(db_path).create()
+    repo.create_tables()
+    monkeypatch.undo()
+
+    assert not (_TOLERATED_ADDITIVE_TABLES & _table_names(db_path))
+
+
+def test_legacy_initialization_failure_is_fail_closed(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """未 version DB の初期化でも、busy などで additive table が欠けたまま成功させないこと。"""
+
+    db_path = tmp_path / "legacy-busy.sqlite3"
+    _create_db_without_tolerated_tables(db_path)
+    original_create_all = Base.metadata.create_all
+
+    def partial_create_all(bind, **kwargs) -> None:
+        del bind, kwargs
+        raise _operational_error("SQLITE_BUSY")
+
+    monkeypatch.setattr(Base.metadata, "create_all", partial_create_all)
+    repo = SQLiteShogiDBFactory(db_path).create()
+    with pytest.raises(StoreSchemaError, match="SQLITE_BUSY"):
+        repo.create_tables()
+    monkeypatch.setattr(Base.metadata, "create_all", original_create_all)
+
+    assert _schema_version(db_path) == 0
+
+
+def test_schema_version_stamp_failure_is_fail_closed(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """version 刻印の失敗も同じ分類器を使い、busy を未刻印成功にしないこと。"""
+
+    from shogiarena._core.platform.db.store import schema_guard
+
+    db_path = tmp_path / "stamp-busy.sqlite3"
+    _create_unversioned_canonical_db(db_path)
+
+    def failing_stamp(engine) -> None:
+        del engine
+        raise _operational_error("SQLITE_BUSY")
+
+    monkeypatch.setattr(schema_guard, "_write_schema_version", failing_stamp)
+    repo = SQLiteShogiDBFactory(db_path).create()
+    with pytest.raises(StoreSchemaError, match="schema version could not be stamped"):
+        repo.create_tables()
+    monkeypatch.undo()
+
+
+def test_update_on_a_database_without_the_attribution_table_does_not_touch_it(tmp_path) -> None:
+    """table を持たない旧 DB で ``should_update=True`` を実行しても、存在しない table を参照しないこと。"""
+
+    db_path = tmp_path / "update-without-tolerated.sqlite3"
+    _create_db_without_tolerated_tables(db_path, version=CURRENT_STORE_SCHEMA_VERSION)
+    repo = SQLiteShogiDBFactory(db_path).create()
+    store = DBRecordStore(repo)
+
+    first = _make_record(game_name="g-update")
+    first.set_metadata_attribute("timeout_origin", "engine_deadline")
+    store.append([first], should_update=True)
+
+    second = _make_record(game_name="g-update")
+    second.set_metadata_attribute("timeout_origin", "orchestrator_stall")
+    second.update_metadata({"updated_date": "2026-01-02T00:00:00"})
+    store.append([second], should_update=True)
+
+    assert not (_TOLERATED_ADDITIVE_TABLES & _table_names(db_path))
+    loaded = store.load(game_name="g-update")
+    assert loaded is not None
+    # 列へ投影できなくても、origin は metadata_attributes_json 側に保たれる。
+    assert loaded.metadata.attributes.get("timeout_origin") == "orchestrator_stall"

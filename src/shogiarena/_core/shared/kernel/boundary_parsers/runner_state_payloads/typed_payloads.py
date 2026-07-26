@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TypeAlias
+from typing import NotRequired, TypeAlias
 
 from typing_extensions import TypedDict
 
@@ -42,6 +42,8 @@ class _SprtStateSnapshot(TypedDict):
     min_pairs: int
     penta_bins: list[int]
     pending: list[_SprtPendingHalf]
+    is_decision_latched: NotRequired[bool]
+    late_games: NotRequired[int]
 
 
 class _TournamentRunStateType(TypedDict, total=False):
@@ -59,6 +61,8 @@ class _TournamentRunStateType(TypedDict, total=False):
     sprt_state: _SprtStateSnapshot | None
     openbench_state: dict[str, JsonValue] | None
     game_instance_overrides: dict[str, _AssignmentOverrideWire]
+    invalid_timeouts_by_origin: dict[str, int]
+    consecutive_invalid_timeouts_by_origin: dict[str, int]
 
 
 __all__ = [

@@ -75,7 +75,7 @@ function parseContentTokens(element: TabContentElement): DashboardTabId[] {
         .filter((token): token is DashboardTabId => token.length > 0) as DashboardTabId[];
 }
 
-function notifyModules(owner: TabsWindow, tabId: DashboardTabId): void {
+function notifyModules(owner: TabsWindow, tabId: DashboardTabId, previousTabId: DashboardTabId): void {
     owner.DashboardInstances?.setActive?.(tabId === 'instances');
     owner.DashboardGames?.setActive?.(tabId === 'games');
     owner.DashboardTournament?.setActive?.(tabId === 'tournament');
@@ -104,9 +104,12 @@ function notifyModules(owner: TabsWindow, tabId: DashboardTabId): void {
         summaryStore.setActiveSource('spsa');
     }
 
-    // Trigger resume when switching to the Live tab from another internal tab
-    // Updates module fetches latest snapshots; Cards module triggers UI refresh burst
+    if (previousTabId === 'live' && tabId !== 'live') {
+        owner.DashboardLiveCards?.onTabDeactivate?.();
+    }
     if (tabId === 'live') {
+        // Trigger resume when switching to the Live tab from another internal tab.
+        // Updates module fetches latest snapshots; Cards module triggers UI refresh burst.
         owner.DashboardLiveUpdates?.onTabActivate?.();
         owner.DashboardLiveCards?.onTabActivate?.();
     }
@@ -201,6 +204,7 @@ function createTabsApi(
 
     function applyTabState(tabId: DashboardTabId, options: { persist?: boolean } = {}): void {
         const { persist = true } = options;
+        const previousTabId = activeTab;
         const targetButton = buttonMap.get(tabId);
         if (!targetButton) {
             const fallback = findFirstVisibleTab(tabId);
@@ -233,7 +237,7 @@ function createTabsApi(
             element.classList.toggle('active', tokens.includes(tabId));
         });
 
-        notifyModules(owner, tabId);
+        notifyModules(owner, tabId, previousTabId);
         if (persist) {
             persistActiveTab(storage, tabId);
         }

@@ -103,6 +103,8 @@ async def test_paused_completion_does_not_mark_game_complete() -> None:
             is_dashboard_enabled=True,
             total_games=1,
             save_run_state=lambda: saved.append(None),
+            consecutive_invalid_timeouts_by_origin={},
+            invalid_timeouts_by_origin={},
         ),
         openbench=CompletionOpenBenchContext(is_strict_mode=False, sync_after_game=sync_after_game),
     )

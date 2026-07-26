@@ -199,6 +199,8 @@ rules:
 ├── game.db
 ├── manifest.json
 ├── state.json
+├── completed.flag
+├── completion_status.json
 ├── data/
 ├── records/
 └── transcripts/
@@ -210,6 +212,133 @@ rules:
 shogiarena results summary /path/to/run
 shogiarena results summary /path/to/run --format csv
 ```
+
+### 完了状態
+
+run が最後まで走ったかどうかは `completion_status.json` で判定します。
+
+この artifact は、失敗しうる最終処理と後始末がすべて終わった後にだけ書かれます。
+`completed.flag` は「その確定書き込みが済んだ」ことを示す派生マーカーで、単独では成功の証拠になりません。
+
+```json
+{
+  "schema_version": 1,
+  "status": "clean",
+  "termination_reason": "sprt-finished",
+  "scheduled": 1000,
+  "completed": 124,
+  "cancelled": 8,
+  "not_played": 868,
+  "error_games": 0,
+  "timeouts_by_origin": { "engine_deadline": 5 },
+  "coverage_incomplete_timeouts": 0,
+  "watchdog": {
+    "loop_lag_events": 3,
+    "thread_lag_events": 0,
+    "max_loop_lag_ms": 412.0,
+    "max_thread_lag_ms": 0.0,
+    "loop_threshold_ms": 200.0,
+    "thread_threshold_ms": 200.0,
+    "dropped_loop_events": 0,
+    "is_coverage_complete": true
+  }
+}
+```
+
+`status` と `termination_reason` は必ず対で読んでください。
+
+`status` の値は次の 3 つです。
+
+- **clean**：正常に終了し、無効局も出ていません。
+- **with-anomalies**：正常に終了しましたが、無効局（`ERROR`）や原因を断定できない時間切れが含まれます。
+- **failed**：**この run の結果を完了した測定として扱えない**、という意味です。
+
+`failed` は異常終了を意味しません。
+利用者が意図して停止した run も `failed` になります。
+実際に何が起きたかは `termination_reason` を読んでください。
+
+| `termination_reason` | `status` | 意味 |
+| --- | --- | --- |
+| `schedule-complete` | `clean` / `with-anomalies` | 予定した対局をすべて消化した |
+| `sprt-finished` | `clean` / `with-anomalies` | SPRT が正常に結論へ到達して早期終了した（下記の「標本を締めるタイミング」を参照） |
+| `cancelled` | `failed` | 利用者が停止した。故障ではない |
+| `timeout-burst` | `failed` | ShogiArena 側の停滞に起因する時間切れが閾値に達した |
+| `timeout-attribution-unknown` | `failed` | 原因を断定できない時間切れが閾値に達した |
+| `transport-timeout` | `failed` | 通信・プロトコル待ちの失敗が閾値に達した |
+| `incomplete` | `failed` | 正常終了の証拠がないまま予定を消化できていない |
+| `runtime-error` | `failed` | 実行中のエラーで終了した |
+| `finalization-error` | `failed` | 最終処理に失敗した |
+| `cleanup-error` | `failed` | 後始末に失敗した |
+
+`not_played` は「予定したが実施しなかった」局数です。
+正常な早期終了でもこの値は増えます。
+上の例では 1000 局を予定して SPRT が 124 局で決着したため、`not_played` が 868 でも `status` は `clean` です。
+
+中断された run では、後始末の前に暫定の status を書いてから確定へ昇格させます。
+暫定のまま残った場合は `is_provisional` が `true` になります。
+これは「run が中断され、後始末の結果を反映できていない」という意味で、`status` と
+`termination_reason` はそのまま読んで構いません。
+後始末そのものに失敗した場合は `cleanup_error` が併記されます。
+中断の理由（`cancelled` など）が後始末の失敗で置き換わることはありません。
+
+#### SPRT が標本を締めるタイミング
+
+SPRT は結論に達した時点で標本を締めます。
+
+停止を決めたときに実行中だった対局は、そのまま最後まで進み、`game.db` と棋譜には記録されます。
+ただし検定へは加えません。
+検定の停止条件は「停止した時点の標本」の関数である必要があり、後から到着した対局を足すと
+一度出た結論が取り消されてしまうためです。
+
+締めた後に完了した局数は、ダッシュボードの SPRT 状態と API 応答の `late_games` で確認できます。
+`completed` と実際の対局数が食い違って見える場合は、この値を確認してください。
+
+なお、`sprt.min_games` に達するまでは結論に到達していても停止しません。
+標本を締めるのも実際に停止を決めたときです。
+
+`watchdog` は、実行中に検出した event loop とスレッドの停滞の集計です。
+`max_loop_lag_ms` が持ち時間に対して無視できない大きさなら、その run の計測値は負荷の影響を受けています。
+`is_coverage_complete` が `false` の場合、監視記録の一部が失われているため、由来判定の一部が `unknown` に倒れます。
+
+`completion_status.json` が存在しない場合は、`manifest.json` の `shogiarena_version` を併せて確認してください。
+1.0.x の run はこの artifact を持ちません。
+1.1.0 以降の run で存在しない場合は、最終処理に到達する前に中断された可能性があります。
+
+### 時間切れの由来
+
+時間切れには、エンジンが実際に持ち時間を超過した場合と、ShogiArena 側の停滞で超過したように見えた場合があります。
+後者をエンジンの負けとして記録すると、レーティングと SPRT に実力とは無関係な差が混入します。
+
+判定には次の 3 つを使います。
+
+1. その手の締切（持ち時間から確定した deadline）
+2. ShogiArena が `bestmove` を最初に観測した時刻
+3. その時間窓を watchdog が観測できていたか
+
+締切の超過分が、同じ窓に重なった停滞より大きい場合だけ、エンジン起因と判定します。
+観測が遅れた分をすべて停滞のせいだと仮定しても、実際の到着が締切より後になるからです。
+逆に、停滞だけで超過を説明できてしまう場合は原因を確定できないため、勝敗を付けません。
+
+判定結果は `timeouts_by_origin` に由来別の件数として現れます。
+
+- **engine_deadline**：エンジン起因です。従来どおり時間切れ負けとして記録し、レーティングと SPRT に算入します。
+- **orchestrator_stall**：締切より前に `bestmove` を観測できていて、その後の処理だけが遅れた場合です。勝敗を付けず `ERROR`（無効局）として記録します。
+- **unknown**：**原因を断定できなかった**場合です。停滞だけで超過を説明できてしまう場合、watchdog がその窓を観測できていなかった場合（記録の溢れ、watchdog の再起動）、リモート実行のように出力の到達時刻を保証できない場合が該当します。無効局として扱い、標本から除外します。
+- **transport_timeout**：持ち時間の予算を持たない探索設定（`depth` / `nodes` のみ）での待ち失敗や、プロトコル待ちの失敗です。無効局として扱います。
+- **unattributed**：停滞の計測自体がない実行（SPSA など）です。保守的に従来どおりの時間切れ負けとして扱います。
+
+`unknown` は「ShogiArena が悪い」でも「エンジンが悪い」でもなく、**どちらとも言えない**という意味です。
+片側に倒すと標本が偏るため、勝敗を付けずに除外します。
+
+無効局が出ても run はすぐには止まりません。
+由来ごとの閾値に達したときにだけ新規対局の投入を止め、`status` を `failed` にします。
+閾値未満なら run は続き、当該局が標本から除かれるだけです（`status` は `with-anomalies` になります）。
+
+除外率は `timeouts_by_origin` と `completed` から後から検証できます。
+無効局の比率が無視できない水準なら、その run の結論は保留してください。
+
+なお、この判定を有効にしているのは tournament / SPRT 系の実行だけです。
+SPSA は従来どおりの扱いを維持します。
 
 ### timing metrics
 

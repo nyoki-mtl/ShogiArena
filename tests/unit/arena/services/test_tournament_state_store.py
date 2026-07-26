@@ -634,7 +634,6 @@ async def test_try_setup_tournament_rejects_malformed_persisted_schedule(tmp_pat
     ("saved_sprt", "expected_error"),
     [
         (None, "SPRT state is missing"),
-        (Sprt(0.0, 5.0), "SPRT state and game.db disagree"),
     ],
 )
 async def test_try_setup_tournament_rejects_inconsistent_sprt_resume(
@@ -721,6 +720,107 @@ async def test_try_setup_tournament_excludes_non_game_db_records_from_sprt_count
     assert resumed_state.completed_game_ids == {"g001"}
     assert resumed_state.sprt is not None
     assert resumed_state.sprt.games_played == 0
+
+
+@pytest.mark.asyncio
+async def test_resume_invalidates_stale_terminal_markers(tmp_path: Path) -> None:
+    """完了済み run を resume すると、前回の terminal marker を dispatch 前に無効化する。
+
+    review finding M6: marker が残ると、途中状態の run が完了済みに見える。
+    """
+
+    config = _make_config()
+    openbench = _OpenBenchStub()
+    saved_state = TournamentRunnerState(game_schedule=[_make_game("g001"), _make_game("g002")])
+    store = TournamentSessionStateStore()
+    _write_sealed_manifest(tmp_path)
+    store.save_run_state(_build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench))
+    (tmp_path / "completed.flag").touch()
+    (tmp_path / "completion_status.json").write_text(json.dumps({"status": "clean"}), encoding="utf-8")
+
+    resumed_state = TournamentRunnerState()
+    ctx = TournamentStateSetupContext(
+        run_dir=tmp_path,
+        run_options=SimpleNamespace(should_skip_resume=False),
+        config=config,
+        scheduler=cast(TournamentScheduleGeneratorPort, _SchedulerStub([_make_game("g001"), _make_game("g002")])),
+        state=resumed_state,
+        openbench=cast(TournamentOpenBenchStatePort, openbench),
+        db_service=cast(Any, _DbStub(["g001"])),
+        reorder_and_shuffle=lambda games: games,
+        reset_schedule_tracking=lambda: None,
+        write_schedule_file=lambda schedule_to_write: None,
+        notify_schedule_available=lambda: None,
+        reset_display_order=lambda: None,
+        apply_assignment_override=_apply_assignment_override,
+        ensure_display_order_for_specs=lambda specs: None,
+        refresh_game_assignments=lambda: None,
+        build_save_context=lambda: _build_save_context(
+            run_dir=tmp_path,
+            config=config,
+            state=resumed_state,
+            openbench=openbench,
+        ),
+        schedule_hash="schedule-hash",
+        resume_hash="resume-hash",
+    )
+
+    resumed = await store.try_setup_tournament(ctx)
+
+    assert resumed is True
+    assert not (tmp_path / "completed.flag").exists()
+    assert not (tmp_path / "completion_status.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_rejected_resume_keeps_existing_terminal_markers(tmp_path: Path) -> None:
+    """resume を拒否した場合は既存 artifact の bytes を変更しない。"""
+
+    config = _make_config()
+    state = TournamentRunnerState()
+    saved_state = TournamentRunnerState(game_schedule=[_make_game("g001")])
+    openbench = _OpenBenchStub()
+    store = TournamentSessionStateStore()
+    store.save_run_state(_build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench))
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"schema_version": 2, "status": "inputs_only", "hashes": {"resume_hash": None}}),
+        encoding="utf-8",
+    )
+    status_bytes = json.dumps({"status": "clean", "termination_reason": "schedule-complete"}).encode("utf-8")
+    (tmp_path / "completion_status.json").write_bytes(status_bytes)
+    (tmp_path / "completed.flag").touch()
+
+    ctx = TournamentStateSetupContext(
+        run_dir=tmp_path,
+        run_options=SimpleNamespace(should_skip_resume=False),
+        config=config,
+        scheduler=cast(TournamentScheduleGeneratorPort, _SchedulerStub([_make_game("g001")])),
+        state=state,
+        openbench=cast(TournamentOpenBenchStatePort, openbench),
+        db_service=cast(Any, _DbStub(["g001"])),
+        reorder_and_shuffle=lambda games: games,
+        reset_schedule_tracking=lambda: None,
+        write_schedule_file=lambda schedule_to_write: None,
+        notify_schedule_available=lambda: None,
+        reset_display_order=lambda: None,
+        apply_assignment_override=_apply_assignment_override,
+        ensure_display_order_for_specs=lambda specs: None,
+        refresh_game_assignments=lambda: None,
+        build_save_context=lambda: _build_save_context(
+            run_dir=tmp_path,
+            config=config,
+            state=state,
+            openbench=openbench,
+        ),
+        schedule_hash="schedule-hash",
+        resume_hash="resume-hash",
+    )
+
+    with pytest.raises(RuntimeError, match="not provenance sealed"):
+        await store.try_setup_tournament(ctx)
+
+    assert (tmp_path / "completion_status.json").read_bytes() == status_bytes
+    assert (tmp_path / "completed.flag").exists()
 
 
 def test_load_completed_games_fails_fast_on_db_error() -> None:

@@ -157,6 +157,7 @@ class SprtAPI(PairwiseRunnerAPI):
                 continue
 
             tested_is_black = black_engine == tested
+            was_latched = sprt.is_decision_latched
 
             if is_pentanomial:
                 game_name = game.get("game_name")
@@ -180,7 +181,14 @@ class SprtAPI(PairwiseRunnerAPI):
                     outcome = GameResult.WHITE_WIN if tested_is_white else GameResult.BLACK_WIN
                 status = sprt.add_game_result(outcome)
 
-            timeline.append(self._timeline_entry(index, status, min_games))
+            if not was_latched:
+                timeline.append(self._timeline_entry(index, status, min_games))
+
+            # replay も run と同じ停止規則を適用する（task 0052 / review H1）。
+            # ここでラッチしないと、決着後に完了した in-flight 局まで標本へ入り、
+            # dashboard だけが `continue` を表示して artifact と食い違う。
+            if not sprt.is_decision_latched and status.games_played >= min_games and sprt.is_finished():
+                sprt.latch_decision()
 
         status = sprt.get_status()
         completed_games = status.games_played
@@ -213,11 +221,14 @@ class SprtAPI(PairwiseRunnerAPI):
                 "elo_estimate": status.elo_estimate,
                 "pending_pairs": status.pending_pairs,
                 "pending_games": status.pending_games,
+                # 標本を締めた後に完了した局数（検定へは入っていない）。
+                "late_games": status.late_games,
             },
             "games": {
                 "completed": completed_games,
                 "total": total_games,
                 "skipped_non_decisive": skipped_non_decisive,
+                "late": status.late_games,
             },
             "timeline": timeline,
             "timestamp": self._now_iso(),

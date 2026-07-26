@@ -12,11 +12,24 @@ from rsshogi.types import Color
 
 from shogiarena._core.contexts.match.domain.adjudication import Adjudicator
 from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort
-from shogiarena._core.contexts.match.ports.usi_think_ports import request_from_time_controls
+from shogiarena._core.contexts.match.ports.usi_think_ports import (
+    BestmoveObservationCapabilityPort,
+    ObservedBestmovePort,
+    request_from_time_controls,
+)
 from shogiarena._core.shared.kernel.engine_errors import UsiHandshakeTimeoutError
 from shogiarena._core.shared.kernel.game_results import GameResult, timeout_win_result
 from shogiarena._core.shared.kernel.ki2_notation import normalize_ki2_move_text
+from shogiarena._core.shared.kernel.runtime_watchdog import LoopLagProbePort
 from shogiarena._core.shared.kernel.time_control import GameClock
+from shogiarena._core.shared.kernel.timeout_attribution import (
+    DeliveryCoverage,
+    ObservationBasis,
+    TimeoutAttributionDecision,
+    TimeoutEvidence,
+    TimeoutWindow,
+    classify_timeout_evidence,
+)
 
 from .runner_types import (
     MoveApplicationDependencies,
@@ -34,6 +47,9 @@ class GameRunnerLoopMixin:
     adjudication_config: Any
     repetition_occurrences_to_draw: int
     _apply_move_log_threshold_ms: float
+    _runtime_watchdog: LoopLagProbePort | None
+    _timeout_shadow_counts: dict[str, int]
+    _timeout_reclassification_enabled: bool
 
     _enqueue_clock_start: Any
     _build_ponder_hit_timings: Any
@@ -44,6 +60,121 @@ class GameRunnerLoopMixin:
     _enqueue_move_progress: Any
     _maybe_start_ponder: Any
     _handle_recovered_bestmove: Any
+
+    @staticmethod
+    def _delivery_coverage(basis: str | None) -> DeliveryCoverage | None:
+        """観測 basis から delivery coverage を決める。
+
+        watchdog が coverage できるのはローカル pipe の読み出しまで。remote transport や
+        third-party port は同等の保証が無いので、deadline 後の観測・未観測を engine 起因の
+        証拠に使わない（``unknown`` へ倒す）。
+        """
+        if basis is None:
+            return None
+        try:
+            observation_basis = ObservationBasis(basis)
+        except ValueError:
+            return None
+        return DeliveryCoverage(
+            basis=observation_basis,
+            is_covered=observation_basis is ObservationBasis.LOCAL_PIPE,
+        )
+
+    def _classify_timeout_at(
+        self,
+        *,
+        window: TimeoutWindow | None,
+        site: str,
+        observed_at_s: float | None,
+        observation_basis: str | None,
+        is_transport_failure: bool = False,
+    ) -> TimeoutAttributionDecision:
+        """clock deadline、最早観測時刻、watchdog coverage から timeout origin を判定する。
+
+        lag を測る窓は ``[window 開始, 観測上界]`` とする。``bestmove`` を観測した後に起きた
+        停滞は、その観測が遅れた理由を説明できないため因果判定に使わない（task 0052 / H1）。
+        """
+        probe = self._runtime_watchdog
+        now = time.perf_counter()
+        # watchdog が注入されていない run（SPSA / 単体テスト / 別セッション）は判定材料が無い。
+        # 従来どおり ``unattributed`` として時間切れ負けのまま扱う。
+        is_enabled = probe is not None
+        coverage = None
+        if probe is not None and window is not None and window.deadline_s is not None:
+            end_s = observed_at_s if observed_at_s is not None else now
+            coverage = probe.observe_loop_lag(window.started_at_s, end_s)
+        evidence = TimeoutEvidence(
+            site=site,
+            detected_at_s=now,
+            is_attribution_enabled=is_enabled,
+            window=window,
+            bestmove_observed_at_s=observed_at_s,
+            delivery=self._delivery_coverage(observation_basis),
+            coverage=coverage,
+            is_transport_failure=is_transport_failure,
+        )
+        return classify_timeout_evidence(evidence)
+
+    def _timeout_result_or_error(
+        self,
+        *,
+        winner_color: Color,
+        decision_holder: list[TimeoutAttributionDecision | None],
+        window: TimeoutWindow | None,
+        site: str,
+        game_id: str | None,
+        observed_at_s: float | None = None,
+        observation_basis: str | None = None,
+        is_transport_failure: bool = False,
+    ) -> GameResult:
+        """timeout を分類し、無効 origin なら ``GameResult.ERROR``、それ以外は時間切れ負けを返す。
+
+        reclassification が opt-in OFF のときは常に時間切れ負け（origin は shadow count のみ）。
+        """
+        decision = self._classify_timeout_at(
+            window=window,
+            site=site,
+            observed_at_s=observed_at_s,
+            observation_basis=observation_basis,
+            is_transport_failure=is_transport_failure,
+        )
+        decision_holder[0] = decision
+        origin = decision.origin
+        self._timeout_shadow_counts[origin.value] = self._timeout_shadow_counts.get(origin.value, 0) + 1
+        if self._timeout_reclassification_enabled and decision.is_invalid:
+            logger.warning(
+                "Invalidating timeout: game=%s site=%s origin=%s reason=%s overshoot_ms=%s lag_ms=%s",
+                game_id,
+                site,
+                origin.value,
+                decision.reason,
+                decision.overshoot_ms,
+                decision.lag_ms_in_window,
+            )
+            return GameResult.ERROR
+        if decision.is_invalid:
+            logger.warning(
+                "Timeout classified as invalid but reclassification is off: game=%s site=%s origin=%s reason=%s",
+                game_id,
+                site,
+                origin.value,
+                decision.reason,
+            )
+        return timeout_win_result(winner_color)
+
+    @staticmethod
+    def _observation_of(think_result: object) -> tuple[float | None, str | None]:
+        """think result が運ぶ ``bestmove`` 観測時刻と basis を取り出す（無ければ ``None``）。"""
+        if isinstance(think_result, ObservedBestmovePort):
+            return think_result.observed_at_s, think_result.observation_basis
+        return None, None
+
+    @staticmethod
+    def _engine_observation_basis(engine: object) -> str | None:
+        """``bestmove`` 未観測時に、そもそも観測できる経路だったかを engine から得る。"""
+        if isinstance(engine, BestmoveObservationCapabilityPort):
+            return engine.bestmove_observation_basis()
+        return None
 
     async def _game_loop(
         self,
@@ -67,6 +198,7 @@ class GameRunnerLoopMixin:
         game_id: str | None = None,
         adjudicator: Adjudicator | None = None,
         result_progress_emitted: list[bool] | None = None,
+        timeout_decision_holder: list[TimeoutAttributionDecision | None] | None = None,
     ) -> GameResult:
         """
         Main game loop.
@@ -77,6 +209,14 @@ class GameRunnerLoopMixin:
         # Exit immediately if shutdown requested
         if self._is_shutting_down:
             raise asyncio.CancelledError()
+        # Per-game out-param: the timeout attribution decision, if any (task 0047). The runner is
+        # shared across workers, so this must not live on ``self``.
+        decision_holder: list[TimeoutAttributionDecision | None] = (
+            timeout_decision_holder if timeout_decision_holder is not None else [None]
+        )
+        # 最後に観測した ``bestmove`` の上界時刻。手が進むたびに更新し、次の手の証拠に流用しない。
+        last_observed_at_s: float | None = None
+        last_observation_basis: str | None = None
         initial_ply = max(int(board.game_ply) - 1, 0)
         ply_count = initial_ply
         max_plies: int | None = None
@@ -122,7 +262,15 @@ class GameRunnerLoopMixin:
                 else:
                     logger.debug(f"Game ended by time expiry - {player_name} loses on time")
                     winner_color = Color.WHITE if is_black_turn else Color.BLACK
-                    return timeout_win_result(winner_color)
+                    return self._timeout_result_or_error(
+                        winner_color=winner_color,
+                        decision_holder=decision_holder,
+                        window=current_time_control.last_timeout_window,
+                        site="loop_top_expired",
+                        game_id=game_id,
+                        observed_at_s=last_observed_at_s,
+                        observation_basis=last_observation_basis or self._engine_observation_basis(current_engine),
+                    )
 
             # Build think request from time controls
             think_request = request_from_time_controls(
@@ -220,6 +368,8 @@ class GameRunnerLoopMixin:
 
                 # Calculate elapsed time as fallback for time_ms
                 elapsed_ms = int((time.perf_counter() - go_start_time) * 1000)
+                # この手の ``bestmove`` 観測。前の手の値を流用しないよう毎手上書きする。
+                last_observed_at_s, last_observation_basis = self._observation_of(think_result)
                 move_result = await self._process_move_result(board, think_result, current_engine.name)
 
                 if move_result["is_game_over"]:
@@ -275,6 +425,8 @@ class GameRunnerLoopMixin:
                         ply_count=ply_count,
                         is_side_that_moved_black=is_side_that_moved_black,
                         repetition_occurrences_to_draw=self.repetition_occurrences_to_draw,
+                        observed_at_s=last_observed_at_s,
+                        observation_basis=last_observation_basis,
                     ),
                     state=MoveApplicationStateRefs(
                         board=board,
@@ -291,6 +443,7 @@ class GameRunnerLoopMixin:
                         current_time_control=current_time_control,
                         black_time_control=black_time_control,
                         white_time_control=white_time_control,
+                        timeout_decision_holder=decision_holder,
                     ),
                     dependencies=MoveApplicationDependencies(adjudicator=adjudicator),
                 )
@@ -377,8 +530,20 @@ class GameRunnerLoopMixin:
                         return GameResult.DRAW_BY_MAX_PLIES
                     logger.debug(f"Timeout recovery failed - {player_name} loses on time")
                     winner_color = Color.WHITE if is_black_turn else Color.BLACK
-                    return timeout_win_result(winner_color)
+                    return self._timeout_result_or_error(
+                        winner_color=winner_color,
+                        decision_holder=decision_holder,
+                        # 進行中の手の deadline snapshot（wait timeout の orchestration slack は含まない）。
+                        window=current_time_control.current_timeout_window,
+                        site="wait_for_timeout",
+                        game_id=game_id,
+                        # bestmove は観測できていない。経路が観測可能だったかだけを engine から得る。
+                        observed_at_s=None,
+                        observation_basis=self._engine_observation_basis(current_engine),
+                    )
 
+                recovered_observed_at_s, recovered_observation_basis = self._observation_of(recovered_think)
+                last_observed_at_s, last_observation_basis = recovered_observed_at_s, recovered_observation_basis
                 result_after_recovery, new_ply_count = await self._handle_recovered_bestmove(
                     request=RecoveredBestmoveRequest(
                         think_result=recovered_think,
@@ -395,6 +560,8 @@ class GameRunnerLoopMixin:
                         player_name=player_name,
                         is_black_turn=is_black_turn,
                         repetition_occurrences_to_draw=self.repetition_occurrences_to_draw,
+                        observed_at_s=recovered_observed_at_s,
+                        observation_basis=recovered_observation_basis,
                     ),
                     state=RecoveredBestmoveStateRefs(
                         move_state=MoveApplicationStateRefs(
@@ -412,6 +579,7 @@ class GameRunnerLoopMixin:
                             current_time_control=current_time_control,
                             black_time_control=black_time_control,
                             white_time_control=white_time_control,
+                            timeout_decision_holder=decision_holder,
                         ),
                         result_progress_emitted=result_progress_emitted,
                     ),
@@ -427,8 +595,12 @@ class GameRunnerLoopMixin:
 
             except (OSError, RuntimeError, ValueError) as exc:
                 if self._is_shutting_down:
-                    logger.debug("Suppressed move error during shutdown for %s", current_engine.name)
-                else:
-                    logger.exception("Error during move by %s: %s", current_engine.name, exc)
+                    # A stop-induced interruption is not a played game. Returning a decisive result
+                    # here would let the shutdown decide the outcome, and (once terminal records are
+                    # always persisted) would finalize the game so resume never replays it.
+                    # PAUSED keeps it non-terminal and resumable (task 0052 / Decision 8).
+                    logger.debug("Interrupted move during shutdown for %s; pausing game", current_engine.name)
+                    return GameResult.PAUSED
+                logger.exception("Error during move by %s: %s", current_engine.name, exc)
                 # Error results in loss for the current player
                 return GameResult.WHITE_WIN if is_black_turn else GameResult.BLACK_WIN

@@ -460,15 +460,30 @@ export function createLiveCardsApi(owner: CardsWindow): LiveCardsApi {
     const toggleEngineLog = (cardId: LiveCardId, role: 'black' | 'white'): void => {
         const cardState = findCardByIdSafe(cardId);
         if (!cardState) return;
-        const cardEl = document.getElementById(`card-${cardState.id}`);
-        const isVisible = cardEl?.classList.contains(`worker-card--log-visible-${role}`) ?? false;
-        const nextPref = !isVisible;
+        // Read the explicit preference, not the CSS class: the class is the union of the prep
+        // overlay (a pure display state) and the manually opened raw panel, so reading it here
+        // would make the first toggle during the prep phase a no-op close (task 0052 / M7).
+        const isOpen = resolveManualOpenRoles(cardState)[role];
+        const nextPref = !isOpen;
         setEngineLogPreferenceForCard(cardState, role, nextPref, { emit: true });
         const { black, white } = resolveManualOpenRoles(cardState);
         if (!black && !white) {
             cardState.engineLogGameKey = null;
         }
         applyEngineLogClasses(cardState);
+    };
+
+    const releaseRawSubscriptionsForCard = (cardState: LiveCardState): void => {
+        // Game completion ends the per-game raw topic. Drop the subscription (refcount -> 0) but
+        // keep the display preference so the user can still read what already arrived.
+        const { black, white } = resolveManualOpenRoles(cardState);
+        if (!black && !white) return;
+        const gid = cardState.engineLogGameKey ?? resolveEngineLogGameKey(cardState) ?? null;
+        if (gid) {
+            if (black) emitEngineLogToggle(gid, 'black', false);
+            if (white) emitEngineLogToggle(gid, 'white', false);
+        }
+        cardState.engineLogGameKey = null;
     };
 
     const closeEngineLogForCard = (cardState: LiveCardState): void => {
@@ -602,7 +617,7 @@ export function createLiveCardsApi(owner: CardsWindow): LiveCardsApi {
         warnSoftFailure,
         closeKifuPopover,
         onEngineLogGameKeyChange: handleEngineLogGameKeyChange,
-        setEngineLogVisibility,
+        releaseRawSubscriptions: releaseRawSubscriptionsForCard,
     });
 
     const eventsController = createEventsController();
@@ -993,6 +1008,9 @@ export function createLiveCardsApi(owner: CardsWindow): LiveCardsApi {
         onTabActivate: () => {
             ensureDefaultCardOnTabActivate();
             triggerTabResume();
+        },
+        onTabDeactivate: () => {
+            getCards().forEach(closeEngineLogForCard);
         },
         teardown,
     });

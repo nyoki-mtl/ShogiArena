@@ -45,15 +45,31 @@ class ShogiRepositoryPort(Protocol):
 class ShogiRepository:
     """Repository facade over SQLAlchemy models."""
 
-    def __init__(self, engine: Engine, session_factory: ScopedSession[Session]) -> None:
+    def __init__(
+        self,
+        engine: Engine,
+        session_factory: ScopedSession[Session],
+        *,
+        is_read_only: bool = False,
+    ) -> None:
         self._engine = engine
         self._session_factory = session_factory
+        self._is_read_only = is_read_only
         self._is_schema_ready = False
         self._is_in_operation = False
+        self._is_closed = False
+
+    def _ensure_open(self) -> None:
+        if self._is_closed:
+            raise RuntimeError("ShogiRepository is closed")
 
     def _ensure_schema_ready(self) -> None:
+        self._ensure_open()
         if not self._is_schema_ready:
-            ensure_store_schema_for_query(self._engine)
+            ensure_store_schema_for_query(
+                self._engine,
+                should_stamp_schema_version=not self._is_read_only,
+            )
             self._is_schema_ready = True
 
     @property
@@ -99,11 +115,16 @@ class ShogiRepository:
             self._session_factory.remove()
 
     def close_db(self) -> None:
-        """Dispose the current scoped session."""
+        """現在の session と connection pool を閉じ、repository を終端状態にする。"""
 
+        if self._is_closed:
+            return
+        self._is_closed = True
         self._session_factory.remove()
+        self._engine.dispose()
 
     def create_tables(self) -> None:
+        self._ensure_open()
         initialize_store_schema(self._engine)
         self._is_schema_ready = True
 

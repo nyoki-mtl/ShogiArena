@@ -6,7 +6,7 @@ from types import TracebackType
 
 import rsshogi
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session, aliased
 
 from shogiarena._core.shared.kernel.game_results import GameResult
@@ -20,7 +20,7 @@ from shogiarena._core.shared.kernel.participation_records import (
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_game_result
 from shogiarena._core.shared.kernel.service_ports import GameRecordPlayers
 
-from .entities import EngineArtifact, Game, GameInstanceParticipation, InstanceSpec, Player
+from .entities import EngineArtifact, Game, GameInstanceParticipation, GameTimeoutAttribution, InstanceSpec, Player
 from .record_store import DBRecordStore
 from .repository import ShogiRepository
 from .repository_factory import BaseFactory
@@ -33,6 +33,7 @@ class ArenaDBAdapter:
         self.factory = factory
         self._db: ShogiRepository | None = None
         self._record_store: DBRecordStore | None = None
+        self._has_timeout_attribution_table: bool | None = None
 
     def _get_db(self) -> ShogiRepository:
         if self._db is None:
@@ -48,6 +49,19 @@ class ArenaDBAdapter:
     @staticmethod
     def _coerce_game_result(raw: GameResult | JsonValue | None) -> GameResult:
         return coerce_game_result(raw, is_strict=True)
+
+    def _timeout_origins_by_game_id(self, session: Session) -> dict[int, str]:
+        """game_id -> timeout origin。table を持たない DB では空 dict へ degrade する（task 0049）。"""
+
+        if self._has_timeout_attribution_table is None:
+            # additive table なので、その table を持たない DB でも読めなければならない。
+            self._has_timeout_attribution_table = inspect(self._get_db().engine).has_table(
+                GameTimeoutAttribution.__tablename__
+            )
+        if not self._has_timeout_attribution_table:
+            return {}
+        rows = session.execute(select(GameTimeoutAttribution.game_id, GameTimeoutAttribution.origin))
+        return {int(game_id): str(origin) for game_id, origin in rows}
 
     def get_games_with_players(self, *, game_type: str) -> list[GameRecordPlayers]:
         db = self._get_db()
@@ -70,20 +84,23 @@ class ArenaDBAdapter:
                 .order_by(Game.id.asc())
             )
             result = session.execute(stmt)
+            timeout_origins = self._timeout_origins_by_game_id(session)
 
             games: list[GameRecordPlayers] = []
             for game_id, game_name, black_name, white_name, raw_result, initial_sfen in result:
                 game_result = self._coerce_game_result(raw_result)
-                games.append(
-                    {
-                        "game_id": game_id,
-                        "game_name": game_name,
-                        "black_player": black_name,
-                        "white_player": white_name,
-                        "result": game_result,
-                        "initial_sfen": initial_sfen,
-                    }
-                )
+                game: GameRecordPlayers = {
+                    "game_id": game_id,
+                    "game_name": game_name,
+                    "black_player": black_name,
+                    "white_player": white_name,
+                    "result": game_result,
+                    "initial_sfen": initial_sfen,
+                }
+                timeout_origin = timeout_origins.get(game_id)
+                if timeout_origin is not None:
+                    game["timeout_origin"] = timeout_origin
+                games.append(game)
             return games
 
     def ensure_schema(self) -> None:

@@ -6,6 +6,7 @@ from collections.abc import Awaitable
 from pathlib import Path
 from typing import Protocol, TypeVar, runtime_checkable
 
+from shogiarena._core.contexts.game_session.domain.run_health import RunTerminationReason
 from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import (
     OrchestratorPort,
     ProgressReporterPort,
@@ -72,6 +73,28 @@ class SessionExecutionRuntimePort(Protocol[TSessionContext, TSessionResults, TSp
 
     async def finalize_tournament(self, results: TSessionResults) -> None: ...
 
+    def write_interrupted_run_health(
+        self,
+        reason: RunTerminationReason,
+        *,
+        is_provisional: bool = False,
+        cleanup_error: str | None = None,
+    ) -> None:
+        """finalize へ到達できない終了で terminal status を best effort で残す（task 0052）。
+
+        cancellation や runtime error でも `status=failed` の artifact を書き、
+        公開文書の decision table と実装を一致させる。``completed.flag`` は作らない。
+
+        **同期メソッドにする**。cancel 済み task では次の ``await`` で再び ``CancelledError``
+        が飛ぶため、await を挟むと cancellation 経路で書けなくなる。
+
+        2 段 commit（decisions.md Decision 7）:
+        cleanup 前に ``is_provisional=True`` で一度書き、cleanup 後に同じ集計のまま
+        ``is_provisional=False`` へ昇格させる。集計と watchdog は cleanup 前に確定する
+        （cleanup 後は DB も watchdog も閉じており、読み直すと劣化するため）。
+        """
+        ...
+
 
 class SessionExecutionServicePort(Protocol[TSessionContext, TSessionResults, TSprtStatus, TRunResult]):
     """Execution-service contract consumed by run service."""
@@ -100,6 +123,11 @@ class SessionExecutionServicePort(Protocol[TSessionContext, TSessionResults, TSp
         runner: SessionExecutionRuntimePort[TSessionContext, TSessionResults, TSprtStatus, TRunResult],
         *,
         controller: SessionStopController,
+    ) -> None: ...
+
+    async def handle_failed_run(
+        self,
+        runner: SessionExecutionRuntimePort[TSessionContext, TSessionResults, TSprtStatus, TRunResult],
     ) -> None: ...
 
     async def finalize_session(

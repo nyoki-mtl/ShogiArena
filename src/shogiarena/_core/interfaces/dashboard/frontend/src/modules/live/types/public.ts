@@ -277,6 +277,11 @@ export interface LiveCardsApi {
      * Triggers resume burst and deferred refresh to catch up to the latest state.
      */
     onTabActivate?: () => void;
+    /**
+     * Called when the user leaves the Live tab.
+     * Closes explicit raw panels so their per-game subscriptions are released.
+     */
+    onTabDeactivate?: () => void;
     teardown?: () => void;
     [key: string]: unknown;
 }

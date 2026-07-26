@@ -9,7 +9,7 @@ from typing import Any
 from rsshogi.core import Move
 from rsshogi.types import Color, RepetitionState
 
-from shogiarena._core.shared.kernel.game_results import GameResult, timeout_win_result
+from shogiarena._core.shared.kernel.game_results import GameResult
 
 from .runner_types import (
     ApplyMoveCommonResult,
@@ -46,6 +46,7 @@ class GameRunnerMoveMixin:
     _process_move_result: Any
     _enqueue_terminal_progress: Any
     _notify_clock_increment: Any
+    _timeout_result_or_error: Any
 
     async def _handle_recovered_bestmove(
         self,
@@ -96,7 +97,16 @@ class GameRunnerMoveMixin:
                 request.player_name,
             )
             winner_color = Color.WHITE if request.is_black_turn else Color.BLACK
-            return RecoveredBestmoveResult(result=timeout_win_result(winner_color), ply_count=request.ply_count)
+            timeout_result = self._timeout_result_or_error(
+                winner_color=winner_color,
+                decision_holder=state.move_state.timeout_decision_holder,
+                window=current_time_control.last_timeout_window,
+                site="recovered_bestmove_expired",
+                game_id=request.game_id,
+                observed_at_s=request.observed_at_s,
+                observation_basis=request.observation_basis,
+            )
+            return RecoveredBestmoveResult(result=timeout_result, ply_count=request.ply_count)
 
         # Apply recovered move using common path
         move_obj = move_result.get("move")
@@ -122,6 +132,8 @@ class GameRunnerMoveMixin:
                 ply_count=request.ply_count,
                 is_side_that_moved_black=is_side_that_moved_black,
                 repetition_occurrences_to_draw=request.repetition_occurrences_to_draw,
+                observed_at_s=request.observed_at_s,
+                observation_basis=request.observation_basis,
             ),
             state=move_state,
             dependencies=dependencies,
@@ -216,8 +228,20 @@ class GameRunnerMoveMixin:
         if state.current_time_control.is_expired() and not state.current_time_control.limits.should_allow_timeout:
             logger.debug("Time expired after move; strict timeout -> loss on time")
             winner_color = Color.WHITE if is_side_that_moved_black else Color.BLACK
+            # Use the deadline snapshot captured at start_timer, and the bestmove observation upper
+            # bound. A slow clock-notify after the bestmove arrived cannot explain a late arrival,
+            # so it must not pollute the attribution window (task 0047, refined in 0052).
+            timeout_result = self._timeout_result_or_error(
+                winner_color=winner_color,
+                decision_holder=state.timeout_decision_holder,
+                window=state.current_time_control.last_timeout_window,
+                site="update_after_move_expired",
+                game_id=game_id,
+                observed_at_s=request.observed_at_s,
+                observation_basis=request.observation_basis,
+            )
             return ApplyMoveCommonResult(
-                result=timeout_win_result(winner_color),
+                result=timeout_result,
                 ply_count=ply_count,
                 eval_value=eval_value,
                 search_stats=search_stats,

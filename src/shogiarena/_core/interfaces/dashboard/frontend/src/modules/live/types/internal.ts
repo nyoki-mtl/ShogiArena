@@ -22,10 +22,17 @@ export interface LiveCardState {
     engineLogPreference?: { black?: boolean | null; white?: boolean | null };
     /** Latches ready state per role so handshake overlay does not reopen on transient regressions. */
     engineReadyLatch?: { black?: boolean; white?: boolean; gameKey?: string | null };
-    /** Track phase transitions for engine log auto open/close. */
+    /** Track phase transitions so raw subscriptions can be released at game completion. */
     engineLogPhase?: 'pre' | 'in' | 'post';
     /** Currently subscribed game key for engine logs. */
     engineLogGameKey?: string | null;
+    /**
+     * Game key whose raw subscription was already released at completion.
+     *
+     * The display preference stays on (the user still wants to read the log), but a finished
+     * game must not be re-subscribed on the next update tick (task 0052 / M7).
+     */
+    engineLogReleasedGameKey?: string | null;
     [key: string]: unknown;
 }
 

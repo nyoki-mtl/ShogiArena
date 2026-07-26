@@ -8,11 +8,16 @@ run cannot be resumed under a different model.
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.sprt_models import (
+    SPRT_MODEL_GSPRT_PENTANOMIAL,
+    SPRT_MODEL_GSPRT_TRINOMIAL,
+    SUPPORTED_SPRT_MODELS,
+)
 from shogiarena._core.shared.kernel.statistics.gsprt import compute_llr, sprt_bounds
 from shogiarena._core.shared.kernel.statistics.pentanomial_pairing import (
     PENTANOMIAL_BIN_COUNT,
@@ -21,10 +26,8 @@ from shogiarena._core.shared.kernel.statistics.pentanomial_pairing import (
 
 logger = logging.getLogger(__name__)
 
-# SPRT model identifiers.
-SPRT_MODEL_GSPRT_TRINOMIAL = "gsprt-trinomial-v1"
-SPRT_MODEL_GSPRT_PENTANOMIAL = "gsprt-pentanomial-v1"
-_SUPPORTED_SPRT_MODELS = frozenset({SPRT_MODEL_GSPRT_TRINOMIAL, SPRT_MODEL_GSPRT_PENTANOMIAL})
+# SPRT model identifiers（正本は shared kernel。resume 側も同じ識別子を使う）。
+_SUPPORTED_SPRT_MODELS = SUPPORTED_SPRT_MODELS
 
 # The pentanomial model uses a Brownian/normal approximation, not an exact finite-sample test.
 # Keep it fail-closed until there is both a conventional CLT-sized sample and enough observations
@@ -88,6 +91,9 @@ class SprtStateSnapshot(TypedDict):
     min_pairs: int
     penta_bins: list[int]
     pending: list[PendingPairHalfSnapshot]
+    # 停止判定のラッチ（task 0052 / review H1）。古い state.json には無いので optional。
+    is_decision_latched: NotRequired[bool]
+    late_games: NotRequired[int]
 
 
 class SprtDecision(Enum):
@@ -114,6 +120,8 @@ class SprtResult:
     elo_estimate: float | None = None
     pending_pairs: int = 0  # incomplete (sfen, pair_slot) buffers awaiting their partner game
     pending_games: int = 0  # buffered games not yet counted into a pentanomial pair
+    # 標本を締めた後に完了した局数（in-flight だった局）。検定へは加えていない。
+    late_games: int = 0
 
 
 class Sprt:
@@ -172,6 +180,13 @@ class Sprt:
         self._penta_bins = [0] * PENTANOMIAL_BIN_COUNT
         self._pending: dict[tuple[str, int], dict[str, list[float]]] = {}
 
+        # 停止判定のラッチ（task 0052 / review H1）。停止規則は「停止した時点の標本」の
+        # 関数でなければならない。ラッチ後に到着した in-flight 局を標本へ足すと、
+        # 一度確定した decision が continue へ戻り、run が成功したのか未完了なのかが
+        # 事後に変わってしまう。到着数だけ ``_late_games`` に数えて捨てる。
+        self._decision_latch: SprtResult | None = None
+        self._late_games = 0
+
         logger.debug(f"SPRT initialized: model={model}, H0={elo0}, H1={elo1}, alpha={alpha}, beta={beta}")
         logger.debug(f"SPRT bounds: lower={self.lower_bound:.4f}, upper={self.upper_bound:.4f}")
 
@@ -220,6 +235,12 @@ class Sprt:
 
     # --- Result construction --------------------------------------------------
     def _build_result(self) -> SprtResult:
+        """現在の status。ラッチ済みなら締めた時点の標本を返す。"""
+        if self._decision_latch is not None:
+            return replace(self._decision_latch, late_games=self._late_games)
+        return self._build_live_result()
+
+    def _build_live_result(self) -> SprtResult:
         decision = self._make_decision()
         win_rate = (self.wins + 0.5 * self.draws) / max(1, self.games_played)
         elo_estimate = self._win_rate_to_elo(win_rate) if self.games_played > 0 else None
@@ -236,7 +257,42 @@ class Sprt:
             elo_estimate=elo_estimate,
             pending_pairs=len(self._pending),
             pending_games=self._pending_games(),
+            late_games=self._late_games,
         )
+
+    # --- Decision latch -------------------------------------------------------
+    @property
+    def is_decision_latched(self) -> bool:
+        """停止判定を確定させ、標本を締めたか。"""
+        return self._decision_latch is not None
+
+    @property
+    def late_games(self) -> int:
+        """標本を締めた後に完了した局数。DB には残るが検定へは加えていない。"""
+        return self._late_games
+
+    def latch_decision(self) -> SprtResult:
+        """現在の標本で停止判定を確定させる（冪等）。
+
+        呼ぶのは「この decision を理由に run を止める」と決めた側だけにする。
+        ``is_finished()`` が True でも ``min_games`` に届いていない間は run が続くので、
+        そこでラッチすると以降の局をすべて捨ててしまう。
+        """
+        if self._decision_latch is None:
+            self._decision_latch = self._build_live_result()
+            logger.info(
+                "SPRT sample closed at games=%d (LLR=%.4f, decision=%s); "
+                "later in-flight games are recorded but excluded from the test",
+                self._decision_latch.games_played,
+                self._decision_latch.llr,
+                self._decision_latch.decision.value,
+            )
+        return self._build_result()
+
+    def _count_late_game(self, games: int = 1) -> SprtResult:
+        """ラッチ後に到着した局を、標本へ加えずに数えるだけにする。"""
+        self._late_games += games
+        return self._build_result()
 
     # --- Snapshot -------------------------------------------------------------
     def to_snapshot(self) -> SprtStateSnapshot:
@@ -261,6 +317,8 @@ class Sprt:
             "min_pairs": self._min_pairs,
             "penta_bins": list(self._penta_bins),
             "pending": pending,
+            "is_decision_latched": self._decision_latch is not None,
+            "late_games": self._late_games,
         }
 
     @classmethod
@@ -291,6 +349,13 @@ class Sprt:
         # Recompute the LLR from the restored counts rather than trusting the stored value, so a
         # snapshot can never carry an LLR computed under a different model.
         sprt._recompute_llr()
+
+        # ラッチは復元する。counter だけから導出しないのは、``min_games`` に届く前に
+        # 一時的に bound を越えた状態と、実際に停止した状態を区別できないため
+        # （前者でラッチすると以降の局をすべて捨ててしまう）。
+        sprt._late_games = int(snapshot.get("late_games", 0))
+        if snapshot.get("is_decision_latched", False):
+            sprt.latch_decision()
         return sprt
 
     # --- Ingestion: trinomial -------------------------------------------------
@@ -298,6 +363,8 @@ class Sprt:
         """Add a single game result (trinomial model). ``result`` is from the tested perspective."""
         if self._is_pentanomial:
             raise ValueError("add_game_result requires the trinomial model; use add_game_observation")
+        if self._decision_latch is not None:
+            return self._count_late_game()
         # Strict input contract: only decisive results and genuine draws are valid SPRT
         # observations. Callers must normalize/skip non-game outcomes (ERROR/INVALID/PAUSED)
         # before reaching here; silently folding them into draws distorts the test.
@@ -329,6 +396,8 @@ class Sprt:
         """
         if not self._is_pentanomial:
             raise ValueError("add_game_observation requires the pentanomial model")
+        if self._decision_latch is not None:
+            return self._count_late_game()
         _validate_game_score(tested_score)
         self._count_game(tested_score)
         key = (sfen, pair_slot)
@@ -349,6 +418,8 @@ class Sprt:
         """
         if not self._is_pentanomial:
             raise ValueError("add_paired_observation requires the pentanomial model")
+        if self._decision_latch is not None:
+            return self._count_late_game(2)
         _validate_game_score(black_score)
         _validate_game_score(white_score)
         self._count_game(black_score)
@@ -386,12 +457,15 @@ class Sprt:
         self.llr = 0.0
         self._penta_bins = [0] * PENTANOMIAL_BIN_COUNT
         self._pending.clear()
+        self._decision_latch = None
+        self._late_games = 0
         logger.debug("SPRT reset")
 
     def is_finished(self) -> bool:
         """Check if SPRT test has reached a decision."""
-        decision = self._make_decision()
-        return decision != SprtDecision.CONTINUE
+        if self._decision_latch is not None:
+            return True
+        return self._make_decision() != SprtDecision.CONTINUE
 
     def __str__(self) -> str:
         """String representation for debugging."""

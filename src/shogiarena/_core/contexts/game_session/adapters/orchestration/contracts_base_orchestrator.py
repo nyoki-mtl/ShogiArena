@@ -43,6 +43,7 @@ from shogiarena._core.contexts.instances.ports.orchestrator_primitives import co
 from shogiarena._core.contexts.match.application.runner import GameRunner
 from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_serialized
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
+from shogiarena._core.shared.kernel.runtime_watchdog import LoopLagProbePort
 from shogiarena._core.shared.kernel.service_ports import DatabaseServicePort
 from shogiarena._core.shared.kernel.session_hooks import (
     GameCompletionEvent,
@@ -62,6 +63,9 @@ class BaseOrchestrator:
     """Base class offering convenience methods for orchestrators."""
 
     engine_configs: dict[str, EngineConfig]
+    # Reclassify orchestrator-stall timeouts as invalid (ERROR) instead of a loss on time. Off by
+    # default; only arena/tournament runs enable it (SPSA keeps the legacy loss — decisions D7).
+    _timeout_reclassification_enabled: bool = False
 
     def __init__(
         self,
@@ -78,6 +82,8 @@ class BaseOrchestrator:
         engine_lifecycle: EngineLifecyclePolicy = "reuse",
     ) -> None:
         self.api_server: DashboardServerPort | None = api_server
+        # Loop-lag probe for timeout attribution (task 0047); injected by the session runner.
+        self._runtime_watchdog: LoopLagProbePort | None = None
         self._summary_updater: SummaryUpdateCallback | None = summary_updater
         self._worker_tasks: set[asyncio.Task[None]] = set()
         self._running_tasks: set[asyncio.Task[None]] = set()
@@ -119,6 +125,12 @@ class BaseOrchestrator:
     async def run(self) -> None:  # pragma: no cover - to be implemented by subclasses
         raise NotImplementedError
 
+    def set_runtime_watchdog(self, probe: LoopLagProbePort | None) -> None:
+        """timeout attribution 用の loop-lag probe を受け取る（session runner が注入）。"""
+        self._runtime_watchdog = probe
+        if self.game_runner is not None:
+            self.game_runner.set_runtime_watchdog(probe)
+
     def _initialize_common_components(
         self,
         *,
@@ -153,6 +165,13 @@ class BaseOrchestrator:
             self.progress_sink,
         )
         self.game_runner.set_engine_options_callback(self._handle_engine_options)
+        # Collect raw engine-I/O only while a client subscribes to a game's raw-I/O topics; the
+        # engine_status badge is fed cheaply by lifecycle events regardless (0046).
+        if self.api_server is not None:
+            self.game_runner.set_engine_io_wanted(self.api_server.has_engine_io_subscribers)
+        # Feed the loop-lag probe so timeout attribution can tell engine slowness from loop stalls (0047).
+        self.game_runner.set_runtime_watchdog(self._runtime_watchdog)
+        self.game_runner.set_timeout_reclassification(self._timeout_reclassification_enabled)
         self.extra_options = compute_max_ply_extra_options(rules)
 
     def _handle_engine_options(

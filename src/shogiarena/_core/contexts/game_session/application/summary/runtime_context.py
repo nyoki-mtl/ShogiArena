@@ -14,7 +14,9 @@ from shogiarena._core.contexts.game_session.ports.summary_runtime import (
     TournamentSummaryRecordWriterPort,
 )
 from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.runtime_watchdog import WatchdogSummaryPort
 from shogiarena._core.shared.kernel.service_ports import DatabaseServicePort, SprtServicePort
+from shogiarena._core.shared.kernel.session_hooks import SessionStopController
 
 if TYPE_CHECKING:
     from shogiarena._core.contexts.game_session.application.summary.runtime_context_service import (
@@ -56,6 +58,10 @@ class SummaryRuntimeDependencies:
     sprt_service: SprtServicePort | None
     is_openbench_strict_mode: bool = False
     openbench_client: SummaryRuntimeOpenBenchClientPort | None = None
+    # run-health artifact 用の loop/thread stall 計測（task 0049）。未計測の run では None。
+    watchdog: WatchdogSummaryPort | None = None
+    # termination reason の正本（task 0052）。停止理由を count 算術から推定しないために渡す。
+    stop_controller: SessionStopController | None = None
 
 
 @dataclass(slots=True)
@@ -71,6 +77,8 @@ class SummaryRuntimeActionRefs:
     flush_openbench: Callable[[], Awaitable[None]]
     save_run_state: Callable[[bool], None]
     update_dashboard: Callable[[], Awaitable[None]]
+    # terminal status を commit する前に全 service を停止する（task 0052、idempotent）。
+    stop_services: Callable[[], Awaitable[None]]
 
 
 @dataclass(slots=True)

@@ -14,6 +14,7 @@ from shogiarena._core.contexts.game_session.application.progress.consumption_eve
     handle_clock_increment,
     handle_clock_start,
     handle_engine_io,
+    handle_engine_state,
     handle_game_assigned,
     handle_handshake_log,
     handle_move_progress,
@@ -44,6 +45,8 @@ class ProgressApiServerPort(Protocol):
     def assign_worker_snapshot(self, worker_idx: int, snapshot: Mapping[str, JsonValue]) -> None: ...
 
     def broadcast_engine_io(self, worker_idx: int, payload: Mapping[str, JsonValue]) -> None: ...
+
+    def broadcast_engine_io_batch(self, worker_idx: int, payload: Mapping[str, JsonValue]) -> None: ...
 
     def clear_engine_logs(self, game_id: str | int) -> None: ...
 
@@ -295,6 +298,26 @@ async def consume_progress_loop(
                 )
                 if diff_payload is not None and worker_idx in state.worker_snapshots:
                     broadcast_snapshot_and_diff(worker_idx, state.worker_snapshots[worker_idx], diff_payload)
+            return
+
+        if progress["type"] == "engine_io_batch":
+            # Raw transcript only: the engine_status badge is driven by ``engine_state`` events, so a
+            # batch just appends to the ring and publishes to raw-I/O subscribers (no snapshot touch).
+            if api_server is not None:
+                batch_payload = to_json_object(dict(progress.items()))
+                api_server.broadcast_engine_io_batch(worker_idx, batch_payload)
+            return
+
+        if progress["type"] == "engine_state":
+            diff_payload = handle_engine_state(
+                worker_idx=worker_idx,
+                current_gen=current_gen,
+                progress=progress,
+                state=state,
+                game_id_num=game_id_num,
+            )
+            if api_server and diff_payload is not None:
+                broadcast_snapshot_and_diff(worker_idx, state.worker_snapshots[worker_idx], diff_payload)
             return
 
         diff_payload = handle_game_assigned(

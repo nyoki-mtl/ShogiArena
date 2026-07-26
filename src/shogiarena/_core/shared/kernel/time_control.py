@@ -10,6 +10,7 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from shogiarena._core.shared.kernel.time_control_spec import limits_to_record_time_spec
+from shogiarena._core.shared.kernel.timeout_attribution import TimeoutWindow
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,15 @@ class GameClock:
         self.last_move_start_time: float | None = None
         self.last_move_duration_ms = 0
         self._is_expired = False
+        # Timeout attribution (task 0047): the perf_counter window and expiry budget of the last
+        # charged move. Captured here because ``prev_remaining`` is consumed by ``update_after_move``.
+        self.last_charged_window: tuple[float, float] | None = None
+        self.last_expiry_budget_ms: float | None = None
+        # Deadline snapshot (task 0052): the single source of truth for both the expiry predicate
+        # and timeout attribution. Captured at ``start_timer`` so attribution never re-derives the
+        # budget from mutated clock state.
+        self.current_timeout_window: TimeoutWindow | None = None
+        self.last_timeout_window: TimeoutWindow | None = None
 
         # Validate incompatible combinations
         fixed = limits.fixed_time_ms is not None
@@ -233,11 +243,27 @@ class GameClock:
         self.last_move_start_time = None
         self.last_move_duration_ms = 0
         self._is_expired = False
+        self.last_charged_window = None
+        self.last_expiry_budget_ms = None
+        self.current_timeout_window = None
+        self.last_timeout_window = None
         logger.debug(f"GameClock initialized for game: remaining={self.remaining_time_ms}ms")
 
     def start_timer(self) -> None:
-        """Start timing for current move."""
-        self.last_move_start_time = time.perf_counter()
+        """Start timing for current move and capture the deadline snapshot."""
+        now = time.perf_counter()
+        self.last_move_start_time = now
+        # ``current_move_budget_ms`` は expiry 判定と同じ計算（increment 適用前の remaining、
+        # byoyomi 込み、margin 込み）を使う。ここで固定するので、後段が clock の変化後に
+        # 予算を再計算して expiry 判定とずれることがない。
+        budget_ms = self.current_move_budget_ms()
+        self.current_timeout_window = TimeoutWindow(
+            started_at_s=now,
+            budget_ms=budget_ms,
+            # ``search_limits`` などは wall-clock deadline を持たないので ``None`` のまま。
+            deadline_s=None if budget_ms is None else now + budget_ms / 1000.0,
+            clock_mode=self.mode,
+        )
         logger.debug(f"Timer started for move {self.move_count + 1}")
 
     def is_expired(self) -> bool:
@@ -250,6 +276,23 @@ class GameClock:
             fixed_time_ms = self.limits.fixed_time_ms
             return fixed_time_ms if fixed_time_ms is not None else 0
         return max(0, self.remaining_time_ms)
+
+    def current_move_budget_ms(self) -> float | None:
+        """現在の手が超えると時間切れになる実 deadline（ms）。timeout attribution 用（task 0047）。
+
+        ``get_timeout_for_wait`` の wait 予算（+1000ms の orchestration slack を含む）とは異なり、
+        engine が本当に許された時間。fixed=fixed_time+margin、byoyomi=remaining+byoyomi+margin、
+        increment=remaining+margin。search_limits は時間 deadline なし（None）。
+        """
+        margin = float(self.limits.expiry_margin_ms)
+        if self.mode == "fixed":
+            return float(self.limits.fixed_time_ms or 0) + margin
+        if self.mode == "time_byoyomi":
+            byoyomi_ms = self.limits.byoyomi_ms or 0
+            return float(max(0, self.remaining_time_ms) + byoyomi_ms) + margin
+        if self.mode == "time_increment":
+            return float(max(0, self.remaining_time_ms)) + margin
+        return None
 
     def get_timeout_for_wait(self) -> float | None:
         """
@@ -313,6 +356,11 @@ class GameClock:
 
         now = time.perf_counter()
         self.last_move_duration_ms = int((now - self.last_move_start_time) * 1000)
+        # Capture the charged window (task 0047) before ``prev_remaining`` is consumed below.
+        self.last_charged_window = (self.last_move_start_time, now)
+        self.last_expiry_budget_ms = None
+        # Hand the move's deadline snapshot to attribution (task 0052).
+        self.last_timeout_window = self.current_timeout_window
 
         if self.mode == "time_increment":
             prev_remaining = self.remaining_time_ms
@@ -322,6 +370,7 @@ class GameClock:
                 self.remaining_time_ms += self.limits.increment_ms
             # Expire only if move duration strictly exceeds (prev + margin)
             allowed_ms = max(0, prev_remaining)
+            self.last_expiry_budget_ms = float(allowed_ms + self.limits.expiry_margin_ms)
             if (
                 not self.limits.should_allow_timeout
                 and self.last_move_duration_ms > allowed_ms + self.limits.expiry_margin_ms
@@ -344,6 +393,7 @@ class GameClock:
             byoyomi_ms = self.limits.byoyomi_ms
             assert byoyomi_ms is not None  # narrowing for type checkers
             allowed_ms = max(0, prev_remaining) + byoyomi_ms
+            self.last_expiry_budget_ms = float(allowed_ms + self.limits.expiry_margin_ms)
             if self.last_move_duration_ms > allowed_ms + self.limits.expiry_margin_ms:
                 self._is_expired = True
                 logger.warning(
@@ -355,6 +405,7 @@ class GameClock:
 
         self.move_count += 1
         self.last_move_start_time = None
+        self.current_timeout_window = None
         logger.debug(
             f"Move {self.move_count} completed: duration={self.last_move_duration_ms}ms, "
             f"remaining={self.remaining_time_ms}ms"

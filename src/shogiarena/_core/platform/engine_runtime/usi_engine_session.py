@@ -210,6 +210,14 @@ class AsyncUsiEngine(
             return self._bridge.get_process_info()
         return None
 
+    def bestmove_observation_basis(self) -> str | None:
+        """``bestmove`` 観測時刻の由来（``local_pipe`` など）。提供できなければ ``None``。
+
+        timeout attribution は、``bestmove`` を観測できなかった場合でも
+        「観測できる経路だったのか」を知る必要があるため、engine 側から取得する（task 0052）。
+        """
+        return self._process.observation_basis()
+
     async def __aenter__(self) -> AsyncUsiEngine:
         await self.start()
         return self

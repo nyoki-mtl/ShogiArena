@@ -10,7 +10,12 @@ from typing import Any, Protocol, runtime_checkable
 from rsshogi.core import Move
 from rsshogi.types import Color
 
-from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort, InfoHandler, JsonObject
+from shogiarena._core.contexts.match.ports.game_engine_ports import (
+    EngineLifecycleEventPort,
+    GameEnginePort,
+    InfoHandler,
+    JsonObject,
+)
 from shogiarena._core.contexts.match.ports.usi_think_ports import PonderHitTimings, UsiThinkRequest, UsiThinkResultPort
 from shogiarena._core.shared.kernel.engine_io import UsiIoEvent
 from shogiarena._core.shared.kernel.game_results import GameResult
@@ -105,6 +110,10 @@ class _EngineRuntimePort(Protocol):
         self,
         handler: Callable[[UsiIoEvent], Awaitable[None] | None],
     ) -> Callable[[], None]: ...
+    def register_lifecycle_handler(
+        self,
+        handler: Callable[[EngineLifecycleEventPort], None],
+    ) -> Callable[[], None]: ...
 
 
 class EngineParticipant(GameEnginePort):
@@ -134,9 +143,27 @@ class EngineParticipant(GameEnginePort):
     ) -> Callable[[], None]:
         return self._engine.register_io_log_handler(handler)
 
+    def register_lifecycle_handler(
+        self,
+        handler: Callable[[EngineLifecycleEventPort], None],
+    ) -> Callable[[], None]:
+        return self._engine.register_lifecycle_handler(handler)
+
     @property
     def name(self) -> str:
         return self._name_override or self._engine.name
+
+    def bestmove_observation_basis(self) -> str | None:
+        """``bestmove`` 観測時刻の由来を timeout attribution へ伝える（task 0052）。
+
+        提供できない実装では ``None`` を返し、attribution 側は capability absence として
+        ``unknown`` へ倒す。
+        """
+        resolve = getattr(self._engine, "bestmove_observation_basis", None)
+        if not callable(resolve):
+            return None
+        basis = resolve()
+        return basis if isinstance(basis, str) else None
 
     @property
     def options_name(self) -> str:

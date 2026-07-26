@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
-from aiohttp import WSServerHandshakeError
+from aiohttp import ClientWebSocketResponse, WSMsgType, WSServerHandshakeError
 from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 
 from shogiarena._core.contexts.dashboard.adapters.game_repository import (
@@ -68,6 +69,17 @@ def _build_server(tmp_path, *, read_only: bool = False) -> ArenaAPIServer:
         run_dir=tmp_path,
         read_only=read_only,
     )
+
+
+async def _receive_ws_topic(ws: ClientWebSocketResponse, topic: str) -> dict[str, object]:
+    while True:
+        message = await asyncio.wait_for(ws.receive(), timeout=2.0)
+        if message.type == WSMsgType.TEXT:
+            envelope = json.loads(message.data)
+            if isinstance(envelope, dict) and envelope.get("topic") == topic:
+                return {str(key): value for key, value in envelope.items()}
+            continue
+        raise AssertionError(f"WebSocket closed before topic {topic}: {message.type}")
 
 
 @pytest.mark.asyncio
@@ -277,6 +289,37 @@ async def test_production_server_rejects_hostile_websocket_origin(tmp_path) -> N
             await client.ws_connect("/ws", origin="https://attacker.example")
 
     assert exc_info.value.status == 403
+
+
+@pytest.mark.asyncio
+async def test_production_stop_delivers_latest_terminal_summary_before_websocket_close(tmp_path) -> None:
+    api_server = _build_server(tmp_path)
+    topic = "live.summary.snapshot.tournament"
+
+    async with TestClient(TestServer(api_server.app)) as client:
+        ws = await client.ws_connect("/ws")
+        await ws.send_json({"type": "subscribe", "topics": [topic], "include_analysis": True})
+        await _receive_ws_topic(ws, topic)
+
+        api_server.broadcast_summary_update({"games_completed": 7, "games_scheduled": 8})
+        seven = await _receive_ws_topic(ws, topic)
+        seven_payload = seven["payload"]
+        assert isinstance(seven_payload, dict)
+        assert seven_payload["games_completed"] == 7
+
+        # The final game update lands inside the normal one-second coalescing window.
+        api_server.broadcast_summary_update({"games_completed": 8, "games_scheduled": 8})
+        stop_task = asyncio.create_task(api_server.stop())
+        try:
+            terminal = await _receive_ws_topic(ws, topic)
+        finally:
+            await stop_task
+
+    terminal_payload = terminal["payload"]
+    assert isinstance(terminal_payload, dict)
+    assert terminal_payload["games_completed"] == 8
+    assert terminal_payload["games_scheduled"] == 8
+    assert terminal_payload["tournament_ended"] is True
 
 
 @pytest.mark.asyncio

@@ -97,6 +97,9 @@ class _SprtStatePayload(BaseModel):
     min_pairs: int
     penta_bins: list[int]
     pending: list[_SprtPendingHalfPayload]
+    # 停止判定のラッチ（task 0052 / review H1）。1.1.0 より前の state.json には無い。
+    is_decision_latched: bool = False
+    late_games: int = 0
 
 
 class _RunStatePayload(BaseModel):
@@ -117,6 +120,9 @@ class _RunStatePayload(BaseModel):
     sprt_state: _SprtStatePayload | None = None
     openbench_state: Mapping[str, object] | None = None
     game_instance_overrides: dict[str, _AssignmentOverrideWire] = Field(default_factory=dict)
+    # timeout breaker の counter（task 0052 / review M3）。1.1.0 より前の state.json には無い。
+    invalid_timeouts_by_origin: dict[str, int] = Field(default_factory=dict)
+    consecutive_invalid_timeouts_by_origin: dict[str, int] = Field(default_factory=dict)
 
     @field_validator("game_display_order", mode="before")
     @classmethod

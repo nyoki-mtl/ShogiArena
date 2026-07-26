@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any, Protocol, cast, runtime_checkable
@@ -36,6 +37,17 @@ EngineProcessSpawnerFn = Callable[..., Awaitable[Any]]
 
 
 logger = logging.getLogger(__name__)
+
+# ``ObservationBasis`` の value と一致させる（shared kernel への依存を platform 層に持ち込まない）。
+_LOCAL_PIPE_BASIS = "local_pipe"
+_REMOTE_TRANSPORT_BASIS = "remote_transport"
+
+
+def _is_local_instance(instance: NamedInstancePort) -> bool:
+    """ローカル subprocess として起動される instance か。判定できない場合は False（fail closed）。"""
+
+    is_ssh = getattr(instance, "is_ssh", None)
+    return is_ssh is False
 
 
 class SpawnerBackedUSIBridge:
@@ -70,6 +82,12 @@ class SpawnerBackedUSIBridge:
         self._stderr_handler: Callable[[str], None] | None = None
         self._is_stopping = False
         self._reap_tasks: set[asyncio.Task[None]] = set()
+        # timeout attribution 用の観測時刻（task 0052）。``receive_lines`` は消費側が処理を
+        # 終えるまで次の ``readline`` へ進まないため、消費側が読む時点の値は必ずその行のもの。
+        self._last_line_received_at_s: float | None = None
+        # SSH 経由では engine の出力が network を越えるので、ローカルの watchdog は
+        # delivery path を coverage できない。判定不能側へ倒すため basis を分ける。
+        self._observation_basis = _LOCAL_PIPE_BASIS if _is_local_instance(instance) else _REMOTE_TRANSPORT_BASIS
 
     @property
     def name(self) -> str:
@@ -253,6 +271,8 @@ class SpawnerBackedUSIBridge:
                     continue
                 if not line_bytes:
                     break
+                # decode、raw log dispatch、protocol parse、queue forwarding より前に採る。
+                self._last_line_received_at_s = time.perf_counter()
                 yield line_bytes.decode("utf-8", errors="replace").rstrip("\r\n")
         except asyncio.CancelledError:
             logger.debug("Receive lines cancelled for %s", self.name)
@@ -265,6 +285,14 @@ class SpawnerBackedUSIBridge:
 
     def is_running(self) -> bool:
         return self.process is not None and self.process.returncode is None
+
+    def last_line_received_at_s(self) -> float | None:
+        """直近に受信した行の monotonic 時刻（``time.perf_counter`` 基底）。"""
+        return self._last_line_received_at_s
+
+    def observation_basis(self) -> str:
+        """観測時刻の由来。``local_pipe`` だけが delivery coverage を主張できる。"""
+        return self._observation_basis
 
 
 def _default_engine_spawner() -> EngineProcessSpawnerFn:

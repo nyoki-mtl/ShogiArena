@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { LiveCardsApi, LiveUpdatesApi } from '@/modules/live/types';
 import { installDashboardTabs } from '@/modules/shared/services/tabs';
 
-type TabsWindow = Window & { DashboardTabs?: unknown };
+type TabsWindow = Window & {
+    DashboardTabs?: unknown;
+};
 
 function buildDashboardDom(): void {
     document.body.innerHTML = `
@@ -25,6 +27,8 @@ describe('installDashboardTabs ARIA wiring', () => {
 
     afterEach(() => {
         delete (window as TabsWindow).DashboardTabs;
+        delete (window as TabsWindow).DashboardLiveCards;
+        delete (window as TabsWindow).DashboardLiveUpdates;
         document.body.innerHTML = '';
     });
 
@@ -66,5 +70,32 @@ describe('installDashboardTabs ARIA wiring', () => {
         // A region spanning every tab is cross-tab chrome, not a per-tab panel.
         const banner = document.getElementById('banner') as HTMLElement;
         expect(banner.hasAttribute('role')).toBe(false);
+    });
+
+    it('notifies Live cards when leaving and re-entering the Live tab', () => {
+        const onTabActivate = vi.fn();
+        const onTabDeactivate = vi.fn();
+        const onUpdatesActivate = vi.fn();
+        Object.assign(window, {
+            DashboardLiveCards: {
+                onTabActivate,
+                onTabDeactivate,
+            } satisfies Pick<LiveCardsApi, 'onTabActivate' | 'onTabDeactivate'>,
+            DashboardLiveUpdates: {
+                onTabActivate: onUpdatesActivate,
+            } satisfies Pick<LiveUpdatesApi, 'onTabActivate'>,
+        });
+
+        const tabs = installDashboardTabs();
+        expect(onTabActivate).toHaveBeenCalledTimes(1);
+        expect(onUpdatesActivate).toHaveBeenCalledTimes(1);
+
+        tabs.setActive('engines');
+        expect(onTabDeactivate).toHaveBeenCalledTimes(1);
+
+        tabs.setActive('live');
+        expect(onTabActivate).toHaveBeenCalledTimes(2);
+        expect(onUpdatesActivate).toHaveBeenCalledTimes(2);
+        expect(onTabDeactivate).toHaveBeenCalledTimes(1);
     });
 });

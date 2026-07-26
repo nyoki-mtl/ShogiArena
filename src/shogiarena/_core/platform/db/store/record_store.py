@@ -7,7 +7,8 @@ from json import JSONDecodeError
 
 import rsshogi
 from rsshogi.core import Board, Move, Move32
-from sqlalchemy import delete, select
+from sqlalchemy import delete, inspect, select
+from sqlalchemy.orm import Session
 
 from shogiarena._core.shared.kernel.game_results import game_result_name
 from shogiarena._core.shared.kernel.scalar_coercion.api import (
@@ -19,12 +20,17 @@ from shogiarena._core.shared.kernel.scalar_coercion.api import (
 )
 from shogiarena._core.shared.kernel.serialization import json_serialize
 
-from .entities import Game, GameMove, Player
+from .entities import Game, GameMove, GameTimeoutAttribution, Player
 from .repository import ShogiRepositoryPort
 
 logger = logging.getLogger(__name__)
 
 _DB_METADATA_ATTRIBUTE_KEYS = {"storage", "game_name", "game_type", "updated_date"}
+
+# 時間切れ由来を列へ投影するための metadata attribute（task 0049）。値は解釈せず不透明な文字列として扱う。
+# blob 側にも残すので、load の roundtrip は投影の有無に依存しない。
+_TIMEOUT_ORIGIN_ATTRIBUTE = "timeout_origin"
+_TIMEOUT_ORIGIN_MAX_LENGTH = 32
 
 
 def _push_record_move(board: Board, move_obj: Move | Move32) -> Move:
@@ -59,6 +65,19 @@ def _book_hit_from_info(engine_info: rsshogi.record.EngineInfo | None) -> int | 
     if _move_source_from_info(engine_info) == "book":
         return 1
     return None
+
+
+def _timeout_origin_from_attributes(attributes: object) -> str | None:
+    if not isinstance(attributes, Mapping):
+        return None
+    raw = coerce_str(attributes.get(_TIMEOUT_ORIGIN_ATTRIBUTE))
+    value = raw.strip() if raw is not None else ""
+    if not value:
+        return None
+    if len(value) > _TIMEOUT_ORIGIN_MAX_LENGTH:
+        logger.debug("Skipping oversized timeout_origin projection: %r", value)
+        return None
+    return value
 
 
 def _serialize_metadata_attributes(attributes: object) -> str | None:
@@ -105,9 +124,22 @@ class DBRecordStore:
         with self._repository.operation(commit=True):
             self._append(records, should_update=should_update)
 
+    @staticmethod
+    def _has_timeout_attribution_table(session: Session) -> bool:
+        """attribution table の有無を transaction 内で確認する（task 0052 / Decision 11）。
+
+        1.0.x が作った table 無し DB では、存在しない table への DELETE / INSERT を発行しない。
+        欠落していても ``metadata_attributes_json`` 側の origin は保持されるので、
+        load の roundtrip は投影の有無に依存しない。
+        """
+
+        bind = session.get_bind()
+        return bool(inspect(bind).has_table(GameTimeoutAttribution.__tablename__))
+
     def _append(self, records: Iterable[rsshogi.record.Record | None], *, should_update: bool = False) -> None:
         session = self._repository.session
         board = Board()
+        has_attribution_table = self._has_timeout_attribution_table(session)
 
         for item in records:
             if item is None:
@@ -115,6 +147,7 @@ class DBRecordStore:
             record = item
             metadata = record.metadata
             metadata_attributes_json = _serialize_metadata_attributes(metadata.attributes)
+            timeout_origin = _timeout_origin_from_attributes(metadata.attributes)
             game_name = record.game_name
             game_type = record.game_type
             black_name = metadata.black_player
@@ -158,6 +191,10 @@ class DBRecordStore:
                 elif existing_updated_date >= updated_date_new:
                     continue
                 session.execute(delete(GameMove).where(GameMove.game_id == existing_game_id))
+                if has_attribution_table:
+                    session.execute(
+                        delete(GameTimeoutAttribution).where(GameTimeoutAttribution.game_id == existing_game_id)
+                    )
                 session.execute(delete(Game).where(Game.id == existing_game_id))
                 logger.info(
                     "Update game %s %s -> %s",
@@ -187,6 +224,8 @@ class DBRecordStore:
                 white_player=white_player,
             )
             session.add(game)
+            if timeout_origin is not None and has_attribution_table:
+                session.add(GameTimeoutAttribution(game=game, origin=timeout_origin))
 
             board.set_sfen(init_sfen)
             for move_record in move_records:

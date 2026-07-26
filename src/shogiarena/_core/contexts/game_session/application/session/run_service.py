@@ -47,8 +47,16 @@ class TournamentSessionRunService:
             return await execution_service.finalize_session(runner, result_builder=result_builder)
         except (asyncio.CancelledError, KeyboardInterrupt):
             # Honour Ctrl+C while paused by making sure services stop exactly once.
+            # A cancelled run never reaches the finalizer, so the terminal status has to be
+            # written here or the documented `status=failed / termination_reason=cancelled`
+            # contract would never hold in practice (task 0052).
             await execution_service.handle_cancelled_run(runner, controller=controller)
             return None
+        except BaseException:
+            # prepare / run-loop / finalize のどこで落ちても service を残さない（Decision 9）。
+            # finalize 内部の失敗は自分で artifact を書くので、ここでは runtime-error として扱う。
+            await execution_service.handle_failed_run(runner)
+            raise
         finally:
             execution_service.restore_progress(runner, previous=previous)
 

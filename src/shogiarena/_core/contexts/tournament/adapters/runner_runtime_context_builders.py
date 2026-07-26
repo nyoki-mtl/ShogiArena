@@ -67,6 +67,8 @@ def build_tournament_completion_runtime_context(
     is_dashboard_enabled: bool,
     total_games: int,
     save_run_state_fn: Callable[[], None],
+    consecutive_invalid_timeouts_by_origin: MutableMapping[str, int],
+    invalid_timeouts_by_origin: MutableMapping[str, int],
     openbench_client: CompletionOpenBenchClientPort | None,
     sync_after_game_fn: Callable[[], Awaitable[None]],
 ) -> CompletionRuntimeContext:
@@ -110,6 +112,8 @@ def build_tournament_completion_runtime_context(
         is_dashboard_enabled=is_dashboard_enabled,
         total_games=total_games,
         save_run_state=save_run_state_fn,
+        consecutive_invalid_timeouts_by_origin=consecutive_invalid_timeouts_by_origin,
+        invalid_timeouts_by_origin=invalid_timeouts_by_origin,
     )
     openbench = completion_openbench_context_service.build_context(
         client=openbench_client,

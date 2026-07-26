@@ -44,6 +44,7 @@ class AsyncUsiEngineInternalMixin:
     _clear_mate_tracking: Any
     _reset_current_info: Any
     _set_state: Any
+    _emit_lifecycle_event: Any
     trigger_isready: Any
     _resolve_ready_timeout: Any
     stop: Any
@@ -129,6 +130,9 @@ class AsyncUsiEngineInternalMixin:
                 f" ({reason})" if reason else "",
             )
         self._state = new_state
+        # Feed the dashboard engine_status badge on every transition (ponder / mate / timeout included),
+        # decoupled from the raw I/O stream. No-op when no lifecycle handler is registered.
+        self._emit_lifecycle_event("state_changed")
 
     def _ensure_state(self, allowed: set[UsiEngineState]) -> None:
         if self._state not in allowed:

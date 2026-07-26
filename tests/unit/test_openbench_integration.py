@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from shogiarena._core.contexts.game_session.adapters.run_storage import Filesyst
 from shogiarena._core.contexts.tournament.adapters.runner import TournamentRunner
 from shogiarena._core.platform.settings import facade as settings_mod
 from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.session_hooks import SessionStopController
 from shogiarena._core.shared.kernel.settings_loading.settings_models import OpenBenchSettings
 
 
@@ -605,8 +607,43 @@ async def test_tournament_runner_openbench_init_continues_when_strict_false(
         def request_stop(self, *, reason: str = "") -> None:
             pass
 
-    await runner._openbench.init(stop_controller=_MockStopController())
+    await runner._openbench.init(stop_controller_provider=_MockStopController)
     assert runner._openbench.client is None
+
+
+@pytest.mark.asyncio
+async def test_tournament_runner_wires_openbench_to_the_current_stop_controller(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``init_services`` が固定 instance ではなく live provider を渡すこと。"""
+
+    from unittest.mock import AsyncMock
+
+    runner = _build_runner_for_openbench(tmp_path, {"enabled": False})
+    providers: list[Callable[[], SessionStopController]] = []
+
+    async def _capture_provider(
+        *,
+        stop_controller_provider: Callable[[], SessionStopController],
+    ) -> None:
+        providers.append(stop_controller_provider)
+
+    monkeypatch.setattr(runner._openbench, "init", _capture_provider)
+    monkeypatch.setattr(runner, "_try_setup_tournament", AsyncMock(return_value=True))
+    monkeypatch.setattr(runner, "_backfill_records_output", lambda: None)
+
+    try:
+        await runner.init_services()
+        assert len(providers) == 1
+        initial = runner.stop_controller
+        replacement = SessionStopController()
+        runner.reset_stop_controller(replacement)
+
+        assert providers[0]() is replacement
+        assert providers[0]() is not initial
+    finally:
+        await runner.stop_services()
 
 
 def test_openbench_create_payload_rejects_invalid_upload_pgns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

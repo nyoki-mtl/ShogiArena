@@ -91,6 +91,20 @@ JSON 化したい場合は、利用側で必要な field を選んで変換し�
 `UsiIoEvent` は `direction`、`line`、`phase`、`timestamp_ms` などの typed field を使います。
 旧来の Mapping 風 key（`dir`、`ts`、`state`）は公開契約ではありません。
 
+### lifecycle handler の呼び出し頻度（1.1.0）
+
+1.1.0 で `EngineLifecycleEventName` に `state_changed` を追加しました。
+
+列挙値の追加自体は minor リリースの追加変更ですが、`register_lifecycle_handler()` で登録した
+handler は、process の起動・終了だけでなく **エンジンの state 遷移ごとにも呼ばれます**。
+1.0.x と比べて呼び出し回数が増えます。
+
+handler 実装では次に注意してください。
+
+- handler 内で blocking work を行わないこと。呼び出しは対局の実行経路上で起きます。
+- 未知の将来イベント名を無視できるようにすること。
+- 列挙値を網羅的に分岐している場合は既定の分岐を用意すること。追加値で失敗しなくなります。
+
 ## `shogiarena.tournament`
 
 主な入口は次のとおりです。

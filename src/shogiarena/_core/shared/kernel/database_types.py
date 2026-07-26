@@ -21,6 +21,8 @@ class GameRecordPlayers(_GameRecordPlayersRequired, total=False):
     game_id: int
     game_name: str
     initial_sfen: str | None
+    # 時間切れ由来（task 0049）。その情報を持たない DB では欠落する。
+    timeout_origin: str
 
 
 @runtime_checkable

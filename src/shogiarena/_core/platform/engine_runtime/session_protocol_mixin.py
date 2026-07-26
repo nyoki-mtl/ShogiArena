@@ -210,6 +210,24 @@ class AsyncUsiEngineProtocolMixin:
         if asyncio.iscoroutine(maybe_coro):
             await maybe_coro
 
+    def _attach_observation(self, result: Any) -> None:
+        """受理した ``bestmove`` に、行を読んだ時刻（実到着時刻の上界）を対応づける。
+
+        timestamp は bridge が ``readline()` 直後に採ったもので、decode / raw log dispatch /
+        parse より前の値。capability の無い実装では ``None`` のままにし、attribution 側で
+        ``unknown`` へ倒す（task 0052）。
+        """
+        process = self._process
+        get_timestamp = getattr(process, "last_line_received_at_s", None)
+        get_basis = getattr(process, "observation_basis", None)
+        if not callable(get_timestamp) or not callable(get_basis):
+            return
+        observed_at_s = get_timestamp()
+        if observed_at_s is None:
+            return
+        result.observed_at_s = observed_at_s
+        result.observation_basis = get_basis()
+
     def _handle_bestmove(self, line: str) -> None:
         sorted_pvs = self._collect_sorted_pvs()
         info_strings = self._collect_info_strings_snapshot()
@@ -279,6 +297,10 @@ class AsyncUsiEngineProtocolMixin:
             self._info_handler = None
             self._clear_ponder_handle()
             return
+        # ここに到達するのは「この探索の結果として受理した bestmove」だけ。stale bestmove、
+        # ponder の早出し、mate search 中の bestmove は上の分岐で返しており、別探索の
+        # 証拠として使われない（task 0052）。
+        self._attach_observation(result)
         if self._bestmove_future and not self._bestmove_future.done():
             self._bestmove_future.set_result(result)
         self._reset_current_info()

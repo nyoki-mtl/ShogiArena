@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any
 
 from shogiarena._core.contexts.match.domain.adjudication import AdjudicationConfig
+from shogiarena._core.shared.kernel.runtime_watchdog import LoopLagProbePort
 from shogiarena._core.shared.kernel.time_control import TimeControlLimitsPort, coerce_time_control_limits
 
 from .runner_finalize_mixin import GameRunnerFinalizeMixin
@@ -68,6 +69,20 @@ class GameRunner(
         self._published_engine_options: set[str] = set()
         self._apply_move_log_threshold_ms = 50.0
         self._clock_notify_log_threshold_ms = 50.0
+        # Timeout attribution (task 0047). Injected per run; None outside dashboard/tournament runs.
+        self._runtime_watchdog: LoopLagProbePort | None = None
+        self._timeout_shadow_counts: dict[str, int] = {}
+        # Opt-in: when True, orchestrator-stall timeouts become ERROR (invalid) instead of a loss on
+        # time. Enabled for arena/tournament runs only; SPSA keeps the legacy loss (see decisions D7).
+        self._timeout_reclassification_enabled: bool = False
+
+    def set_runtime_watchdog(self, probe: LoopLagProbePort | None) -> None:
+        """timeout attribution 用の loop-lag probe（watchdog）を注入する。"""
+        self._runtime_watchdog = probe
+
+    def set_timeout_reclassification(self, enabled: bool) -> None:
+        """orchestrator-stall timeout を無効局(ERROR)へ再分類する挙動を有効化する（arena/tournament のみ）。"""
+        self._timeout_reclassification_enabled = enabled
 
     def set_engine_options_callback(
         self,

@@ -111,37 +111,41 @@ class ArenaApiServerEventsMixin:
             )
         )
 
-    def broadcast_engine_io(self, worker_idx: int, payload: Mapping[str, JsonValue]) -> None:
-        payload_dict: JsonObject = {str(key): value for key, value in payload.items()}
+    def _resolve_engine_io_target(self, payload_dict: Mapping[str, object]) -> tuple[str, str] | None:
         gid_raw = payload_dict.get("game_id") or payload_dict.get("gid")
         if not gid_raw:
-            return
+            return None
         gid = str(gid_raw).strip()
         if not gid:
-            return
+            return None
         role_raw = payload_dict.get("role")
         if not isinstance(role_raw, str) or role_raw not in {"black", "white"}:
-            return
-        role = role_raw
-        direction_raw = payload_dict.get("direction")
+            return None
+        return gid, role_raw
+
+    def _store_engine_io_raw_entry(self, *, gid: str, role: str, raw: Mapping[str, object]) -> EngineIoTailEntry | None:
+        direction_raw = raw.get("direction")
         if not isinstance(direction_raw, str) or direction_raw not in {"in", "out"}:
-            return
-        direction = direction_raw
-        line = payload_dict.get("line")
+            return None
+        line = raw.get("line")
         if not isinstance(line, str) or not line.strip():
-            return
-        ts_raw = payload_dict.get("ts")
+            return None
+        ts_raw = raw.get("ts")
         ts = int(ts_raw) if isinstance(ts_raw, int | float) else int(time.time() * 1000)
-        state_raw = payload_dict.get("state")
+        state_raw = raw.get("state")
         state = state_raw.strip() if isinstance(state_raw, str) and state_raw.strip() else None
-        entry = self._store_engine_io_entry(
+        return self._store_engine_io_entry(
             gid=gid,
             role=role,
-            direction=direction,
+            direction=direction_raw,
             line=line,
             ts=ts,
             state=state,
         )
+
+    def _emit_engine_io_entries(self, worker_idx: int, gid: str, role: str, entries: list[EngineIoTailEntry]) -> None:
+        if not entries:
+            return
         self._emit_dashboard_event(
             DashboardEvent(
                 event_type=DashboardEventType.ENGINE_IO,
@@ -150,11 +154,46 @@ class ArenaApiServerEventsMixin:
                     {
                         "gid": gid,
                         "role": role,
-                        "entries": [entry],
+                        "entries": entries,
                     }
                 ),
             )
         )
+
+    def broadcast_engine_io(self, worker_idx: int, payload: Mapping[str, JsonValue]) -> None:
+        payload_dict: JsonObject = {str(key): value for key, value in payload.items()}
+        target = self._resolve_engine_io_target(payload_dict)
+        if target is None:
+            return
+        gid, role = target
+        entry = self._store_engine_io_raw_entry(gid=gid, role=role, raw=payload_dict)
+        if entry is None:
+            return
+        self._emit_engine_io_entries(worker_idx, gid, role, [entry])
+
+    def broadcast_engine_io_batch(self, worker_idx: int, payload: Mapping[str, JsonValue]) -> None:
+        payload_dict: JsonObject = {str(key): value for key, value in payload.items()}
+        target = self._resolve_engine_io_target(payload_dict)
+        if target is None:
+            return
+        gid, role = target
+        raw_entries = payload_dict.get("entries")
+        if not isinstance(raw_entries, list):
+            return
+        entries: list[EngineIoTailEntry] = []
+        for raw in raw_entries:
+            if not isinstance(raw, Mapping):
+                continue
+            entry = self._store_engine_io_raw_entry(gid=gid, role=role, raw=raw)
+            if entry is not None:
+                entries.append(entry)
+        self._emit_engine_io_entries(worker_idx, gid, role, entries)
+
+    def has_engine_io_subscribers(self, gid: str) -> bool:
+        """当該 game の raw engine-I/O topic 購読者がいるかを返す（raw I/O listener の動的 gating 用）。"""
+        if self.ws_hub is None:
+            return False
+        return self.ws_hub.has_engine_io_subscribers(gid)
 
     def clear_engine_logs(self, game_id: str | int) -> None:
         self._emit_dashboard_event(

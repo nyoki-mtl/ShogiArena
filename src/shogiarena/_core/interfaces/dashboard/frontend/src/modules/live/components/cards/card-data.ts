@@ -15,6 +15,46 @@ export interface UpdateCardDataOptions {
     forceBootstrap?: boolean;
 }
 
+export type EngineIoTail = EngineStatusSnapshot['black']['io_tail'];
+
+/**
+ * Does the lifecycle-derived io_tail already show the game kickoff (`usinewgame` / `position`)?
+ *
+ * Kickoff detection must never require the raw I/O topic: those lines are already carried by the
+ * `engine_status` snapshot (task 0052 / Decision 12).
+ */
+export const hasKickoffCommand = (entries: EngineIoTail | undefined): boolean => {
+    if (!Array.isArray(entries) || entries.length === 0) return false;
+    return entries.some((entry) => {
+        if (!entry || entry.dir !== 'out' || typeof entry.line !== 'string') return false;
+        const line = entry.line.trim().toLowerCase();
+        return line === 'usinewgame' || line.startsWith('position ');
+    });
+};
+
+/**
+ * Should the prep overlay be shown for this card?
+ *
+ * This is a pure display decision derived from lifecycle state only. It deliberately does not
+ * touch the raw-I/O preference, so the default Live grid keeps zero raw subscriptions no matter
+ * how many games run in parallel (review finding M7).
+ */
+export const isPrepOverlayVisibleFor = (input: {
+    phase: 'pre' | 'in' | 'post';
+    isBlackReady: boolean;
+    isWhiteReady: boolean;
+    blackIoTail: EngineIoTail | undefined;
+    whiteIoTail: EngineIoTail | undefined;
+}): boolean => {
+    if (input.phase !== 'pre') return false;
+    const kickoffStarted =
+        input.isBlackReady &&
+        input.isWhiteReady &&
+        hasKickoffCommand(input.blackIoTail) &&
+        hasKickoffCommand(input.whiteIoTail);
+    return !kickoffStarted;
+};
+
 export interface CardDataDeps {
     state: DashboardCoreState;
     normalizeSFEN: (sfen: string | null | undefined) => string;
@@ -33,11 +73,12 @@ export interface CardDataDeps {
     warnSoftFailure: (context: string, error: unknown) => void;
     closeKifuPopover: () => void;
     onEngineLogGameKeyChange?: (cardState: LiveCardState, prevKey: string | null, nextKey: string) => void;
-    setEngineLogVisibility?: (
-        cardState: LiveCardState,
-        next: { black?: boolean | null; white?: boolean | null },
-        options?: { emit?: boolean },
-    ) => void;
+    /**
+     * Release the raw-I/O subscription of a finished game without closing its display.
+     *
+     * The topic is per game, so completion must drop the refcount to 0 (task 0052 / Decision 12).
+     */
+    releaseRawSubscriptions?: (cardState: LiveCardState) => void;
 }
 
 export function createUpdateCardData(deps: CardDataDeps) {
@@ -59,7 +100,7 @@ export function createUpdateCardData(deps: CardDataDeps) {
         warnSoftFailure,
         closeKifuPopover,
         onEngineLogGameKeyChange,
-        setEngineLogVisibility,
+        releaseRawSubscriptions,
     } = deps;
 
     const syncBoard = createBoardSync({
@@ -139,15 +180,6 @@ export function createUpdateCardData(deps: CardDataDeps) {
                 section.textContent = item.label;
             }
         }
-    };
-
-    const hasKickoffCommand = (entries: EngineStatusSnapshot['black']['io_tail'] | undefined): boolean => {
-        if (!Array.isArray(entries) || entries.length === 0) return false;
-        return entries.some((entry) => {
-            if (!entry || entry.dir !== 'out' || typeof entry.line !== 'string') return false;
-            const line = entry.line.trim().toLowerCase();
-            return line === 'usinewgame' || line.startsWith('position ');
-        });
     };
 
     const renderPrepEngineLog = (
@@ -307,29 +339,34 @@ export function createUpdateCardData(deps: CardDataDeps) {
         const hasGameActivity = moveCount > 0 || hasTerminalResult(data);
         const isTerminal = hasTerminalResult(data);
         const phase: 'pre' | 'in' | 'post' = isTerminal ? 'post' : hasGameActivity ? 'in' : 'pre';
-        const prevPhase = cardState.engineLogPhase ?? 'pre';
-        if (prevPhase !== phase) {
-            if (phase === 'post') {
-                setEngineLogVisibility?.(cardState, { black: true, white: true }, { emit: true });
-            } else if (phase === 'in') {
-                setEngineLogVisibility?.(cardState, { black: false, white: false }, { emit: true });
-            } else if (phase === 'pre') {
-                setEngineLogVisibility?.(cardState, { black: null, white: null }, { emit: false });
-            }
-            cardState.engineLogPhase = phase;
+        // Phase transitions must not *open* the raw-I/O preference (task 0052 / Decision 12).
+        // The prep overlay is rendered from lifecycle-derived engine_status, so opening it on a
+        // phase change would subscribe every card to both engines' raw log topics.
+        //
+        // Completion is different: the raw topic is per game, so a finished game must release its
+        // subscription (refcount -> 0). The display preference stays on so the user keeps reading
+        // the log that already arrived.
+        const previousPhase = cardState.engineLogPhase ?? 'pre';
+        cardState.engineLogPhase = phase;
+        if (phase === 'post' && previousPhase !== 'post') {
+            cardState.engineLogReleasedGameKey = logKey ?? null;
+            releaseRawSubscriptions?.(cardState);
+        } else if (phase !== 'post' && cardState.engineLogReleasedGameKey !== logKey) {
+            cardState.engineLogReleasedGameKey = null;
         }
         const logPrefs = (cardState.engineLogPreference ?? {}) as { black?: boolean | null; white?: boolean | null };
         const manualOpenBlack = logPrefs.black === true;
         const manualOpenWhite = logPrefs.white === true;
         const hasManualOpen = manualOpenBlack || manualOpenWhite;
-        if (hasManualOpen && logKey) {
-            const prevKey = (cardState as { engineLogGameKey?: string | null }).engineLogGameKey ?? null;
+        const isReleasedGame = Boolean(logKey) && cardState.engineLogReleasedGameKey === logKey;
+        if (hasManualOpen && logKey && !isReleasedGame) {
+            const prevKey = cardState.engineLogGameKey ?? null;
             if (prevKey !== logKey) {
-                (cardState as { engineLogGameKey?: string | null }).engineLogGameKey = logKey;
+                cardState.engineLogGameKey = logKey;
                 onEngineLogGameKeyChange?.(cardState, prevKey, logKey);
             }
         } else if (!hasManualOpen) {
-            (cardState as { engineLogGameKey?: string | null }).engineLogGameKey = null;
+            cardState.engineLogGameKey = null;
         }
         const readyLatch = (cardState.engineReadyLatch ?? {}) as {
             black?: boolean;
@@ -348,20 +385,15 @@ export function createUpdateCardData(deps: CardDataDeps) {
             readyLatch.white = true;
         }
         cardState.engineReadyLatch = readyLatch;
-        if (phase === 'pre') {
-            const bothReady = Boolean(readyLatch.black) && Boolean(readyLatch.white);
-            const kickoffBlack = hasKickoffCommand(engineStatus?.black?.io_tail);
-            const kickoffWhite = hasKickoffCommand(engineStatus?.white?.io_tail);
-            const kickoffStarted = bothReady && kickoffBlack && kickoffWhite;
-            setEngineLogVisibility?.(
-                cardState,
-                {
-                    black: !kickoffStarted,
-                    white: !kickoffStarted,
-                },
-                { emit: true },
-            );
-        }
+        // Kickoff detection uses the lifecycle-derived engine_status snapshot only; the raw I/O
+        // topic is never needed for it (task 0052 / Decision 12).
+        const isPrepOverlayVisible = isPrepOverlayVisibleFor({
+            phase,
+            isBlackReady: Boolean(readyLatch.black),
+            isWhiteReady: Boolean(readyLatch.white),
+            blackIoTail: engineStatus?.black?.io_tail,
+            whiteIoTail: engineStatus?.white?.io_tail,
+        });
         const refreshedPrefs = (cardState.engineLogPreference ?? {}) as {
             black?: boolean | null;
             white?: boolean | null;
@@ -369,19 +401,17 @@ export function createUpdateCardData(deps: CardDataDeps) {
         const finalManualOpenBlack = refreshedPrefs.black === true;
         const finalManualOpenWhite = refreshedPrefs.white === true;
         if (cardEl) {
-            const visibleBlack = finalManualOpenBlack;
-            const visibleWhite = finalManualOpenWhite;
+            // Display state is the union of the prep overlay and the explicitly opened raw panel;
+            // only the latter drives a subscription.
+            const visibleBlack = finalManualOpenBlack || isPrepOverlayVisible;
+            const visibleWhite = finalManualOpenWhite || isPrepOverlayVisible;
             cardEl.classList.toggle('worker-card--log-visible-black', visibleBlack);
             cardEl.classList.toggle('worker-card--log-visible-white', visibleWhite);
         }
         if (phase === 'pre') {
-            const bothReady = Boolean(readyLatch.black) && Boolean(readyLatch.white);
-            const kickoffBlack = hasKickoffCommand(engineStatus?.black?.io_tail);
-            const kickoffWhite = hasKickoffCommand(engineStatus?.white?.io_tail);
-            const kickoffStarted = bothReady && kickoffBlack && kickoffWhite;
             renderPrepEngineLog(cardState.id, data, engineStatus, {
-                black: !kickoffStarted,
-                white: !kickoffStarted,
+                black: isPrepOverlayVisible,
+                white: isPrepOverlayVisible,
             });
         }
         updateEngineLogLabels(cardState.id, data, engineStatus);

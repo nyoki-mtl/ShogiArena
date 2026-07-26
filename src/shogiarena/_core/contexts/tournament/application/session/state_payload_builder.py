@@ -94,6 +94,15 @@ def build_run_state_payload(
     }
     if ctx.state.sprt is not None:
         run_state["sprt_state"] = ctx.state.sprt.to_snapshot()
+
+    # timeout breaker の counter（task 0052 / review M3）。永続化しないと resume のたびに
+    # ゼロへ戻り、pause / resume を繰り返すことで安全停止の閾値を実質的に回避できてしまう。
+    if ctx.state.invalid_timeouts_by_origin:
+        run_state["invalid_timeouts_by_origin"] = dict(sorted(ctx.state.invalid_timeouts_by_origin.items()))
+    if ctx.state.consecutive_invalid_timeouts_by_origin:
+        run_state["consecutive_invalid_timeouts_by_origin"] = dict(
+            sorted(ctx.state.consecutive_invalid_timeouts_by_origin.items())
+        )
     openbench_snap2 = ctx.openbench.snapshot_state()
     if openbench_snap2 is not None:
         run_state["openbench_state"] = openbench_snap2

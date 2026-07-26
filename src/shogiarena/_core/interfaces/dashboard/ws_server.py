@@ -34,6 +34,7 @@ from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int
 
 logger = logging.getLogger(__name__)
+_SHUTDOWN_DRAIN_TIMEOUT_SECONDS = 1.0
 
 
 def _parse_workers_param(raw_value: str | None) -> set[int] | None:
@@ -129,20 +130,44 @@ class LiveWebSocketHub(WsHubBackpressureMixin, WsHubControlMixin, WsHubRuntimeMi
             return True
         return self._topic_subscribers.get(topic, 0) > 0
 
+    def has_engine_io_subscribers(self, gid: str) -> bool:
+        """当該 game の raw engine-I/O topic を購読しているクライアントがいるかを返す。
+
+        raw I/O listener の動的 gating に使う。global 購読者は全 topic を受け取るため真とみなす。
+        """
+        if self._global_subscribers > 0:
+            return True
+        for role in ("black", "white"):
+            for suffix in ("io.diff", "io.snapshot"):
+                if self._topic_subscribers.get(f"live.engine.{gid}.{role}.{suffix}", 0) > 0:
+                    return True
+        return False
+
     async def shutdown(self) -> None:
         """Terminate all connections and prevent new ones from being accepted."""
 
         self._is_closed = True
-        for client in list(self.clients):
+        await asyncio.gather(*(self._drain_and_close(client) for client in list(self.clients)))
+        self.clients.clear()
+
+    async def _drain_and_close(self, client: LiveWsClient) -> None:
+        """Flush queued terminal messages before closing one established client."""
+
+        sender = client.tasks[0] if client.tasks else None
+        if sender is not None and not sender.done():
             try:
-                client.queue.put_nowait("null")
-            except asyncio.QueueFull:
+                async with asyncio.timeout(_SHUTDOWN_DRAIN_TIMEOUT_SECONDS):
+                    await client.queue.put(None)
+                    await asyncio.shield(sender)
+            except asyncio.CancelledError:
+                if not sender.cancelled():
+                    raise
+            except TimeoutError:
                 logger.debug(
-                    "WS shutdown signal skipped because client queue is full (client_id=%s)",
+                    "WS shutdown drain timed out (client_id=%s)",
                     client.client_id,
                 )
-            await self._graceful_close(client)
-        self.clients.clear()
+        await self._graceful_close(client)
 
     def _build_envelope(self, topic: str, payload: JsonValue) -> str | None:
         state = self._topics.setdefault(topic, TopicState())

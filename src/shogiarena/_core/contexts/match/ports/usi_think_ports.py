@@ -57,6 +57,25 @@ class UsiThinkResultPort(Protocol):
     def get_last_pv(self, multipv_index: int = 1) -> UsiThinkPVPort | None: ...
 
 
+@runtime_checkable
+class ObservedBestmovePort(Protocol):
+    """``bestmove`` の観測時刻を運ぶ think result の追加 capability（task 0052）。
+
+    値は engine の出力行を読んだ直後の monotonic 時刻で、**実到着時刻の上界** として扱う。
+    提供しない実装では timeout attribution が ``unknown`` へ倒す。
+    """
+
+    observed_at_s: float | None
+    observation_basis: str | None
+
+
+@runtime_checkable
+class BestmoveObservationCapabilityPort(Protocol):
+    """``bestmove`` を観測できなかった場合にも delivery coverage を問い合わせる contract。"""
+
+    def bestmove_observation_basis(self) -> str | None: ...
+
+
 @dataclass(slots=True, kw_only=True)
 class UsiThinkRequest:
     """Structured parameters for a USI ``go`` command."""

@@ -21,6 +21,7 @@ from shogiarena._core.contexts.tournament.adapters.runner_runtime_context_builde
     build_tournament_completion_runtime_context,
 )
 from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.runtime_watchdog import WatchdogSummary
 
 
 class _StopControllerStub:
@@ -58,6 +59,18 @@ class _OpenBenchClientStub:
         self.is_strict = is_strict
 
 
+class _WatchdogStub:
+    def summary(self) -> WatchdogSummary:
+        return WatchdogSummary(
+            loop_lag_events=1,
+            thread_lag_events=0,
+            max_loop_lag_ms=420.0,
+            max_thread_lag_ms=0.0,
+            loop_threshold_ms=200.0,
+            thread_threshold_ms=200.0,
+        )
+
+
 def test_build_completion_runtime_context_shares_completed_summaries_mapping() -> None:
     completed_summaries: dict[str, JsonObject] = {
         "g0": {
@@ -86,6 +99,8 @@ def test_build_completion_runtime_context_shares_completed_summaries_mapping() -
         is_dashboard_enabled=True,
         total_games=2,
         save_run_state_fn=_noop,
+        consecutive_invalid_timeouts_by_origin={},
+        invalid_timeouts_by_origin={},
         openbench_client=None,
         sync_after_game_fn=_noop_async,
     )
@@ -108,6 +123,7 @@ def test_build_summary_runtime_context_groups_state_and_adapts_dependencies(tmp_
     schedule = [SimpleNamespace(game_id="g0")]
     api_server = _SummaryApiServerStub()
     record_writer = _SummaryRecordWriterStub()
+    watchdog = _WatchdogStub()
 
     context = TournamentSummaryRuntimeContextService().build_runtime_context(
         request=SummaryRuntimeBuildRequest(
@@ -136,6 +152,7 @@ def test_build_summary_runtime_context_groups_state_and_adapts_dependencies(tmp_
             record_writer=record_writer,
             sprt_service=None,
             openbench_client=_OpenBenchClientStub(is_strict=True),
+            watchdog=watchdog,
         ),
         actions=SummaryRuntimeActionRefs(
             engine_instance_defaults=lambda: {"engine-a": "inst-1"},
@@ -147,6 +164,7 @@ def test_build_summary_runtime_context_groups_state_and_adapts_dependencies(tmp_
             flush_openbench=_noop_async,
             save_run_state=lambda _is_finished: None,
             update_dashboard=_noop_async,
+            stop_services=_noop_async,
         ),
     )
 
@@ -154,6 +172,8 @@ def test_build_summary_runtime_context_groups_state_and_adapts_dependencies(tmp_
     assert context.state.completed_game_ids is completed_game_ids
     assert context.state.cancelled_game_ids is cancelled_game_ids
     assert context.dependencies.is_openbench_strict_mode is True
+    # 再構築で落とすと completion_status.json の watchdog が無音で欠落するため、passthrough を固定する。
+    assert context.dependencies.watchdog is watchdog
 
     context.dependencies.api_server.broadcast_games_snapshot({"games": []})
     context.dependencies.api_server.broadcast_summary_update({"ok": True}, source="tournament")

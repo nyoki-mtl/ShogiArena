@@ -6,7 +6,7 @@ import json
 import logging
 from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from shogiarena._core.contexts.tournament.application.session.state_payload_builder import build_run_state_payload
 from shogiarena._core.contexts.tournament.domain.tournament_models import GameSpec
@@ -27,7 +27,13 @@ from shogiarena._core.shared.kernel.run_manifest_reader import read_sealed_manif
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int, coerce_str
 from shogiarena._core.shared.kernel.serialization import json_serialize
 from shogiarena._core.shared.kernel.service_ports import SprtServicePort
-from shogiarena._core.shared.kernel.statistics.pentanomial_pairing import is_decisive_result
+from shogiarena._core.shared.kernel.sprt_ingestion import normalize_sprt_observation
+from shogiarena._core.shared.kernel.sprt_models import SPRT_MODEL_GSPRT_PENTANOMIAL
+from shogiarena._core.shared.kernel.statistics.pentanomial_pairing import (
+    is_decisive_result,
+    round_index_from_game_name,
+)
+from shogiarena._core.shared.kernel.timeout_breaker import rebuild_timeout_breaker_counters
 
 logger = logging.getLogger(__name__)
 
@@ -213,13 +219,9 @@ class TournamentSessionStateStore:
                 raise RuntimeError(
                     f"Failed to restore SPRT state for resume: {exc}. Use --no-resume to start a fresh run."
                 ) from exc
-            restored_games = getattr(restored_sprt, "games_played", None)
-            sampled_games = sum(1 for game in completed_games if is_decisive_result(game["result"]))
-            if restored_games != sampled_games:
-                raise RuntimeError(
-                    "SPRT state and game.db disagree on completed game count, cannot resume. "
-                    "Use --no-resume to start a fresh run."
-                )
+            self._reconcile_sprt_with_completed_games(ctx, restored_sprt, completed_games=completed_games)
+        self._restore_timeout_breaker_counters(ctx, saved_state, completed_games=completed_games)
+
         openbench_state = saved_state.get("openbench_state")
         if openbench_state is not None:
             ctx.openbench.restore_state(openbench_state)
@@ -330,7 +332,31 @@ class TournamentSessionStateStore:
         ctx.refresh_game_assignments()
         ctx.notify_schedule_available()
 
+        # validation と state restoration がすべて成功した時点で、前回の terminal marker を
+        # 無効化する（task 0052 / decisions.md Decision 10）。resume 直後に crash しても
+        # 完了済み run と誤表示されないよう、新規 dispatch より前に消す。
+        # resume を拒否した経路ではここへ到達しないので、既存 artifact の bytes は変わらない。
+        # ``tournament_results.json`` と ``summary_btd.json`` は terminal marker として
+        # 読まれない derived cache なので対象外（finalize で必ず上書きされる）。
+        self._invalidate_terminal_markers(ctx.run_dir)
+
         return True
+
+    @staticmethod
+    def _invalidate_terminal_markers(run_dir: Path) -> None:
+        """完了済み run を resume する際に、前回の terminal marker を消す。"""
+
+        for name in ("completion_status.json", "completed.flag"):
+            path = run_dir / name
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                # 消せない marker を残したまま dispatch すると、途中状態を完了済みに見せる。
+                raise RuntimeError(
+                    f"Failed to invalidate the stale terminal marker {name} before resuming: {exc}. "
+                    "Use --no-resume to start a fresh run."
+                ) from exc
+        logger.debug("Invalidated stale terminal markers in %s before resuming", run_dir)
 
     def save_run_state(self, ctx: TournamentStateSaveContext, *, is_finished: bool = False) -> None:
         """Persist current run-state payload."""
@@ -338,6 +364,169 @@ class TournamentSessionStateStore:
         run_state = build_run_state_payload(ctx, is_finished=is_finished)
         run_state_path = ctx.run_dir / "state.json"
         write_json_atomic(run_state_path, run_state)
+
+    @staticmethod
+    def _reconcile_sprt_with_completed_games(
+        ctx: TournamentStateSetupContext,
+        restored_sprt: SprtServicePort,
+        *,
+        completed_games: list[GameRecordPlayers],
+    ) -> None:
+        """復元した SPRT 状態を game.db に合わせる（decisions.md Decision 8）。
+
+        ``game.db`` が正本。DB へ commit した後 ``save_run_state()`` の前に落ちると、
+        state.json の SPRT は DB より数局遅れる。完全一致だけを許すと、この crash window で
+        resume 不能になる（review H2）。breaker counter と同じく、遅れている分の
+        DB suffix を **完了順に replay** して追いつかせる。
+
+        decision をラッチした後の局は、標本ではなく ``late_games`` に入る（review H1）。
+        したがって突き合わせるのは「標本 + 後着」であって標本だけではない。
+
+        DB が state.json より **少ない** 場合は追いつかせようがないので fail closed にする。
+        """
+        tested_engine = ctx.state.sprt_pair[0] if ctx.state.sprt_pair is not None else None
+        if tested_engine is None:
+            # 検定対象ペアが決まらない構成（engine が 2 個でない）では、live でも
+            # SPRT へ局を入れない。突き合わせる対象そのものが無い。
+            return
+
+        sampled = int(getattr(restored_sprt, "games_played", 0) or 0)
+        late = int(getattr(restored_sprt, "late_games", 0) or 0)
+        decisive = [game for game in completed_games if is_decisive_result(game["result"])]
+        already = sampled + late
+
+        if already == len(decisive):
+            return
+        if already > len(decisive):
+            raise RuntimeError(
+                "SPRT state is ahead of game.db "
+                f"(sample={sampled}, late={late}, decisive in game.db={len(decisive)}), "
+                "cannot resume. Use --no-resume to start a fresh run."
+            )
+
+        is_pentanomial = str(getattr(restored_sprt, "model", "")) == SPRT_MODEL_GSPRT_PENTANOMIAL
+        replayed = 0
+        for game in decisive[already:]:
+            black = str(game["black_player"])
+            white = str(game["white_player"])
+            if tested_engine not in (black, white):
+                # tested engine が絡まない局は live でも標本へ入らない。
+                continue
+            observation = normalize_sprt_observation(game["result"], is_tested_black=tested_engine == black)
+            if is_pentanomial:
+                game_name = game.get("game_name")
+                round_index = round_index_from_game_name(str(game_name)) if game_name else None
+                if round_index is None:
+                    # pair slot を復元できない局を混ぜると、対にならない観測が残る。
+                    raise RuntimeError(
+                        f"Cannot replay pentanomial SPRT observation for game {game_name!r} "
+                        "(no round index in the game name), cannot resume. "
+                        "Use --no-resume to start a fresh run."
+                    )
+                restored_sprt.add_game_observation(
+                    sfen=str(game.get("initial_sfen") or "startpos"),
+                    pair_slot=round_index // 2,
+                    is_tested_black=observation.is_tested_black,
+                    tested_score=observation.tested_score,
+                )
+            else:
+                restored_sprt.add_game_result(observation.trinomial_result)
+            replayed += 1
+
+            # live と同じく、**1 局入れるたび** に停止条件を評価してラッチする
+            # （review 第5次 H2）。suffix を全部入れてから評価すると、途中で bound を
+            # 越えた後の局まで標本に入り、確定したはずの decision を continue へ戻せる。
+            if not getattr(restored_sprt, "is_decision_latched", False):
+                if restored_sprt.is_finished() and restored_sprt.games_played >= ctx.state.sprt_min_games:
+                    restored_sprt.latch_decision()
+                    logger.info(
+                        "SPRT reached its decision while replaying game.db (games=%d); "
+                        "the remaining replayed games are counted as late",
+                        restored_sprt.games_played,
+                    )
+
+        logger.warning(
+            "Replayed %d SPRT observation(s) committed to game.db after the last state save "
+            "(sample=%d, late=%d -> sample=%d, late=%d)",
+            replayed,
+            sampled,
+            late,
+            int(getattr(restored_sprt, "games_played", 0) or 0),
+            int(getattr(restored_sprt, "late_games", 0) or 0),
+        )
+
+    @staticmethod
+    def _restore_timeout_breaker_counters(
+        ctx: TournamentStateSetupContext,
+        saved_state: Mapping[str, Any],
+        *,
+        completed_games: list[GameRecordPlayers],
+    ) -> None:
+        """timeout breaker の counter を resume で復元する（task 0052 / review M3）。
+
+        counter がゼロへ戻ると、pause / resume を繰り返すだけで安全停止の閾値を
+        実質的に回避できてしまう。一方で state.json だけを見ると、DB へ commit した後
+        `save_run_state()` の前に落ちた場合に stale な counter を復元してしまう
+        （閾値の回避にも、逆に本来 reset された counter での誤停止にもなりうる）。
+
+        そこで **game.db を正本** とし（decisions.md Decision 8）、state.json は
+        「どこまでを counter に反映済みか」の起点として使う。
+
+        - counter が state.json にあれば、それを起点に、保存時点より後の DB suffix を replay する。
+        - counter が無い場合（1.1.0 より前の state.json）は DB 全体から再構築する。
+        """
+        saved_totals = saved_state.get("invalid_timeouts_by_origin") or {}
+        saved_consecutive = saved_state.get("consecutive_invalid_timeouts_by_origin") or {}
+
+        if not saved_totals and not saved_consecutive:
+            totals, consecutive = rebuild_timeout_breaker_counters(completed_games)
+            ctx.state.invalid_timeouts_by_origin = totals
+            ctx.state.consecutive_invalid_timeouts_by_origin = consecutive
+            if totals:
+                logger.warning(
+                    "Rebuilt timeout breaker counters from game.db (state.json predates them): %s",
+                    dict(sorted(totals.items())),
+                )
+            return
+
+        saved_completed = coerce_int(saved_state.get("completed_games_count"))
+        if saved_completed is None:
+            # 起点が分からない state.json で counter へ DB を重ねると二重計上になる。
+            # 正本である DB から作り直す。
+            logger.warning("state.json has breaker counters but no completed count; rebuilding from game.db")
+            totals, consecutive = rebuild_timeout_breaker_counters(completed_games)
+            ctx.state.invalid_timeouts_by_origin = totals
+            ctx.state.consecutive_invalid_timeouts_by_origin = consecutive
+            return
+
+        suffix = completed_games[saved_completed:] if saved_completed >= 0 else []
+        if saved_completed > len(completed_games):
+            # DB が state.json より古い。counter だけを信じると DB に無い局を数えたままになるので、
+            # DB から作り直す（正本は DB）。
+            logger.warning(
+                "state.json claims %d completed games but game.db has %d; "
+                "rebuilding timeout breaker counters from game.db",
+                saved_completed,
+                len(completed_games),
+            )
+            totals, consecutive = rebuild_timeout_breaker_counters(completed_games)
+            ctx.state.invalid_timeouts_by_origin = totals
+            ctx.state.consecutive_invalid_timeouts_by_origin = consecutive
+            return
+
+        totals, consecutive = rebuild_timeout_breaker_counters(
+            suffix,
+            totals={str(k): int(v) for k, v in saved_totals.items()},
+            consecutive={str(k): int(v) for k, v in saved_consecutive.items()},
+        )
+        ctx.state.invalid_timeouts_by_origin = totals
+        ctx.state.consecutive_invalid_timeouts_by_origin = consecutive
+        if suffix:
+            logger.warning(
+                "Reconciled timeout breaker counters with %d game(s) committed after the last state save: %s",
+                len(suffix),
+                dict(sorted(totals.items())),
+            )
 
     @staticmethod
     def _load_completed_games(ctx: TournamentStateSetupContext) -> list[GameRecordPlayers]:

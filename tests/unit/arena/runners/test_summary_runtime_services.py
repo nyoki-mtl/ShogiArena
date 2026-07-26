@@ -111,6 +111,7 @@ def _build_runtime(run_dir: Path) -> TournamentSummaryRuntimeContext:
             flush_openbench=_noop_async,
             save_run_state=lambda _is_finished: None,
             update_dashboard=_noop_async,
+            stop_services=_noop_async,
         ),
     )
 
@@ -133,6 +134,7 @@ async def test_finalize_service_uses_grouped_runtime_actions(tmp_path: Path) -> 
     flush_calls: list[str] = []
     save_calls: list[bool] = []
     dashboard_calls: list[str] = []
+    cleanup_calls: list[str] = []
     runtime = _build_runtime(tmp_path)
     runtime.actions = SummaryRuntimeActionRefs(
         engine_instance_defaults=runtime.actions.engine_instance_defaults,
@@ -144,6 +146,7 @@ async def test_finalize_service_uses_grouped_runtime_actions(tmp_path: Path) -> 
         flush_openbench=lambda: _record_async(flush_calls, "flush"),
         save_run_state=lambda is_finished: save_calls.append(is_finished),
         update_dashboard=lambda: _record_async(dashboard_calls, "dashboard"),
+        stop_services=lambda: _record_async(cleanup_calls, "stop_services"),
     )
     artifact_service = _ArtifactServiceStub()
     reporting_service = _ReportingServiceStub()
@@ -166,9 +169,12 @@ async def test_finalize_service_uses_grouped_runtime_actions(tmp_path: Path) -> 
     assert flush_calls == ["flush"]
     assert save_calls == [True]
     assert dashboard_calls == ["dashboard"]
+    # terminal commit の前に service cleanup が走る（task 0052 / Decision 7 の手順 8）。
+    assert cleanup_calls == ["stop_services"]
     assert artifact_service.results_writes == [(tmp_path, {"completed": 1})]
     assert artifact_service.summary_writes == [(tmp_path, {"total": 2}, "final")]
     assert (tmp_path / "completed.flag").exists()
+    assert (tmp_path / "completion_status.json").exists()
     assert reporting_service.logged_results == [results]
 
 

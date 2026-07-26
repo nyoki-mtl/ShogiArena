@@ -70,6 +70,8 @@ class CompletionRuntimeContextService:
         is_dashboard_enabled: bool,
         total_games: int,
         save_run_state: Callable[[], None],
+        consecutive_invalid_timeouts_by_origin: MutableMapping[str, int],
+        invalid_timeouts_by_origin: MutableMapping[str, int],
     ) -> CompletionStateContext:
         return CompletionStateContext(
             completed_game_ids=completed_game_ids,
@@ -81,6 +83,8 @@ class CompletionRuntimeContextService:
             is_dashboard_enabled=is_dashboard_enabled,
             total_games=total_games,
             save_run_state=save_run_state,
+            consecutive_invalid_timeouts_by_origin=consecutive_invalid_timeouts_by_origin,
+            invalid_timeouts_by_origin=invalid_timeouts_by_origin,
         )
 
     @staticmethod

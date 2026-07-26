@@ -218,3 +218,43 @@ def test_build_time_control_limits_defaults_max_wait_when_unset():
     resolved = build_time_control_limits(base, None)
     assert resolved is not None
     assert resolved.max_wait_ms == DEFAULT_MAX_WAIT_MS
+
+
+def test_current_move_budget_ms_is_the_engine_deadline_by_mode() -> None:
+    # Task 0047: the real engine deadline (allowed + margin), NOT the wait timeout with its slack.
+    fixed = GameClock(TimeControlLimits(fixed_time_ms=1000, expiry_margin_ms=100))
+    assert fixed.current_move_budget_ms() == 1100.0
+
+    inc = GameClock(TimeControlLimits(time_ms=5000, increment_ms=1000, expiry_margin_ms=200))
+    inc.initialize_for_game()
+    assert inc.current_move_budget_ms() == 5200.0  # remaining 5000 + margin 200 (increment excluded)
+
+    byo = GameClock(TimeControlLimits(time_ms=3000, byoyomi_ms=1000, expiry_margin_ms=200))
+    byo.initialize_for_game()
+    assert byo.current_move_budget_ms() == 4200.0  # 3000 + byoyomi 1000 + margin 200
+
+    search = GameClock(TimeControlLimits(depth_limit=10))
+    assert search.current_move_budget_ms() is None  # no time deadline
+
+
+def test_update_after_move_captures_window_and_budget_for_increment() -> None:
+    clock = GameClock(TimeControlLimits(time_ms=5000, increment_ms=0, expiry_margin_ms=300))
+    clock.initialize_for_game()
+    clock.start_timer()
+    clock.update_after_move()
+
+    assert clock.last_charged_window is not None
+    start_s, end_s = clock.last_charged_window
+    assert end_s >= start_s
+    assert clock.last_expiry_budget_ms == 5300.0  # allowed(5000) + margin(300)
+
+
+def test_update_after_move_leaves_budget_none_for_fixed() -> None:
+    clock = GameClock(TimeControlLimits(fixed_time_ms=500, expiry_margin_ms=100))
+    clock.initialize_for_game()
+    clock.start_timer()
+    clock.update_after_move()
+
+    # Fixed mode does not set an expiry via update_after_move (timeout is wait-based).
+    assert clock.last_charged_window is not None
+    assert clock.last_expiry_budget_ms is None

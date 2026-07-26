@@ -11,6 +11,7 @@ from typing import Any, Protocol, TypeGuard, runtime_checkable
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool, ResourceRequest
 from shogiarena._core.contexts.instances.application.slot_policy import OptionsPort, estimate_required_slots
 from shogiarena._core.contexts.instances.ports.orchestrator_primitives import make_role_pool_key
+from shogiarena._core.shared.kernel.dispatch_control import GameDispatchStoppedError
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
 from .config_builders import build_usi_options
@@ -287,6 +288,18 @@ async def await_instance_resources(
     """Wait until all required resources are available, reserving them atomically."""
 
     owner = orchestrator
+
+    def _abort_if_stopped() -> None:
+        """停止要求が立っていたら resource を取らずに打ち切る（task 0052 / review M4）。
+
+        acquire を先に試すと、停止直後に resource が空いたときだけ新しい局が始まってしまう。
+        SPRT では、その局が decision 確定後の後着標本になって検定結果を動かす。
+        異常ではないので、fail-fast が掴まないよう専用の型で表す。
+        """
+        if owner._stop_event.is_set():
+            raise GameDispatchStoppedError(f"Stop requested before acquiring instance resources (game {game_id})")
+
+    _abort_if_stopped()
     resolved_poll = poll_interval if poll_interval is not None else (owner._resource_poll_interval or 0.1)
     resolved_max = max_interval if max_interval is not None else (owner._resource_poll_max_interval or 1.0)
     if resolved_poll <= 0 or resolved_max <= 0:
@@ -321,12 +334,13 @@ async def await_instance_resources(
 
     delay = resolved_poll
     while True:
+        # acquire より **先** に停止を確認する。順序が逆だと、待機中に停止が要求され
+        # 同時に resource が空いた場合に、その局だけが開始されてしまう。
+        _abort_if_stopped()
+
         acquired = pool.try_acquire_resources(requirements)
         if acquired:
             return
-
-        if owner._stop_event.is_set():
-            raise RuntimeError(f"Stop requested while waiting for instance resources (game {game_id})")
 
         await asyncio.sleep(delay)
         delay = min(delay * 1.5, resolved_max)

@@ -109,6 +109,8 @@ class TournamentSummaryRuntimeContextService:
                 sprt_service=dependencies.sprt_service,
                 is_openbench_strict_mode=self.is_openbench_strict_mode(dependencies.openbench_client),
                 openbench_client=dependencies.openbench_client,
+                watchdog=dependencies.watchdog,
+                stop_controller=dependencies.stop_controller,
             ),
             actions=actions,
         )

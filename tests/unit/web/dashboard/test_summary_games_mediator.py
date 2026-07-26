@@ -99,3 +99,24 @@ def test_publish_games_snapshot_ignores_unsupported_event_type(
     assert not published
     assert state.get_games_snapshot() is None
     assert "Ignoring unsupported games snapshot event_type" in caplog.text
+
+
+def test_terminal_summary_bypasses_publish_coalescing(tmp_path: Path) -> None:
+    mediator, published, state = _build_mediator(tmp_path)
+
+    mediator.publish_summary_update(
+        {"games": {"completed": 7, "total": 8, "cancelled": 0}},
+        source="tournament",
+    )
+    mediator.publish_summary_update(
+        {"games": {"completed": 8, "total": 8, "cancelled": 0}},
+        source="tournament",
+    )
+    mediator.publish_summary_update({"tournament_ended": True}, source="tournament")
+
+    assert len(published) == 2
+    topic, terminal = published[-1]
+    assert topic == "live.summary.snapshot.tournament"
+    assert terminal["games"] == {"completed": 8, "total": 8, "cancelled": 0}
+    assert terminal["tournament_ended"] is True
+    assert state.get_summary_snapshot("tournament") == terminal

@@ -16,6 +16,19 @@ InfoHandler = Callable[[Any], Awaitable[None] | None]
 
 
 @runtime_checkable
+class EngineLifecycleEventPort(Protocol):
+    """``GameRunner`` がバッジ更新に必要とする engine lifecycle event の最小契約。
+
+    platform の ``EngineLifecycleEvent`` を構造的に満たす。match context が platform 型を
+    import しないための境界 Protocol。
+    """
+
+    name: str
+    state: str | None
+    monotonic_ns: int
+
+
+@runtime_checkable
 class GameEnginePort(Protocol):
     """Minimal interface required by ``GameRunner`` for engine participants."""
 
@@ -69,6 +82,11 @@ class GameEnginePort(Protocol):
     def register_io_log_handler(
         self,
         handler: Callable[[UsiIoEvent], Awaitable[None] | None],
+    ) -> Callable[[], None]: ...
+
+    def register_lifecycle_handler(
+        self,
+        handler: Callable[[EngineLifecycleEventPort], None],
     ) -> Callable[[], None]: ...
 
     async def start_ponder(

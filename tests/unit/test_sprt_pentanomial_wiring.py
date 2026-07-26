@@ -124,3 +124,35 @@ def test_update_sprt_state_fails_fast_on_non_decisive_results(result: GameResult
         service.update_sprt_state(_context(sprt), _spec(black="tested", white="base", round_num=0), result=result)
 
     assert sprt.games_played == 0
+
+
+@pytest.mark.parametrize("origin", ["orchestrator_stall", "unknown", "transport_timeout"])
+def test_update_sprt_state_skips_invalidated_timeout_error(origin: str) -> None:
+    # An ERROR carrying an invalid timeout origin is an orchestrator-stall game (task 0047): it must
+    # be excluded from the SPRT sample WITHOUT aborting the run (no ValueError).
+    sprt = Sprt(elo0=0.0, elo1=5.0)
+    service = TournamentSessionCompletionService()
+    service.update_sprt_state(
+        _context(sprt),
+        _spec(black="tested", white="base", round_num=0),
+        result=GameResult.ERROR,
+        invalid_timeout_origin=origin,
+    )
+
+    assert sprt.games_played == 0
+
+
+def test_update_sprt_state_still_fails_fast_on_error_with_non_invalid_origin() -> None:
+    # Only invalid origins skip. An engine_deadline (valid) origin or no origin still fails fast, so a
+    # genuine crash-ERROR is never silently swallowed.
+    sprt = Sprt(elo0=0.0, elo1=5.0)
+    service = TournamentSessionCompletionService()
+    with pytest.raises(ValueError, match="non-decisive"):
+        service.update_sprt_state(
+            _context(sprt),
+            _spec(black="tested", white="base", round_num=0),
+            result=GameResult.ERROR,
+            invalid_timeout_origin="engine_deadline",
+        )
+
+    assert sprt.games_played == 0

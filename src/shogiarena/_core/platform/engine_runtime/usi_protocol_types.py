@@ -304,6 +304,10 @@ class UsiThinkResult:
         self.ponder: Move | None = None
         self.pvs: list[UsiThinkPV] = []
         self.info_strings: tuple[str, ...] = ()
+        # timeout attribution 用の観測時刻（task 0052）。engine の出力行を読んだ直後に採った
+        # monotonic 時刻で、**実到着時刻の上界** として扱う。採れない実装では ``None`` のまま。
+        self.observed_at_s: float | None = None
+        self.observation_basis: str | None = None
 
     def get_last_pv(self, multipv_index: int = 1) -> UsiThinkPV | None:
         return find_last_pv(self.pvs, multipv_index=multipv_index)
@@ -391,6 +395,19 @@ class AsyncUsiProcessBridgePort(Protocol):
     def receive_lines(self) -> AsyncIterator[str]: ...
 
     def is_running(self) -> bool: ...
+
+
+@runtime_checkable
+class LineReceiptObservationPort(Protocol):
+    """行の受信時刻を提供できる bridge の追加 capability（task 0052）。
+
+    実装しない bridge や third-party port では観測が得られないため、timeout attribution は
+    capability absence として ``unknown`` へ倒す（正常な勝敗へは倒さない）。
+    """
+
+    def last_line_received_at_s(self) -> float | None: ...
+
+    def observation_basis(self) -> str: ...
 
 
 @dataclass(slots=True, frozen=True)

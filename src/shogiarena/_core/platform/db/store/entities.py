@@ -115,8 +115,33 @@ class GameMove(Base):
         )
 
 
+class GameTimeoutAttribution(Base):
+    """時間切れ判定の由来（task 0049）。
+
+    `game.metadata_attributes_json` の blob にも同じ値が入るが、run 横断で集計するための
+    正規化した投影を持つ。additive table なので、この table を持たない旧 DB でも
+    「origin 情報なし」に degrade するだけで読み書きできる。
+    """
+
+    __tablename__ = "game_timeout_attribution"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    game_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("game.id", onupdate="CASCADE", ondelete="CASCADE"),
+        nullable=False,
+    )
+    origin: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    game: Mapped[Game] = relationship("Game")
+
+    def __repr__(self) -> str:
+        return f"GameTimeoutAttribution(id={self.id}, game_id={self.game_id}, origin={self.origin})"
+
+
 Index("game_name_index", Game.game_name, unique=True)
 Index("game_id_index", GameMove.game_id)
+Index("game_timeout_attribution_game_idx", GameTimeoutAttribution.game_id, unique=True)
 
 
 class EngineArtifact(Base):
@@ -234,6 +259,7 @@ __all__ = [
     "Game",
     "GameInstanceParticipation",
     "GameMove",
+    "GameTimeoutAttribution",
     "ModelT",
     "Player",
     "InstanceSpec",

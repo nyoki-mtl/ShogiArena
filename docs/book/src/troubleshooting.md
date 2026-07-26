@@ -208,6 +208,72 @@ shogiarena run tournament tournament.yaml --dry-run
    shogiarena run mate myengine.yaml startpos --ply-limit 5
    ```
 
+#### `completion_status.json` の読み方
+
+run の終了状態は `status` と `termination_reason` の組で読みます。
+
+`status=failed` は「この run の結果を完了した測定として扱えない」という意味で、異常終了とは限りません。
+
+| `termination_reason` | 何が起きたか | 対処 |
+| --- | --- | --- |
+| `schedule-complete` | 予定を消化して正常終了 | 対処不要 |
+| `sprt-finished` | SPRT が結論へ到達して早期終了 | 対処不要。`not_played` は予定との差 |
+| `cancelled` | 利用者が停止した | 故障ではない。resume で再開できる |
+| `timeout-burst` | 停滞起因の時間切れが閾値に達した | 下の項目を参照 |
+| `timeout-attribution-unknown` | 原因を断定できない時間切れが閾値に達した | 下の項目を参照 |
+| `transport-timeout` | 通信・プロトコル待ちの失敗が閾値に達した | エンジンの応答性とリモート接続を確認 |
+| `incomplete` | 正常終了の証拠がないまま予定が残っている | 実行ログで中断の原因を確認 |
+| `runtime-error` | 実行中のエラーで終了した | 実行ログを確認 |
+| `finalization-error` | 最終処理に失敗した | 実行ログを確認。結果は再集計が必要 |
+| `cleanup-error` | 後始末に失敗した | プロセスやポートの残留を確認 |
+
+`is_provisional` が `true` の場合は、中断された run で後始末の結果を反映できないまま
+暫定の status が残っています。`status` と `termination_reason` はそのまま読んで構いません。
+`cleanup_error` があれば、そこに後始末の失敗理由が入っています。
+プロセスやポートが残っていないかを確認してください。
+
+`completion_status.json` が **存在しない** 場合は、`manifest.json` の `shogiarena_version` を確認してください。
+
+- 1.0.x の run：この artifact はそもそも出力されません。欠落は異常ではありません。
+- 1.1.0 以降、または version が読めない run：最終処理に到達する前に中断された可能性があります。
+
+#### run が `timeout-burst` / `timeout-attribution-unknown` で停止する
+
+**原因**：無効と判定された時間切れが由来ごとの閾値に達したため、新規対局の投入を止めています。
+一度の停滞は並行中の全対局を同時に無効化しうるので、そのまま続けると 0 手の無効局が量産されます。
+
+`timeout-attribution-unknown` は「ShogiArena 側の停滞と断定できた」わけではなく、
+**エンジン起因か停滞起因かを区別できない時間切れが増えた**という意味です。
+
+**解決**：
+1. 停滞の規模と内訳を確認
+   ```bash
+   cat /path/to/run/completion_status.json
+   ```
+   `watchdog.max_loop_lag_ms` が大きいほど、ホスト側の負荷や I/O 待ちが疑われます。
+   `timeouts_by_origin` に由来別の件数が入っています。
+   `watchdog.is_coverage_complete` が `false` なら、監視記録が溢れており判定材料自体が不足しています。
+
+2. 並列数を下げる（`tournament.num_parallel`）か、dashboard を無効にして負荷を減らす
+
+3. ホスト側の要因（他プロセスの負荷、スリープ・サスペンド、ウイルス対策のスキャン）を確認
+
+停止した run は完了済みの対局を保持しているので、resume で続きから再開できます。
+
+#### 対局が `ERROR` として記録される
+
+**原因**：エンジンの起動失敗やクラッシュのほか、engine 起因と断定できない時間切れも `ERROR`（無効局）として記録されます。
+無効局はレーティングと SPRT の標本から除外されるため、対局数は増えても検定は進みません。
+
+**解決**：`completion_status.json` の `timeouts_by_origin` で内訳を確認します。
+
+- `orchestrator_stall` が計上されていれば停滞起因なので、上の項目と同じ対処を行います。
+- `unknown` が計上されていれば原因を確定できていません。負荷を下げるか、監視記録の不足（`watchdog.is_coverage_complete`）を確認します。
+- `transport_timeout` はプロトコル待ちの失敗です。リモート実行の接続とエンジンの応答性を確認します。
+- いずれの計上もなければエンジン側の問題なので、transcripts とエンジンのログを確認してください。
+
+由来の意味は[トーナメント](user-guide/tournaments.md)を参照してください。
+
 #### 対局数が想定より少ない
 
 **原因**：`games_per_pair` の設定が小さいか、SPRT が早期停止しています。

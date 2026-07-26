@@ -1,4 +1,5 @@
 import { peekWorkerSnapshotRecord } from '@/modules/live/state/updates';
+import type { LiveCardState } from '@/modules/live/types';
 import type { LiveUpdatesContext } from '@/modules/live/types/updates';
 import { recordLiveDiagnosticsMetric } from '@/modules/live/utils/liveNamespace/metrics';
 import { getResumeCoordinator, type ResumeToken } from '@/modules/shared/services/resume-coordinator';
@@ -35,6 +36,11 @@ type ResumeSession = {
 
 const WORKER_SNAPSHOT_BOOTSTRAP_GRACE_MS = 800;
 const SUMMARY_TOPIC_PREFIX = 'live.summary.snapshot.';
+type EngineLogCardState = Pick<LiveCardState, 'engineLogGameKey' | 'engineLogPreference'>;
+
+function isEngineLogCardState(value: unknown): value is EngineLogCardState {
+    return typeof value === 'object' && value !== null;
+}
 
 function resolveSummaryTopic(runtimeMode: string | null | undefined): string {
     const normalized = (runtimeMode ?? 'tournament').toLowerCase();
@@ -219,6 +225,7 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
     let socket: WebSocket | null = null;
     let wsDisconnected = false;
     let closedByUser = false;
+    let terminalShutdownExpected = false;
     // Track whether we've ever received an assignment snapshot (i.e., initial bootstrap is complete).
     // Used to skip tab resume logic during initial load.
     let hasReceivedInitialAssignment = false;
@@ -372,6 +379,25 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
             engineLogTopicCounts.delete(topic);
         } else {
             engineLogTopicCounts.set(topic, current - 1);
+        }
+    }
+
+    function rebuildEngineLogTopicsFromCards(): void {
+        engineLogTopicCounts.clear();
+        const cards = Array.isArray(context.state?.cards) ? context.state.cards : [];
+        for (const card of cards) {
+            if (!isEngineLogCardState(card)) {
+                continue;
+            }
+            const gid = typeof card.engineLogGameKey === 'string' ? card.engineLogGameKey.trim() : '';
+            if (!gid) {
+                continue;
+            }
+            for (const role of ['black', 'white'] as const) {
+                if (card.engineLogPreference?.[role] === true) {
+                    addEngineLogTopic(buildEngineLogDiffTopic(gid, role));
+                }
+            }
         }
     }
 
@@ -715,6 +741,8 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
             reconnectTimer = null;
         }
 
+        terminalShutdownExpected = false;
+        rebuildEngineLogTopicsFromCards();
         if (!removeVisibilityListener) {
             installVisibilityListener();
         }
@@ -890,6 +918,9 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
                     const payload = normalizeSummaryPayload(parsed.payload);
                     const afterNormalize = getNow();
                     clearPendingTopic(pendingSnapshotTopics, topic);
+                    if (payload.tournament_ended === true) {
+                        terminalShutdownExpected = true;
+                    }
                     onSummaryUpdate(payload);
                     const afterApply = getNow();
                     recordLiveDiagnosticsMetric('live.ws.summary_snapshot', {
@@ -962,6 +993,10 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
         };
 
         socket.onerror = (err: Event | null) => {
+            if (terminalShutdownExpected) {
+                stop('user');
+                return;
+            }
             recordConnectFailure();
             handleDisconnected('error');
             notifyDashboardServerStopped();
@@ -984,6 +1019,10 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
         };
 
         socket.onclose = () => {
+            if (terminalShutdownExpected) {
+                stop('user');
+                return;
+            }
             recordConnectFailure();
             handleDisconnected('closed');
             close('system');

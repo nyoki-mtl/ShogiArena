@@ -66,6 +66,9 @@ from shogiarena._core.contexts.game_session.application.sprt_service import (
     SprtResult,
     validate_pentanomial_preconditions,
 )
+from shogiarena._core.contexts.game_session.application.summary.finalize_service import (
+    build_watchdog_payload,
+)
 from shogiarena._core.contexts.game_session.application.summary.results_service import TournamentSummaryResultsService
 from shogiarena._core.contexts.game_session.application.summary.runtime_context import (
     SummaryRuntimeActionRefs,
@@ -78,6 +81,7 @@ from shogiarena._core.contexts.game_session.application.summary.runtime_context_
     TournamentSummaryRuntimeContextService,
 )
 from shogiarena._core.contexts.game_session.application.summary.session_service import TournamentSummaryService
+from shogiarena._core.contexts.game_session.domain.run_health import RunTerminationReason
 from shogiarena._core.contexts.game_session.domain.summary_models import TournamentResults
 from shogiarena._core.contexts.game_session.ports.completion_runtime import CompletionRuntimeContext
 from shogiarena._core.contexts.game_session.ports.dashboard_lifecycle_factory import (
@@ -171,6 +175,7 @@ from shogiarena._core.shared.kernel.session_hooks import (
     SessionStopController,
 )
 from shogiarena._core.shared.kernel.snapshots import EngineInfoSnapshots, EngineOptionsSnapshots
+from shogiarena._core.shared.kernel.timeout_breaker import resolve_breaker_stop_reason
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +268,9 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
         self._state_store = TournamentSessionStateStore()
         self._summary_service = TournamentSummaryService()
         self._summary_results_service = TournamentSummaryResultsService()
+        # 中断経路の 2 段 commit 用（task 0052）。cleanup 前に確定した集計と watchdog を保持し、
+        # 昇格時に読み直さない。
+        self._interrupted_run_snapshot: tuple[TournamentResults, JsonObject | None] | None = None
         self._summary_runtime_context_service = TournamentSummaryRuntimeContextService()
         self._completion_openbench_context_service = CompletionOpenBenchContextService()
         self._completion_runtime_context_service = CompletionRuntimeContextService()
@@ -407,6 +415,10 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             is_dashboard_enabled=self._dashboard_enabled,
             total_games=int(self._state.original_total_games or len(self._state.game_schedule)),
             save_run_state_fn=self._save_run_state,
+            # run-scoped な counter を渡す。context は局ごとに作り直されるので、
+            # ここで runner state の mapping を共有しないと breaker が働かない（task 0052）。
+            consecutive_invalid_timeouts_by_origin=self._state.consecutive_invalid_timeouts_by_origin,
+            invalid_timeouts_by_origin=self._state.invalid_timeouts_by_origin,
             openbench_client=self._openbench.client,
             sync_after_game_fn=lambda: self._openbench.sync_after_game(
                 db_service=self._state.db_service,
@@ -458,13 +470,15 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
         """Run tournament orchestration with support for dashboard rescheduling."""
         if not isinstance(self, SessionRunRuntimePort):
             raise TypeError("TournamentRunner does not satisfy session run runtime contract")
-        result = await self._run_service.run(
-            self,
-            execution_service=self._execution_service,
-            run_loop_service=self._run_loop_service,
-            result_builder=self._result_builder,
-            progress_reporter=progress_reporter,
-        )
+        # run は base の実装を上書きするので、watchdog の起動もここで行う必要がある（task 0047）。
+        async with self.runtime_watchdog_session():
+            result = await self._run_service.run(
+                self,
+                execution_service=self._execution_service,
+                run_loop_service=self._run_loop_service,
+                result_builder=self._result_builder,
+                progress_reporter=progress_reporter,
+            )
         return result
 
     async def calculate_results(self) -> TournamentResults:
@@ -478,6 +492,53 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
     async def finalize_tournament(self, results: TournamentResults) -> None:
         runtime: TournamentSummaryRuntimeContext = self._build_summary_runtime_context()
         await self._summary_service.finalize_tournament(runtime, results)
+
+    def write_interrupted_run_health(
+        self,
+        reason: RunTerminationReason,
+        *,
+        is_provisional: bool = False,
+        cleanup_error: str | None = None,
+    ) -> None:
+        """finalize へ到達しない終了でも terminal status を残す（task 0052）。
+
+        cancellation や runtime error では集計を作れないため、判明している件数だけの
+        最小 artifact を best effort で書く。``completed.flag`` は作らない。
+
+        集計と watchdog は **最初の呼び出し（cleanup 前）で確定して保持する**。
+        cleanup 後は DB も watchdog も閉じているため、昇格時に読み直すと
+        暫定 status より内容が劣化してしまう。
+        """
+        runtime = self._build_summary_runtime_context()
+        if self._interrupted_run_snapshot is None:
+            self._interrupted_run_snapshot = (
+                self._collect_interrupted_results(runtime),
+                build_watchdog_payload(self._watchdog),
+            )
+        results, watchdog = self._interrupted_run_snapshot
+        self._summary_service.write_interrupted_status(
+            runtime,
+            reason,
+            results=results,
+            watchdog=watchdog,
+            is_provisional=is_provisional,
+            cleanup_error=cleanup_error,
+        )
+
+    def _collect_interrupted_results(self, runtime: TournamentSummaryRuntimeContext) -> TournamentResults:
+        try:
+            return self._summary_results_service.calculate_results(runtime)
+        except Exception as exc:  # noqa: BLE001 - best effort。中断理由を集計失敗で隠さない
+            # service が既に閉じている中断経路では DB を読めない。判明している件数だけで確定する。
+            logger.warning("Falling back to counter-only results for the interrupted run status: %s", exc)
+            return TournamentResults(
+                engine_stats={},
+                pair_results={},
+                completed_games=[],
+                total_games=int(self._state.original_total_games or len(self._state.game_schedule)),
+                completed_games_count=len(self._state.completed_game_ids),
+                cancelled_games_count=len(self._state.cancelled_game_ids),
+            )
 
     # ======================================================================
     # Runtime, context, and setup logic
@@ -563,6 +624,8 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             record_writer=self._record_writer,
             sprt_service=self._state.sprt,
             openbench_client=self._openbench.client,
+            watchdog=self._watchdog,
+            stop_controller=self.stop_controller,
         )
         actions = SummaryRuntimeActionRefs(
             engine_instance_defaults=self._engine_instance_defaults,
@@ -578,6 +641,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             ),
             save_run_state=self._save_run_state,
             update_dashboard=self._update_dashboard,
+            stop_services=self.stop_services,
         )
         return self._summary_runtime_context_service.build_runtime_context(
             request=request,
@@ -588,12 +652,14 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
 
     async def _stop_additional_services(self) -> None:
         cancellation: asyncio.CancelledError | None = None
+        cleanup_error: Exception | None = None
         try:
             await self._openbench.stop()
         except asyncio.CancelledError as exc:
             cancellation = exc
         except (OSError, RuntimeError, ValueError) as exc:
             logger.warning("Failed to stop OpenBench service: %s", exc, exc_info=True)
+            cleanup_error = exc
 
         db_service = self._state.db_service
         if db_service is not None:
@@ -601,6 +667,8 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
                 db_service.close()
             except (OSError, RuntimeError, ValueError) as exc:
                 logger.warning("Failed to close tournament DB service: %s", exc, exc_info=True)
+                if cleanup_error is None:
+                    cleanup_error = exc
             finally:
                 self._state.db_service = None
 
@@ -610,11 +678,15 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
                 record_writer.close()
             except (OSError, RuntimeError, ValueError) as exc:
                 logger.warning("Failed to close tournament record writer: %s", exc, exc_info=True)
+                if cleanup_error is None:
+                    cleanup_error = exc
             finally:
                 self._record_writer = None
 
         if cancellation is not None:
             raise cancellation
+        if cleanup_error is not None:
+            raise cleanup_error
 
     async def init_services(self) -> None:
         """Initialize database and rating services."""
@@ -656,12 +728,18 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
                     self._state.sprt_pair = (str(self.config.engines[0].name), str(self.config.engines[1].name))
                 else:
                     self._state.sprt_pair = None
-            await self._openbench.init(stop_controller=self.stop_controller)
+            # instance ではなく provider を渡す。run loop は pause のたびに controller を
+            # 差し替えるため、長寿命の heartbeat が起動時の instance を握ると、差し替え後の
+            # 停止要求が死んだ controller に立つ（task 0052 / review 第7次 H1）。
+            await self._openbench.init(stop_controller_provider=lambda: self.stop_controller)
 
             # Resume only after every stateful dependency exists.  Restoring earlier is unsafe:
             # SPRT initialization would overwrite the restored snapshot and OpenBench would not
             # yet have a client to receive its snapshot.
             await self._try_setup_tournament()
+
+            # 復元した停止判断を dispatch 前に効かせる（task 0052 / review H1）。
+            self._reapply_restored_stop_decisions()
 
             # Rebuild derived services from the database after resume has established the
             # authoritative completed-game set.
@@ -674,12 +752,57 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
                     logger.debug("Restored ratings from %d completed games", restored)
             self._backfill_records_output()
         except asyncio.CancelledError:
-            await self._stop_additional_services()
+            await self._stop_additional_services_preserving_primary()
             raise
         except Exception:
-            await self._stop_additional_services()
+            await self._stop_additional_services_preserving_primary()
             raise
         logger.debug("Services initialized (DB/Rating/SPRT)")
+
+    async def _stop_additional_services_preserving_primary(self) -> None:
+        """Initialization failure を保ったまま追加 service の cleanup を試みる。"""
+
+        try:
+            await self._stop_additional_services()
+        except BaseException as exc:  # noqa: BLE001 - initialization failure を primary に保つ
+            logger.error(
+                "Additional service cleanup failed while handling an initialization error: %s",
+                exc,
+                exc_info=True,
+            )
+
+    def _reapply_restored_stop_decisions(self) -> None:
+        """resume で復元した停止判断を、最初の局を投入する前に再評価する（review H1）。
+
+        停止判断は run 中に「局の完了」を契機として下される。resume 直後にはその契機が無いため、
+        再評価しないと **既に停止すべき run が再び走り出す**。
+
+        SPRT では決着済みの run が数局進み、breaker では次の正常局が先に完了して連続数が消え、
+        安全停止そのものを回避できてしまう。どちらも「無駄が出る」では済まない。
+        """
+        sprt = self._state.sprt
+        if sprt is not None and self._state.sprt_pair is not None:
+            is_latched = bool(getattr(sprt, "is_decision_latched", False))
+            has_decision = sprt.is_finished() and sprt.games_played >= self._state.sprt_min_games
+            if is_latched or has_decision:
+                sprt.latch_decision()
+                self.stop_controller.request_stop(reason="sprt-finished")
+                logger.info(
+                    "Resumed a run whose SPRT already reached a decision (games=%d); not dispatching new games",
+                    sprt.games_played,
+                )
+
+        breaker_reason = resolve_breaker_stop_reason(
+            totals=self._state.invalid_timeouts_by_origin,
+            consecutive=self._state.consecutive_invalid_timeouts_by_origin,
+            completed=len(self._state.completed_game_ids),
+        )
+        if breaker_reason is not None:
+            self.stop_controller.request_stop(reason=breaker_reason)
+            logger.error(
+                "Resumed a run whose timeout breaker had already tripped (%s); not dispatching new games",
+                breaker_reason,
+            )
 
     def _create_record_writer(self) -> RecordBinaryWriter | None:
         config = self.config.records_output
@@ -916,6 +1039,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
                 "state.json",
                 "schedule.json",
                 "completed.flag",
+                "completion_status.json",
                 "manifest.json",
             ],
             dirs=["spsa", "html", "static", "dashboard", "inputs", "results", "failures", "logs", "records"],

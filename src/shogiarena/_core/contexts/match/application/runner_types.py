@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, NamedTuple, Protocol, TypedDict, runtime_checkable
 
 from rsshogi.core import Board, Move
@@ -11,6 +11,7 @@ from shogiarena._core.contexts.match.domain.adjudication import Adjudicator
 from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkResultPort
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.time_control import GameClock
+from shogiarena._core.shared.kernel.timeout_attribution import TimeoutAttributionDecision
 
 
 class RecoveredBestmoveResult(NamedTuple):
@@ -44,6 +45,9 @@ class MoveApplicationRequest:
     ply_count: int
     is_side_that_moved_black: bool
     repetition_occurrences_to_draw: int
+    # timeout attribution 用の ``bestmove`` 観測（task 0052）。実到着時刻の上界。
+    observed_at_s: float | None = None
+    observation_basis: str | None = None
 
 
 @dataclass(slots=True)
@@ -64,6 +68,10 @@ class MoveApplicationStateRefs:
     current_time_control: GameClock
     black_time_control: GameClock
     white_time_control: GameClock
+    # Per-game out-param for the timeout attribution decision (task 0047, typed in 0052).
+    # scalar origin ではなく decision object を運ぶことで、breaker と persistence が
+    # 同じ根拠から分岐できる。runner は worker 共有なので ``self`` には置かない。
+    timeout_decision_holder: list[TimeoutAttributionDecision | None] = field(default_factory=lambda: [None])
 
 
 @dataclass(slots=True)
@@ -91,6 +99,9 @@ class RecoveredBestmoveRequest:
     player_name: str
     is_black_turn: bool
     repetition_occurrences_to_draw: int
+    # timeout attribution 用の ``bestmove`` 観測（task 0052）。実到着時刻の上界。
+    observed_at_s: float | None = None
+    observation_basis: str | None = None
 
 
 @dataclass(slots=True)
@@ -182,6 +193,59 @@ class _EngineIoPayload(TypedDict, total=False):
     state: str
 
 
+class _EngineIoBatchEntry(TypedDict, total=False):
+    """1 行分の raw USI I/O。batch payload の ``entries`` 要素。"""
+
+    direction: Literal["in", "out", "stderr"]
+    line: str
+    ts: int
+    state: str
+
+
+class _EngineIoBatchPayload(TypedDict, total=False):
+    """時間窓で coalesce した raw engine-I/O の1イベント。
+
+    move/clock/result と異なり lossy telemetry として扱う（0046）。
+    """
+
+    type: Literal["engine_io_batch"]
+    game_id: str | None
+    initial_sfen: str
+    black_name: str
+    white_name: str
+    role: Literal["black", "white"]
+    entries: list[_EngineIoBatchEntry]
+
+
+class _EngineIoGameMeta(NamedTuple):
+    """1 局の engine-I/O batch が共有する不変メタ情報。"""
+
+    initial_sfen: str
+    black_name: str
+    white_name: str
+
+
+class _EngineStatePayload(TypedDict, total=False):
+    """engine lifecycle event 由来のバッジ状態遷移（0046）。
+
+    raw engine-I/O 行から独立した安価な per-transition イベント。engine_status バッジは
+    これを唯一の更新源とし、engine_io は raw ログ配信のみを担う。
+    """
+
+    type: Literal["engine_state"]
+    game_id: str | None
+    initial_sfen: str
+    black_name: str
+    white_name: str
+    role: Literal["black", "white"]
+    state: str
+    ts: int
+    # Optional command line to keep in the engine_status io_tail (e.g. ``usinewgame`` at kickoff).
+    # Raw ``info`` lines are NOT carried here; only lifecycle-significant commands.
+    direction: Literal["in", "out", "stderr"]
+    line: str
+
+
 class _ClockIncrementPayload(TypedDict):
     type: Literal["clock_increment"]
     game_id: str | None
@@ -195,7 +259,13 @@ class _ClockIncrementPayload(TypedDict):
 
 
 _ProgressPayload = (
-    _ClockStartPayload | _MoveProgressPayload | _HandshakePayload | _EngineIoPayload | _ClockIncrementPayload
+    _ClockStartPayload
+    | _MoveProgressPayload
+    | _HandshakePayload
+    | _EngineIoPayload
+    | _EngineIoBatchPayload
+    | _EngineStatePayload
+    | _ClockIncrementPayload
 )
 
 
@@ -232,7 +302,11 @@ __all__ = [
     "RecoveredBestmoveRequest",
     "RecoveredBestmoveStateRefs",
     "_ClockIncrementPayload",
+    "_EngineIoBatchEntry",
+    "_EngineIoBatchPayload",
+    "_EngineIoGameMeta",
     "_EngineIoPayload",
+    "_EngineStatePayload",
     "_GameMoveResult",
     "_MoveProgressPayload",
     "_OptionNameEnginePort",

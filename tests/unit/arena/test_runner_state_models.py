@@ -226,7 +226,10 @@ async def test_tournament_stop_services_closes_db_and_writer_when_openbench_stop
     runner._state = TournamentRunnerState(db_service=cast(Any, db_service))
     runner._record_writer = record_writer
 
-    with caplog.at_level(logging.WARNING):
+    with (
+        caplog.at_level(logging.WARNING),
+        pytest.raises(RuntimeError, match="openbench stop failed"),
+    ):
         await runner._stop_additional_services()
 
     assert db_service.close_calls == 1
@@ -234,6 +237,103 @@ async def test_tournament_stop_services_closes_db_and_writer_when_openbench_stop
     assert runner._state.db_service is None
     assert runner._record_writer is None
     assert "Failed to stop OpenBench service" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_tournament_stop_services_propagates_dashboard_asset_failure_after_additional_cleanup(
+    tmp_path: Path,
+) -> None:
+    """dashboard asset failure でも追加 service cleanup を省略せず、最後に failure を返すこと。"""
+
+    events: list[str] = []
+    runner = object.__new__(TournamentRunner)
+    runner._has_closed_services = False
+
+    async def stop_dashboard_server() -> None:
+        events.append("dashboard-stop")
+
+    def cleanup_dashboard_assets(run_dir: Path) -> None:
+        assert run_dir == tmp_path
+        events.append("dashboard-assets")
+        raise RuntimeError("dashboard asset cleanup failed")
+
+    async def stop_additional_services() -> None:
+        events.append("additional-stop")
+
+    runner.stop_dashboard_server = stop_dashboard_server
+    runner._resolve_dashboard_run_dir = lambda: tmp_path
+    runner.cleanup_dashboard_assets = cleanup_dashboard_assets
+    runner._stop_additional_services = stop_additional_services
+
+    with pytest.raises(RuntimeError, match="dashboard asset cleanup failed"):
+        await runner.stop_services()
+
+    assert events == ["dashboard-stop", "dashboard-assets", "additional-stop"]
+    assert not runner.are_services_closed()
+
+
+@pytest.mark.asyncio
+async def test_tournament_stop_services_continues_cleanup_after_dashboard_shutdown_failure(
+    tmp_path: Path,
+) -> None:
+    """dashboard shutdown timeout でも asset と追加 service の cleanup を試行すること。"""
+
+    events: list[str] = []
+    runner = object.__new__(TournamentRunner)
+    runner._has_closed_services = False
+
+    async def stop_dashboard_server() -> None:
+        events.append("dashboard-stop")
+        raise TimeoutError("dashboard shutdown timed out")
+
+    def cleanup_dashboard_assets(run_dir: Path) -> None:
+        assert run_dir == tmp_path
+        events.append("dashboard-assets")
+
+    async def stop_additional_services() -> None:
+        events.append("additional-stop")
+
+    runner.stop_dashboard_server = stop_dashboard_server
+    runner._resolve_dashboard_run_dir = lambda: tmp_path
+    runner.cleanup_dashboard_assets = cleanup_dashboard_assets
+    runner._stop_additional_services = stop_additional_services
+
+    with pytest.raises(TimeoutError, match="dashboard shutdown timed out"):
+        await runner.stop_services()
+
+    assert events == ["dashboard-stop", "dashboard-assets", "additional-stop"]
+    assert not runner.are_services_closed()
+
+
+@pytest.mark.asyncio
+async def test_tournament_stop_services_preserves_the_first_cleanup_failure(tmp_path: Path) -> None:
+    """複数の cleanup failure が起きても、最初の dashboard shutdown failure を返すこと。"""
+
+    events: list[str] = []
+    runner = object.__new__(TournamentRunner)
+    runner._has_closed_services = False
+
+    async def stop_dashboard_server() -> None:
+        events.append("dashboard-stop")
+        raise TimeoutError("first cleanup failure")
+
+    def cleanup_dashboard_assets(run_dir: Path) -> None:
+        assert run_dir == tmp_path
+        events.append("dashboard-assets")
+        raise RuntimeError("second cleanup failure")
+
+    async def stop_additional_services() -> None:
+        events.append("additional-stop")
+
+    runner.stop_dashboard_server = stop_dashboard_server
+    runner._resolve_dashboard_run_dir = lambda: tmp_path
+    runner.cleanup_dashboard_assets = cleanup_dashboard_assets
+    runner._stop_additional_services = stop_additional_services
+
+    with pytest.raises(TimeoutError, match="first cleanup failure"):
+        await runner.stop_services()
+
+    assert events == ["dashboard-stop", "dashboard-assets", "additional-stop"]
 
 
 @pytest.mark.asyncio
@@ -249,6 +349,7 @@ async def test_tournament_init_services_cleans_db_before_record_writer_on_openbe
 
         async def stop(self) -> None:
             self.stop_calls += 1
+            raise RuntimeError("openbench cleanup failed")
 
     class _DbStub:
         def __init__(self) -> None:

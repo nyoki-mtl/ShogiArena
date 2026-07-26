@@ -24,6 +24,7 @@ from shogiarena._core.shared.kernel.time_control import (
     coerce_time_control_limits,
     limits_to_record_time_spec,
 )
+from shogiarena._core.shared.kernel.timeout_attribution import TimeoutAttributionDecision
 
 from .runner_types import _OptionNameEnginePort, _ReadyStateEnginePort, _starting_ply_number
 
@@ -72,6 +73,10 @@ class GameRunnerRunMixin:
         # Initialize game_result to handle exceptions
         game_result = GameResult.ERROR
         result_progress_emitted = [False]
+        # Per-game out-param for the timeout attribution decision (task 0047); the runner is
+        # worker-shared, so this is local state per ``run_game`` invocation. 前局の decision を
+        # 引き継がないよう、局ごとに新しい holder を作る。
+        timeout_decision_holder: list[TimeoutAttributionDecision | None] = [None]
 
         # Initialize game state with normalized SFEN
         board = Board()
@@ -179,6 +184,7 @@ class GameRunnerRunMixin:
                     game_id=game_id,
                     adjudicator=adjudicator,
                     result_progress_emitted=result_progress_emitted,
+                    timeout_decision_holder=timeout_decision_holder,
                 )
 
             except asyncio.CancelledError:
@@ -211,6 +217,16 @@ class GameRunnerRunMixin:
         # Build encoded TimeControl spec strings for DB/UI
         tc_spec_black_str = limits_to_record_time_spec(black_time_control.limits)
         tc_spec_white_str = limits_to_record_time_spec(white_time_control.limits)
+        record_attributes = {
+            "game_name": game_id,
+            "game_type": "arena",
+            "updated_date": end_time.isoformat(),
+        }
+        # Carry the classified timeout origin so completion can exclude orchestrator-stall timeouts
+        # from rating/SPRT, and later persist it (task 0047). Kept even for valid timeouts (calibration).
+        timeout_decision = timeout_decision_holder[0]
+        if timeout_decision is not None:
+            record_attributes["timeout_origin"] = timeout_decision.origin.value
         record_metadata = rsshogi.record.RecordMetadata(
             game_name=game_id,
             game_type="arena",
@@ -221,11 +237,7 @@ class GameRunnerRunMixin:
             updated_date=end_time.isoformat(),
             black_time_control=rsshogi.record.TimeControl.from_spec(tc_spec_black_str),
             white_time_control=rsshogi.record.TimeControl.from_spec(tc_spec_white_str),
-            attributes={
-                "game_name": game_id,
-                "game_type": "arena",
-                "updated_date": end_time.isoformat(),
-            },
+            attributes=record_attributes,
         )
         logger.debug(f"Game {game_id} completed: {game_result}")
         record = rsshogi.record.Record.from_usi_main_line(

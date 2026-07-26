@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING
 from shogiarena._core.contexts.game_session.application.progress.events import (
     ClockIncrementEvent,
     ClockStartEvent,
+    EngineIoBatchEvent,
     EngineIoEvent,
+    EngineStateEvent,
     GameAssignedEvent,
     HandshakeLogEvent,
     MoveProgressEvent,
@@ -48,7 +50,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ProgressEvent = (
-    MoveProgressEvent | ClockStartEvent | ClockIncrementEvent | GameAssignedEvent | HandshakeLogEvent | EngineIoEvent
+    MoveProgressEvent
+    | ClockStartEvent
+    | ClockIncrementEvent
+    | GameAssignedEvent
+    | HandshakeLogEvent
+    | EngineIoEvent
+    | EngineIoBatchEvent
+    | EngineStateEvent
 )
 
 
@@ -316,6 +325,77 @@ def handle_engine_io(
     return to_ws_moves_diff(progress, snapshot)
 
 
+def handle_engine_state(
+    *,
+    worker_idx: int,
+    current_gen: int,
+    progress: EngineStateEvent,
+    state: ProgressState,
+    game_id_num: int,
+) -> LiveStreamDiffPayload | None:
+    """engine lifecycle 由来の ``engine_state`` で engine_status バッジを更新する（0046）。
+
+    raw I/O 行から独立した per-transition イベントを唯一のバッジ更新源とする。line を持たないため
+    io_tail は変化させず、状態遷移があった時だけ ``engine_status.diff`` を返す。
+    """
+    snapshot = _initialize_snapshot(
+        state,
+        worker_idx=worker_idx,
+        current_gen=current_gen,
+        progress=progress,
+        event_name="engine_state",
+        game_id=game_id_num,
+        default_name="",
+    )
+    if snapshot is None:
+        return None
+    if progress.get("game_id") is not None:
+        snapshot_gid = snapshot.game_id or ""
+        progress_gid = coerce_str(progress.get("game_id")) or ""
+        if snapshot_gid and progress_gid and snapshot_gid != progress_gid:
+            try:
+                snapshot = snapshot_from_progress_event(progress, generation=current_gen, name_default="")
+            except (ValueError, TypeError, RuntimeError) as exc:
+                logger.warning(
+                    "Dropped engine_state missing initial_sfen (worker=%s game_id=%s): %s",
+                    worker_idx,
+                    progress.get("game_id"),
+                    exc,
+                )
+                return None
+            state.worker_snapshots[worker_idx] = snapshot
+    role = progress["role"]
+    normalized_role = _normalized_engine_role(role)
+    previous_state = _engine_state_before_update(snapshot, normalized_role)
+    incoming_state = coerce_str(progress.get("state"))
+    # Only lifecycle-significant commands (e.g. ``usinewgame``) ride along here; raw ``info`` lines do
+    # not, so the io_tail stays small while the card UI keeps its kickoff signal.
+    updated = update_engine_status_model_entry(
+        snapshot,
+        role=role,
+        direction=progress.get("direction"),
+        line=progress.get("line"),
+        state=progress.get("state"),
+        timestamp=coerce_int(progress.get("ts")),
+    )
+    if not updated:
+        return None
+    if not _should_emit_engine_status_diff(
+        snapshot,
+        normalized_role=normalized_role,
+        previous_state=previous_state,
+        incoming_state=incoming_state,
+    ):
+        return None
+    diff_event: EngineIoEvent = {"type": "engine_io", "role": role}
+    game_id_value = coerce_str(progress.get("game_id"))
+    if game_id_value is not None:
+        diff_event["game_id"] = game_id_value
+    if incoming_state is not None:
+        diff_event["state"] = incoming_state
+    return to_ws_moves_diff(diff_event, snapshot)
+
+
 def sync_worker_generation_for_incoming_event(
     *,
     worker_idx: int,
@@ -357,6 +437,7 @@ __all__ = [
     "handle_clock_increment",
     "handle_clock_start",
     "handle_engine_io",
+    "handle_engine_state",
     "handle_game_assigned",
     "handle_handshake_log",
     "handle_move_progress",

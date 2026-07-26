@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TypeAlias
 
 from shogiarena._core.contexts.game_session.adapters.openbench.client import (
     OpenBenchClient,
@@ -37,6 +37,14 @@ class _StopController(Protocol):
     """Minimal protocol for requesting a tournament stop."""
 
     def request_stop(self, *, reason: str) -> None: ...
+
+
+StopControllerProvider: TypeAlias = Callable[[], _StopController]
+"""現在の stop controller を返す。**instance を直接持たない**（task 0052 / review 第7次 H1）。
+
+run loop は pause のたびに controller を差し替える。heartbeat のような長寿命 producer が
+起動時の instance を握ると、差し替え後の停止要求が死んだ controller に立ち、
+実行中の run は止まらない。"""
 
 
 class OpenBenchDelegate:
@@ -64,7 +72,7 @@ class OpenBenchDelegate:
     def client(self) -> OpenBenchClient | None:
         return self._client
 
-    async def init(self, *, stop_controller: _StopController) -> None:
+    async def init(self, *, stop_controller_provider: StopControllerProvider) -> None:
         """Resolve configuration and initialize the OpenBench client."""
         self._heartbeat_error = None
         await self._stop_heartbeat()
@@ -94,7 +102,11 @@ class OpenBenchDelegate:
             self._client = None
             return
         self._client = client
-        self._start_heartbeat(client=client, interval_sec=cfg.heartbeat_interval_sec, stop_controller=stop_controller)
+        self._start_heartbeat(
+            client=client,
+            interval_sec=cfg.heartbeat_interval_sec,
+            stop_controller_provider=stop_controller_provider,
+        )
 
     async def sync_after_game(
         self,
@@ -162,12 +174,14 @@ class OpenBenchDelegate:
         *,
         client: OpenBenchClient,
         interval_sec: float,
-        stop_controller: _StopController,
+        stop_controller_provider: StopControllerProvider,
     ) -> None:
         if self._heartbeat_task is not None:
             self._heartbeat_task.cancel()
         self._heartbeat_task = asyncio.create_task(
-            self._heartbeat_loop(client=client, interval_sec=interval_sec, stop_controller=stop_controller),
+            self._heartbeat_loop(
+                client=client, interval_sec=interval_sec, stop_controller_provider=stop_controller_provider
+            ),
             name="openbench-heartbeat",
         )
 
@@ -185,7 +199,7 @@ class OpenBenchDelegate:
         *,
         client: OpenBenchClient,
         interval_sec: float,
-        stop_controller: _StopController,
+        stop_controller_provider: StopControllerProvider,
     ) -> None:
         try:
             while True:
@@ -198,12 +212,14 @@ class OpenBenchDelegate:
                     if client.is_strict:
                         logger.error("OpenBench heartbeat failed in strict mode: %s", exc)
                         self._heartbeat_error = exc
-                        stop_controller.request_stop(reason="openbench-heartbeat-error")
+                        # 停止のたびに現在の controller を解決する。起動時の instance を
+                        # 握ると、reschedule 後の停止要求が死んだ controller に立つ。
+                        stop_controller_provider().request_stop(reason="openbench-heartbeat-error")
                         return
                     logger.warning("OpenBench heartbeat failed; continuing (strict=false): %s", exc)
                     continue
                 if should_stop:
-                    stop_controller.request_stop(reason="openbench-stop")
+                    stop_controller_provider().request_stop(reason="openbench-stop")
                     return
         except asyncio.CancelledError:
             return

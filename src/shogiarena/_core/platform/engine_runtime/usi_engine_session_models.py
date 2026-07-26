@@ -14,6 +14,7 @@ from rsshogi.core import Move
 from shogiarena._core.contexts.match.ports.usi_think_ports import PonderHitTimings, UsiThinkRequest
 from shogiarena._core.platform.engine_runtime.usi_protocol_types import (
     AsyncUsiProcessBridgePort,
+    LineReceiptObservationPort,
     UsiOption,
     UsiThinkPV,
     UsiThinkResult,
@@ -40,6 +41,9 @@ EngineLifecycleEventName = Literal[
     "think_started",
     "think_finished",
     "process_exited",
+    # Fired on every engine state transition (`_set_state`). Carries the new state and lets the
+    # dashboard badge track all transitions (incl. ponder / mate / timeout) without the raw I/O flood.
+    "state_changed",
 ]
 UsiOptionValidationMode = Literal["strict", "warn", "raw", "allow_unlisted_combo_value"]
 UsiAnalyzeFailurePolicy = Literal["raise", "collect"]
@@ -129,6 +133,19 @@ class AsyncUsiProcess:
         if not self.is_running():
             raise RuntimeError(f"USI process {self.name} is not running; cannot receive output")
         return self._bridge.receive_lines()
+
+    def last_line_received_at_s(self) -> float | None:
+        """bridge が提供する直近行の受信時刻（capability が無ければ ``None``）。"""
+        bridge = self._bridge
+        if isinstance(bridge, LineReceiptObservationPort):
+            return bridge.last_line_received_at_s()
+        return None
+
+    def observation_basis(self) -> str | None:
+        bridge = self._bridge
+        if isinstance(bridge, LineReceiptObservationPort):
+            return bridge.observation_basis()
+        return None
 
 
 @dataclass(slots=True, kw_only=True)

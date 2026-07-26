@@ -152,6 +152,14 @@ class TournamentMutableStatePort(Protocol):
     game_display_order: dict[str, int]
     original_total_games: int
     sprt: SprtServicePort | None
+    # SPRT の検定対象ペアと最小局数。resume 時の replay と停止判断の再評価に必要
+    # （task 0052 / review H1・H2）。
+    sprt_pair: tuple[str, str] | None
+    sprt_min_games: int
+    # timeout breaker の counter（task 0052 / review M3）。resume で復元する必要があるため
+    # state の一部として明示する。
+    invalid_timeouts_by_origin: dict[str, int]
+    consecutive_invalid_timeouts_by_origin: dict[str, int]
 
 
 # ---------------------------------------------------------------------------

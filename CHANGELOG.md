@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-26
+
+### Added
+
+- 時間切れの由来を**証拠**から分類し、engine 起因と断定できないものを無効局として扱うようにした。
+  判定には、その手の締切（GameClock が確定した deadline）、ShogiArena が `bestmove` を最初に
+  観測した時刻、event loop / thread の停滞を常時監視する watchdog の観測範囲を使う。
+  超過分が重なった停滞より大きい場合だけ engine 起因の時間切れ負けとし、停滞だけで超過を
+  説明できてしまう場合や観測範囲が欠けている場合は `unknown` として勝敗を付けない。
+  締切より前に `bestmove` を観測できていた場合だけ `orchestrator_stall` と判定する。
+  無効局は `GameResult.ERROR` として rating と SPRT の標本から除外する。
+  有効化するのは arena / tournament 系のみで、SPSA は従来どおりの扱いを維持する。
+- 無効な時間切れが閾値に達した場合に、新規対局の投入を止めるようにした。
+  由来ごとに独立した閾値を持ち、閾値未満では run を継続して当該局を標本から除くだけにする。
+  1回の停滞は並行中の全対局を同時に無効化しうるため、連続発生には早く反応する。
+- run 終了時に `completion_status.json` を出力するようにした。
+  `clean` / `with-anomalies` / `failed` の判定に加えて `termination_reason` を持ち、
+  SPRT の正常な早期終了（`sprt-finished`）と異常な中断を区別できる。
+  時間切れの由来別内訳と watchdog の停滞計測も含む。
+  `status=failed` は「この run の結果を完了した測定として扱えない」という意味であり、
+  異常終了とは限らない（利用者が停止した run も `failed` になる）。
+  予定したが実施しなかった局数は `not_played` として記録する。
+  中断された run では、後片付けの前に暫定 status を書いてから確定へ昇格させる。
+  暫定のまま残った場合は `is_provisional` が `true` になり、後片付けに失敗した場合は
+  `cleanup_error` を併記する。中断の理由そのものは後片付けの失敗で置き換えない。
+- 時間切れの由来を `game_timeout_attribution` テーブルへ保存するようにした。
+  純追加のテーブルなのでスキーマ版数は据え置きで、このテーブルを持たない既存の DB も
+  引き続き読み書きできる。旧バージョンからも新しい DB を開ける。
+- `EngineLifecycleEventName.state_changed` を追加した。
+  `UsiEngineSession` の lifecycle handler は、process の起動・終了だけでなく engine の
+  state 遷移ごとにも呼ばれるようになる。既存 handler の呼び出し回数が増えるため、
+  handler 内で blocking work を行わないこと。未知の将来 event 名は無視できる実装にすること。
+
+### Changed
+
+- dashboard 有効時のエンジン入出力テレメトリのコストを削減した。
+  エンジン状態のバッジは軽量なライフサイクルイベントで駆動し、生ログは購読者がいる対局にだけ
+  流すようにした。指し手・消費時間・結果の記録は従来どおり欠落しない。
+  24局の controlled A/B（いずれも dashboard 有効、WebSocket 未接続）では、
+  `io.collect_raw_io` を on にした場合の所要時間比が 8.65 倍から 1.146 倍になった。
+  これは headless の demand gate の効果であり、dashboard 無効時との比較ではない。
+  実ブラウザで視聴した場合の比は本 CHANGELOG では主張しない。
+- Live view の既定表示で raw I/O を購読しないようにした。
+  kickoff 表示は lifecycle 由来の `engine_status` だけで成立させ、raw I/O の購読は
+  利用者が明示的に生ログを開いた対局だけに限定する。
+  既定の grid では並列数に関係なく購読数が 0 になる。
+
+### Fixed
+
+- tournament 経路で stall watchdog が起動していなかった問題を修正した。
+  この修正により、時間切れの由来分類が実運用で初めて機能する。
+- SPRT が結論に達した後、実行中だった対局が完了すると結論が取り消されることがあった問題を
+  修正した。停止を決めた時点で標本を締め、それ以降に完了した対局は記録には残すが検定へは
+  加えないようにした。締めた後に完了した局数は SPRT の status に `late_games` として出る。
+  あわせて、停止を要求した後は空きが出ても新しい対局を開始しないようにした。
+- 無効な時間切れの計数が resume で失われ、中断と再開を繰り返すと安全停止の閾値に
+  到達しなくなる問題を修正した。計数は `state.json` へ保存し、保存が無い場合は
+  `game.db` の記録から復元する。
+- resume 時に、DB へ保存済みで `state.json` に未反映の対局を完了順に再生するようにした。
+  SPRT の決着、決着後に完了した対局、安全停止の計数を復元し、再開直後に不要な対局を
+  投入しない。通常の一時停止と run を終了する停止も別の制御状態として扱う。
+- timeout 後に回収した `bestmove` の最初の観測時刻と観測根拠が分類処理まで届かず、
+  engine 起因の時間切れを `unknown` に誤分類できる問題を修正した。
+- finalization または service cleanup が失敗した場合に、正常完了を示す marker が残る問題を
+  修正した。dashboard、OpenBench、DB、棋譜 writer は一つの停止処理が失敗しても残りを停止し、
+  最初の cleanup failure を `cleanup-error` として記録する。`completed.flag` は作成しない。
+- `game_timeout_attribution` が無い DB では、read-only 媒体だけを互換モードで開くようにした。
+  writable DB の lock、I/O error、disk full、破損を table 不在として握り潰さず、
+  旧 DB と新 DB の読み書き互換を保ったまま異常を fail closed にする。
+
 ## [1.0.2] - 2026-07-24
 
 dashboard 無効の長時間 run で event loop が秒単位で停止し、進行中の対局が一斉に時間切れ負けとして
@@ -203,7 +273,9 @@ dashboard 無効の長時間 run で event loop が秒単位で停止し、進�
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.0.2...v1.1.0
+[1.0.2]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.0.0...v1.0.2
 [1.0.0]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.4...v1.0.0
 [0.5.4]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.2...v0.5.3
