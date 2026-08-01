@@ -190,11 +190,11 @@ ci:
 	$(MAKE) architecture-lint-dynamic-strict
 	$(MAKE) architecture-lint-final-strict
 	uv run ty check src/
+	npm run frontend:build
 	uv run pytest
 	npm run frontend:lint
 	npm run frontend:typecheck
 	npm run frontend:test
-	npm run frontend:build
 	uv build
 	$(MAKE) check-distribution-artifacts
 

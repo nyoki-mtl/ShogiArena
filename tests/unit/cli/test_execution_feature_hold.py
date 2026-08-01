@@ -95,8 +95,9 @@ spsa:
 def test_spsa_cli_reports_same_boundary_error_for_all_validation_modes(
     caplog: pytest.LogCaptureFixture,
     mode_args: list[str],
+    tmp_path: Path,
 ) -> None:
-    config_path = Path(".sandbox/configs/run/spsa/halfkp512x2-8-64.yaml")
+    config_path = _write_relative_spsa_config(tmp_path)
     expected = f"Invalid SPSA config: {config_path}: spsa.inflight_factor must be a positive integer"
     caplog.set_level(logging.ERROR, logger="shogiarena.cli")
 

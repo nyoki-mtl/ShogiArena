@@ -22,7 +22,7 @@ from shogiarena._core.shared.kernel.time_control import TimeControlLimits
 
 
 def _engine_config(tmp_path: Path, name: str) -> Path:
-    binary = tmp_path / f"{name}.exe"
+    binary = tmp_path / name
     binary.write_bytes(name.encode())
     config = tmp_path / f"{name}.yaml"
     config.write_text(
