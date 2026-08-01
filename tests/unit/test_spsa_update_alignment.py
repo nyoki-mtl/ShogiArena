@@ -3,7 +3,7 @@ import textwrap
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 import rsshogi
@@ -13,9 +13,11 @@ from shogiarena._core.contexts.game_session.adapters.run_storage import Filesyst
 from shogiarena._core.contexts.game_session.application.orchestration.concurrent_executor import numeric_game_id
 from shogiarena._core.contexts.game_session.ports.session_context import SessionContext
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
+from shogiarena._core.contexts.spsa.adapters import orchestrator_update_flow
 from shogiarena._core.contexts.spsa.adapters.orchestrator import SpsaOrchestrator
 from shogiarena._core.contexts.spsa.application.space_spec import load_spsa_space_spec
 from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.participation_records import GameParticipationRecord
 from shogiarena._core.shared.kernel.session_hooks import GameCompletionEvent, NoopGameLifecycleHooks
 from tests.unit.spsa_config_test_helpers import load_spsa_run_config
 
@@ -110,7 +112,10 @@ def _write_int_space(write, *, initial: int = 10) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_spsa_update_matches_reference_script(tmp_path: Path) -> None:
+async def test_spsa_update_matches_reference_script(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Verify direct plus/minus SPSA update math with a deterministic score."""
 
     def write(rel: str, content: str) -> Path:
@@ -151,8 +156,8 @@ async def test_spsa_update_matches_reference_script(tmp_path: Path) -> None:
           num_parallel: 1
           algorithm:
             name: classic
-            alpha: 0.0
-            gamma: 0.0
+            alpha: 0.602
+            gamma: 0.101
             A:
               mode: absolute
               value: 0.0
@@ -164,10 +169,15 @@ async def test_spsa_update_matches_reference_script(tmp_path: Path) -> None:
     )
 
     cfg = load_spsa_run_config(config_yaml)
+    cfg.run_seed = "00" * 32
     storage = FilesystemRunStorage(tmp_path)
     session = SessionContext.build(storage=storage, num_workers=1, run_id="test")
     orch = SpsaOrchestrator(
-        cfg, session=session, hooks=NoopGameLifecycleHooks(), engine_factory_service=_mock_engine_factory_service
+        cfg,
+        session=session,
+        hooks=NoopGameLifecycleHooks(),
+        engine_factory_service=_mock_engine_factory_service,
+        ledger_runtime=Mock(game_result_kind=Mock(return_value=None)),
     )
     now = datetime.now(UTC).isoformat()
     state = {
@@ -184,22 +194,42 @@ async def test_spsa_update_matches_reference_script(tmp_path: Path) -> None:
     orch.set_work_items([1], params, ["startpos"])
 
     # Make perturbation deterministic and provide scripted match outcomes.
-    orch._make_rng = lambda _idx: _DummyRng()  # type: ignore[assignment]
+    orch._make_rng = lambda **_kwargs: _DummyRng()  # type: ignore[assignment]
     scores: Iterator[float] = iter([0.5])
 
     async def fake_run_game_pair(*_args, **_kwargs):
         return (next(scores), None, None)
 
     orch._run_game_pair = fake_run_game_pair
+    accepted_path = tmp_path / "spsa" / "accepted-best.json"
+
+    def fake_persist_accepted_best(**kwargs: object) -> Path:
+        accepted_path.parent.mkdir(parents=True, exist_ok=True)
+        accepted_path.write_text(
+            json.dumps({"wire_values": kwargs["parameter_wire_values"]}),
+            encoding="utf-8",
+        )
+        return accepted_path
+
+    monkeypatch.setattr(
+        orchestrator_update_flow,
+        "persist_accepted_best",
+        fake_persist_accepted_best,
+    )
 
     await orch._run_one_spsa_update(1)
 
     # Direct pairing converts a pair average of +0.5 into score_sum=+1.0.
     assert pytest.approx(orch._params[0].value, abs=1e-6) == 11.0
+    accepted = json.loads(accepted_path.read_text(encoding="utf-8"))
+    assert accepted["wire_values"] == {"param1": "11"}
 
 
 @pytest.mark.asyncio
-async def test_spsa_int_stochastic_options_are_assigned_once_and_reused(tmp_path: Path) -> None:
+async def test_spsa_int_stochastic_options_are_assigned_once_and_reused(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def write(rel: str, content: str) -> Path:
         path = tmp_path / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -236,8 +266,8 @@ async def test_spsa_int_stochastic_options_are_assigned_once_and_reused(tmp_path
           num_parallel: 1
           algorithm:
             name: classic
-            alpha: 0.0
-            gamma: 0.0
+            alpha: 0.602
+            gamma: 0.101
             A:
               mode: absolute
               value: 0.0
@@ -249,6 +279,7 @@ async def test_spsa_int_stochastic_options_are_assigned_once_and_reused(tmp_path
     )
 
     cfg = load_spsa_run_config(config_yaml)
+    cfg.run_seed = "00" * 32
     storage = FilesystemRunStorage(tmp_path)
     session = SessionContext.build(storage=storage, num_workers=1, run_id="test")
     orch = SpsaOrchestrator(
@@ -256,6 +287,7 @@ async def test_spsa_int_stochastic_options_are_assigned_once_and_reused(tmp_path
         session=session,
         hooks=NoopGameLifecycleHooks(),
         engine_factory_service=_mock_engine_factory_service,
+        ledger_runtime=Mock(game_result_kind=Mock(return_value=None)),
     )
     now = datetime.now(UTC).isoformat()
     state = {
@@ -270,7 +302,7 @@ async def test_spsa_int_stochastic_options_are_assigned_once_and_reused(tmp_path
 
     params = load_spsa_space_spec(space_path).to_param_entries()
     orch.set_work_items([1], params, ["startpos"])
-    orch._make_rng = lambda _idx: _SharedStochasticRng()  # type: ignore[assignment]
+    orch._make_rng = lambda **_kwargs: _SharedStochasticRng()  # type: ignore[assignment]
     captured_options: list[tuple[dict[str, object], dict[str, object]]] = []
 
     async def fake_run_game_pair(*_args, **kwargs):
@@ -278,6 +310,11 @@ async def test_spsa_int_stochastic_options_are_assigned_once_and_reused(tmp_path
         return (0.0, None, None)
 
     orch._run_game_pair = fake_run_game_pair
+    monkeypatch.setattr(
+        orchestrator_update_flow,
+        "persist_accepted_best",
+        lambda **_kwargs: tmp_path / "spsa" / "accepted-best.json",
+    )
 
     await orch._run_one_spsa_update(1)
 
@@ -336,7 +373,13 @@ async def test_spsa_completion_reports_assigned_worker(tmp_path: Path) -> None:
     storage = FilesystemRunStorage(tmp_path)
     session = SessionContext.build(storage=storage, num_workers=2, run_id="test")
     hooks = _CapturingHooks()
-    orch = SpsaOrchestrator(cfg, session=session, hooks=hooks, engine_factory_service=_mock_engine_factory_service)
+    orch = SpsaOrchestrator(
+        cfg,
+        session=session,
+        hooks=hooks,
+        engine_factory_service=_mock_engine_factory_service,
+        ledger_runtime=Mock(game_result_kind=Mock(return_value=None)),
+    )
     params = load_spsa_space_spec(space_path).to_param_entries()
     orch.set_work_items([1], params, ["startpos"])
 
@@ -360,6 +403,14 @@ async def test_spsa_completion_reports_assigned_worker(tmp_path: Path) -> None:
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(_gpm, "_execute_game_service", fake_execute_game)
+    monkeypatch.setattr(
+        _gpm,
+        "extract_participation",
+        lambda _record: (
+            GameParticipationRecord(role="black", engine_name="black"),
+            GameParticipationRecord(role="white", engine_name="white"),
+        ),
+    )
 
     await orch._run_game(
         start_sfen="startpos",
@@ -370,6 +421,7 @@ async def test_spsa_completion_reports_assigned_worker(tmp_path: Path) -> None:
         update_idx=1,
         phase="plus",
         preassigned_game_id=None,
+        pair_id="spsa-u000001-p000000",
     )
     monkeypatch.undo()
 
@@ -424,7 +476,13 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
     storage = FilesystemRunStorage(tmp_path)
     session = SessionContext.build(storage=storage, num_workers=2, run_id="test")
     hooks = _CapturingHooks()
-    orch = SpsaOrchestrator(cfg, session=session, hooks=hooks, engine_factory_service=_mock_engine_factory_service)
+    orch = SpsaOrchestrator(
+        cfg,
+        session=session,
+        hooks=hooks,
+        engine_factory_service=_mock_engine_factory_service,
+        ledger_runtime=Mock(game_result_kind=Mock(return_value=None)),
+    )
     params = load_spsa_space_spec(space_path).to_param_entries()
     orch.set_work_items([1], params, ["startpos"])
 
@@ -452,6 +510,14 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(_gpm, "_execute_game_service", fake_execute_game)
+    monkeypatch.setattr(
+        _gpm,
+        "extract_participation",
+        lambda _record: (
+            GameParticipationRecord(role="black", engine_name="black"),
+            GameParticipationRecord(role="white", engine_name="white"),
+        ),
+    )
 
     await orch._run_game(
         start_sfen="startpos",
@@ -462,6 +528,7 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
         update_idx=1,
         phase="plus",
         preassigned_game_id="test-game",
+        pair_id="spsa-u000001-p000000",
     )
 
     monkeypatch.undo()

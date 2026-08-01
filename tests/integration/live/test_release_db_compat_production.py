@@ -409,7 +409,7 @@ def test_live_writer_and_checkpoint_produce_consistent_online_backup_snapshots(t
 def test_read_only_sqlite_uri_percent_encodes_unc_leading_slashes() -> None:
     """UNC server 名を SQLite URI authority にしないこと。"""
 
-    uri = build_sqlite_read_only_uri(Path(r"\\server\share\archive\game.db"))
+    uri = build_sqlite_read_only_uri(Path(r"\\server\share\archive\game.db"), immutable=True)
 
-    assert uri == "file:%2F%2Fserver%2Fshare%2Farchive%2Fgame.db?mode=ro"
+    assert uri == "file:%2F%2Fserver%2Fshare%2Farchive%2Fgame.db?mode=ro&immutable=1"
     assert not uri.startswith("file://")

@@ -63,6 +63,9 @@ def build_summary_payload(
     engine_stats: Mapping[str, Mapping[str, int | float]],
     engines_meta: Sequence[Mapping[str, object]],
     spsa_config: JsonObject | None,
+    current_session_uuid: str | None,
+    resume_boundaries: Sequence[Mapping[str, object]],
+    operational_status: Mapping[str, object],
 ) -> JsonObject:
     """Build dashboard summary payload from aggregate values."""
 
@@ -137,6 +140,9 @@ def build_summary_payload(
         "engine_instances": dict(engine_instances),
         "engine_stats": engine_stats_payload,
         "spsa_config": spsa_config,
+        "current_session_uuid": current_session_uuid,
+        "resume_boundaries": [dict(boundary) for boundary in resume_boundaries],
+        "operational_status": dict(operational_status),
     }
 
 

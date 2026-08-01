@@ -131,6 +131,7 @@ def resolve_dashboard_spsa_services(
     *,
     db_path: Path,
     run_dir: Path,
+    read_only: bool = False,
     dashboard_service_factory: DashboardSpsaServicesFactory | None = None,
     store: DashboardSpsaStorePort | None = None,
     summary_service: DashboardSpsaSummaryServicePort | None = None,
@@ -154,6 +155,7 @@ def resolve_dashboard_spsa_services(
         services = resolved_factory.create_services(
             run_dir=run_dir,
             db_path=db_path,
+            read_only=read_only,
             store=_coerce_factory_store(store),
             summary_service=_coerce_factory_summary_service(summary_service),
             update_query_service=_coerce_factory_update_query_service(update_query_service),

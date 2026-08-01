@@ -64,7 +64,7 @@ class SpsaParamsService:
 
     @staticmethod
     def _extract_initial_params(meta_data: SpsaMetaData) -> dict[str, float]:
-        return dict(meta_data.initial_params)
+        return meta_data.effective_experiment_initial_params
 
     def _resolve_space_path(self, meta_data: SpsaMetaData) -> Path | None:
         normalized = self._run_dir / "spsa" / "space.normalized.json"

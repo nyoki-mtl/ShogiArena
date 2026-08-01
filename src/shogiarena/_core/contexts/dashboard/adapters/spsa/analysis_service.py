@@ -34,7 +34,7 @@ class SpsaAnalysisService:
             meta_data = self._store.load_meta_data()
         except OSError:
             return None
-        return meta_data.initial_params if meta_data is not None else None
+        return meta_data.effective_experiment_initial_params if meta_data is not None else None
 
     def compute_correlation_analysis(self, updates: list[UpdateEntry]) -> CorrelationAnalysis:
         analysis = run_correlation_analysis(

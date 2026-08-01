@@ -462,6 +462,7 @@ export function normalizeSpsaSummary(raw: unknown): NormalizedSpsaSummary {
         engineInstances,
         engineStats,
         engineMeta,
+        operationalStatus: coerceObject(rawRecord.operational_status),
     } satisfies NormalizedSpsaSummary;
 }
 

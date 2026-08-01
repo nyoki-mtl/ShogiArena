@@ -361,6 +361,42 @@ async def test_archived_dashboard_server_allows_reads_and_rejects_mutations(tmp_
 
 
 @pytest.mark.asyncio
+async def test_spsa_get_does_not_write_artifact_derived_variant_tokens(tmp_path) -> None:
+    spsa_dir = tmp_path / "spsa"
+    spsa_dir.mkdir()
+    events = [
+        {
+            "event": "update",
+            "update_idx": 1,
+            "ts": 1,
+            "params": {"ParamA": 1.0},
+        },
+        {
+            "event": "ltc_regression_result",
+            "update_idx": 1,
+            "ts": 2,
+            "status": "accepted",
+            "is_accepted": True,
+            "tuned_variant_token": "../../escaped",
+        },
+    ]
+    (spsa_dir / "events.jsonl").write_text(
+        "".join(f"{json.dumps(event)}\n" for event in events),
+        encoding="utf-8",
+    )
+    api_server = _build_server(tmp_path, read_only=True)
+
+    async with TestClient(TestServer(api_server.app)) as client:
+        get_response = await client.get("/api/spsa/updates")
+        removed_stream_response = await client.get("/api/spsa/update/detail/stream")
+
+    assert get_response.status == 200
+    assert removed_stream_response.status == 404
+    assert not (spsa_dir / "accepted-best.json").exists()
+    assert not (tmp_path.parent / "escaped.json").exists()
+
+
+@pytest.mark.asyncio
 async def test_live_dashboard_server_still_materializes_a_local_instance(tmp_path) -> None:
     api_server = _build_server(tmp_path)
 

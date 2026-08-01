@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 
 from shogiarena._core.contexts.dashboard.application.events import GamesSnapshotPayload
 from shogiarena._core.contexts.dashboard.application.publish_fn import PublishFn
@@ -27,12 +27,10 @@ class SummaryGamesMediator:
         state: DashboardState,
         storage: SnapshotStorage,
         publish: PublishFn,
-        spsa_notifier: Callable[[JsonObject], None] | None = None,
     ) -> None:
         self._state = state
         self._storage = storage
         self._publish = publish
-        self._spsa_notifier = spsa_notifier
         self._last_summary_publish_at: dict[str, float] = {}
         self._last_games_published_snapshot: GamesSnapshotPayload | None = None
 
@@ -60,9 +58,6 @@ class SummaryGamesMediator:
         sanitised = self._storage.store_summary(snapshot, source=source)
         if sanitised is None:
             return
-        if self._spsa_notifier is not None and source == "spsa":
-            self._spsa_notifier(sanitised)
-
         now_ms = time.time() * 1000
         last_sent = self._last_summary_publish_at.get(source)
         is_terminal = payload.get("tournament_ended") is True

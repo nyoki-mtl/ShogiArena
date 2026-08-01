@@ -59,12 +59,3 @@ def test_parse_spsa_stream_payload_requires_type() -> None:
     }
     with pytest.raises(ContractParseError):
         parse_spsa_payload("stream", payload, path="tests.spsa.stream")
-
-
-def test_parse_spsa_websocket_payload_rejects_non_list_updates() -> None:
-    payload = {
-        "type": "update",
-        "updates": {"update_idx": 1},
-    }
-    with pytest.raises(ContractParseError):
-        parse_spsa_payload("websocket", payload, path="tests.spsa.websocket")

@@ -306,6 +306,10 @@ async def await_instance_resources(
         raise ValueError("poll intervals must be positive")
     if resolved_poll > resolved_max:
         raise ValueError("poll_interval must be <= max_interval")
+    allocation_timeout = getattr(owner, "_resource_allocation_timeout", None) or 30.0
+    if allocation_timeout <= 0:
+        raise ValueError("resource allocation timeout must be positive")
+    deadline = asyncio.get_running_loop().time() + allocation_timeout
 
     # Validate hard capacity upfront to avoid waiting forever.
     for instance_id, req in requirements.items():
@@ -318,6 +322,12 @@ async def await_instance_resources(
             else:
                 raise KeyError(f"instance '{instance_id}' is not registered in the instance pool")
         slot_capacity = instance.effective_slots
+        if req.slots and slot_capacity is None:
+            raise RuntimeError(
+                f"Game {game_id} requires {req.slots} slot(s) on instance '{instance_id}', "
+                "but slot capacity is unknown. Set instance slots explicitly or complete "
+                "the instance startup preflight."
+            )
         if slot_capacity is not None and req.slots and slot_capacity < req.slots:
             raise RuntimeError(
                 f"Game {game_id} requires {req.slots} slot(s) on instance '{instance_id}' "
@@ -325,6 +335,11 @@ async def await_instance_resources(
                 "Adjust either engine Threads or instance slots."
             )
         max_engines = instance.max_engine_capacity
+        if req.engines and not instance.is_engine_capacity_known:
+            raise RuntimeError(
+                f"Game {game_id} requires {req.engines} engine(s) on instance '{instance_id}', "
+                "but engine capacity is unknown. Set max_engines or slots explicitly."
+            )
         if instance.is_engine_capacity_known and req.engines and max_engines < req.engines:
             raise RuntimeError(
                 f"Game {game_id} requires {req.engines} engine(s) on instance '{instance_id}' "
@@ -341,6 +356,12 @@ async def await_instance_resources(
         acquired = pool.try_acquire_resources(requirements)
         if acquired:
             return
+        if asyncio.get_running_loop().time() >= deadline:
+            instance_ids = ", ".join(sorted(requirements))
+            raise TimeoutError(
+                f"Timed out after {allocation_timeout:.1f}s waiting for instance resources "
+                f"for game {game_id} on: {instance_ids}"
+            )
 
         await asyncio.sleep(delay)
         delay = min(delay * 1.5, resolved_max)

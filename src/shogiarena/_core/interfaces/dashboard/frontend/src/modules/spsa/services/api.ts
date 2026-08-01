@@ -1,10 +1,8 @@
 import { createMetricsHelpers } from './metrics';
-import { describeError, isAbortError, isLikelyNetworkError } from './errors';
+import { describeError, isLikelyNetworkError } from './errors';
 import type {
-    DashboardSpsaExperimentalFeatures,
     DashboardSpsaPublicApi,
     SpsaLtcResultsResponse,
-    SpsaLtcSummary,
     SpsaRefreshOptions,
     SpsaTabId,
 } from '@/modules/spsa/types';
@@ -45,7 +43,6 @@ import {
     DETAIL_HYDRATION_METRIC,
     LTC_HYDRATION_METRIC,
     PARAMS_REFRESH_INTERVAL_MS,
-    SSE_DISCONNECT_MESSAGE,
 } from './api-constants';
 import { reportDashboardRecoverableFailure } from '@/modules/shared/utils/errors';
 
@@ -60,37 +57,6 @@ export function createSpsaApi({
     const resumeCoordinator = getResumeCoordinator(window);
     resetSpsaConsistencyState();
     const state = getState();
-    const resolveDetailStreamExperiment = (): DashboardSpsaExperimentalFeatures | undefined => {
-        if (!document || typeof document.getElementById !== 'function') {
-            return undefined;
-        }
-        const root = document.getElementById('spsaTab');
-        if (!root) {
-            return undefined;
-        }
-        const mode = (root.getAttribute('data-detail-stream') || '').toLowerCase();
-        if (!mode || mode === 'off') {
-            return undefined;
-        }
-        const endpointAttr = root.getAttribute('data-detail-stream-endpoint');
-        const autoStartAttr = root.getAttribute('data-detail-stream-autostart');
-        const paramsAttr = root.getAttribute('data-detail-stream-params');
-        const autoStart =
-            autoStartAttr && autoStartAttr.length > 0
-                ? autoStartAttr.toLowerCase() !== '0' && autoStartAttr.toLowerCase() !== 'false'
-                : undefined;
-        const trimmedEndpoint = endpointAttr?.trim();
-        const trimmedParams = paramsAttr?.trim();
-        return {
-            detailStream: {
-                enabled: true,
-                endpoint: trimmedEndpoint ? trimmedEndpoint : undefined,
-                autoStart,
-                params: trimmedParams && trimmedParams.length > 0 ? trimmedParams : undefined,
-            },
-        };
-    };
-    const experimentalFlags = resolveDetailStreamExperiment();
     let activeErrorSource: ErrorSource | null = null;
     const handleError = (message: string, options?: { source?: ErrorSource }): void => {
         activeErrorSource = options?.source ?? 'generic';
@@ -102,9 +68,6 @@ export function createSpsaApi({
         clearError();
         callbacks.onClearError?.();
     };
-    const markSseDisconnected = (): void => {
-        handleError(SSE_DISCONNECT_MESSAGE, { source: 'sse' });
-    };
     const clearSseDisconnectNotice = (): void => {
         if (activeErrorSource !== 'sse') {
             return;
@@ -115,11 +78,7 @@ export function createSpsaApi({
     ensureUpdateCacheCapacity(DEFAULT_UPDATES_LIMIT);
     const streamCacheState: SpsaStreamCacheState = createStreamCacheState();
     let markAnalysisDataStale: () => void = () => {};
-    let isCorrelationStreamActiveRef: () => boolean = () => false;
-    let isConvergenceStreamActiveRef: () => boolean = () => false;
-    let isLtcResultsStreamActiveRef: () => boolean = () => false;
-    let deriveStreamBackedLtcSummaryRef: () => SpsaLtcSummary | null = () => null;
-    let deriveStreamBackedLtcResultsRef: (limit: number) => SpsaLtcResultsResponse | null = () => null;
+    let deriveCachedLtcResultsRef: (limit: number) => SpsaLtcResultsResponse | null = () => null;
 
     const reportRecoverableFailure = (
         context: string,
@@ -164,11 +123,6 @@ export function createSpsaApi({
         markAnalysisDataStale: () => markAnalysisDataStale(),
         recordDetailPayloadMetrics,
         streamCacheState,
-        isCorrelationStreamActive: () => isCorrelationStreamActiveRef(),
-        isConvergenceStreamActive: () => isConvergenceStreamActiveRef(),
-        isLtcResultsStreamActive: () => isLtcResultsStreamActiveRef(),
-        deriveStreamBackedLtcSummary: () => deriveStreamBackedLtcSummaryRef(),
-        deriveStreamBackedLtcResults: (limit: number) => deriveStreamBackedLtcResultsRef(limit),
         resumeCoordinator,
     });
 
@@ -218,19 +172,6 @@ export function createSpsaApi({
         startHydrationAttempt,
         reportRecoverableFailure,
     );
-    const refreshAnalysisNow = (): void => {
-        markAnalysisDataStale();
-        if (!getState().active) {
-            return;
-        }
-        if (resumeCoordinator.isCritical()) {
-            resumeCoordinator.defer('spsa.analysis.refresh', () => {
-                analysisHydrator.ensure('analysis', { immediate: true });
-            });
-            return;
-        }
-        analysisHydrator.ensure('analysis', { immediate: true });
-    };
     const performRefresh = async (options: SpsaRefreshOptions): Promise<void> => {
         if (isDashboardOffline()) {
             handleError('Dashboard server is offline');
@@ -244,16 +185,13 @@ export function createSpsaApi({
         registerAbortController(controller);
         const signal = controller.signal;
 
-        const isSseConnected = state.connection.eventSourceStatus === 'open';
         const refreshTasks: Array<Promise<void>> = [];
-        if (options.force || !isSummaryStreamOpen()) {
-            refreshTasks.push(fetchers.requestSummary(Boolean(options.force), signal));
-        }
+        refreshTasks.push(fetchers.requestSummary(Boolean(options.force), signal));
         if (shouldRefreshParams(Boolean(options.force))) {
             refreshTasks.push(fetchers.requestParams(Boolean(options.force), signal));
         }
 
-        if (!isSseConnected) {
+        if (options.force || state.connection.eventSourceStatus !== 'open') {
             refreshTasks.push(fetchers.requestUpdates({ limit: state.updates.limit, offset: 0, signal }));
         }
 
@@ -266,86 +204,24 @@ export function createSpsaApi({
 
     const { refreshAll } = createRefreshQueue({ performRefresh });
 
-    const refreshSummaryOnly = async (): Promise<void> => {
-        try {
-            await fetchers.requestSummary(true);
-        } catch (error) {
-            if (isAbortError(error)) {
-                return;
-            }
-            reportRecoverableFailure('SpsaApi.refreshSummaryOnly', error, { notifyOffline: true });
-            handleError(`Failed to refresh SPSA summary: ${describeError(error)}`);
-        }
-    };
-
     const streams = createSpsaStreams(streamCacheState, {
-        core,
-        state,
-        callbacks,
         getApiBase,
         isDashboardOffline,
         reportRecoverableFailure,
         handleError,
-        refreshSummaryOnly,
         refreshAll,
-        markSseDisconnected,
         clearSseDisconnectNotice,
         markAnalysisDataStale: () => markAnalysisDataStale(),
-        refreshAnalysisNow,
     });
     const {
         startRealtimeStreams,
-        openUpdatesStream,
-        closeUpdatesStream,
-        openVariantGamesStream,
-        closeVariantGamesStream,
-        openLtcGamesStream,
-        closeLtcGamesStream,
-        openCorrelationStream,
-        closeCorrelationStream,
-        openConvergenceStream,
-        closeConvergenceStream,
-        openSummaryStream,
-        closeSummaryStream,
-        openLtcResultsStream,
-        closeLtcResultsStream,
-        openLtcProgressStream,
-        closeLtcProgressStream,
-        isCorrelationStreamActive,
-        isConvergenceStreamActive,
-        isLtcResultsStreamActive,
-        isSummaryStreamOpen,
-        deriveStreamBackedLtcSummary,
-        deriveStreamBackedLtcResults,
+        hideRevisionStream,
+        markRevisionOffline,
+        closeRevisionStream,
+        deriveCachedLtcResults,
         resetCaches,
         invalidateCorrelationCache,
     } = streams;
-
-    let activeTab: SpsaTabId = 'overview';
-
-    const openTabStreams = (): void => {
-        switch (activeTab) {
-            case 'correlation':
-                openCorrelationStream();
-                closeConvergenceStream();
-                closeVariantGamesStream();
-                return;
-            case 'convergence':
-                openConvergenceStream();
-                closeCorrelationStream();
-                closeVariantGamesStream();
-                return;
-            case 'updates':
-                openVariantGamesStream();
-                closeCorrelationStream();
-                closeConvergenceStream();
-                return;
-            default:
-                closeCorrelationStream();
-                closeConvergenceStream();
-                closeVariantGamesStream();
-        }
-    };
 
     const { resetHydrationState, beginBootstrapSequence } = createBootstrapManager({
         fetchers,
@@ -359,11 +235,7 @@ export function createSpsaApi({
         startRealtimeStreams,
     });
 
-    isCorrelationStreamActiveRef = () => isCorrelationStreamActive();
-    isConvergenceStreamActiveRef = () => isConvergenceStreamActive();
-    deriveStreamBackedLtcSummaryRef = () => deriveStreamBackedLtcSummary();
-    deriveStreamBackedLtcResultsRef = (limit: number) => deriveStreamBackedLtcResults(limit);
-    isLtcResultsStreamActiveRef = () => isLtcResultsStreamActive();
+    deriveCachedLtcResultsRef = (limit: number) => deriveCachedLtcResults(limit);
 
     markAnalysisDataStale = () => {
         invalidateCorrelationCache();
@@ -380,30 +252,11 @@ export function createSpsaApi({
         resetHydrationState,
         resetUpdates,
         recomputeTrend,
-        refreshAll,
         setActive,
         setVisibilityPaused,
-        openStreams: {
-            summary: openSummaryStream,
-            updates: openUpdatesStream,
-            variantGames: openVariantGamesStream,
-            ltcGames: openLtcGamesStream,
-            correlation: openCorrelationStream,
-            convergence: openConvergenceStream,
-            ltcResults: openLtcResultsStream,
-            ltcProgress: openLtcProgressStream,
-        },
-        openTabStreams,
-        closeStreams: {
-            summary: closeSummaryStream,
-            updates: closeUpdatesStream,
-            variantGames: closeVariantGamesStream,
-            ltcGames: closeLtcGamesStream,
-            correlation: closeCorrelationStream,
-            convergence: closeConvergenceStream,
-            ltcResults: closeLtcResultsStream,
-            ltcProgress: closeLtcProgressStream,
-        },
+        hideRevisionStream,
+        markRevisionOffline,
+        closeRevisionStream,
         cancelOngoingRequests,
     });
 
@@ -517,7 +370,7 @@ export function createSpsaApi({
         fetchConvergenceAnalysis: fetchers.fetchConvergenceAnalysis,
         fetchLtcSummary: fetchers.fetchLtcSummary,
         fetchLtcResults: fetchers.fetchLtcResults,
-        getLtcResultsSnapshot: (limit = 100) => deriveStreamBackedLtcResultsRef(limit),
+        getLtcResultsSnapshot: (limit = 100) => deriveCachedLtcResultsRef(limit),
         getNormalizedSummary: () => buildNormalizedSummary(),
         parseTimeControlSpec: (spec: string) => parseTournamentTimeControlSpec(spec),
         formatTimeControlShort,
@@ -551,19 +404,17 @@ export function createSpsaApi({
         recordDetailPayloadMetrics,
         switchTab: () => {},
         focusUpdate: () => {},
-        notifyTabChange: (tab: SpsaTabId) => {
-            activeTab = tab;
-            if (!getState().active) {
-                return;
-            }
-            openTabStreams();
+        notifyTabChange: (_tab: SpsaTabId) => {
+            return;
         },
-        experimental: experimentalFlags,
     };
 
     return api;
 }
 
 function isDashboardOffline(): boolean {
-    return (window as Window & { ARENA_DASHBOARD_STOPPED?: boolean }).ARENA_DASHBOARD_STOPPED === true;
+    return (
+        (window as Window & { ARENA_DASHBOARD_STOPPED?: boolean }).ARENA_DASHBOARD_STOPPED === true ||
+        navigator.onLine === false
+    );
 }

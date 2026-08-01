@@ -71,7 +71,7 @@ export const state: SpsaDashboardState = {
     convergenceMetrics: makeConvergenceMetrics(),
     connection: {
         eventSource: null,
-        eventSourceStatus: 'idle',
+        eventSourceStatus: 'closed',
         abortControllers: new Set<AbortController>(),
         refreshInFlight: false,
         refreshPromise: null,

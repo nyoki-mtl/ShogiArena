@@ -36,6 +36,7 @@ class SpsaOrchestratorLifecycleMixin:
     extra_options: JsonObject | None
 
     run_items_concurrently: Any
+    preflight_instance_health: Any
     _run_one_spsa_update: Any
     _store_ltc_baseline: Any
 
@@ -58,10 +59,11 @@ class SpsaOrchestratorLifecycleMixin:
         is_tuned_as_black: bool,
         worker_idx: int,
         event_family: str = "spsa",
+        game_id: str | None = None,
     ) -> str:
         """Allocate a game id upfront and emit a pending schedule event."""
         vtoken = variant_token(update_idx)
-        game_id = self._make_game_id(vtoken, phase)
+        game_id = game_id or self._make_game_id(vtoken, phase)
         tuned_label = self._tuned_player_label(vtoken, phase)
         baseline_label = self._baseline_player_label(vtoken)
         variant_label = vtoken if phase == "ltc" else vtoken + phase_symbol(phase)
@@ -114,6 +116,7 @@ class SpsaOrchestratorLifecycleMixin:
         if not self._sfens:
             raise RuntimeError("SpsaOrchestrator requires SFENs via set_work_items() before run()")
 
+        await self.preflight_instance_health()
         # SPSA theta updates are sequential; game-pair concurrency stays inside each update.
         await self.run_items_concurrently(self._update_items, self._run_one_spsa_update, concurrency_limit=1)
 

@@ -272,6 +272,26 @@ class LoggingConfig(BaseModel):
     usi_transcript_max_bytes: int = Field(default=8 * 1024 * 1024, ge=4096, le=1024 * 1024 * 1024)
 
 
+class InstanceSchedulingConfig(BaseModel):
+    """Instance assignment policy shared by Tournament and SPSA."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    policy: Literal["local", "explicit", "auto"] = "local"
+    required_tags: list[str] = Field(default_factory=list)
+    allocation_timeout: float = Field(default=30.0, gt=0)
+
+    @field_validator("required_tags")
+    @classmethod
+    def _validate_required_tags(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip() for item in value]
+        if any(not item for item in normalized):
+            raise ValueError("system.instance_scheduling.required_tags must not contain empty values")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("system.instance_scheduling.required_tags must be unique")
+        return normalized
+
+
 class SystemConfig(BaseModel):
     """System-level configuration placeholder."""
 
@@ -280,6 +300,7 @@ class SystemConfig(BaseModel):
     engine_handshake_timeout: float | None = Field(default=None, gt=0)
     path_preflight: Literal["off", "warn", "error"] = "off"
     resource_capacity_preflight: Literal["off", "warn", "error"] = "error"
+    instance_scheduling: InstanceSchedulingConfig = Field(default_factory=InstanceSchedulingConfig)
     extras: EngineOptionMap = Field(default_factory=dict)
 
     @model_validator(mode="after")

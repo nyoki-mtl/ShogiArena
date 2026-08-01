@@ -49,6 +49,26 @@ shogiarena --version
 Windows x86_64、Linux x86_64／arm64、macOS Intel／Apple Silicon向けのwheelを提供しています。
 AVX2版の`rsshogi`へ差し替える場合は、[インストールガイド](https://nyoki-mtl.github.io/ShogiArena/getting-started/installation.html)を参照してください。
 
+実行platformの対応範囲は次のとおりです。
+
+| 用途 | 対応platform |
+|---|---|
+| Coordinator／ローカル対局 | Windows x86_64、Linux x86_64／arm64、macOS Intel／Apple Silicon |
+| SSH Remote worker | Linux x86_64 |
+
+Remote workerは`worker-bundle`でwheel、lock、manifestからimmutable bundleを生成します。
+別のuv projectの仮想環境へインストールした場合も、bundle sourceにはinstalled ShogiArena distributionを使います。
+既配置engineや評価ファイルを使う場合は、`preplaced-map`で実行時と同じlogical IDとSHA-256 mappingを生成できます。
+
+```bash
+shogiarena worker-bundle build --output worker-bundle.zip
+shogiarena worker-bundle preplaced-map \
+  --engine engine-a /local/engine-a /opt/engines/engine-a \
+  --resource engine-a /local/eval /opt/eval/engine-a
+```
+
+Remote設定と`cas`／`preplaced`運用は[リモート実行ガイド](https://nyoki-mtl.github.io/ShogiArena/user-guide/remote-execution.html)を参照してください。
+
 出力先とエンジン配置先を初期化する場合は、次のコマンドを実行します。
 
 ```bash

@@ -63,8 +63,8 @@ def test_space_select_resolves_manifest_with_overrides() -> None:
     assert visits.value_encoding == "integer"
 
 
-def test_space_rejects_int_param_with_no_integer_in_bounds() -> None:
-    with pytest.raises(ValueError, match="no integer"):
+def test_space_rejects_fractional_int_bounds() -> None:
+    with pytest.raises(ValueError, match="must be integral"):
         parse_spsa_space_spec(
             {
                 "schema_version": "shogiarena.spsa.space.v1",
@@ -83,7 +83,7 @@ def test_space_rejects_int_param_with_no_integer_in_bounds() -> None:
         )
 
 
-def test_space_rejects_manifest_int_param_with_no_integer_in_bounds() -> None:
+def test_space_rejects_manifest_fractional_int_bounds() -> None:
     manifest = {
         "schema_version": "shogiarena.usi_tunables.v1",
         "tunables": [
@@ -99,7 +99,7 @@ def test_space_rejects_manifest_int_param_with_no_integer_in_bounds() -> None:
             }
         ],
     }
-    with pytest.raises(ValueError, match="no integer"):
+    with pytest.raises(ValueError, match="must be integral"):
         parse_spsa_space_spec(
             {
                 "schema_version": "shogiarena.spsa.space.v1",
@@ -107,6 +107,53 @@ def test_space_rejects_manifest_int_param_with_no_integer_in_bounds() -> None:
                 "select": [{"id": "p"}],
             },
             manifest=manifest,
+        )
+
+
+def test_space_preserves_per_parameter_rounding_in_runtime_model() -> None:
+    space = parse_spsa_space_spec(
+        {
+            "schema_version": "shogiarena.spsa.space.v1",
+            "target": {"protocol": "usi_options"},
+            "parameters": [
+                {
+                    "id": "p",
+                    "target": {"option": "Tune.P", "value_encoding": "integer"},
+                    "value_type": "int",
+                    "initial": 2.5,
+                    "bounds": {"min": 0, "max": 8},
+                    "schedule": {"c_end": 1, "r_end": 0.002},
+                    "rounding": {"mode": "nearest"},
+                }
+            ],
+        }
+    )
+
+    assert space.parameters[0].rounding == "nearest"
+    assert space.to_param_entries()[0].rounding == "nearest"
+
+
+def test_space_rejects_scaled_integer_bounds_without_wire_value() -> None:
+    with pytest.raises(ValueError, match="no scaled_integer wire value"):
+        parse_spsa_space_spec(
+            {
+                "schema_version": "shogiarena.spsa.space.v1",
+                "target": {"protocol": "usi_options"},
+                "parameters": [
+                    {
+                        "id": "p",
+                        "target": {
+                            "option": "Tune.P",
+                            "value_encoding": "scaled_integer",
+                            "scale": 10,
+                        },
+                        "value_type": "float",
+                        "initial": 0.25,
+                        "bounds": {"min": 0.21, "max": 0.29},
+                        "schedule": {"c_end": 0.01, "r_end": 0.002},
+                    }
+                ],
+            }
         )
 
 
@@ -131,3 +178,15 @@ def test_space_select_rejects_unknown_manifest_id() -> None:
             },
             manifest=_manifest(),
         )
+
+
+def test_manifest_rejects_duplicate_target_option() -> None:
+    manifest = _manifest()
+    tunables = manifest["tunables"]
+    assert isinstance(tunables, list)
+    duplicate = dict(tunables[0])
+    duplicate["id"] = "other-id"
+    tunables.append(duplicate)
+
+    with pytest.raises(ValueError, match="duplicate manifest tunable option"):
+        parse_spsa_tunable_manifest(manifest)

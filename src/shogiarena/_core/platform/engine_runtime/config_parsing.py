@@ -68,6 +68,7 @@ class _UsiEngineMappingInput(BaseModel):
     working_directory: OptionalText = None
     engine_args: StringListLike = None
     environment: _ConfigObject = Field(default_factory=dict)
+    secret_environment: _ConfigObject = Field(default_factory=dict)
     options: _ConfigObject = Field(default_factory=dict)
     go_options: _ConfigObject = Field(default_factory=dict)
     build_options: _ConfigObject = Field(default_factory=dict)
@@ -121,7 +122,7 @@ class _UsiEngineMappingInput(BaseModel):
     def _coerce_optional_lock_str(cls, value: JsonValue | None) -> str | None:
         return coerce_optional_text(value)
 
-    @field_validator("environment", "options", "go_options", "build_options", mode="before")
+    @field_validator("environment", "secret_environment", "options", "go_options", "build_options", mode="before")
     @classmethod
     def _coerce_mapping_fields(cls, value: JsonValue | Mapping[str, JsonValue] | None) -> _ConfigObject:
         if value is None:

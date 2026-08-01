@@ -102,10 +102,20 @@ def build_provenance_payload(config_payload: Mapping[str, object]) -> JsonObject
         if engine.get("hash_source") != "sha256":
             hash_source = "missing"
             break
-    return {
+    payload: JsonObject = {
         "hash_source": hash_source,
         "engines": engines,
     }
+    tunable_handshake = config.get("_spsa_tunable_handshake")
+    if isinstance(tunable_handshake, dict):
+        payload["spsa_tunable_handshake"] = json_serialize(tunable_handshake)
+    fixed_option_preflight = config.get("_spsa_fixed_option_preflight")
+    if isinstance(fixed_option_preflight, dict):
+        payload["spsa_fixed_option_preflight"] = json_serialize(fixed_option_preflight)
+    remote_worker_bundle = config.get("_remote_worker_bundle")
+    if isinstance(remote_worker_bundle, dict):
+        payload["remote_worker_bundle"] = json_serialize(remote_worker_bundle)
+    return payload
 
 
 def build_engine_manifest_payload(engine: Mapping[str, object]) -> JsonObject:
@@ -119,6 +129,10 @@ def build_engine_manifest_payload(engine: Mapping[str, object]) -> JsonObject:
     if working_dir_text is None and engine_path_text is not None:
         working_dir_text = str(Path(engine_path_text).parent)
     sha256 = _sha256_file(Path(engine_path_text)) if engine_path_text is not None else None
+    option_payload = _merged_engine_options_payload(physical, engine_map)
+    path_options = _merged_path_option_names(physical, engine_map)
+    effective_options = {key: value for key, value in option_payload.items() if key not in path_options}
+    resolved_path_options = {key: value for key, value in option_payload.items() if key in path_options}
     return {
         "name": coerce_str(engine_map.get("name")) or coerce_str(physical.get("name")),
         "artifact": coerce_str(engine_map.get("artifact")) or coerce_str(physical.get("artifact")),
@@ -126,14 +140,17 @@ def build_engine_manifest_payload(engine: Mapping[str, object]) -> JsonObject:
             "engine_path": engine_path_text,
             "engine_config": engine_config_text,
             "working_directory": working_dir_text,
-            "path_options": _resolved_path_options_payload(engine_map),
+            "path_options": resolved_path_options,
         },
         "bytes_hash": {
             "engine_binary_sha256": sha256,
-            "path_options": _path_option_hashes_payload(engine_map),
+            "engine_config_sha256": (
+                _sha256_file(Path(engine_config_text)) if engine_config_text is not None else None
+            ),
+            "path_options": _path_option_hashes_payload(resolved_path_options),
         },
-        "effective_options": _effective_options_payload(engine_map),
-        "path_options": _path_option_names(engine_map),
+        "effective_options": effective_options,
+        "path_options": path_options,
         "build_options": _object_or_empty(engine_map.get("build_options"))
         or _object_or_empty(physical.get("build_options")),
         "verification_probe": None,
@@ -172,7 +189,15 @@ def _generate_schedule_payload(generate: JsonObject) -> JsonObject:
 
 
 def _spsa_schedule_payload(spsa: JsonObject) -> JsonObject:
-    keys = ("space", "space_path", "num_updates", "pairs_per_update", "algorithm", "variants", "seed")
+    keys = (
+        "space",
+        "space_path",
+        "num_updates",
+        "pairs_per_update",
+        "algorithm",
+        "variants",
+        "run_seed",
+    )
     return {key: spsa[key] for key in keys if key in spsa}
 
 
@@ -185,12 +210,12 @@ def _spsa_contract_payload(config: JsonObject) -> JsonObject:
     keys = (
         "space_path",
         "start_sfens_path",
+        "run_seed",
         "num_updates",
         "pairs_per_update",
         "crn_enabled",
         "is_crn_enabled",
         "int_rounding",
-        "update_mode",
         "A",
         "alpha",
         "gamma",
@@ -233,6 +258,8 @@ def _engine_provenance_payload(engine: JsonObject) -> JsonObject:
         "artifact": manifest_payload.get("artifact"),
         "resolved_paths": manifest_payload.get("resolved_paths"),
         "bytes_hash": manifest_payload.get("bytes_hash"),
+        "effective_options": manifest_payload.get("effective_options"),
+        "path_options": manifest_payload.get("path_options"),
         "build_options": _object_or_empty(engine.get("build_options"))
         or _object_or_empty(manifest_payload.get("build_options")),
         "hash_source": "sha256" if bytes_hash.get("engine_binary_sha256") else "missing",
@@ -267,19 +294,26 @@ def _effective_options_payload(engine: JsonObject) -> JsonObject:
     return {key: value for key, value in options.items() if key not in path_options}
 
 
-def _resolved_path_options_payload(engine: JsonObject) -> JsonObject:
-    path_options = set(_path_option_names(engine))
-    options = _object_or_empty(engine.get("options"))
-    return {key: value for key, value in options.items() if key in path_options}
-
-
 def _path_option_hashes_payload(engine: JsonObject) -> JsonObject:
-    resolved = _resolved_path_options_payload(engine)
     result: JsonObject = {}
-    for key, raw_path in resolved.items():
+    for key, raw_path in engine.items():
         path_text = coerce_str(raw_path)
         result[key] = _sha256_path(Path(path_text)) if path_text else None
     return result
+
+
+def _merged_engine_options_payload(physical: JsonObject, logical: JsonObject) -> JsonObject:
+    options = _object_or_empty(physical.get("options"))
+    options.update(_object_or_empty(logical.get("options")))
+    return options
+
+
+def _merged_path_option_names(physical: JsonObject, logical: JsonObject) -> list[str]:
+    names = _path_option_names(physical)
+    for name in _path_option_names(logical):
+        if name not in names:
+            names.append(name)
+    return names
 
 
 def _path_option_names(engine: JsonObject) -> list[str]:

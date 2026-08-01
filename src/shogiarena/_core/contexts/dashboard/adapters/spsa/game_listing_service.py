@@ -44,9 +44,11 @@ class SpsaGameListingService:
         *,
         db_path: Path,
         update_query_service: DashboardSpsaUpdateQueryPort,
+        read_only: bool = False,
     ) -> None:
         self._db_path = db_path
         self._update_query = update_query_service
+        self._read_only = read_only
 
     def list_games(
         self,
@@ -54,7 +56,7 @@ class SpsaGameListingService:
         limit: int,
         search_query: str,
     ) -> tuple[list[GameListEntry], int]:
-        repository = open_dashboard_repository(self._db_path)
+        repository = open_dashboard_repository(self._db_path, immutable=self._read_only)
         if repository is not None:
             try:
                 session = repository.session
@@ -110,9 +112,11 @@ class SpsaGameListingService:
                     )
 
                     rows = session.execute(data_stmt).all()
+                    game_ids = [str(row[0]) for row in rows]
+                    snapshots = self._update_query.get_game_event_snapshots(game_ids)
                     games = build_games_from_db_rows(
                         rows=rows,
-                        game_snapshot_loader=lambda gid: self._update_query.get_game_event_snapshot(gid),
+                        game_snapshot_loader=snapshots.get,
                         resolve_variant_id=resolve_variant_id,
                         extract_variant_from_game_id=extract_variant_from_game_id,
                     )
@@ -126,10 +130,27 @@ class SpsaGameListingService:
             return [], 0
 
         ordered_ids = deduplicate_game_id_entries(game_entries)
+        ordered_ids.sort(key=lambda entry: entry[1], reverse=True)
+        if not search_query:
+            total = len(ordered_ids)
+            paginated_ids = ordered_ids[offset : offset + limit]
+            snapshots = self._update_query.get_game_event_snapshots([gid for gid, _ in paginated_ids])
+            records = build_games_from_event_entries(
+                ordered_ids=paginated_ids,
+                search_query="",
+                game_snapshot_loader=snapshots.get,
+                resolve_variant_id=resolve_variant_id,
+                extract_variant_from_game_id=extract_variant_from_game_id,
+            )
+            for item in records:
+                item.pop("timestamp", None)
+            return cast(list[GameListEntry], records), total
+
+        snapshots = self._update_query.get_game_event_snapshots([gid for gid, _ in ordered_ids])
         records = build_games_from_event_entries(
             ordered_ids=ordered_ids,
             search_query=search_query,
-            game_snapshot_loader=lambda gid: self._update_query.get_game_event_snapshot(gid),
+            game_snapshot_loader=snapshots.get,
             resolve_variant_id=resolve_variant_id,
             extract_variant_from_game_id=extract_variant_from_game_id,
         )

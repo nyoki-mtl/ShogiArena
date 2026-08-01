@@ -56,6 +56,7 @@ class _RunnerStub:
         self._progress = _Progress()
         self._stop_controller = SessionStopController()
         self._services_closed = False
+        self.seed_calls = 0
 
     def _maybe_fail(self, stage: str) -> None:
         if self._fail_at == stage:
@@ -80,6 +81,7 @@ class _RunnerStub:
         return preferred_port
 
     async def seed_initial_summary(self) -> None:
+        self.seed_calls += 1
         self._maybe_fail("seed_initial_summary")
 
     def build_session_context(self) -> object | None:
@@ -212,6 +214,17 @@ async def test_prepare_failure_still_stops_services(stage: str) -> None:
     assert runner.stop_calls >= 1
     assert run_loop.calls == 0
     assert runner.interrupted_reasons == [RunTerminationReason.RUNTIME_ERROR]
+
+
+@pytest.mark.asyncio
+async def test_prepare_session_seeds_artifacts_without_dashboard() -> None:
+    runner = _RunnerStub()
+    runner.get_dashboard_params = lambda: None  # type: ignore[method-assign]
+
+    session_context = await TournamentSessionExecutionService().prepare_session(cast(Any, runner))
+
+    assert session_context is not None
+    assert runner.seed_calls == 1
 
 
 @pytest.mark.asyncio

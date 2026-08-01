@@ -43,8 +43,14 @@ async def manage_remote_pair_instance_lifecycle(
     is_active_recorded = False
 
     if pool is not None and instance_id:
-        resource_requirements = _collect_instance_usage_service(owner, pool, black_item, white_item)
-        if resource_requirements:
+        configured_usage = _collect_instance_usage_service(owner, pool, black_item, white_item)
+        if configured_usage:
+            resource_requirements = {
+                instance_id: ResourceRequest(
+                    slots=sum(request.slots for request in configured_usage.values()),
+                    engines=sum(request.engines for request in configured_usage.values()),
+                )
+            }
             await _await_instance_resources_service(owner, pool, resource_requirements, game_id)
             is_slots_reserved = True
 

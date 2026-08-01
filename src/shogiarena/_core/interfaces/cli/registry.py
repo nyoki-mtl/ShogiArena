@@ -16,10 +16,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     config.register(subparsers)
 
     # Register heavier commands (lazy import to speed up config command startup)
-    from . import dashboard, internal, replay_position, results, run
+    from . import dashboard, internal, replay_position, results, run, worker_bundle
 
     run.register(subparsers)
     replay_position.register(subparsers)
     results.register(subparsers)
     dashboard.register(subparsers)
+    worker_bundle.register(subparsers)
     internal.register(subparsers)

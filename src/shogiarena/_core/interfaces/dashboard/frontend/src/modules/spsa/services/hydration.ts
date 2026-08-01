@@ -7,15 +7,10 @@ export function createStreamCacheState(): SpsaStreamCacheState {
     return {
         latestConvergenceData: null,
         convergenceCacheExpiry: 0,
-        latestCorrelationData: null,
         correlationCache: null,
         ltcSummaryCache: null,
         ltcResultsCache: new Map(),
-        latestLtcResults: null,
-        latestLtcResultsAt: null,
-        latestLtcResultsSeq: null,
-        ltcResultsGapDetected: false,
-        ltcResultsStreamOpenedAt: null,
+        latestLtcResultsSnapshot: null,
     };
 }
 

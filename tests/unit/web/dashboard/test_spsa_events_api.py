@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -75,3 +76,23 @@ async def test_get_games_converts_service_failure_to_500() -> None:
 
     assert response.status == 500
     assert json.loads(response.text)["code"] == "games_query_failed"
+
+
+@pytest.mark.asyncio
+async def test_get_games_runs_listing_off_the_event_loop_thread() -> None:
+    event_loop_thread = threading.get_ident()
+    listing_threads: list[int] = []
+
+    def _list_games(**_kwargs: object) -> tuple[list[dict], int]:
+        listing_threads.append(threading.get_ident())
+        return [], 0
+
+    api = object.__new__(SpsaAPI)
+    api._game_listing_service = SimpleNamespace(list_games=_list_games)  # type: ignore[attr-defined]
+    request = make_mocked_request("GET", "/api/spsa/games?limit=10&offset=0")
+
+    response = await api.get_games(request)
+
+    assert response.status == 200
+    assert listing_threads
+    assert listing_threads[0] != event_loop_thread

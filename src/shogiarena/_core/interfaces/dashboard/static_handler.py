@@ -12,6 +12,9 @@ from urllib.parse import unquote
 
 from aiohttp import web
 
+from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import DashboardProfile
+from shogiarena._core.interfaces.dashboard.assets_writer import render_dashboard_html
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,8 +28,20 @@ class StaticAssetsHandler:
         run_dir: Runtime directory containing session-specific assets.
     """
 
-    def __init__(self, run_dir: Path) -> None:
+    def __init__(
+        self,
+        run_dir: Path,
+        *,
+        port: int = 8080,
+        read_only: bool = False,
+        num_workers: int = 0,
+        profiles: tuple[DashboardProfile, ...] | None = None,
+    ) -> None:
         self._run_dir = run_dir
+        self._port = port
+        self._read_only = read_only
+        self._num_workers = num_workers
+        self._profiles = profiles
 
     def asset_root(self) -> Path:
         """Return the run-local dashboard asset root."""
@@ -95,6 +110,9 @@ class StaticAssetsHandler:
             app: The aiohttp application to register routes on.
         """
         dashboard_static_dir = self.dashboard_static_dir()
+        if self._read_only:
+            self._register_read_only_routes(app, dashboard_static_dir)
+            return
 
         asset_root = self.asset_root()
         run_static_dir = asset_root / "static"
@@ -159,6 +177,31 @@ class StaticAssetsHandler:
             name="html",
         )
         self._register_html_entrypoints(app, html_root, dashboard_static_dir)
+
+    def _register_read_only_routes(self, app: web.Application, dashboard_static_dir: Path) -> None:
+        """Serve packaged assets and an in-memory entrypoint for an archive."""
+
+        self._register_directory(app, "/static", dashboard_static_dir, name="static")
+        self._register_directory(
+            app,
+            "/assets",
+            dashboard_static_dir / "dist" / "assets",
+            name="assets",
+        )
+        data_dir = self.asset_root() / "data"
+        self._register_directory(app, "/data", data_dir, name="data")
+        html_content = render_dashboard_html(
+            self._run_dir,
+            self._num_workers,
+            api_port=self._port,
+            profiles=self._profiles,
+        )
+
+        async def _index(_request: web.Request) -> web.StreamResponse:
+            return web.Response(text=html_content, content_type="text/html")
+
+        app.router.add_get("/", _index, name="archive_index")
+        app.router.add_get("/index.html", _index, name="archive_index_html")
 
     def _register_directory(
         self,

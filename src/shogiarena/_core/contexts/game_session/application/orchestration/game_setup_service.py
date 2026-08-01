@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 
 from shogiarena._core.contexts.game_session.application.orchestration.context_service import (
     SpsaOrchestrationContextRequest,
@@ -23,16 +23,16 @@ from shogiarena._core.contexts.game_session.application.orchestration.game_assig
 )
 from shogiarena._core.contexts.game_session.application.orchestration.game_dispatch import (
     EngineConfigDispatchPort,
-    RemoteInstanceDispatchPort,
 )
 from shogiarena._core.contexts.game_session.application.orchestration.selection_service import (
     OrchestratorDispatchSelectionRequest,
     OrchestratorDispatchSelectionResponse,
     OrchestratorDispatchSelectionService,
+    SchedulableRemoteInstancePort,
 )
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
-RemoteInstanceT = TypeVar("RemoteInstanceT", bound=RemoteInstanceDispatchPort)
+RemoteInstanceT = TypeVar("RemoteInstanceT", bound=SchedulableRemoteInstancePort)
 
 
 @dataclass(frozen=True)
@@ -54,6 +54,8 @@ class SpsaGameSetupRequest(Generic[RemoteInstanceT]):
     instance_pool: object | None
     engine_configs: Mapping[str, EngineConfigDispatchPort]
     should_force_enginepool: bool = False
+    scheduling_policy: Literal["local", "explicit", "auto"] = "local"
+    required_tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -115,6 +117,8 @@ class SpsaGameSetupService(Generic[RemoteInstanceT]):
                 white_engine_name=context.white_engine_name,
                 should_raise_on_missing_instance=True,
                 should_force_enginepool=request.should_force_enginepool,
+                scheduling_policy=request.scheduling_policy,
+                required_tags=request.required_tags,
             ),
         )
         event_common = build_scheduled_event_common(

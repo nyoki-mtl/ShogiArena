@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 import rsshogi.record
 
+from shogiarena._core.contexts.game_session.adapters.dashboard_lifecycle import DashboardLifecycleCoordinator
 from shogiarena._core.contexts.game_session.application.session.run_metadata_persistence_service import (
     RunManifestSealError,
 )
@@ -145,6 +146,7 @@ def test_tournament_cleanup_existing_run_removes_default_records_dir(tmp_path: P
     runner = object.__new__(TournamentRunner)
     runner.run_dir = tmp_path
     runner.config = SimpleNamespace(records_output=None, openbench=None)
+    runner._dashboard_manager = SimpleNamespace(cleanup_run_dir=DashboardLifecycleCoordinator.cleanup_run_dir)
 
     records_dir = tmp_path / "records"
     records_dir.mkdir()
@@ -153,6 +155,35 @@ def test_tournament_cleanup_existing_run_removes_default_records_dir(tmp_path: P
     runner._cleanup_existing_run()
 
     assert not records_dir.exists()
+
+
+def test_dashboard_cleanup_manager_is_runner_owned(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    class _Manager:
+        def __init__(self, label: str) -> None:
+            self._label = label
+
+        def cleanup_run_dir(
+            self,
+            run_dir: Path,
+            *,
+            files: list[str] | None = None,
+            dirs: list[str] | None = None,
+        ) -> None:
+            del run_dir, files, dirs
+            calls.append(self._label)
+
+    first = object.__new__(TournamentRunner)
+    second = object.__new__(TournamentRunner)
+    first._dashboard_manager = _Manager("first")
+    second._dashboard_manager = _Manager("second")
+
+    first.cleanup_run_dir(tmp_path)
+    second.cleanup_run_dir(tmp_path)
+    first.cleanup_run_dir(tmp_path)
+
+    assert calls == ["first", "second", "first"]
 
 
 def test_tournament_records_output_rejects_existing_external_output_for_new_run(tmp_path: Path) -> None:

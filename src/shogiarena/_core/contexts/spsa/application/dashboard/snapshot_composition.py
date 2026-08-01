@@ -7,7 +7,7 @@ application 層に集約する。interfaces 層はこのサービスを呼ぶ th
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from shogiarena._core.shared.kernel.json_coercion import to_json_object
@@ -54,17 +54,21 @@ class SpsaSnapshotCompositionService:
         ltc_service: Any,
         summary_service: Any | None = None,
         live_view_builder: Any | None = None,
+        ltc_results_loader: Callable[[], Sequence[Mapping[str, object]]] | None = None,
     ) -> None:
         self._store: _StorePort = store
         self._ltc_service: _LtcServicePort = ltc_service
         self._summary_service: _SummaryServicePort | None = summary_service
         self._live_view_builder: _LiveViewBuilderPort | None = live_view_builder
+        self._ltc_results_loader = ltc_results_loader
 
     # ── LTC 結果スナップショット ─────────────────────────────────────
 
     def compose_ltc_results_snapshot(self, *, limit: int = 200) -> JsonObject | None:
         """LTC 結果を enrich し、subset + summary を組み立てる。"""
-        raw_results = self._store.load_ltc_results()
+        raw_results = (
+            self._ltc_results_loader() if self._ltc_results_loader is not None else self._store.load_ltc_results()
+        )
         enriched_results = self._ltc_service.enrich_ltc_results(raw_results)
         total = len(enriched_results)
         subset = enriched_results[-limit:] if limit < total else enriched_results

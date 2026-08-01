@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
+from pathlib import PurePosixPath
+from typing import Literal
 
 
 class InstanceType(StrEnum):
@@ -35,6 +36,8 @@ class InstanceConfig:
     slots: int | None = None
     max_engines: int | None = None
     tags: list[str] = field(default_factory=list)
+    operating_system: Literal["linux"] = "linux"
+    architecture: Literal["x86_64"] = "x86_64"
     is_strict_host_key_checking: bool = True
     should_install_requirements: bool = False
 
@@ -67,7 +70,9 @@ class InstanceConfig:
                 # Default to remote home (do not expand locally)
                 self.project_root = "$HOME/ShogiArena-remote"
             # Derive engine_dir from project_root consistently
-            self.engine_dir = str(Path(self.project_root) / "data" / "engines")
+            if "\\" in self.project_root:
+                raise ValueError("SSH project_root must use POSIX separators")
+            self.engine_dir = str(PurePosixPath(self.project_root) / "data" / "engines")
 
 
 @dataclass

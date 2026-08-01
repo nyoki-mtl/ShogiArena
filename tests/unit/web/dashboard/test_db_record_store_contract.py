@@ -12,6 +12,10 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 
 from shogiarena._core.contexts.dashboard.adapters.result_summary_reader import SQLiteResultSummaryReader
+from shogiarena._core.contexts.spsa.domain.participation_identity import (
+    SpsaParticipationIdentity,
+    attach_spsa_participation_identity,
+)
 from shogiarena._core.platform.db.store.arena_db_adapter import ArenaDBAdapter
 from shogiarena._core.platform.db.store.entities import Base
 from shogiarena._core.platform.db.store.record_store import DBRecordStore
@@ -22,7 +26,11 @@ from shogiarena._core.platform.db.store.schema_guard import (
     StoreSchemaError,
 )
 from shogiarena._core.shared.kernel.game_results import GameResult
-from shogiarena._core.shared.kernel.participation_records import EngineArtifactSnapshot, InstanceSnapshot
+from shogiarena._core.shared.kernel.participation_records import (
+    EngineArtifactSnapshot,
+    GameParticipationRecord,
+    InstanceSnapshot,
+)
 from shogiarena._core.shared.kernel.schedule_metadata import extract_schedule_metadata, serialize_schedule_metadata
 
 
@@ -73,6 +81,52 @@ def _create_unversioned_canonical_db(db_path: Path) -> None:
         Base.metadata.create_all(engine)
     finally:
         engine.dispose()
+
+
+def test_spsa_record_and_participation_commit_atomically_and_are_readable(tmp_path: Path) -> None:
+    adapter = ArenaDBAdapter(SQLiteShogiDBFactory(tmp_path / "game.db"))
+    identity = SpsaParticipationIdentity(
+        run_id="run-1",
+        update_idx=1,
+        pair_id="pair-1",
+        attempt_id="attempt-1",
+        observation_kind="SPSA",
+    )
+    participation = attach_spsa_participation_identity(
+        (
+            GameParticipationRecord(role="black", engine_name="black"),
+            GameParticipationRecord(role="white", engine_name="white"),
+        ),
+        identity=identity,
+    )
+
+    game_db_id = adapter.append_record_with_participation(
+        _make_record(game_name="spsa-game-1", game_type="spsa"),
+        participation=participation,
+    )
+
+    assert adapter.get_game_id_by_name("spsa-game-1") == game_db_id
+    records = adapter.get_spsa_game_database_records(run_id="run-1")
+    assert len(records) == 1
+    assert records[0].game_id == "spsa-game-1"
+    assert records[0].participation_extras[0]["spsa_identity"] == identity.model_dump(mode="json")
+    adapter.close()
+
+
+def test_spsa_record_rolls_back_when_participation_is_invalid(tmp_path: Path) -> None:
+    adapter = ArenaDBAdapter(SQLiteShogiDBFactory(tmp_path / "game.db"))
+
+    with pytest.raises(TypeError, match="participation entries"):
+        adapter.append_record_with_participation(
+            _make_record(game_name="spsa-invalid", game_type="spsa"),
+            participation=(
+                GameParticipationRecord(role="black", engine_name="black"),
+                {"role": "invalid"},
+            ),
+        )
+
+    assert adapter.get_game_id_by_name("spsa-invalid") is None
+    adapter.close()
 
 
 def _create_db_without_tolerated_tables(db_path: Path, *, version: int | None = None) -> None:

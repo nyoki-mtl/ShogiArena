@@ -31,6 +31,7 @@ from .config_spsa_models import (
 )
 from .config_spsa_support import (
     _build_rules_config,
+    _coerce_spsa_integral_int,
     _get_spsa_float,
     _get_spsa_int,
     _map_engine,
@@ -80,10 +81,11 @@ def parse_spsa_config_mapping(
         raise ValueError("Missing required 'spsa' block")
     spsa_node_map = coerce_json_object_serialized(spsa_node, field_name="spsa")
 
-    _warn_unknown_keys(
+    _reject_unknown_keys(
         spsa_node_map,
         allowed={
             "space",
+            "run_seed",
             "num_updates",
             "pairs_per_update",
             "algorithm",
@@ -91,7 +93,6 @@ def parse_spsa_config_mapping(
             "inflight_factor",
             "snap_float_to_step",
             "int_ck_floor",
-            "update_mode",
             "early_stop",
             "num_parallel",
             "ltc_regression",
@@ -103,7 +104,7 @@ def parse_spsa_config_mapping(
     raw_space_path = coerce_str(spsa_node_map.get("space"))
     if raw_space_path is None:
         raise ValueError("spsa.space is required")
-    num_updates_val = coerce_int(spsa_node_map.get("num_updates"))
+    num_updates_val = _coerce_spsa_integral_int(spsa_node_map.get("num_updates"))
     if num_updates_val is None or num_updates_val <= 0:
         raise ValueError("spsa.num_updates must be a positive integer")
     pairs_per_update = _get_spsa_int(spsa_node_map, "pairs_per_update", 1)
@@ -167,8 +168,13 @@ def parse_spsa_config_mapping(
         api_host = dash.get("api_host")
         if isinstance(api_host, str) and api_host.strip():
             dashboard_payload["api_host"] = api_host.strip()
-    parsed_np = coerce_int(spsa_node_map.get("num_parallel"))
-    if parsed_np is not None:
+    raw_np = spsa_node_map.get("num_parallel")
+    parsed_np = _coerce_spsa_integral_int(raw_np)
+    if raw_np is not None:
+        if parsed_np is None:
+            raise ValueError("spsa.num_parallel must be a positive integer")
+        if parsed_np < 1:
+            raise ValueError("spsa.num_parallel must be a positive integer")
         num_workers = parsed_np
 
     system = SystemConfig()
@@ -180,6 +186,7 @@ def parse_spsa_config_mapping(
             "engine_handshake_timeout",
             "path_preflight",
             "resource_capacity_preflight",
+            "instance_scheduling",
             "extras",
         }
         raw_system = dict(system_raw)
@@ -219,15 +226,22 @@ def parse_spsa_config_mapping(
         raise TypeError("spsa.early_stop must be a mapping or null")
 
     inflight_factor = _get_spsa_int(spsa_node_map, "inflight_factor", 4)
+    if inflight_factor < 1:
+        raise ValueError("spsa.inflight_factor must be a positive integer")
     int_ck_floor = _get_spsa_float(spsa_node_map, "int_ck_floor", 0.5)
-
-    return SpsaRunConfig(
-        start_sfens_path=start_sfens_path,
-        space_path=resolve_path_like(
+    space_path = Path(
+        resolve_path_like(
             str(raw_space_path),
             output_dir=project_dirs.output_dir,
             engine_dir=project_dirs.engine_dir,
-        ),
+        )
+    )
+    if not space_path.is_absolute():
+        space_path = p.parent / space_path
+
+    return SpsaRunConfig(
+        start_sfens_path=start_sfens_path,
+        space_path=str(space_path.resolve()),
         baseline=baseline,
         tuned=tuned,
         rules=rules_obj,
@@ -237,11 +251,11 @@ def parse_spsa_config_mapping(
         variants=variants,
         scale=1.0,
         experiment_name=exp_name,
+        run_seed=coerce_str(spsa_node_map.get("run_seed")),
         inflight_factor=inflight_factor,
         update_batch_size=pairs_per_update,
         is_snap_float_to_step=coerce_bool(spsa_node_map.get("snap_float_to_step", False)),
         int_ck_floor=int_ck_floor,
-        update_mode="barrier",
         early_stop=early_stop,
         dashboard=DashboardConfig(**dashboard_payload) if dashboard_payload else DashboardConfig(),
         system=system,
@@ -257,7 +271,7 @@ def _parse_algorithm_block(raw: object) -> SpsaAlgorithmBlock:
     if not isinstance(raw, Mapping):
         raise TypeError("spsa.algorithm must be a mapping")
     payload = coerce_json_object_serialized(raw, field_name="spsa.algorithm")
-    _warn_unknown_keys(payload, allowed={"name", "alpha", "gamma", "A"}, label="spsa.algorithm")
+    _reject_unknown_keys(payload, allowed={"name", "alpha", "gamma", "A"}, label="spsa.algorithm")
     a_payload: object = payload.get("A", {})
     if isinstance(a_payload, int | float):
         a_config = SpsaAlgorithmAConfig(mode="absolute", value=float(a_payload))
@@ -279,9 +293,9 @@ def _parse_variants_block(raw: object) -> SpsaVariantsConfig:
     if not isinstance(raw, Mapping):
         raise TypeError("spsa.variants must be a mapping")
     payload = coerce_json_object_serialized(raw, field_name="spsa.variants")
-    _warn_unknown_keys(
+    _reject_unknown_keys(
         payload,
-        allowed={"pairing", "crn", "integer_rounding", "instance_affinity", "apply"},
+        allowed={"pairing", "crn", "integer_rounding", "apply"},
         label="spsa.variants",
     )
     apply_raw = payload.get("apply")
@@ -294,7 +308,6 @@ def _parse_variants_block(raw: object) -> SpsaVariantsConfig:
         pairing=_parse_pairing(payload.get("pairing")),
         is_crn_enabled=_parse_bool_field(payload.get("crn"), field="spsa.variants.crn", default=True),
         integer_rounding=_parse_integer_rounding(payload.get("integer_rounding")),
-        instance_affinity=_parse_instance_affinity(payload.get("instance_affinity")),
         apply=apply_config,
     )
 
@@ -336,10 +349,7 @@ def _parse_integer_rounding(value: JsonValue | None) -> Literal["none", "stochas
     raise ValueError("spsa.variants.integer_rounding must be 'none' or 'stochastic'")
 
 
-def _parse_instance_affinity(value: JsonValue | None) -> Literal["update", "none"]:
-    parsed = coerce_str(value) or "update"
-    if parsed == "update":
-        return "update"
-    if parsed == "none":
-        return "none"
-    raise ValueError("spsa.variants.instance_affinity must be 'update' or 'none'")
+def _reject_unknown_keys(section: Mapping[str, JsonValue], allowed: set[str], *, label: str) -> None:
+    extras = sorted(key for key in section if key not in allowed)
+    if extras:
+        raise ValueError(f"Unknown keys in {label}: {', '.join(extras)}")

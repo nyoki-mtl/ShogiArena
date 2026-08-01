@@ -11,6 +11,11 @@ experiment_name: sample_gauntlet
 # ログ出力レベル。DEBUG にすると詳細ログ。
 log_level: INFO
 
+# Engineのinstance_idと照合するinstance source。
+instances:
+  - "./resources/instances/local_example.yaml"
+  - "./resources/instances/ssh_example.yaml"
+
 # 実行時の作業ディレクトリ。省略時は `shogiarena.utils.common.project_dirs.output_dir`（settings.yaml が無ければ `./shogiarena_output`）。
 # work_dir: "{output_dir}"
 

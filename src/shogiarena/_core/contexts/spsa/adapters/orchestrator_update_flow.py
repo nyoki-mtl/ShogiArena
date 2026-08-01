@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
 import rsshogi.record
@@ -12,20 +11,18 @@ from shogiarena._core.contexts.game_session.application.orchestration.ltc_post_u
     SpsaLtcPostUpdateRequest,
 )
 from shogiarena._core.contexts.game_session.application.orchestration.update_batch_execution_service import (
+    SpsaPairAssignmentRequest,
     SpsaPendingReservationRequest,
     SpsaRunGamePairRequest,
     SpsaUpdateBatchExecutionRequest,
 )
-from shogiarena._core.contexts.game_session.application.orchestration.update_recording_service import (
-    SpsaUpdateRecordingRequest,
-)
+from shogiarena._core.contexts.spsa.adapters.accepted_best import persist_accepted_best
 from shogiarena._core.contexts.spsa.adapters.runtime.ltc_regression import run_ltc_regression
-from shogiarena._core.contexts.spsa.adapters.runtime.persistence import update_index_json
 from shogiarena._core.contexts.spsa.adapters.runtime.tokens import variant_token
 from shogiarena._core.contexts.spsa.application.classic_schedule import compute_classic_schedule_point
 from shogiarena._core.contexts.spsa.application.param_io import quantize_value
+from shogiarena._core.contexts.spsa.domain.pair_identity import canonical_pair_ids
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
-from shogiarena._core.shared.kernel.atomic_json import write_json_atomic
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
 logger = logging.getLogger(__name__)
@@ -36,7 +33,6 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
     if orchestrator._stop_event.is_set():
         return
 
-    rng = orchestrator._make_rng(int(update_idx))
     params = orchestrator._params
     sfens = orchestrator._sfens
 
@@ -57,7 +53,22 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
     pair_index_start = schedule.pair_index_start
     pair_index_end = schedule.pair_index_end
 
-    flips = [0 if p.is_not_used else (1 if rng.randint(0, 1) else -1) for p in params]
+    flips = [
+        (
+            0
+            if p.is_not_used
+            else (
+                1
+                if orchestrator._make_rng(
+                    domain="spsa.flip",
+                    update_idx=int(update_idx),
+                    parameter_id=p.name,
+                ).randint(0, 1)
+                else -1
+            )
+        )
+        for p in params
+    ]
     c_values = [float(schedule.c.get(p.name, 0.0)) for p in params]
     r_values = [float(schedule.r.get(p.name, 0.0)) for p in params]
 
@@ -80,6 +91,7 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
                     p.value_encoding,
                     p.scale,
                     p.significant_digits,
+                    p.rounding,
                 )
             )
         return out
@@ -91,7 +103,34 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
         "plus": orchestrator._compute_variant_offsets(params, tuned_plus),
         "minus": orchestrator._compute_variant_offsets(params, tuned_minus),
     }
-    plus_options, minus_options = orchestrator._build_engine_option_maps_for_pair(tuned_plus, tuned_minus, rng=rng)
+    plus_options, minus_options = orchestrator._build_engine_option_maps_for_pair(
+        tuned_plus,
+        tuned_minus,
+        update_idx=int(update_idx),
+    )
+    theta_before = {p.name: float(p.value) for p in params if not p.is_not_used}
+    should_run_ltc_after_update = orchestrator._ltc_should_run(update_idx)
+    ltc_config = orchestrator._ltc_config if should_run_ltc_after_update else None
+    ltc_pair_count = int(ltc_config.total_pairs) if ltc_config is not None else 0
+    ledger_schedule: JsonObject = {
+        "k_pair": int(k_pair),
+        "pair_index_start": int(pair_index_start),
+        "pair_index_end": int(pair_index_end),
+        "c": {p.name: c_values[idx] for idx, p in enumerate(params) if not p.is_not_used},
+        "r": {p.name: r_values[idx] for idx, p in enumerate(params) if not p.is_not_used},
+        "flips": {p.name: flips[idx] for idx, p in enumerate(params) if not p.is_not_used},
+        "expected_pair_ids": {
+            "SPSA": list(canonical_pair_ids(kind="SPSA", update_idx=update_idx, count=pairs_per_update)),
+            "LTC": list(canonical_pair_ids(kind="LTC", update_idx=update_idx, count=ltc_pair_count)),
+        },
+    }
+    orchestrator._ledger_runtime.plan_update(
+        update_idx=update_idx,
+        theta_before=theta_before,
+        schedule=ledger_schedule,
+        ltc_required=should_run_ltc_after_update,
+    )
+    _try_project_derived_json(orchestrator)
     _append_variant_artifact(
         orchestrator.run_dir,
         update_idx=update_idx,
@@ -105,22 +144,6 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
         minus_options=minus_options,
     )
 
-    orchestrator._append_spsa_event(
-        {
-            "event": "update_pending",
-            "update_idx": int(update_idx),
-            "params": {p.name: p.value for p in params if not p.is_not_used},
-            "timestamp": int(time.time() * 1000),
-            "perturbations": perturbations,
-            "is_pending": True,
-            "c_k": float(max(c_values) if c_values else 0.0),
-            "a_k": float(max(r_values) if r_values else 0.0),
-            "k_pair": int(k_pair),
-            "pair_index_start": int(pair_index_start),
-            "pair_index_end": int(pair_index_end),
-        }
-    )
-
     # Determine batch size for noise reduction
     batch_size = pairs_per_update
     event_family = "spsa"
@@ -132,6 +155,7 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
             is_tuned_as_black=request.is_tuned_as_black,
             worker_idx=request.worker_idx,
             event_family=request.event_family,
+            game_id=f"{request.pair_id}-{request.game_slot}",
         )
 
     async def _run_game_pair_for_batch(
@@ -148,7 +172,48 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
             tuned_option_map=request.tuned_options,
             baseline_option_map=request.current_options,
             event_family=request.event_family,
+            pair_id=request.pair_id,
         )
+
+    def _record_pair_assignment(request: SpsaPairAssignmentRequest) -> None:
+        orchestrator._ledger_runtime.assign_pair(
+            update_idx=request.update_idx,
+            pair_id=request.pair_id,
+            assignment_kind="SPSA",
+            opening={
+                "opening_idx": request.opening_idx,
+                "start_sfen": request.start_sfen,
+                "batch_idx": request.batch_idx,
+            },
+            color_assignment={
+                "games": [
+                    {
+                        "slot": "black",
+                        "tuned_as": "black",
+                        "game_id": request.reserved_ids[0],
+                    },
+                    {
+                        "slot": "white",
+                        "tuned_as": "white",
+                        "game_id": request.reserved_ids[1],
+                    },
+                ]
+            },
+            flips={p.name: flips[idx] for idx, p in enumerate(params) if not p.is_not_used},
+            rounding_samples={"plus_options": plus_options, "minus_options": minus_options},
+        )
+
+    if orchestrator.config.is_crn_enabled:
+        opening_indices = [pair_idx % len(sfens) for pair_idx in range(batch_size)]
+    else:
+        opening_indices = [
+            orchestrator._make_rng(
+                domain="spsa.opening",
+                update_idx=int(update_idx),
+                pair_idx=pair_idx,
+            ).randrange(len(sfens))
+            for pair_idx in range(batch_size)
+        ]
 
     score_sum, s_minus = await orchestrator._update_batch_execution_service.execute(
         request=SpsaUpdateBatchExecutionRequest(
@@ -158,9 +223,9 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
             inflight_factor=orchestrator.config.inflight_factor,
             is_crn_enabled=orchestrator.config.is_crn_enabled,
             sfens=sfens,
+            opening_indices=opening_indices,
             event_family=event_family,
         ),
-        rng=rng,
         tuned_plus=tuned_plus,
         tuned_minus=tuned_minus,
         tuned_plus_options=plus_options,
@@ -168,12 +233,16 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
         current_params=params,
         reserve_pending_game=_reserve_pending_for_batch,
         run_game_pair=_run_game_pair_for_batch,
+        record_pair_assignment=_record_pair_assignment,
+        on_assignments_ready=lambda: orchestrator._ledger_runtime.mark_games_running(
+            update_idx=update_idx,
+        ),
     )
+    orchestrator._ledger_runtime.mark_games_complete(update_idx=update_idx)
 
     # Compute contributions and apply parameter update atomically.
     step = score_sum - s_minus
 
-    should_run_ltc_after_update = False
     pre_update_snapshot: list[ParamEntry] | None = None
     post_update_snapshot: list[ParamEntry] | None = None
     baseline_snapshot: list[ParamEntry] | None = None
@@ -219,13 +288,6 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
             logger.debug(f"Early stopping triggered: delta_norm={delta_norm:.6f} < {early_stop_threshold}")
             orchestrator._stop_event.set()
 
-        _write_current_artifact(
-            orchestrator.run_dir,
-            update_idx=update_idx,
-            pair_index_end=pair_index_end,
-            params=params,
-        )
-
         # Log useful SPSA update summary
         variant_id = variant_token(update_idx)
         top_movers = sorted(grads.items(), key=lambda x: abs(x[1]), reverse=True)[:3]
@@ -235,83 +297,68 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
             f"changed={changed_params}, vid={variant_id}, top|grad|=[{top_str}]"
         )
         params_map = {p.name: p.value for p in params if not p.is_not_used}
+        post_update_snapshot = orchestrator._clone_param_entries(params)
 
-        def _persist_update_index(request: SpsaUpdateRecordingRequest, timestamp: int) -> None:
-            update_index_json(
-                orchestrator.run_dir,
-                orchestrator.config,
-                update_idx=request.update_idx,
-                params=dict(request.params),
-                s_plus=request.s_plus,
-                s_minus=request.s_minus,
-                step=request.step,
-                gradients=dict(request.gradients),
-                deltas=dict(request.deltas),
-                delta_norm=request.delta_norm,
-                batch_size=request.batch_size,
-                total_games=request.total_games,
-                timestamp=timestamp,
-                a_k=request.a_k,
-                c_k=request.c_k,
-                iteration_k=request.iteration_k,
-                perturbations=request.perturbations,
-                extra_fields={
-                    "schema_version": "shogiarena.spsa.update.v1",
-                    "score_sum": float(step),
-                    "score_definition": "plus_wins_minus_plus_losses_draw_zero",
-                    "pair_index_start": int(pair_index_start),
-                    "pair_index_end": int(pair_index_end),
-                    "k_pair": int(k_pair),
-                    "c": {p.name: c_values[idx] for idx, p in enumerate(params) if not p.is_not_used},
-                    "r": {p.name: r_values[idx] for idx, p in enumerate(params) if not p.is_not_used},
-                    "flips": {p.name: flips[idx] for idx, p in enumerate(params) if not p.is_not_used},
-                },
+        def persist_accepted(values: dict[str, float]) -> None:
+            accepted_params = orchestrator._clone_param_entries(params)
+            for entry in accepted_params:
+                if not entry.is_not_used:
+                    entry.value = values[entry.name]
+            persist_accepted_best(
+                run_dir=orchestrator.run_dir,
+                ledger_commit=orchestrator._ledger_runtime.accepted_best_commit(update_idx=update_idx),
+                parameter_wire_values=orchestrator._build_engine_option_map(accepted_params),
+                baseline_engine_count=len(orchestrator.config.baseline),
+                tuned_engine_count=len(orchestrator.config.tuned),
             )
 
-        orchestrator._update_recording_service.record(
-            request=SpsaUpdateRecordingRequest(
-                update_idx=update_idx,
-                params=params_map,
-                s_plus=score_sum,
-                s_minus=s_minus,
-                step=step,
-                gradients=grads,
-                deltas=deltas,
-                delta_norm=delta_norm,
-                batch_size=batch_size,
-                total_games=batch_size * 2,
-                perturbations=perturbations,
-                c_k=float(max(c_values) if c_values else 0.0),
-                a_k=float(max(r_values) if r_values else 0.0),
-                iteration_k=k_pair,
-            ),
-            append_spsa_event=orchestrator._append_spsa_event,
-            persist_update_index=_persist_update_index,
-        )
-        post_update_snapshot = orchestrator._clone_param_entries(params)
-        should_run_ltc_after_update = orchestrator._ltc_should_run(update_idx)
-
-    def _persist_revert_index(params_map: dict[str, float], timestamp: int, extra_fields: JsonObject) -> None:
-        update_index_json(
-            orchestrator.run_dir,
-            orchestrator.config,
+        orchestrator._ledger_runtime.store_candidate(
             update_idx=update_idx,
-            params=params_map,
-            s_plus=score_sum,
-            s_minus=s_minus,
-            step=step,
-            gradients=grads,
-            deltas=deltas,
-            delta_norm=delta_norm,
-            batch_size=batch_size,
-            total_games=batch_size * 2,
-            timestamp=timestamp,
-            a_k=float(max(r_values) if r_values else 0.0),
-            c_k=float(max(c_values) if c_values else 0.0),
-            iteration_k=k_pair,
-            perturbations=perturbations,
-            extra_fields=extra_fields,
+            theta_candidate=params_map,
+            schedule={
+                **ledger_schedule,
+                "s_plus": float(score_sum),
+                "s_minus": float(s_minus),
+                "step": float(step),
+                "score_sum": float(step),
+                "score_definition": "plus_wins_minus_plus_losses_draw_zero",
+                "gradients": grads,
+                "deltas": deltas,
+                "delta_norm": delta_norm,
+                "batch_size": int(batch_size),
+                "total_games": int(batch_size * 2),
+                "perturbations": perturbations,
+                "c_k": float(max(c_values) if c_values else 0.0),
+                "a_k": float(max(r_values) if r_values else 0.0),
+                "iteration_k": int(k_pair),
+            },
         )
+        if should_run_ltc_after_update:
+            orchestrator._ledger_runtime.prepare_ltc(update_idx=update_idx)
+        else:
+            orchestrator._ledger_runtime.commit_without_ltc(
+                update_idx=update_idx,
+                theta_final=params_map,
+            )
+            persist_accepted(params_map)
+
+    def commit_ltc_decision(
+        evidence: JsonObject,
+        is_passed: bool,
+        accepted: dict[str, float],
+        reverted: dict[str, float],
+        baseline_idx: int,
+    ) -> None:
+        orchestrator._ledger_runtime.commit_ltc_decision(
+            update_idx=update_idx,
+            baseline_update_idx=baseline_idx,
+            is_passed=is_passed,
+            evidence=evidence,
+            accepted_theta=accepted,
+            reverted_theta=reverted,
+        )
+        if is_passed:
+            persist_accepted(accepted)
 
     await orchestrator._ltc_post_update_service.process(
         request=SpsaLtcPostUpdateRequest(
@@ -330,24 +377,18 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
         clone_param_entries=orchestrator._clone_param_entries,
         store_ltc_baseline=orchestrator._store_ltc_baseline,
         append_spsa_event=orchestrator._append_spsa_event,
-        write_params=lambda updated_params: _write_current_artifact(
-            orchestrator.run_dir,
-            update_idx=update_idx,
-            pair_index_end=pair_index_end,
-            params=updated_params,
-        ),
-        persist_revert_index=_persist_revert_index,
+        write_params=lambda _updated_params: None,
+        persist_revert_index=lambda _params, _timestamp, _extra_fields: None,
+        commit_ltc_decision=commit_ltc_decision,
     )
+    _try_project_derived_json(orchestrator)
 
 
-def _write_current_artifact(run_dir: Any, *, update_idx: int, pair_index_end: int, params: list[ParamEntry]) -> None:
-    payload: JsonObject = {
-        "schema_version": "shogiarena.spsa.current.v1",
-        "update_idx": int(update_idx),
-        "pair_index_end": int(pair_index_end),
-        "theta": {entry.name: float(entry.value) for entry in params if not entry.is_not_used},
-    }
-    write_json_atomic(run_dir / "spsa" / "current.json", payload)
+def _try_project_derived_json(orchestrator: Any) -> None:
+    try:
+        orchestrator._ledger_runtime.project_derived_json(run_dir=orchestrator.run_dir)
+    except (OSError, ValueError) as exc:
+        logger.warning("SPSA ledger commit succeeded but derived JSON projection failed: %s", exc)
 
 
 def _append_variant_artifact(

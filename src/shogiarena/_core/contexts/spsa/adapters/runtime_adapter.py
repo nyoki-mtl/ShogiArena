@@ -18,9 +18,14 @@ from shogiarena._core.contexts.game_session.ports.dashboard_lifecycle_factory im
 )
 from shogiarena._core.contexts.game_session.ports.run_storage import RunStoragePort
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
+from shogiarena._core.contexts.spsa.adapters.fixed_option_preflight import (
+    run_yaneuraou_fixed_option_preflight,
+)
 from shogiarena._core.contexts.spsa.adapters.runner import SpsaRunner
+from shogiarena._core.contexts.spsa.application.space_spec import load_spsa_space_spec
 from shogiarena._core.contexts.spsa.ports.dashboard_factory import DashboardSpsaServicesFactory
 from shogiarena._core.contexts.spsa.ports.spsa_runtime_port import SpsaRunConfigBuildRequest
+from shogiarena._core.platform.settings import project_dirs
 
 
 class SpsaRuntimeAdapter:
@@ -70,6 +75,27 @@ class SpsaRuntimeAdapter:
 
     def create_run_storage(self, run_dir: Path) -> RunStoragePort:
         return FilesystemRunStorage(run_dir)
+
+    def preflight_dry_run(
+        self,
+        config: SpsaRunConfig,
+        *,
+        work_dir: Path,
+        instance_pool: object | None,
+    ) -> None:
+        """Scan resolved local fixed options in an isolated directory."""
+
+        params = load_spsa_space_spec(config.space_path).to_param_entries()
+        if not params:
+            raise ValueError("SPSA space spec has no parameters")
+        run_yaneuraou_fixed_option_preflight(
+            engines=config.tuned,
+            target_option_names=(entry.engine_option_name for entry in params if not entry.is_not_used),
+            run_dir=work_dir,
+            output_dir=project_dirs.output_dir,
+            engine_dir=project_dirs.engine_dir,
+            instance_pool=validate_instance_pool(instance_pool),
+        )
 
     def engine_trace_logger_names(self) -> tuple[str, ...]:
         return ("shogiarena",)

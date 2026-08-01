@@ -85,6 +85,7 @@ async def test_spsa_runner_does_not_persist_error_result_when_stop_requested() -
     state = types.SimpleNamespace(
         db_service=db_service,
         completion_lock=asyncio.Lock(),
+        observation_ledger=None,
     )
     runner = types.SimpleNamespace(
         _state=state,
@@ -113,12 +114,16 @@ async def test_spsa_orchestrator_run_serializes_update_items() -> None:
     ) -> None:
         calls.append((list(items), run_one_update, concurrency_limit))
 
+    async def preflight_instance_health() -> None:
+        return
+
     orchestrator = types.SimpleNamespace(
         _update_items=[1, 2, 3],
         _params=[object()],
         _sfens=["startpos"],
         num_workers=4,
         run_items_concurrently=run_items_concurrently,
+        preflight_instance_health=preflight_instance_health,
         _run_one_spsa_update=run_one,
     )
 

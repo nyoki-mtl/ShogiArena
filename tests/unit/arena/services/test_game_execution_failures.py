@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from shogiarena._core.contexts.game_session.adapters.orchestration import game_execution
 from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution import execute_game
 from shogiarena._core.contexts.instances.application.instance_models import InstanceConfig, InstanceType
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
+from shogiarena._core.shared.kernel.time_control import TimeControlLimits
 
 
 class _EngineItem:
@@ -23,8 +25,8 @@ class _GameSpec:
     white_item = _EngineItem()
     initial_sfen = "startpos"
     game_id = "g-cancelled"
-    black_limits = None
-    white_limits = None
+    black_limits = TimeControlLimits(fixed_time_ms=10)
+    white_limits = TimeControlLimits(fixed_time_ms=10)
     before_game_hook = None
     game_round = None
     schedule_metadata = None
@@ -67,8 +69,13 @@ class _ResourceOwner:
 
 
 @pytest.mark.asyncio
-async def test_execute_game_records_user_interruption(tmp_path: Path) -> None:
+async def test_execute_game_records_user_interruption(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     owner = _Owner(tmp_path / "run")
+    monkeypatch.setattr(
+        game_execution,
+        "_prepare_resource_context",
+        lambda *_args: _cancelled_resource_context(),
+    )
 
     with pytest.raises(asyncio.CancelledError):
         await execute_game(owner, _GameSpec())
@@ -76,6 +83,10 @@ async def test_execute_game_records_user_interruption(tmp_path: Path) -> None:
     payload = json.loads((owner.run_dir / "failures" / "run_failures.json").read_text(encoding="utf-8"))
     assert payload["failures"][0]["failure_phase"] == "user_interruption"
     assert payload["failures"][0]["game_id"] == "g-cancelled"
+
+
+async def _cancelled_resource_context() -> object:
+    raise asyncio.CancelledError()
 
 
 @pytest.mark.asyncio

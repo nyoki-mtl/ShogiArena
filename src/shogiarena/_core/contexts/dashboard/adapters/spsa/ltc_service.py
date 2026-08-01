@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import cast
 
 from shogiarena._core.contexts.dashboard.application.spsa.event_types import SpsaEvent
@@ -24,8 +24,16 @@ class SpsaLtcService:
     def __init__(
         self,
         store: DashboardSpsaStorePort,
+        *,
+        results_loader: Callable[[], list[JsonObject]] | None = None,
     ) -> None:
         self._store = store
+        self._results_loader = results_loader
+
+    def bind_results_loader(self, results_loader: Callable[[], list[JsonObject]]) -> None:
+        """Bind the canonical run-owned LTC result projection."""
+
+        self._results_loader = results_loader
 
     def compute_ltc_summary(
         self,
@@ -37,10 +45,10 @@ class SpsaLtcService:
         config_meta_payload = to_json_object(ltc_config.model_dump(exclude_none=True)) if ltc_config else None
 
         if enriched_results is None:
-            raw_results = self._store.load_ltc_results()
+            raw_results = self._results_loader() if self._results_loader is not None else self._store.load_ltc_results()
             enriched_results = self.enrich_ltc_results(raw_results)
 
-        ltc_index = self._store.load_index_metadata().ltc_regression
+        ltc_index = self._store.load_index_metadata().ltc_regression if self._results_loader is None else None
         index_meta_payload = to_json_object(ltc_index.model_dump(exclude_none=True)) if ltc_index else None
         summary = build_ltc_summary_projection(
             config_meta_payload=config_meta_payload,

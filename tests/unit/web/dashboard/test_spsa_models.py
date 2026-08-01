@@ -22,7 +22,6 @@ from shogiarena._core.contexts.dashboard.application.spsa.io_models.meta_io_mode
     LtcRegressionMetaConfig,
     SpsaMetaData,
 )
-from shogiarena._core.contexts.spsa.application.dashboard.summary_cache_payload import SummaryCachePayload
 
 # ---------------------------------------------------------------------------
 # EngineStatEntry
@@ -447,39 +446,3 @@ class TestIndexData:
     def test_extra_ignored(self) -> None:
         data = IndexData.model_validate({"extra_key": True})
         assert data.updates == []
-
-
-# ---------------------------------------------------------------------------
-# SummaryCachePayload
-# ---------------------------------------------------------------------------
-
-
-class TestSummaryCachePayload:
-    def test_normal(self) -> None:
-        payload = SummaryCachePayload.model_validate(
-            {
-                "version": 1,
-                "session_uuid": "abc-123",
-                "events_offset": 100,
-                "events_size": 50,
-                "events_mtime_ns": 9999999,
-                "aggregates": {"total_games": 200},
-            }
-        )
-        assert payload.version == 1
-        assert payload.session_uuid == "abc-123"
-        assert payload.events_offset == 100
-        assert payload.aggregates == {"total_games": 200}
-
-    def test_defaults(self) -> None:
-        payload = SummaryCachePayload.model_validate({})
-        assert payload.version == 1
-        assert payload.session_uuid is None
-        assert payload.events_offset == 0
-        assert payload.events_size == 0
-        assert payload.events_mtime_ns == 0
-        assert payload.aggregates == {}
-
-    def test_extra_ignored(self) -> None:
-        payload = SummaryCachePayload.model_validate({"unknown": 42})
-        assert payload.version == 1

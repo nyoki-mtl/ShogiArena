@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
+from shogiarena._core.shared.kernel.json_types import JsonObject
 
 
 @runtime_checkable
@@ -21,14 +21,6 @@ class SpsaStorePort(Protocol):
     def load_index_metadata(self) -> object: ...
     def load_variants_map(self) -> JsonObject: ...
     def load_ltc_results(self) -> list[object]: ...
-    def save_best_params_snapshot(
-        self,
-        *,
-        variant_token: str,
-        update_idx: int,
-        params: Mapping[str, float],
-        metadata: Mapping[str, JsonValue] | None = None,
-    ) -> None: ...
 
 
 @runtime_checkable

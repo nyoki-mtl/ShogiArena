@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Mapping
 from typing import Any
 
 from shogiarena._core.contexts.game_session.application.sprt_service import SprtDecision
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
 logger = logging.getLogger(__name__)
+
+LTC_SPRT_BUDGET_EXHAUSTED_REASON = "sealed LTC pair budget exhausted without terminal SPRT decision"
 
 
 def determine_ltc_status(
@@ -24,18 +27,19 @@ def determine_ltc_status(
     status = "passed"
     fail_reasons: list[str] = []
 
-    min_winrate = getattr(criteria, "min_winrate", None)
+    min_winrate = _criterion_value(criteria, "min_winrate")
     if min_winrate is not None and winrate < min_winrate:
         status = "failed"
         fail_reasons.append(f"winrate {winrate:.3f} below threshold {min_winrate:.3f}")
 
     # Treat both 10 and -10 as "allow at most a 10 Elo drop" to preserve existing configs
     # that wrote the threshold as a negative Elo bound.
-    max_elo_drop = getattr(criteria, "max_elo_drop", None)
+    max_elo_drop = _criterion_value(criteria, "max_elo_drop")
     allowed_elo_drop = abs(max_elo_drop) if max_elo_drop is not None else None
-    if allowed_elo_drop is not None and elo is not None and elo < -allowed_elo_drop:
+    if allowed_elo_drop is not None and (winrate <= 0.0 or (elo is not None and elo < -allowed_elo_drop)):
         status = "failed"
-        fail_reasons.append(f"elo {elo:.1f} below allowed drop of {allowed_elo_drop:.1f}")
+        elo_label = "-inf" if winrate <= 0.0 else f"{elo:.1f}"
+        fail_reasons.append(f"elo {elo_label} below allowed drop of {allowed_elo_drop:.1f}")
 
     if sprt_payload is not None and sprt_decision is not None:
         if sprt_decision == SprtDecision.ACCEPT_H0:
@@ -48,6 +52,26 @@ def determine_ltc_status(
             )
 
     return status, fail_reasons
+
+
+def fail_closed_ltc_status_at_budget(
+    status: str,
+    fail_reasons: list[str],
+    *,
+    pairs_played: int,
+    total_pairs: int,
+) -> tuple[str, list[str]]:
+    """Convert an unresolved finite LTC sample into a durable rejection."""
+
+    if status != "pending" or pairs_played < total_pairs:
+        return status, fail_reasons
+    return "failed", [*fail_reasons, LTC_SPRT_BUDGET_EXHAUSTED_REASON]
+
+
+def _criterion_value(criteria: Any, field: str) -> Any:
+    if isinstance(criteria, Mapping):
+        return criteria.get(field)
+    return getattr(criteria, field, None)
 
 
 def append_ltc_start_event(

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from shogiarena._core.contexts.game_session.adapters.engine.pool import EnginePool
+from shogiarena._core.contexts.instances.application.instance_models import InstanceConfig, InstanceType
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
 
@@ -52,6 +53,78 @@ def test_engine_pool_slot_key():
     assert EnginePool.slot_key("engine", "local") == "engine@local"
     assert EnginePool.slot_key("engine", "  local ") == "engine@local"
     assert EnginePool.slot_key("engine", "") == "engine@auto"
+
+
+@pytest.mark.asyncio
+async def test_engine_pool_spec_acquisition_uses_mapping_factory_only() -> None:
+    mappings: list[object] = []
+
+    async def _create_from_mapping(config_mapping: object, **_kwargs: Any) -> _DummyEngine:
+        mappings.append(config_mapping)
+        return _DummyEngine(name="from-spec")
+
+    async def _legacy_create(*_args: Any, **_kwargs: Any) -> _DummyEngine:
+        raise AssertionError("legacy YAML engine creation must not be used")
+
+    mock_factory = AsyncMock()
+    mock_factory.create_engine = _legacy_create
+    mock_factory.create_engine_from_mapping = _create_from_mapping
+    engine_pool = EnginePool(engine_factory_service=EngineFactoryService(factory=mock_factory))
+    mapping = {"engine_path": "engine", "working_directory": ".", "options": {}}
+
+    engine = await engine_pool.acquire_from_mapping(
+        "engine-a",
+        mapping,
+        contract_digest="a" * 64,
+    )
+
+    assert mappings == [mapping]
+    await engine_pool.release("engine-a", engine, contract_digest="a" * 64)
+    await engine_pool.shutdown_all()
+
+
+@pytest.mark.asyncio
+async def test_engine_pool_spec_acquisition_passes_configured_instance_to_factory() -> None:
+    factory_instance_ids: list[str | None] = []
+
+    async def _create_from_mapping(_mapping: object, **kwargs: Any) -> _DummyEngine:
+        factory_instance_ids.append(kwargs["instance_id"])
+        return _DummyEngine(name="remote")
+
+    mock_factory = AsyncMock()
+    mock_factory.create_engine_from_mapping = _create_from_mapping
+    instance_pool = InstancePool()
+    instance_pool.add_instance(
+        InstanceConfig(
+            name="ssh-a",
+            type=InstanceType.SSH,
+            engine_dir="~/arena/data/engines",
+            host="example.invalid",
+            slots=2,
+            max_engines=2,
+        )
+    )
+    config = SimpleNamespace(
+        instance_id="ssh-a",
+        cpu_affinity=None,
+        handshake_timeout=None,
+        go_options={},
+    )
+    engine_pool = EnginePool(
+        engine_factory_service=EngineFactoryService(factory=mock_factory),
+        engine_configs={"engine-a": config},
+        instance_pool=instance_pool,
+    )
+
+    engine = await engine_pool.acquire_from_mapping(
+        "engine-a",
+        {"engine_path": "engine", "working_directory": ".", "options": {}},
+        contract_digest="a" * 64,
+    )
+
+    assert factory_instance_ids == ["ssh-a"]
+    assert instance_pool.get_instance("ssh-a").metrics.engine_processes == 1  # type: ignore[union-attr]
+    await engine_pool.release("engine-a", engine, contract_digest="a" * 64)
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Mapping
@@ -33,11 +34,13 @@ from shogiarena._core.contexts.dashboard.ports.spsa_service_ports import (
     DashboardSpsaStorePort,
     DashboardSpsaSummaryServicePort,
     DashboardSpsaUpdateQueryPort,
+    SpsaUpdateNotFoundError,
 )
 from shogiarena._core.contexts.spsa.application.dashboard.snapshot_composition import SpsaSnapshotCompositionService
 from shogiarena._core.contexts.spsa.ports.dashboard_factory import DashboardSpsaServicesFactory
 from shogiarena._core.interfaces.dashboard.api_query_models import PaginatedSearchQuery
 from shogiarena._core.interfaces.dashboard.http_response_builder import json_error_response
+from shogiarena._core.shared.kernel.json_coercion import to_json_object
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int, coerce_optional_text
 from shogiarena._core.shared.kernel.serialization import json_serialize
@@ -64,6 +67,7 @@ class SpsaAPI:
         *,
         db_path: Path,
         run_dir: Path,
+        read_only: bool = False,
         dashboard_service_factory: DashboardSpsaServicesFactory | None = None,
         store: DashboardSpsaStorePort | None = None,
         summary_service: DashboardSpsaSummaryServicePort | None = None,
@@ -75,9 +79,11 @@ class SpsaAPI:
     ) -> None:
         self._db_path = db_path
         self._run_dir = run_dir
+        self._read_only = read_only
         resolved_services = resolve_dashboard_spsa_services(
             db_path=db_path,
             run_dir=run_dir,
+            read_only=read_only,
             dashboard_service_factory=dashboard_service_factory,
             store=store,
             summary_service=summary_service,
@@ -98,25 +104,21 @@ class SpsaAPI:
         self._ltc_service: DashboardSpsaLtcServicePort = interface_dependencies.spsa_support.create_ltc_service(
             self._store
         )
+        bind_ltc_results = getattr(self._ltc_service, "bind_results_loader", None)
+        if callable(bind_ltc_results):
+            bind_ltc_results(self._update_query_service.load_ltc_results)
         self._snapshot_service = SpsaSnapshotCompositionService(
             store=self._store,
             ltc_service=self._ltc_service,
             summary_service=self._summary_service,
             live_view_builder=build_live_view_snapshot,
+            ltc_results_loader=self._update_query_service.load_ltc_results,
         )
         self._analysis_cache = AnalysisCacheService(
             update_query_service=self._update_query_service,
             analysis_service=self._analysis_service,
         )
-        self._streams = SpsaStreams(
-            self._update_query_service,
-            analysis_service=self._analysis_service,
-            store=self._store,
-            ltc_service=self._ltc_service,
-            snapshot_service=self._snapshot_service,
-            summary_supplier=self._build_summary_payload,
-            analysis_cache=self._analysis_cache,
-        )
+        self._streams = SpsaStreams(self._update_query_service)
         self._params_service: DashboardSpsaParamsServicePort = (
             interface_dependencies.spsa_support.create_params_service(
                 store=self._store,
@@ -134,23 +136,22 @@ class SpsaAPI:
         app.router.add_get("/api/spsa/params", self.get_params)
         app.router.add_get("/api/spsa/update/{idx}", self.get_update)
         app.router.add_get("/api/spsa/updates", self.get_updates)
-        app.router.add_get("/api/spsa/updates/stream", self._streams.sse_updates)
-        app.router.add_get("/api/spsa/update/detail/stream", self._streams.sse_update_detail)
+        app.router.add_get("/api/spsa/revisions/stream", self._streams.sse_revisions)
         app.router.add_get("/api/spsa/variants", self.get_variants)
         app.router.add_get("/api/spsa/variant/{variant_id}", self.get_variant)
-        app.router.add_get("/api/spsa/variant/games/stream", self._streams.sse_variant_games)
-        app.router.add_get("/ws/spsa/updates", self._streams.websocket_updates)
         app.router.add_get("/api/spsa/analysis/correlation", self.get_correlation)
-        app.router.add_get("/api/spsa/analysis/correlation/stream", self._streams.sse_correlation)
-        app.router.add_get("/api/spsa/analysis/convergence", self.sse_convergence)
+        app.router.add_get("/api/spsa/analysis/convergence", self.get_convergence)
         app.router.add_get("/api/spsa/games", self.get_games)
         app.router.add_get("/api/spsa/game/{game_id}", self.get_game)
         app.router.add_get("/api/spsa/ltc/summary", self.get_ltc_summary)
         app.router.add_get("/api/spsa/ltc/results", self.get_ltc_results)
-        app.router.add_get("/api/spsa/ltc/results/stream", self._streams.sse_ltc_results)
-        app.router.add_get("/api/spsa/ltc/progress/stream", self._streams.sse_ltc_progress)
-        app.router.add_get("/api/spsa/ltc/games/stream", self._streams.sse_ltc_games)
-        app.router.add_get("/api/spsa/summary/stream", self._streams.sse_summary)
+
+    def close(self) -> None:
+        """Release instance-owned SPSA projection resources."""
+
+        close = getattr(self._update_query_service, "close", None)
+        if callable(close):
+            close()
 
     # ------------------------------------------------------------------
     # GET /api/spsa/events
@@ -161,7 +162,12 @@ class SpsaAPI:
         except ValidationError as exc:
             return json_error_response(str(exc), status=400, code="invalid_limit")
         limit = parsed_query.limit
-        event_entries = self._store.load_event_entries()
+        query_service = getattr(self, "_update_query_service", None)
+        event_entries = (
+            query_service.load_event_entries()
+            if query_service is not None
+            else [to_json_object(event) for event in self._store.load_event_entries()]
+        )
         if not event_entries:
             return web.json_response({"events": []})
 
@@ -246,6 +252,8 @@ class SpsaAPI:
             return json_error_response("Unsupported detail view", status=400, code="invalid_detail_view")
         try:
             payload = self._update_query_service.build_update_detail(idx)
+        except SpsaUpdateNotFoundError as exc:
+            return json_error_response(str(exc), status=404, code="update_not_found")
         except ValueError as exc:
             message = str(exc) or "no events"
             return json_error_response(message, status=404, code="no_events")
@@ -283,7 +291,12 @@ class SpsaAPI:
         search_query = parsed_query.q.strip().lower()
 
         try:
-            games, total = self._game_listing_service.list_games(offset=offset, limit=limit, search_query=search_query)
+            games, total = await asyncio.to_thread(
+                self._game_listing_service.list_games,
+                offset=offset,
+                limit=limit,
+                search_query=search_query,
+            )
         except Exception as exc:
             # The listing service propagates DB-layer failures (e.g. a corrupt game.db); convert
             # them to a clean 500 at the API boundary instead of leaking an unhandled traceback.
@@ -297,7 +310,11 @@ class SpsaAPI:
     async def get_game(self, request: web.Request) -> web.Response:
         game_id = request.match_info["game_id"]
 
-        record = self._game_query.load_game_record(self._db_path, game_name=game_id)
+        record = self._game_query.load_game_record(
+            self._db_path,
+            game_name=game_id,
+            immutable=self._read_only,
+        )
         if record is not None:
             game_data = build_game_detail_payload(record=record, game_id=game_id, logger=logger)
 
@@ -364,17 +381,18 @@ class SpsaAPI:
             {"updates": [], "total": 0, "limit": limit, "offset": offset, "has_more": False, "progress": progress}
         )
 
-    async def sse_convergence(self, request: web.Request) -> web.StreamResponse | web.Response:
-        """Serve convergence analysis as SSE or JSON snapshot depending on query params."""
+    async def get_convergence(self, request: web.Request) -> web.Response:
+        """Serve the current convergence analysis snapshot."""
 
-        if request.rel_url.query.get("format", "").lower() == "json":
-            snapshot = self._build_convergence_snapshot(request)
-            return web.json_response(snapshot)
+        analysis = await asyncio.to_thread(self._analysis_cache.get_convergence_snapshot)
+        snapshot = self._compose_convergence_snapshot(to_json_object(analysis), request)
+        return web.json_response(snapshot)
 
-        return await self._streams.sse_convergence(request)
-
-    def _build_convergence_snapshot(self, request: web.Request | None = None) -> JsonObject:
-        snapshot = self._analysis_cache.get_convergence_snapshot()
+    def _compose_convergence_snapshot(
+        self,
+        snapshot: Mapping[str, JsonValue],
+        request: web.Request | None = None,
+    ) -> JsonObject:
         ltc_limit = 200
         if request is not None:
             try:
@@ -384,14 +402,9 @@ class SpsaAPI:
                 ltc_limit = 200
         return self._snapshot_service.compose_convergence_with_ltc(snapshot, ltc_limit=ltc_limit)
 
-    def notify_summary_snapshot(self, payload: Mapping[str, JsonValue]) -> None:
-        """Receive summary snapshots broadcast by the server and publish to SSE clients."""
-        enriched = self._attach_ltc_summary_fields(payload)
-        self._streams.publish_summary_snapshot(enriched)
-
     # ------------------------------------------------------------------
     # GET /api/spsa/analysis/correlation
     # ------------------------------------------------------------------
     async def get_correlation(self, _request: web.Request) -> web.Response:
-        snapshot = self._analysis_cache.get_correlation_snapshot()
+        snapshot = await asyncio.to_thread(self._analysis_cache.get_correlation_snapshot)
         return web.json_response(snapshot)

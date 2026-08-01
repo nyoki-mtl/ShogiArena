@@ -29,9 +29,7 @@ from shogiarena._core.contexts.match.domain.adjudication import AdjudicationResu
 from shogiarena._core.contexts.spsa.adapters.runtime.persistence import update_index_json
 from shogiarena._core.interfaces.cli.config.repo_setup import _should_use_github_token
 from shogiarena._core.interfaces.cli.run.tournament import run_generate_command
-from shogiarena._core.platform.engine_provisioning.remote_paths import RemotePathResolver
-from shogiarena._core.platform.engine_provisioning.remote_repo_manager import RemoteRepoSpec, RemoteRepoSynchronizer
-from shogiarena._core.platform.engine_provisioning.remote_stream_runner import build_remote_runner_command
+from shogiarena._core.platform.engine_provisioning.remote_paths import RemotePathResolver, RemotePosixPath
 from shogiarena._core.platform.settings.loader import write_settings_file
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.settings_loading.settings_models import ArenaSettings
@@ -220,30 +218,20 @@ async def test_remote_path_resolver_expands_without_eval() -> None:
     transport = _FakeTransport(env_output="__HOME__=/home/arena\nHOME=/home/arena\nENGINE_DIR=/opt/engines\n")
     resolver = RemotePathResolver(transport)
 
-    assert await resolver.expand("~/book") == "/home/arena/book"
-    assert await resolver.expand("$ENGINE_DIR/bin") == "/opt/engines/bin"
+    assert str(await resolver.expand(RemotePosixPath("~/book"))) == "/home/arena/book"
+    assert str(await resolver.expand(RemotePosixPath("$ENGINE_DIR/bin"))) == "/opt/engines/bin"
     assert all("eval" not in command for command in transport.commands)
 
 
-@pytest.mark.asyncio
-async def test_remote_repo_branch_checkout_uses_origin_ref() -> None:
-    transport = _FakeTransport()
-    synchronizer = RemoteRepoSynchronizer(
-        transport,
-        RemoteRepoSpec(base="/repo", url="https://github.com/a/b", ref="main"),
-    )
+def test_remote_posix_path_rejects_coordinator_windows_separator_and_quotes_shell() -> None:
+    with pytest.raises(ValueError, match="POSIX separators"):
+        RemotePosixPath(r"C:\worker\deployments")
 
-    await synchronizer._reset_ref("/repo", "main")
+    root = RemotePosixPath("$HOME/Shogi Arena")
+    deployment = root / "deployments" / "abc123"
 
-    assert synchronizer._checkout_command("/repo", "main") == ("git -C /repo checkout -B main refs/remotes/origin/main")
-    assert transport.commands == ["git -C /repo reset --hard refs/remotes/origin/main"]
-
-
-def test_remote_runner_command_preserves_exit_code_sentinel() -> None:
-    command = build_remote_runner_command("/repo", "/tmp/spec.json", "{}", github_token_file=None)
-
-    assert "|| rc=$?" in command
-    assert "echo __REMOTE_EXIT_RC:$rc" in command
+    assert str(deployment) == "$HOME/Shogi Arena/deployments/abc123"
+    assert deployment.shell_quote() == "'$HOME/Shogi Arena/deployments/abc123'"
 
 
 @pytest.mark.skipif(

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 
+from shogiarena._core.interfaces.cli.run.provision_options import parse_provision_mode
+
 
 def add_tournament_common_args(
     parser: argparse.ArgumentParser,
@@ -46,9 +48,10 @@ def add_tournament_common_args(
     )
     parser.add_argument(
         "--provision",
-        choices=["none", "force"],
-        default="none",
-        help="Provision engine assets to SSH instances before execution",
+        type=parse_provision_mode,
+        default="cas",
+        metavar="{cas,preplaced}",
+        help="Remote resource placement mode (default: content-addressed cas)",
     )
     parser.add_argument(
         "--git-worktree",

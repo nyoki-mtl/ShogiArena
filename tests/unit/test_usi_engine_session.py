@@ -1764,3 +1764,58 @@ async def test_send_command_rejects_embedded_newline() -> None:
         await engine._send_command("setoption name X value foo\nquit")
     with pytest.raises(ValueError):
         await engine._send_command("usi\rmalicious")
+
+
+@pytest.mark.asyncio
+async def test_request_tunable_manifest_accepts_exact_framed_payload() -> None:
+    bridge = DummyBridge()
+
+    async def respond(_command: str) -> None:
+        await bridge.enqueue(
+            "info string shogiarena_tunables_json "
+            '{"schema_version":"shogiarena.usi_tunables.v1","tunables":[{"id":"threads"}]}'
+        )
+        await bridge.enqueue("usi_tunablesok")
+
+    bridge.set_handler("usi_tunables", respond)
+    bridge._handlers = {"usi_tunables": respond, **bridge._handlers}
+    config = UsiEngineConfig(engine_path="dummy", name="dummy")
+    async with AsyncUsiEngine(config=config, bridge=bridge) as engine:
+        manifest = await engine.request_tunable_manifest(timeout=1.0)
+
+    assert manifest == {
+        "schema_version": "shogiarena.usi_tunables.v1",
+        "tunables": [{"id": "threads"}],
+    }
+    assert "usi_tunables" in bridge.commands
+
+
+@pytest.mark.asyncio
+async def test_request_tunable_manifest_rejects_malformed_json() -> None:
+    bridge = DummyBridge()
+
+    async def respond(_command: str) -> None:
+        await bridge.enqueue("info string shogiarena_tunables_json {broken")
+        await bridge.enqueue("usi_tunablesok")
+
+    bridge.set_handler("usi_tunables", respond)
+    bridge._handlers = {"usi_tunables": respond, **bridge._handlers}
+    config = UsiEngineConfig(engine_path="dummy", name="dummy")
+    async with AsyncUsiEngine(config=config, bridge=bridge) as engine:
+        with pytest.raises(ValueError, match="malformed"):
+            await engine.request_tunable_manifest(timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_request_tunable_manifest_times_out_without_terminator() -> None:
+    bridge = DummyBridge()
+
+    async def no_response(_command: str) -> None:
+        return
+
+    bridge.set_handler("usi_tunables", no_response)
+    bridge._handlers = {"usi_tunables": no_response, **bridge._handlers}
+    config = UsiEngineConfig(engine_path="dummy", name="dummy")
+    async with AsyncUsiEngine(config=config, bridge=bridge) as engine:
+        with pytest.raises(TimeoutError, match="usi_tunables"):
+            await engine.request_tunable_manifest(timeout=0.01)

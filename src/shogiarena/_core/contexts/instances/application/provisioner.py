@@ -229,6 +229,25 @@ class Provisioner:
                 logger.debug("Failed to close SSH transport after file ensure: %s", exc)
 
     @staticmethod
+    async def verify_remote_file_sha256(instance: Instance, remote_path: str, expected_sha256: str) -> bool:
+        """Remote fileの存在とfull SHA-256を検証する。"""
+
+        if instance.config.type != InstanceType.SSH:
+            return False
+        resolved = await Provisioner._resolve_remote_path(instance, remote_path)
+        transport = create_transport(instance)
+        await transport.connect()
+        try:
+            command = (
+                f"test -f {shlex.quote(resolved)} && "
+                f"test \"$(sha256sum {shlex.quote(resolved)} | cut -d' ' -f1)\" = {shlex.quote(expected_sha256)}"
+            )
+            rc, _, _ = await transport.run(command)
+            return rc == 0
+        finally:
+            await transport.close()
+
+    @staticmethod
     async def _tar_stream_to_remote(instance_config: InstanceConfig, local_dir: Path, remote_tmp: str) -> None:
         """Stream a local tar archive to remote and extract using asyncssh."""
         # local tar sender
@@ -365,8 +384,14 @@ class Provisioner:
         data = json.dumps(payload, sort_keys=True).encode()
         t = create_transport(instance)
         await t.connect()
-        await t.mkdir(remote_dir, is_existing_ok=True)
-        await t.write_bytes(manifest_path, data)
+        try:
+            await t.mkdir(remote_dir, is_existing_ok=True)
+            await t.write_bytes(manifest_path, data)
+        finally:
+            try:
+                await t.close()
+            except (asyncssh.Error, OSError) as exc:
+                logger.debug("Failed to close SSH transport after writing manifest: %s", exc)
 
     @staticmethod
     async def ensure_remote_dir_by_manifest(instance: Instance, local_dir: Path, remote_dir: str) -> None:

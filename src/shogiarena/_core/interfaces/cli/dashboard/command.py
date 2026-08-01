@@ -7,6 +7,7 @@ import asyncio
 import logging
 from pathlib import Path
 
+from shogiarena._core.contexts.spsa.ports.ledger_ports import SPSA_LEDGER_RELATIVE_PATH
 from shogiarena._core.interfaces.boundaries.parsers.dashboard import (
     detect_worker_count,
     infer_dashboard_profiles,
@@ -16,10 +17,14 @@ from shogiarena._core.interfaces.boundaries.parsers.dashboard import (
 )
 from shogiarena._core.interfaces.cli.main import CliError
 from shogiarena._core.interfaces.composition_root.default_root import build_default_root
-from shogiarena._core.interfaces.dashboard.assets_writer import write_dashboard_assets
 from shogiarena._core.shared.kernel.paths import resolve_path_like
 
 logger = logging.getLogger(__name__)
+
+LEGACY_SPSA_DASHBOARD_MESSAGE = (
+    "This SPSA archive uses the pre-1.2 JSON-only format and cannot be opened by ShogiArena 1.2.0. "
+    "Use ShogiArena 1.1.0 to inspect this archive."
+)
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -64,17 +69,23 @@ async def _serve_dashboard(args: argparse.Namespace) -> None:
         if not config_path.exists():
             raise CliError(f"configuration file not found: {config_path}")
         try:
-            run_dir, num_workers, profile = load_tournament_config_for_dashboard(config_path)
+            configured_run_dir, num_workers, profile = load_tournament_config_for_dashboard(
+                config_path,
+                run_dir_override=run_dir,
+            )
             config_mode = profile
         except ValueError as tournament_error:
             try:
-                run_dir, num_workers = load_spsa_config_for_dashboard(
+                configured_run_dir, num_workers = load_spsa_config_for_dashboard(
                     config_path,
                     original_error=tournament_error,
+                    run_dir_override=run_dir,
                 )
             except ValueError as spsa_error:
                 raise CliError(str(spsa_error)) from spsa_error
             config_mode = "spsa"
+        if run_dir is None:
+            run_dir = configured_run_dir
 
     if run_dir is None:
         raise CliError("Specify either --run-dir or --config to locate the dashboard data")
@@ -86,14 +97,15 @@ async def _serve_dashboard(args: argparse.Namespace) -> None:
     if not db_path.exists():
         raise CliError(f"game.db not found in {run_dir}")
 
+    profiles = infer_dashboard_profiles(run_dir, config_mode)
+    if "spsa" in profiles and not (run_dir / SPSA_LEDGER_RELATIVE_PATH).is_file():
+        raise CliError(LEGACY_SPSA_DASHBOARD_MESSAGE)
+
     if num_workers is None or num_workers <= 0:
         detected = detect_worker_count(run_dir)
         if detected <= 0:
             raise CliError("Could not determine worker count; require data/workers or a config file")
         num_workers = detected
-
-    profiles = infer_dashboard_profiles(run_dir, config_mode)
-    write_dashboard_assets(run_dir / "dashboard", num_workers, should_overwrite_data=False, profiles=profiles)
 
     requested_port = int(args.port or 8080)
     try:
@@ -109,12 +121,10 @@ async def _serve_dashboard(args: argparse.Namespace) -> None:
         run_dir=run_dir,
         instance_pool=None,
         read_only=True,
+        dashboard_num_workers=num_workers,
+        dashboard_profiles=profiles,
     )
     await server.start()
-
-    port_js = run_dir / "dashboard" / "data" / "arena_port.js"
-    port_js.parent.mkdir(parents=True, exist_ok=True)
-    port_js.write_text(f"window.ARENA_API_PORT = {port};\n", encoding="utf-8")
 
     mode_label = config_mode or "dashboard"
     index_target = f"http://localhost:{port}/index.html"

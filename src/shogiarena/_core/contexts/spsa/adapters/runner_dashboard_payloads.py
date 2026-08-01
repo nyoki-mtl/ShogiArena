@@ -16,8 +16,12 @@ from shogiarena._core.contexts.game_session.adapters.engine.metadata_collector i
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_engine import EngineConfig
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_spsa_models import SpsaRunConfig
 from shogiarena._core.contexts.game_session.application.progress.hub import DashboardServerPort
+from shogiarena._core.contexts.spsa.adapters.fixed_option_preflight import (
+    load_fixed_option_preflight_status,
+)
 from shogiarena._core.contexts.spsa.adapters.runtime.tokens import phase_symbol, variant_token
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry, SpsaGamePayload
+from shogiarena._core.shared.kernel.atomic_json import write_json_atomic
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
 
@@ -35,6 +39,7 @@ def _build_seed_summary_payload(
     engine_metadata: list[JsonObject],
     rules_payload: JsonObject,
     spsa_algorithm_config: JsonObject,
+    preflight_status: JsonObject,
 ) -> JsonObject:
     seed_summary: JsonObject = {
         "tournament_type": "spsa",
@@ -65,6 +70,7 @@ def _build_seed_summary_payload(
             "draw_eq_se": 0.0,
             "rating_cov": {name: {} for name in engines_list},
         },
+        "preflight_status": preflight_status,
     }
 
     if rules_payload:
@@ -90,17 +96,37 @@ def _build_spsa_meta_payload(
     session_uuid: str,
     session_started_at_iso: str,
     params: list[ParamEntry] | None,
+    experiment_initial_params: dict[str, float] | None,
+    prior_experiment_initial_params: dict[str, float] | None,
+    prior_sessions: list[JsonObject],
     spsa_algorithm_config: JsonObject,
     engine_time_controls: dict[str, str],
     default_time_control: str | None,
     engines_list: list[str],
     engine_instances: dict[str, str | None],
     engine_metadata: list[JsonObject],
+    preflight_status: JsonObject,
 ) -> JsonObject:
-    initial_params_map: dict[str, float] = {}
+    session_start_params: dict[str, float] = {}
     if params is not None:
         for p in params:
-            initial_params_map[p.name] = float(p.value)
+            session_start_params[p.name] = float(p.value)
+    requested_initial_params = dict(experiment_initial_params or session_start_params)
+    if prior_experiment_initial_params is not None and prior_experiment_initial_params != requested_initial_params:
+        raise ValueError("SPSA experiment_initial_params conflict with the existing run projection")
+    initial_params_map = dict(prior_experiment_initial_params or requested_initial_params)
+    sessions = [
+        session
+        for session in prior_sessions
+        if isinstance(session.get("session_uuid"), str) and session.get("session_uuid") != session_uuid
+    ]
+    sessions.append(
+        {
+            "session_uuid": session_uuid,
+            "session_started_at": session_started_at_iso,
+            "session_start_params": session_start_params,
+        }
+    )
 
     meta: JsonObject = {
         "type": "spsa",
@@ -110,8 +136,12 @@ def _build_spsa_meta_payload(
         **dict(spsa_algorithm_config),
         "num_workers": int(num_workers),
         "initial_params": initial_params_map,
+        "experiment_initial_params": initial_params_map,
+        "session_start_params": session_start_params,
+        "sessions": sessions,
         "session_uuid": session_uuid,
         "session_started_at": session_started_at_iso,
+        "preflight_status": preflight_status,
     }
 
     meta["engine_time_controls"] = engine_time_controls
@@ -129,6 +159,7 @@ def seed_spsa_initial_summary(
     config: SpsaRunConfig,
     num_workers: int,
     params: list[ParamEntry] | None,
+    experiment_initial_params: dict[str, float] | None,
     session_uuid: str,
     session_started_at_iso: str,
     api_server: DashboardServerPort | None,
@@ -145,6 +176,7 @@ def seed_spsa_initial_summary(
     engines = spsa_engine_configs(config)
     engine_time_controls, default_time_control = compute_engine_time_control_specs(config.rules, engines)
     engine_instances = engine_instance_defaults(engines)
+    preflight_status = load_fixed_option_preflight_status(run_dir)
 
     seed_summary = _build_seed_summary_payload(
         run_dir=run_dir,
@@ -155,6 +187,7 @@ def seed_spsa_initial_summary(
         engine_metadata=engine_metadata,
         rules_payload=rules_payload,
         spsa_algorithm_config=spsa_algorithm_config,
+        preflight_status=preflight_status,
     )
 
     if api_server is not None:
@@ -162,20 +195,42 @@ def seed_spsa_initial_summary(
 
     spsa_dir = run_dir / "spsa"
     spsa_dir.mkdir(parents=True, exist_ok=True)
+    meta_path = spsa_dir / "meta.json"
+    prior_sessions: list[JsonObject] = []
+    prior_experiment_initial_params: dict[str, float] | None = None
+    if meta_path.is_file():
+        try:
+            prior_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Existing SPSA session metadata is unreadable: {meta_path}") from exc
+        if not isinstance(prior_meta, dict):
+            raise RuntimeError(f"Existing SPSA session metadata is not a JSON object: {meta_path}")
+        if isinstance(prior_meta, dict) and isinstance(prior_meta.get("sessions"), list):
+            prior_sessions = [entry for entry in prior_meta["sessions"] if isinstance(entry, dict)]
+        if isinstance(prior_meta, dict):
+            raw_initial = prior_meta.get("experiment_initial_params")
+            if isinstance(raw_initial, dict):
+                prior_experiment_initial_params = {
+                    str(name): float(value) for name, value in raw_initial.items() if isinstance(value, int | float)
+                }
     meta = _build_spsa_meta_payload(
         config=config,
         num_workers=num_workers,
         session_uuid=session_uuid,
         session_started_at_iso=session_started_at_iso,
         params=params,
+        experiment_initial_params=experiment_initial_params,
+        prior_experiment_initial_params=prior_experiment_initial_params,
+        prior_sessions=prior_sessions,
         spsa_algorithm_config=spsa_algorithm_config,
         engine_time_controls=engine_time_controls,
         default_time_control=default_time_control,
         engines_list=engines_list,
         engine_instances=engine_instances,
         engine_metadata=engine_metadata,
+        preflight_status=preflight_status,
     )
-    (spsa_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_atomic(meta_path, meta)
 
 
 def append_spsa_event_record(
@@ -206,8 +261,10 @@ def append_spsa_event_record(
 
     event_record = {
         "event": "game_result",
+        "projection_schema": "shogiarena.spsa.runtime-compat-export.v1",
+        "projection_source": "runtime-cache; ledger remains authoritative",
         "update_idx": int(payload.update_idx),
-        "winner": int(payload.winner_code),
+        "winner": int(payload.winner_code) if payload.winner_code is not None else None,
         "tuned_as_black": bool(payload.is_tuned_as_black),
         "phase": payload.phase,
         "tuned_variant": tuned_vid,

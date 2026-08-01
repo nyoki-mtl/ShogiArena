@@ -68,10 +68,11 @@ def load_game_record(
     *,
     game_name: str | None = None,
     game_id: int | None = None,
+    immutable: bool = False,
 ) -> rsshogi.record.Record | None:
     """Load a single game record from the dashboard DB."""
 
-    repository = open_dashboard_repository(db_path)
+    repository = open_dashboard_repository(db_path, immutable=immutable)
     if repository is None:
         return None
     try:

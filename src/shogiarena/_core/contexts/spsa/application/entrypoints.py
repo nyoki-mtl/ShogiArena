@@ -48,6 +48,18 @@ def create_spsa_run_storage(run_dir: Path, *, runtime: SpsaRuntimePort) -> Any:
     return runtime.create_run_storage(run_dir)
 
 
+def preflight_spsa_dry_run(
+    config: Any,
+    *,
+    work_dir: Path,
+    instance_pool: object | None,
+    runtime: SpsaRuntimePort,
+) -> None:
+    """Run fixed-option checks without creating a run archive."""
+
+    runtime.preflight_dry_run(config, work_dir=work_dir, instance_pool=instance_pool)
+
+
 def spsa_engine_trace_logger_names(*, runtime: SpsaRuntimePort) -> tuple[str, ...]:
     """Logger names used when SPSA engine trace is enabled."""
 
@@ -57,6 +69,7 @@ def spsa_engine_trace_logger_names(*, runtime: SpsaRuntimePort) -> tuple[str, ..
 __all__ = [
     "build_spsa_run_config",
     "create_spsa_run_storage",
+    "preflight_spsa_dry_run",
     "run_spsa_session",
     "spsa_engine_trace_logger_names",
 ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -14,6 +15,30 @@ from typing import Any, Protocol, cast
 import rsshogi.record
 from rsshogi.types import Color
 
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_builders import (
+    build_usi_option_layers,
+)
+from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution_manifest import (
+    persist_game_execution_manifest,
+)
+from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution_materializer import (
+    apply_engine_variant,
+    materialize_engine_config,
+    materialize_opening_sfen,
+    resolve_effective_handshake_timeout,
+)
+from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution_output import (
+    build_game_execution_result,
+)
+from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution_spec_resolver import (
+    EngineSpecProvenance,
+)
+from shogiarena._core.contexts.game_session.adapters.orchestration.game_runner_factory import (
+    build_game_runner_execution_policy,
+)
+from shogiarena._core.contexts.game_session.adapters.orchestration.local_game_execution_contract import (
+    resolve_local_game_execution,
+)
 from shogiarena._core.contexts.game_session.adapters.orchestration.participation_records import (
     attach_participation_metadata as _attach_participation_metadata_service,
 )
@@ -35,14 +60,18 @@ from shogiarena._core.contexts.game_session.application.session.run_failure_reco
     RunFailureRecordService,
 )
 from shogiarena._core.contexts.game_session.domain.failure_records import coerce_failure_phase
+from shogiarena._core.contexts.game_session.ports.game_execution_spec import EngineExecutionSpec
 from shogiarena._core.contexts.game_session.ports.session_runner_ports import BeforeGameHookPort, BeforeGameHookRequest
 from shogiarena._core.contexts.instances.application.instance_models import InstanceActiveGameSide
 from shogiarena._core.contexts.instances.application.instance_pool import ResourceRequest
 from shogiarena._core.contexts.match.application.engine_participant import EngineParticipant
 from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine
 from shogiarena._core.platform.engine_runtime.usi_engine_session_models import UsiEngineStartError
+from shogiarena._core.shared.kernel.game_results import game_result_name
 from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.run_artifact_hashes import canonical_sha256
 from shogiarena._core.shared.kernel.schedule_metadata import attach_schedule_metadata
+from shogiarena._core.shared.kernel.time_control import TimeControlLimits
 
 from .config_engine import EngineConfig
 
@@ -51,7 +80,7 @@ logger = logging.getLogger(__name__)
 
 class _EngineItemPort(Protocol):
     pool_key: str
-    config_path: object
+    config_path: Path
     extra_options: JsonObject | None
     instance_override: str | None
 
@@ -67,6 +96,12 @@ class _GameSpecPort(Protocol):
     game_id: str
     black_limits: _TimeControlLimitsPort | None
     white_limits: _TimeControlLimitsPort | None
+    black_variant_options: JsonObject | None
+    white_variant_options: JsonObject | None
+    black_variant_id: str | None
+    white_variant_id: str | None
+    clear_hash_before_game: bool
+    after_variant_setoption: str
     before_game_hook: BeforeGameHookPort | None
     game_round: int | None
     schedule_metadata: JsonObject | None
@@ -99,27 +134,140 @@ async def execute_game(orchestrator: Any, spec: Any) -> rsshogi.record.Record:
     game_spec = cast(_GameSpecPort, spec)
     ep = owner.engine_pool
     assert ep is not None, "EnginePool not initialized"
-    gr = owner.game_runner
-    assert gr is not None, "GameRunner not initialized"
 
     resource_context = _empty_resource_context()
     black_engine: AsyncUsiEngine | None = None
     white_engine: AsyncUsiEngine | None = None
+    game_runner = None
+    black_contract_digest: str | None = None
+    white_contract_digest: str | None = None
 
     try:
         resource_context = await _prepare_resource_context(owner, game_spec)
-        b_tuple = _build_engine_tuple(game_spec.black_item)
-        w_tuple = _build_engine_tuple(game_spec.white_item)
-        black_engine, white_engine = await ep.acquire_pair_sorted(b_tuple, w_tuple)
-        return await _run_game_with_engines(
+        black_limits = _require_time_control(game_spec.black_limits, side="black")
+        white_limits = _require_time_control(game_spec.white_limits, side="white")
+        black_config = resource_context.black_engine_spec
+        white_config = resource_context.white_engine_spec
+        if black_config is None or white_config is None:
+            raise ValueError("Local GameExecutionSpec requires both resolved engine configs")
+        black_layers = build_usi_option_layers(owner.extra_options, black_config)
+        white_layers = build_usi_option_layers(owner.extra_options, white_config)
+        resolved_execution = resolve_local_game_execution(
+            run_id=owner.session_context.run_id,
+            game_id=game_spec.game_id,
+            initial_sfen=game_spec.initial_sfen,
+            black_name=black_config.name or game_spec.black_item.pool_key,
+            white_name=white_config.name or game_spec.white_item.pool_key,
+            black_config_path=Path(game_spec.black_item.config_path),
+            white_config_path=Path(game_spec.white_item.config_path),
+            black_artifact_overlay_options=black_layers.artifact_overlay,
+            white_artifact_overlay_options=white_layers.artifact_overlay,
+            black_arena_options=black_layers.arena,
+            white_arena_options=white_layers.arena,
+            black_overlay_options=black_layers.declared_overlays,
+            white_overlay_options=white_layers.declared_overlays,
+            black_inline_options=black_layers.inline,
+            white_inline_options=white_layers.inline,
+            black_variant_options=game_spec.black_variant_options,
+            white_variant_options=game_spec.white_variant_options,
+            black_variant_id=game_spec.black_variant_id,
+            white_variant_id=game_spec.white_variant_id,
+            clear_hash_before_game=game_spec.clear_hash_before_game,
+            after_variant_setoption=game_spec.after_variant_setoption,
+            black_path_option_names=tuple(black_config.path_options),
+            white_path_option_names=tuple(white_config.path_options),
+            black_go_options={str(key): value for key, value in black_config.go_options.items()},
+            white_go_options={str(key): value for key, value in white_config.go_options.items()},
+            black_handshake_timeout_s=_effective_handshake_timeout(owner, black_config),
+            white_handshake_timeout_s=_effective_handshake_timeout(owner, white_config),
+            black_limits=black_limits,
+            white_limits=white_limits,
+            rules=owner.config.rules,
+            engine_lifecycle=owner._engine_lifecycle,
+            timeout_reclassification_enabled=owner._timeout_reclassification_enabled,
+        )
+        persist_game_execution_manifest(
+            run_dir=owner.run_dir,
+            game_id=game_spec.game_id,
+            payload=resolved_execution.manifest_payload(),
+        )
+        black_secret_values = _local_secret_values(resolved_execution.spec.black_engine)
+        white_secret_values = _local_secret_values(resolved_execution.spec.white_engine)
+        black_mapping = materialize_engine_config(
+            resolved_execution.spec.black_engine,
+            execution_root=owner.run_dir,
+            artifact_paths=_artifact_paths(
+                resolved_execution.spec.black_engine,
+                resolved_execution.engine_provenance[0],
+            ),
+            secret_values=black_secret_values,
+        )
+        white_mapping = materialize_engine_config(
+            resolved_execution.spec.white_engine,
+            execution_root=owner.run_dir,
+            artifact_paths=_artifact_paths(
+                resolved_execution.spec.white_engine,
+                resolved_execution.engine_provenance[1],
+            ),
+            secret_values=white_secret_values,
+        )
+        black_contract_digest = _engine_pool_contract_digest(black_mapping)
+        white_contract_digest = _engine_pool_contract_digest(white_mapping)
+        Path(str(black_mapping["working_directory"])).mkdir(parents=True, exist_ok=True)
+        Path(str(white_mapping["working_directory"])).mkdir(parents=True, exist_ok=True)
+        black_engine, white_engine = await ep.acquire_pair_from_mappings(
+            (
+                game_spec.black_item.pool_key,
+                black_mapping,
+                black_contract_digest,
+                game_spec.black_item.instance_override,
+                black_config.cpu_affinity,
+                resolved_execution.spec.black_engine.process.handshake_timeout_ms / 1000.0,
+            ),
+            (
+                game_spec.white_item.pool_key,
+                white_mapping,
+                white_contract_digest,
+                game_spec.white_item.instance_override,
+                white_config.cpu_affinity,
+                resolved_execution.spec.white_engine.process.handshake_timeout_ms / 1000.0,
+            ),
+        )
+        await apply_engine_variant(black_engine, resolved_execution.spec.black_engine)
+        await apply_engine_variant(white_engine, resolved_execution.spec.white_engine)
+        policy = build_game_runner_execution_policy(
+            resolved_execution.spec,
+            progress_queue=owner.progress_sink,
+            runtime_watchdog=owner._runtime_watchdog,
+        )
+        game_runner = policy.runner
+        game_runner.set_engine_options_callback(owner._handle_engine_options)
+        if owner.api_server is not None:
+            game_runner.set_engine_io_wanted(owner.api_server.has_engine_io_subscribers)
+        owner._active_game_runners.add(game_runner)
+        started_at = datetime.now(UTC)
+        game_info = await _run_game_with_engines(
             owner,
             game_spec,
-            game_runner=gr,
+            game_runner=game_runner,
             black_engine=black_engine,
             white_engine=white_engine,
             black_engine_spec=resource_context.black_engine_spec,
             white_engine_spec=resource_context.white_engine_spec,
+            initial_sfen=materialize_opening_sfen(resolved_execution.spec.opening),
         )
+        result_envelope = build_game_execution_result(
+            resolved_execution.spec,
+            classification=game_result_name(game_info.result),
+            started_at=started_at,
+            finished_at=datetime.now(UTC),
+            engine_info={
+                "black": black_engine.engine_info,
+                "white": white_engine.engine_info,
+            },
+        )
+        game_info.set_metadata_attribute("game_execution_result", result_envelope.model_dump_json())
+        return game_info
     except asyncio.CancelledError as exc:
         _record_run_failure(owner, game_spec, exc, fallback_phase="user_interruption")
         raise
@@ -132,6 +280,8 @@ async def execute_game(orchestrator: Any, spec: Any) -> rsshogi.record.Record:
         )
         raise
     finally:
+        if game_runner is not None:
+            owner._active_game_runners.discard(game_runner)
         # An exception may already be propagating from the body (including
         # CancelledError). Capture it before cleanup so a cleanup failure does
         # not mask the original error / break cancellation propagation.
@@ -144,6 +294,8 @@ async def execute_game(orchestrator: Any, spec: Any) -> rsshogi.record.Record:
                 black_engine=black_engine,
                 white_engine=white_engine,
                 resource_context=resource_context,
+                black_contract_digest=black_contract_digest,
+                white_contract_digest=white_contract_digest,
             )
         except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
             _record_run_failure(owner, game_spec, exc, fallback_phase="shutdown")
@@ -158,12 +310,41 @@ async def execute_game(orchestrator: Any, spec: Any) -> rsshogi.record.Record:
             )
 
 
-def _build_engine_tuple(item: _EngineItemPort) -> tuple[str, object, object, str | None]:
-    return (
-        item.pool_key,
-        item.config_path,
-        item.extra_options,
-        item.instance_override,
+def _artifact_paths(engine_spec: EngineExecutionSpec, provenance: EngineSpecProvenance) -> dict[str, Path]:
+    paths = {
+        engine_spec.process.artifact.logical_id: Path(provenance.engine_source_path),
+    }
+    for resource, source in zip(engine_spec.usi.path_resources, provenance.path_sources, strict=True):
+        paths[resource.artifact.logical_id] = Path(source)
+    return paths
+
+
+def _local_secret_values(engine_spec: EngineExecutionSpec) -> dict[str, str]:
+    references = set(engine_spec.process.secret_environment_refs.values())
+    missing = sorted(reference for reference in references if reference not in os.environ)
+    if missing:
+        raise ValueError(f"required engine secret references are unavailable: {', '.join(missing)}")
+    return {reference: os.environ[reference] for reference in references}
+
+
+def _engine_pool_contract_digest(
+    config_mapping: Mapping[str, object],
+) -> str:
+    """Process startup contractをreuse keyへ反映する。値自体は保存・出力しない。"""
+
+    return canonical_sha256(config_mapping)
+
+
+def _require_time_control(value: object, *, side: str) -> TimeControlLimits:
+    if not isinstance(value, TimeControlLimits):
+        raise ValueError(f"Local GameExecutionSpec requires {side} time control")
+    return value
+
+
+def _effective_handshake_timeout(owner: Any, config: EngineConfig) -> float:
+    return resolve_effective_handshake_timeout(
+        config.handshake_timeout,
+        getattr(owner, "_default_engine_handshake_timeout", None),
     )
 
 
@@ -369,6 +550,7 @@ async def _run_game_with_engines(
     white_engine: AsyncUsiEngine,
     black_engine_spec: EngineConfig | None,
     white_engine_spec: EngineConfig | None,
+    initial_sfen: str,
 ) -> rsshogi.record.Record:
     black_pool_key = game_spec.black_item.pool_key
     white_pool_key = game_spec.white_item.pool_key
@@ -411,7 +593,7 @@ async def _run_game_with_engines(
         game_info = await game_runner.run_game(
             black_participant,
             white_participant,
-            game_spec.initial_sfen,
+            initial_sfen,
             game_spec.game_id,
             black_time_control_limits=game_spec.black_limits,
             white_time_control_limits=game_spec.white_limits,
@@ -421,7 +603,7 @@ async def _run_game_with_engines(
             game_info = await game_runner.run_game(
                 black_participant,
                 white_participant,
-                game_spec.initial_sfen,
+                initial_sfen,
                 game_spec.game_id,
                 black_time_control_limits=game_spec.black_limits,
                 white_time_control_limits=game_spec.white_limits,
@@ -502,6 +684,8 @@ async def _cleanup_execution(
     black_engine: AsyncUsiEngine | None,
     white_engine: AsyncUsiEngine | None,
     resource_context: _ResourceContext,
+    black_contract_digest: str | None,
+    white_contract_digest: str | None,
 ) -> None:
     if black_engine is not None and white_engine is not None:
         try:
@@ -509,12 +693,14 @@ async def _cleanup_execution(
                 game_spec.white_item.pool_key,
                 white_engine,
                 game_spec.white_item.instance_override,
+                contract_digest=white_contract_digest,
             )
         finally:
             await engine_pool.release(
                 game_spec.black_item.pool_key,
                 black_engine,
                 game_spec.black_item.instance_override,
+                contract_digest=black_contract_digest,
             )
 
     pool = owner.instance_pool

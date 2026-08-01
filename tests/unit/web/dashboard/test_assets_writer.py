@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from shogiarena._core.interfaces.dashboard import assets_writer
-from shogiarena._core.interfaces.dashboard.assets_writer import write_dashboard_assets
+from shogiarena._core.interfaces.dashboard.assets_writer import render_dashboard_html, write_dashboard_assets
 
 
 def test_write_dashboard_assets_materializes_runtime_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -61,3 +61,47 @@ def test_write_dashboard_assets_materializes_runtime_files(tmp_path: Path, monke
     assert not (run_dir / "index.html").exists()
     assert not (run_dir / "data").exists()
     assert not (run_dir / "static").exists()
+
+
+def test_render_dashboard_html_is_in_memory_and_uses_packaged_assets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = tmp_path / "archive"
+    run_dir.mkdir()
+    static_dir = tmp_path / "static"
+    template_root = tmp_path / "frontend"
+    manifest_dir = static_dir / "dist" / ".vite"
+    manifest_dir.mkdir(parents=True)
+    (static_dir / "dist" / "assets").mkdir(parents=True)
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps({"src/main.ts": {"file": "assets/index.js", "css": [], "imports": []}}),
+        encoding="utf-8",
+    )
+    template_root.mkdir()
+    (template_root / "index.html").write_text(
+        "\n".join(
+            (
+                '<body data-dashboard-profile="__DASHBOARD_PROFILE__">',
+                '<script src="data/arena_port.js"></script>',
+                "<!-- WORKER_SCRIPTS -->",
+                "<!-- DASHBOARD_STYLES -->",
+                "<!-- DASHBOARD_SCRIPTS:start --><!-- DASHBOARD_SCRIPTS:end -->",
+                '<div data-guidelines="__LIVE_DIAGNOSTICS_CONFIG__"></div>',
+                "</body>",
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(assets_writer, "_resolve_dashboard_asset_dirs", lambda: (static_dir, template_root))
+
+    before = list(run_dir.rglob("*"))
+    html_content = render_dashboard_html(run_dir, 3, api_port=9123, profiles=("spsa",))
+
+    assert list(run_dir.rglob("*")) == before
+    assert 'data-dashboard-profile="spsa"' in html_content
+    assert "window.ARENA_API_PORT = 9123" in html_content
+    assert "window.__ARENA_NUM_WORKERS__ = 3" in html_content
+    assert "static/dist/assets/index.js" in html_content
+    assert "data/arena_port.js" not in html_content
+    assert "data/workers/" not in html_content

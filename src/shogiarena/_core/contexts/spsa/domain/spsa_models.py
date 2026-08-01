@@ -33,6 +33,7 @@ class ParamEntry:
     value_encoding: Literal["integer", "decimal", "scaled_integer"] = "decimal"
     scale: float | None = None
     significant_digits: int = 9
+    rounding: Literal["none", "nearest", "stochastic"] = "none"
 
     @property
     def engine_option_name(self) -> str:
@@ -48,7 +49,7 @@ class SpsaGamePayload:
     tuned_params: list[ParamEntry]
     current_params: list[ParamEntry]
     is_tuned_as_black: bool
-    winner_code: int
+    winner_code: int | None
     phase: PhaseLiteral
     event_family: str = "spsa"
 
@@ -64,7 +65,6 @@ class SpsaAlgorithmConfig(TypedDict):
     is_crn_enabled: bool
     int_rounding: str
     int_ck_floor: float
-    update_mode: str
     should_snap_float_to_step: bool
     early_stop: JsonObject | None
     update_batch_size: int | None

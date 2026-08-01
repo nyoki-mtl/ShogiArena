@@ -1,5 +1,6 @@
 import type { LiveViewSnapshot } from '@/modules/live/types';
 import type { SpsaDashboardState, NormalizedSpsaUpdateEntry, NormalizedSpsaSummary } from '@/modules/spsa/types';
+import type { JsonObject } from '@/types/shared';
 
 const ELEMENT_IDS = {
     variantValue: 'variantValue',
@@ -10,6 +11,17 @@ const ELEMENT_IDS = {
     etaValue: 'etaValue',
     deltaNormValue: 'deltaNormValue',
     deltaNormWindow: 'deltaNormWindow',
+    operationalHealth: 'operationalHealth',
+    operationalIdentity: 'operationalIdentity',
+    operationalCompletion: 'operationalCompletion',
+    operationalProgress: 'operationalProgress',
+    operationalLtc: 'operationalLtc',
+    operationalManifest: 'operationalManifest',
+    operationalPreflight: 'operationalPreflight',
+    operationalTunable: 'operationalTunable',
+    operationalArtifact: 'operationalArtifact',
+    operationalRemote: 'operationalRemote',
+    operationalNodeMultiplier: 'operationalNodeMultiplier',
 };
 
 const elementCache = new Map<string, HTMLElement>();
@@ -86,6 +98,144 @@ function formatGamesPlayed(summary: NormalizedSpsaSummary | null): string {
     } catch (_error) {
         return String(fallbackCount);
     }
+}
+
+function asObject(value: unknown): JsonObject {
+    return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : {};
+}
+
+function textValue(value: unknown, fallback = 'Unknown'): string {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+    if (typeof value === 'boolean') return value ? 'yes' : 'no';
+    return fallback;
+}
+
+function shortDigest(value: unknown): string | null {
+    if (typeof value !== 'string' || !value.trim()) return null;
+    const normalized = value.trim();
+    return normalized.length > 12 ? normalized.slice(0, 12) : normalized;
+}
+
+function joinStatus(parts: Array<string | null | undefined>, fallback = 'Unknown'): string {
+    const visible = parts.filter((part): part is string => Boolean(part?.trim()));
+    return visible.length > 0 ? visible.join(' · ') : fallback;
+}
+
+export function renderOperationalStatus(summary: NormalizedSpsaSummary | null): void {
+    const operational = summary?.operationalStatus ?? {};
+    const completion = asObject(operational.completion);
+    const baseline = asObject(operational.accepted_baseline);
+    const decision = asObject(operational.last_ltc_decision);
+    const manifest = asObject(operational.manifest);
+    const preflight = asObject(operational.fixed_option_preflight);
+    const tunable = asObject(operational.tunable_manifest);
+    const engineDigests = asObject(tunable.engine_digests);
+    const artifact = asObject(operational.artifact_health);
+    const ledger = asObject(operational.ledger);
+    const remote = asObject(operational.remote_execution);
+    const participation = asObject(remote.participation);
+    const nodeMultiplier = asObject(operational.node_multiplier);
+
+    const health = textValue(artifact.status, 'unknown').toLowerCase();
+    const healthNode = getElement(ELEMENT_IDS.operationalHealth);
+    if (healthNode) {
+        healthNode.textContent = health === 'healthy' ? 'Healthy' : health === 'degraded' ? 'Degraded' : 'Unknown';
+        healthNode.dataset.status = health === 'healthy' || health === 'degraded' ? health : 'unknown';
+    }
+
+    setText(
+        ELEMENT_IDS.operationalIdentity,
+        joinStatus([
+            operational.run_id ? `run ${textValue(operational.run_id)}` : null,
+            operational.session_id ? `session ${textValue(operational.session_id)}` : null,
+        ]),
+    );
+    setText(
+        ELEMENT_IDS.operationalCompletion,
+        joinStatus([
+            textValue(completion.status),
+            completion.termination_reason ? textValue(completion.termination_reason) : null,
+            completion.resumable === true ? 'resumable' : null,
+        ]),
+    );
+    setText(
+        ELEMENT_IDS.operationalProgress,
+        joinStatus([
+            completion.last_committed_update !== undefined
+                ? `committed ${textValue(completion.last_committed_update)}`
+                : null,
+            completion.pending_update !== null && completion.pending_update !== undefined
+                ? `pending ${textValue(completion.pending_update)}`
+                : null,
+            completion.pending_stage ? textValue(completion.pending_stage) : null,
+        ]),
+    );
+    setText(
+        ELEMENT_IDS.operationalLtc,
+        joinStatus([
+            baseline.update_idx !== undefined ? `baseline ${textValue(baseline.update_idx)}` : null,
+            decision.decision ? `${textValue(decision.decision)} @${textValue(decision.tested_update_idx)}` : null,
+        ]),
+    );
+    setText(
+        ELEMENT_IDS.operationalManifest,
+        joinStatus([
+            textValue(manifest.status),
+            manifest.schema_version !== null && manifest.schema_version !== undefined
+                ? `schema ${textValue(manifest.schema_version)}`
+                : null,
+            shortDigest(manifest.resume_hash) ? `resume ${shortDigest(manifest.resume_hash)}` : null,
+        ]),
+    );
+    const scopes = Array.isArray(preflight.evidence_scopes)
+        ? preflight.evidence_scopes.map((scope) => textValue(scope)).join(',')
+        : null;
+    setText(
+        ELEMENT_IDS.operationalPreflight,
+        joinStatus([textValue(preflight.status), scopes ? `scope ${scopes}` : null]),
+    );
+    setText(
+        ELEMENT_IDS.operationalTunable,
+        joinStatus([
+            textValue(tunable.status),
+            tunable.runtime_scope ? textValue(tunable.runtime_scope) : null,
+            shortDigest(tunable.evidence_digest) ? `evidence ${shortDigest(tunable.evidence_digest)}` : null,
+            Object.entries(engineDigests).length > 0
+                ? `engine ${Object.entries(engineDigests)
+                      .map(([name, digest]) => `${name}:${shortDigest(digest) ?? 'missing'}`)
+                      .join(',')}`
+                : null,
+        ]),
+    );
+    setText(
+        ELEMENT_IDS.operationalArtifact,
+        joinStatus([
+            textValue(artifact.status),
+            ledger.schema_version ? `ledger ${textValue(ledger.schema_version)}` : null,
+            artifact.revision !== null && artifact.revision !== undefined
+                ? `revision ${textValue(artifact.revision)}`
+                : null,
+        ]),
+    );
+    setText(
+        ELEMENT_IDS.operationalRemote,
+        remote.status === 'observed'
+            ? joinStatus([
+                  remote.endpoint_identity ? `endpoint ${textValue(remote.endpoint_identity)}` : null,
+                  remote.deployment_id ? `deployment ${textValue(remote.deployment_id)}` : null,
+                  remote.job_id ? `job ${textValue(remote.job_id)}` : null,
+                  participation.pair_id ? `pair ${textValue(participation.pair_id)}` : null,
+                  participation.attempt_id ? `attempt ${textValue(participation.attempt_id)}` : null,
+              ])
+            : 'Not observed',
+    );
+    setText(
+        ELEMENT_IDS.operationalNodeMultiplier,
+        nodeMultiplier.status === 'applied'
+            ? `applied ×${textValue(nodeMultiplier.value)}`
+            : textValue(nodeMultiplier.status, 'unknown'),
+    );
 }
 
 function formatUpdateSummary(
@@ -249,4 +399,5 @@ export function renderHero(state: SpsaDashboardState, liveView?: LiveViewSnapsho
     } else {
         setText(ELEMENT_IDS.deltaNormWindow, 'Latest update');
     }
+    renderOperationalStatus(summary);
 }

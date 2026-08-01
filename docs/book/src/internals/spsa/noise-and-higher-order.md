@@ -252,11 +252,10 @@ vdbergh の SPSA シミュレータ（spsa_simul）は、この問題に対し�
 - **精度**（precision）：最適解からの目標 Elo 距離（デフォルト: 0.5 Elo）
 - **信頼度**（confidence）：目標達成の確率（デフォルト: 95%）
 
-このフレームワークでは、固定ゲイン（\\(\alpha = \gamma = 0\\)）を使用し、
-漸近的収束ではなく有限サンプルでの性能を最適化します。
-ShogiArena の既定は Spall の推奨減衰（\\(\alpha = 0.602,\ \gamma = 0.101\\)）ですが、
-`algorithm.alpha` と `algorithm.gamma` を 0 にすればこの固定ゲイン方針も選べます
-（[ゲインスケジュール](./gain-schedule.md) の「探索的」パターン）。
+このフレームワークは固定ゲインを使う研究例ですが、現行の ShogiArena は固定ゲインを提供しません。
+既定は Spall の推奨減衰（\\(\alpha = 0.602,\ \gamma = 0.101\\)）です。
+設定可能範囲は `algorithm.alpha` が \\(0.5 < \alpha \le 1.0\\)、
+`algorithm.gamma` が \\(0 < \gamma \le 0.5\\) です。
 
 ### パラメータ数とスケーリング
 

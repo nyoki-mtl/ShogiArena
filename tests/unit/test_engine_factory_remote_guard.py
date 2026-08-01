@@ -4,14 +4,10 @@ import pytest
 
 from shogiarena._core.contexts.instances.adapters.engine_runtime_adapter import create_default_engine_runtime_factory
 from shogiarena._core.contexts.instances.application.instance_models import Instance, InstanceConfig, InstanceType
-from shogiarena._core.platform.engine_provisioning import runtime_factory
 
 
 @pytest.mark.asyncio
-async def test_remote_instances_rejected_on_windows_host(tmp_path, monkeypatch) -> None:
-    # Simulate Windows platform on orchestrator host
-    monkeypatch.setattr(runtime_factory._platform, "system", lambda: "Windows")
-
+async def test_remote_exec_paths_use_posix_semantics_on_coordinator_host(tmp_path, monkeypatch) -> None:
     local_bin_dir = tmp_path / "engines" / "test"
     local_bin_dir.mkdir(parents=True)
     local_bin = local_bin_dir / "engine"
@@ -30,9 +26,19 @@ async def test_remote_instances_rejected_on_windows_host(tmp_path, monkeypatch) 
     instance = Instance(config=cfg)
 
     factory = create_default_engine_runtime_factory()
+    transferred: list[tuple[object, object, str]] = []
 
-    with pytest.raises(RuntimeError) as excinfo:
-        await factory._compute_exec_paths(instance, str(local_bin))
+    async def ensure_remote_binary(
+        target_instance: object,
+        local_binary: object,
+        remote_binary: str,
+    ) -> None:
+        transferred.append((target_instance, local_binary, remote_binary))
 
-    assert "Linux" in str(excinfo.value)
-    assert "WSL" in str(excinfo.value)
+    monkeypatch.setattr(factory._support, "ensure_remote_binary", ensure_remote_binary)  # noqa: SLF001
+
+    engine_path, working_directory = await factory._compute_exec_paths(instance, str(local_bin))
+
+    assert engine_path == "/home/remote/ShogiArena-remote/data/engines/test/engine"
+    assert working_directory == "/home/remote/ShogiArena-remote/data/engines/test"
+    assert transferred == [(instance, local_bin, engine_path)]

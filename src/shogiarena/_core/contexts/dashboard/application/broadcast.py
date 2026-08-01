@@ -6,7 +6,7 @@ Handles broadcasting updates to connected clients via WebSocket.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 
 from shogiarena._core.contexts.dashboard.application.assignment_service import AssignmentService
 from shogiarena._core.contexts.dashboard.application.engine_io_mediator import EngineIoMediator
@@ -36,7 +36,6 @@ class BroadcastHandler:
         game_state: Game state updater instance.
         snapshot_storage: Snapshot storage instance.
         publish: Callback to publish messages to WebSocket hub.
-        spsa_notifier: Optional callback to notify SPSA API of summary updates.
     """
 
     def __init__(
@@ -45,7 +44,6 @@ class BroadcastHandler:
         game_state: GameStateUpdater,
         snapshot_storage: SnapshotStorage,
         publish: PublishFn,
-        spsa_notifier: Callable[[JsonObject], None] | None = None,
         publish_assignment: PublishFn | None = None,
         normalize_snapshot: WorkerSnapshotNormalizer | None = None,
     ) -> None:
@@ -55,7 +53,6 @@ class BroadcastHandler:
             state=state,
             storage=snapshot_storage,
             publish=publish,
-            spsa_notifier=spsa_notifier,
         )
         self._worker_streams = WorkerStreamMediator(
             state=state,

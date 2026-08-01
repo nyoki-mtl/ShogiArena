@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, Self, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from shogiarena._core.contexts.game_session.application.engine.config_normalizer import EngineSyncStrategy
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
@@ -82,6 +82,8 @@ class EarlyStopConfig(BaseModel):
 class SpsaAlgorithmAConfig(BaseModel):
     """Classic SPSA A schedule configuration."""
 
+    model_config = ConfigDict(extra="forbid")
+
     mode: Literal["absolute", "ratio"] = "absolute"
     value: float = Field(default=0.0, ge=0.0)
 
@@ -89,9 +91,11 @@ class SpsaAlgorithmAConfig(BaseModel):
 class SpsaAlgorithmBlock(BaseModel):
     """SPSA algorithm configuration block."""
 
+    model_config = ConfigDict(extra="forbid")
+
     name: Literal["classic"] = "classic"
-    alpha: float = 0.602
-    gamma: float = 0.101
+    alpha: float = Field(default=0.602, gt=0.5, le=1.0)
+    gamma: float = Field(default=0.101, gt=0.0, le=0.5)
     A: SpsaAlgorithmAConfig = Field(default_factory=SpsaAlgorithmAConfig)
 
 
@@ -99,7 +103,7 @@ class SpsaVariantApplyConfig(BaseModel):
     """Variant option application behavior."""
 
     # alias 付きフィールドは populate_by_name がないとフィールド名指定が黙って捨てられる。
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     is_clear_hash_enabled: bool = Field(default=True, alias="clear_hash")
     after_setoption: Literal["isready", "none"] = "isready"
@@ -109,12 +113,11 @@ class SpsaVariantsConfig(BaseModel):
     """SPSA variant generation and pairing configuration."""
 
     # alias 付きフィールドは populate_by_name がないとフィールド名指定が黙って捨てられる。
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     pairing: Literal["plus_minus"] = "plus_minus"
     is_crn_enabled: bool = Field(default=True, alias="crn")
     integer_rounding: Literal["none", "stochastic"] = "stochastic"
-    instance_affinity: Literal["update", "none"] = "update"
     apply: SpsaVariantApplyConfig = Field(default_factory=SpsaVariantApplyConfig)
 
 
@@ -122,7 +125,7 @@ class SpsaRunConfig(BaseModel):
     """SPSA run configuration."""
 
     # alias 付きフィールドは populate_by_name がないとフィールド名指定が黙って捨てられる。
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     # Required inputs
     start_sfens_path: str
@@ -140,20 +143,34 @@ class SpsaRunConfig(BaseModel):
     scale: float = 1.0
     # Paths and runtime
     experiment_name: str | None = None
+    run_seed: str | None = None
     instances: tuple[Path, ...] | None = None
     # Async orchestration
-    inflight_factor: int = 4
+    inflight_factor: int = Field(default=4, ge=1)
     update_batch_size: int | None = None
     is_snap_float_to_step: bool = Field(default=False, alias="snap_float_to_step")
     # OpenBench alignment options
     int_ck_floor: float = 0.5
-    update_mode: Literal["immediate", "barrier"] = "immediate"
     early_stop: EarlyStopConfig | None = None
     # Dashboard / workers
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     system: SystemConfig = Field(default_factory=SystemConfig)
-    num_workers: int = 1
+    num_workers: int = Field(default=1, ge=1)
     ltc_regression: LtcRegressionConfig | None = None
+
+    @field_validator("run_seed")
+    @classmethod
+    def _validate_run_seed(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if len(normalized) != 64:
+            raise ValueError("run_seed must be exactly 256 bits encoded as 64 hexadecimal characters")
+        try:
+            bytes.fromhex(normalized)
+        except ValueError as exc:
+            raise ValueError("run_seed must contain only hexadecimal characters") from exc
+        return normalized
 
     @property
     def is_crn_enabled(self) -> bool:

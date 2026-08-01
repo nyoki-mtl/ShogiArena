@@ -7,6 +7,9 @@ from pathlib import Path
 import pytest
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_core import InitialPositionConfig
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_spsa_parser import (
+    parse_spsa_config_mapping,
+)
 from shogiarena._core.interfaces.cli.config_file_loaders import (
     parse_engine_config_file,
     parse_spsa_config_boundary,
@@ -142,6 +145,103 @@ def test_parse_spsa_boundary_rejects_invalid_rules_payload(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match="rules.initial_positions.source is required"):
         parse_spsa_config_boundary(payload)
+
+
+def test_parse_spsa_boundary_rejects_noncanonical_artifact_id(tmp_path: Path) -> None:
+    payload = _minimal_spsa_payload(tmp_path)
+    payload["engines"] = [{"artifact": "rshogi-az/local"}]
+
+    with pytest.raises(ValueError, match="artifact must be '<repo>/<commit_hash>'"):
+        parse_spsa_config_mapping(payload, source_path=tmp_path / "spsa.yaml")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("inflight_factor", 0, "spsa.inflight_factor"),
+        ("num_parallel", 0, "spsa.num_parallel"),
+        ("unknown_key", 1, "Unknown keys in spsa"),
+    ],
+)
+def test_parse_spsa_boundary_rejects_unsafe_runtime_values(
+    tmp_path: Path,
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    payload = _minimal_spsa_payload(tmp_path)
+    spsa = payload["spsa"]
+    assert isinstance(spsa, dict)
+    spsa[field] = value
+
+    with pytest.raises((ContractParseError, ValueError), match=message):
+        parse_spsa_config_mapping(payload, source_path=tmp_path / "spsa.yaml")
+
+
+@pytest.mark.parametrize("field", ["num_updates", "pairs_per_update", "num_parallel", "inflight_factor"])
+def test_parse_spsa_boundary_rejects_fractional_integer_values(tmp_path: Path, field: str) -> None:
+    payload = _minimal_spsa_payload(tmp_path)
+    spsa = payload["spsa"]
+    assert isinstance(spsa, dict)
+    spsa[field] = 1.9
+
+    with pytest.raises((TypeError, ValueError), match=rf"spsa\.{field}.*integer"):
+        parse_spsa_config_mapping(payload, source_path=tmp_path / "spsa.yaml")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("alpha", 0.5),
+        ("alpha", 1.1),
+        ("gamma", 0.0),
+        ("gamma", 0.6),
+    ],
+)
+def test_parse_spsa_boundary_rejects_unsupported_gain_ranges(
+    tmp_path: Path,
+    field: str,
+    value: float,
+) -> None:
+    payload = _minimal_spsa_payload(tmp_path)
+    spsa = payload["spsa"]
+    assert isinstance(spsa, dict)
+    spsa["algorithm"] = {field: value}
+
+    with pytest.raises((ContractParseError, ValueError), match=field):
+        parse_spsa_config_mapping(payload, source_path=tmp_path / "spsa.yaml")
+
+
+def test_parse_spsa_boundary_rejects_removed_instance_affinity(tmp_path: Path) -> None:
+    payload = _minimal_spsa_payload(tmp_path)
+    spsa = payload["spsa"]
+    assert isinstance(spsa, dict)
+    spsa["variants"] = {"instance_affinity": "update"}
+
+    with pytest.raises((ContractParseError, ValueError), match="instance_affinity"):
+        parse_spsa_config_mapping(payload, source_path=tmp_path / "spsa.yaml")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("update_mode", "barrier"),
+        ("update_mode", "immediate"),
+        ("parameters_path", "legacy.params"),
+    ],
+)
+def test_parse_spsa_boundary_rejects_removed_root_keys(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    payload = _minimal_spsa_payload(tmp_path)
+    spsa = payload["spsa"]
+    assert isinstance(spsa, dict)
+    spsa[field] = value
+
+    with pytest.raises((ContractParseError, ValueError), match=field):
+        parse_spsa_config_mapping(payload, source_path=tmp_path / "spsa.yaml")
 
 
 def test_initial_position_config_usi_line_metadata_is_opt_in(tmp_path: Path) -> None:

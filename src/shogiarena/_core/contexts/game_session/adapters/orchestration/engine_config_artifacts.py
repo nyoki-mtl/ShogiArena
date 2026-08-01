@@ -122,7 +122,9 @@ def resolve_engine_config_entry(
     """Resolve a concrete engine config path from existing file or artifact."""
 
     # Apply overlay-provided settings before any materialization.
-    build_usi_options(extra_options, engine)
+    effective_options = build_usi_options(extra_options, engine)
+    if effective_options is not None:
+        engine.options = effective_options
 
     if engine.engine_path is not None and engine.engine_path.exists():
         return engine

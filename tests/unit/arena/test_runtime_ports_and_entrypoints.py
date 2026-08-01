@@ -14,6 +14,7 @@ from shogiarena._core.contexts.spsa.adapters.runtime_adapter import SpsaRuntimeA
 from shogiarena._core.contexts.spsa.application.entrypoints import (
     build_spsa_run_config,
     create_spsa_run_storage,
+    preflight_spsa_dry_run,
     run_spsa_session,
     spsa_engine_trace_logger_names,
 )
@@ -38,6 +39,7 @@ class _RuntimeStub:
         self.build_calls: list[tuple[dict[str, object], object]] = []
         self.run_calls: list[tuple[object, object, bool, object | None]] = []
         self.storage_calls: list[Path] = []
+        self.preflight_calls: list[tuple[object, Path, object | None]] = []
 
     def build_run_config(self, payload: dict[str, object], *, request: object) -> dict[str, object]:
         self.build_calls.append((payload, request))
@@ -59,6 +61,9 @@ class _RuntimeStub:
 
     def engine_trace_logger_names(self) -> tuple[str, ...]:
         return ("logger.a", "logger.b")
+
+    def preflight_dry_run(self, config: object, *, work_dir: Path, instance_pool: object | None) -> None:
+        self.preflight_calls.append((config, work_dir, instance_pool))
 
 
 class _InstancePoolStub:
@@ -137,6 +142,12 @@ async def test_spsa_entrypoints_forward_typed_request_and_engine_trace_extension
 
     config = build_spsa_run_config(payload, source_path=source_path, runtime=spsa_runtime)
     storage = create_spsa_run_storage(Path("/tmp/spsa-run"), runtime=spsa_runtime)
+    preflight_spsa_dry_run(
+        config,
+        work_dir=Path("/tmp/spsa-preflight"),
+        instance_pool="pool",
+        runtime=spsa_runtime,
+    )
     await run_spsa_session(
         config,
         storage=storage,
@@ -152,6 +163,7 @@ async def test_spsa_entrypoints_forward_typed_request_and_engine_trace_extension
     assert build_payload == payload
     assert isinstance(request, SpsaRunConfigBuildRequest)
     assert request.source_path == source_path
+    assert runtime.preflight_calls == [(config, Path("/tmp/spsa-preflight"), "pool")]
     assert runtime.run_calls == [(config, storage, False, "pool")]
 
 
@@ -184,6 +196,45 @@ def test_spsa_runtime_adapter_satisfies_runtime_port_and_engine_trace_contract(t
     assert isinstance(adapter, SpsaRuntimePort)
     assert isinstance(storage, FilesystemRunStorage)
     assert adapter.engine_trace_logger_names() == ("shogiarena",)
+
+
+def test_spsa_runtime_adapter_dry_run_checks_fixed_options(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    adapter = SpsaRuntimeAdapter(
+        engine_factory_service=cast(Any, SimpleNamespace()),
+        init_dashboard_html=lambda *_args, **_kwargs: None,
+        api_server_factory=lambda *_args, **_kwargs: None,
+        dashboard_service_factory=cast(DashboardSpsaServicesFactory, _DashboardServiceFactoryStub()),
+    )
+    config = SimpleNamespace(space_path=tmp_path / "space.yaml", tuned=[SimpleNamespace(name="tuned")])
+    params = [SimpleNamespace(engine_option_name="ParamA", is_not_used=False)]
+
+    monkeypatch.setattr(
+        spsa_runtime_adapter_module,
+        "load_spsa_space_spec",
+        lambda _path: SimpleNamespace(to_param_entries=lambda: params),
+    )
+    monkeypatch.setattr(
+        spsa_runtime_adapter_module,
+        "run_yaneuraou_fixed_option_preflight",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    instance_pool = _InstancePoolStub()
+    adapter.preflight_dry_run(
+        cast(Any, config),
+        work_dir=tmp_path / "preflight",
+        instance_pool=instance_pool,
+    )
+
+    assert len(calls) == 1
+    fixed_options = calls[0]
+    assert fixed_options["run_dir"] == tmp_path / "preflight"
+    assert tuple(cast(object, fixed_options["target_option_names"])) == ("ParamA",)
+    assert fixed_options["instance_pool"] is instance_pool
 
 
 def test_tournament_runtime_adapter_build_run_config_uses_request_fields(monkeypatch: pytest.MonkeyPatch) -> None:

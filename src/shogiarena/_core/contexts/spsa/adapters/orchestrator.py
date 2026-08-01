@@ -42,6 +42,7 @@ from shogiarena._core.contexts.game_session.application.orchestration.update_rec
 )
 from shogiarena._core.contexts.game_session.application.progress.hub import DashboardServerPort, SummaryUpdateCallback
 from shogiarena._core.contexts.game_session.ports.session_context import SessionContext
+from shogiarena._core.contexts.game_session.ports.worker_deployment import WorkerBundleBuildResult
 from shogiarena._core.contexts.instances.application.instance_models import Instance
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
 from shogiarena._core.contexts.spsa.adapters.orchestrator_gameplay_mixin import SpsaOrchestratorGameplayMixin
@@ -49,6 +50,7 @@ from shogiarena._core.contexts.spsa.adapters.orchestrator_lifecycle_mixin import
 from shogiarena._core.contexts.spsa.adapters.orchestrator_remote_game_mixin import SpsaOrchestratorRemoteGameMixin
 from shogiarena._core.contexts.spsa.adapters.orchestrator_update_mixin import SpsaOrchestratorUpdateMixin
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
+from shogiarena._core.contexts.spsa.ports.ledger_ports import SpsaLedgerRuntimePort
 from shogiarena._core.shared.kernel.service_ports import DatabaseServicePort
 from shogiarena._core.shared.kernel.session_hooks import GameLifecycleHooks
 
@@ -70,6 +72,8 @@ class SpsaOrchestrator(
         engine_factory_service: EngineFactoryService,
         summary_updater: SummaryUpdateCallback | None = None,
         api_server: DashboardServerPort | None = None,
+        ledger_runtime: SpsaLedgerRuntimePort,
+        remote_worker_bundle: WorkerBundleBuildResult | None = None,
     ) -> None:
         super().__init__(
             api_server=api_server,
@@ -80,7 +84,9 @@ class SpsaOrchestrator(
             engine_factory_service=engine_factory_service,
             resource_poll_interval=config.system.resource_poll_interval,
             resource_poll_max_interval=config.system.resource_poll_max_interval,
+            resource_allocation_timeout=config.system.instance_scheduling.allocation_timeout,
             default_engine_handshake_timeout=config.system.engine_handshake_timeout,
+            remote_worker_bundle=remote_worker_bundle,
         )
         # Align naming with TournamentOrchestrator: expose unified config
         self.config = config
@@ -90,6 +96,7 @@ class SpsaOrchestrator(
         metadata = session.metadata or {}
         session_uuid = str(metadata.get("session_uuid") or "").strip()
         self._session_uuid: str = session_uuid or session.run_id
+        self._ledger_runtime = ledger_runtime
 
         # Unique game id sequencer
         self._gid_seq: int = 0

@@ -2,7 +2,6 @@ import { isAbortError } from './errors';
 import { type getState, registerVisibilityHandler } from '../state';
 import type { DashboardCore } from '@/types/dashboard';
 import type { SpsaApiCallbacks, SpsaApiOptions } from './types';
-import type { SpsaRefreshOptions } from '@/modules/spsa/types';
 
 // SPSA専用のライフサイクルコントローラ。接続/切断とUIエラー通知を集約する。
 export type LifecycleDeps = {
@@ -14,30 +13,11 @@ export type LifecycleDeps = {
     resetHydrationState: () => void;
     resetUpdates: () => void;
     recomputeTrend: () => void;
-    refreshAll: (options?: SpsaRefreshOptions) => Promise<void>;
     setActive: (active: boolean) => void;
     setVisibilityPaused: (paused: boolean) => void;
-    openStreams: {
-        summary: () => void;
-        updates: () => void;
-        variantGames: () => void;
-        ltcGames: () => void;
-        correlation: () => void;
-        convergence: () => void;
-        ltcResults: () => void;
-        ltcProgress: () => void;
-    };
-    openTabStreams?: () => void;
-    closeStreams: {
-        summary: () => void;
-        updates: () => void;
-        variantGames: () => void;
-        ltcGames: () => void;
-        correlation: () => void;
-        convergence: () => void;
-        ltcResults: () => void;
-        ltcProgress: () => void;
-    };
+    hideRevisionStream: () => void;
+    markRevisionOffline: () => void;
+    closeRevisionStream: () => void;
     cancelOngoingRequests: () => void;
 };
 
@@ -58,13 +38,12 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleApi {
         resetHydrationState,
         resetUpdates,
         recomputeTrend,
-        refreshAll,
         setActive,
         setVisibilityPaused,
-        openStreams,
-        closeStreams,
+        hideRevisionStream,
+        markRevisionOffline,
+        closeRevisionStream,
         cancelOngoingRequests,
-        openTabStreams,
     } = deps;
 
     const reportUiError = (title: string, detail: unknown): void => {
@@ -76,15 +55,12 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleApi {
         callbacks.onError?.(title);
     };
 
-    const runVisibilityRefresh = () => {
-        if (!state.active) {
-            return;
-        }
-        void refreshAll({ force: false }).catch((error) => {
+    const runBootstrap = (): void => {
+        void beginBootstrapSequence().catch((error) => {
             if (isAbortError(error)) {
                 return;
             }
-            reportUiError('Failed to refresh SPSA panel', error);
+            reportUiError('Failed to bootstrap SPSA dashboard', error);
         });
     };
 
@@ -96,12 +72,7 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleApi {
         resetHydrationState();
         resetUpdates();
         recomputeTrend();
-        beginBootstrapSequence().catch((error) => {
-            if (isAbortError(error)) {
-                return;
-            }
-            reportUiError('Failed to bootstrap SPSA dashboard', error);
-        });
+        runBootstrap();
     };
 
     const pause = () => {
@@ -109,13 +80,8 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleApi {
             return;
         }
         setActive(false);
-        closeStreams.summary();
-        closeStreams.variantGames();
-        closeStreams.ltcGames();
-        closeStreams.correlation();
-        closeStreams.convergence();
-        closeStreams.ltcResults();
-        closeStreams.ltcProgress();
+        closeRevisionStream();
+        cancelOngoingRequests();
         resetHydrationState();
     };
 
@@ -124,15 +90,8 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleApi {
             reportUiError('SPSA disconnect', reason);
         }
         setActive(false);
-        closeStreams.updates();
+        closeRevisionStream();
         cancelOngoingRequests();
-        closeStreams.variantGames();
-        closeStreams.ltcGames();
-        closeStreams.correlation();
-        closeStreams.convergence();
-        closeStreams.summary();
-        closeStreams.ltcResults();
-        closeStreams.ltcProgress();
         resetHydrationState();
     };
 
@@ -142,13 +101,30 @@ export function createLifecycle(deps: LifecycleDeps): LifecycleApi {
         }
         registerVisibilityHandler(document, (visible) => {
             setVisibilityPaused(!visible);
-            if (!visible || !state.active) {
+            if (!visible) {
+                hideRevisionStream();
+                cancelOngoingRequests();
+                resetHydrationState();
                 return;
             }
-            openStreams.summary();
-            openStreams.updates();
-            openTabStreams?.();
-            runVisibilityRefresh();
+            if (!state.active) {
+                return;
+            }
+            runBootstrap();
+        });
+        window.addEventListener('offline', () => {
+            if (!state.active) {
+                return;
+            }
+            markRevisionOffline();
+            cancelOngoingRequests();
+            resetHydrationState();
+        });
+        window.addEventListener('online', () => {
+            if (!state.active || document.hidden) {
+                return;
+            }
+            runBootstrap();
         });
     };
 

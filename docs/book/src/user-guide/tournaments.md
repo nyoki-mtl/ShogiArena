@@ -16,7 +16,7 @@ shogiarena run tournament tournament.yaml
 | `--experiment-name NAME` | 自動生成される run グループ名を上書きする |
 | `--run-dir PATH` | run ディレクトリを明示指定する |
 | `--no-resume` | 既存状態を再開せず新規実行する |
-| `--provision {none,force}` | SSH インスタンスへのエンジン配置を制御する |
+| `--provision {cas,preplaced}` | SSH resourceをCAS配置またはpath/digest検証済み既配置として扱う |
 | `--path-preflight {off,warn,error}` | USI オプション内のパスらしき値を事前検査する |
 
 `--rules KEY=VALUE`、`--tournament KEY=VALUE`、`--dashboard KEY=VALUE` などで YAML の一部を CLI から上書きできます。

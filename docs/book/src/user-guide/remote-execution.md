@@ -1,6 +1,19 @@
 # リモート実行
 
-ShogiArena は SSH 経由でリモートサーバー上でエンジンを実行し、対局を分散実行できます。
+> **Qualification完了**
+>
+> 実行spec、immutable deployment、job lifecycle、artifact検証を再構築し、
+> 2026-07-31にproduction qualificationを完了しました。
+> Production CLIからLinux x86_64 workerへのRemote tournament/SPSAを利用できます。
+
+### Qualification status（2026-07-31）
+
+Windows coordinatorからLinux x86_64 workerへのproduction-path試験では、
+Remote tournament、Remote SPSA、same-host 2並列、CAS再利用・digest分離、
+`preplaced`のremote hash検証、durable jobの重複操作、Remote SPSA archiveの
+browser表示とzero-writeを確認しました。加えてLinux coordinator、2 endpoint/same-root、
+実YaneuraOuのfull YAML parityと`usi_tunables`、SSH応答喪失、TERM無視、heartbeat停止、
+result write失敗の実host fault matrixを完走しました。
 
 ## ユースケース
 
@@ -14,18 +27,20 @@ ShogiArena は SSH 経由でリモートサーバー上でエンジンを実行�
 
 1. **SSH アクセス**：公開鍵認証が設定されていること
 2. **bash**：コマンドシェルとして bash が利用できること
-3. **Python 3.11+**：リモート側に Python がインストールされていること
-4. **エンジンバイナリ**：リモート側にエンジンがビルドされ、配置されていること
+3. **uv**：worker bundleが固定するCPython 3.12 runtimeを用意できること
+4. **Linux x86_64**：初期Remote workerの対象platformであること
 
 ### ローカル側
 
 1. **SSH クライアント**：`ssh` コマンドが利用できること
 2. **ShogiArena**：ローカルに ShogiArena がインストール済みであること
 
-> **Warning: Windows リモート実行は非対応**
+> **Warning: Linux x86_64 以外の worker は非対応**
 >
-> リモート実行先は Linux/macOS のみサポートします。
-> ローカル（orchestrator）は Windows でも動作します。
+> リモート実行先は Linux x86_64 のみをqualification対象とします。
+> Windows worker、macOS worker、Linux arm64 はpreflightで拒否されます。
+> Coordinatorとローカル対局はWindows x86_64、Linux x86_64／arm64、
+> macOS Intel／Apple Siliconで動作します。
 
 ## インスタンス設定ファイル
 
@@ -62,6 +77,8 @@ is_strict_host_key_checking: true
 | `project_root` | リモート側の作業ディレクトリ（省略時は `~/ShogiArena-remote`） |
 | `slots` | engine thread / ponder から見積もる同時実行容量 |
 | `max_engines` | 同時起動できる engine process 数の上限 |
+| `operating_system` | `linux`。初期Remote workerでは他の値をreject |
+| `architecture` | `x86_64`。初期Remote workerでは他の値をreject |
 | `is_strict_host_key_checking` | host key 検証を厳格に行うか |
 | `tags` | インスタンスのタグ（任意） |
 
@@ -111,7 +128,7 @@ engines:
   
   - name: "EngineB"
     engine_path: "engine_b.yaml"
-    instance_id: "local"
+    instance_id: "remote1"
   
   - name: "EngineC"
     engine_path: "engine_c.yaml"
@@ -128,7 +145,22 @@ rules:
     increment_ms: 300
 ```
 
-`instance_id` を省略した場合、ShogiArena が利用可能なインスタンスへ自動的に割り当てます。
+Instance assignmentは`system.instance_scheduling.policy`で明示します。
+
+```yaml
+system:
+  instance_scheduling:
+    policy: explicit  # local / explicit / auto
+    required_tags: []
+    allocation_timeout: 30
+```
+
+- `local`（既定）は全roleをlocalへ割り当てます。remote `instance_id`を指定した場合はfail closedとなり、`explicit`の明示が必要です。
+- `explicit`は両roleの`instance_id`を必須とし、同じhealthy SSH instanceであることを検証します。
+- `auto`はengine側の`instance_id`と併用できません。Linux x86_64、required tags、slot/engine capacity、health、draining状態を満たす候補からcurrent leaseが最小のworkerを選びます。
+
+`auto`または`explicit`で候補・指定先が不適格な場合、localへfallbackしません。
+選択したendpoint/deployment/jobはworker開始前にgame execution artifactへ保存し、resume時に一致を検証します。
 
 ## ファイル同期（Provisioning）
 
@@ -138,17 +170,20 @@ rules:
 
 | モード | 説明 |
 | --- | --- |
-| `none` | 同期しない（リモート側に既にファイルがあることを前提） |
-| `force` | 毎回強制的に同期 |
+| `cas` | 既定。endpoint/platform/kind/content digest単位のCASへ検証付きで配置 |
+| `preplaced` | remote absolute pathとexpected SHA-256を検証して既配置resourceを参照 |
 
 ```bash
-# 毎回同期
+# content-addressed CAS（既定）
 shogiarena run tournament tournament.yaml \
-  --provision force
+  --provision cas
 
-# 同期しない
-shogiarena run tournament tournament.yaml \
-  --provision none
+# 既配置bookをfull SHA-256検証して使用
+SHOGIARENA_REMOTE_PREPLACED_RESOURCES='{"<engine-name>-linux":{"path":"/opt/engines/engine","sha256":"<engineの64文字lowercase SHA-256>"},"<engine-name>-linux-resource-<book digest先頭12文字>":{"path":"/opt/books/user_book1.db","sha256":"<bookの64文字lowercase SHA-256>"}}' \
+SHOGIARENA_REMOTE_BOOK_TRANSFER=preplaced \
+SHOGIARENA_REMOTE_BOOK_PREPLACED_PATH=/opt/books/user_book1.db \
+SHOGIARENA_REMOTE_BOOK_PREPLACED_SHA256=<64文字のlowercase SHA-256> \
+  shogiarena run tournament tournament.yaml --provision preplaced
 ```
 
 ### 同期されるファイル
@@ -162,26 +197,91 @@ shogiarena run tournament tournament.yaml \
 
 YaneuraOu 系の `BookDir` / `BookFile` は、remote 実行では book file 単体を content-hash 名で worker 側に配置します。
 巨大な book を意図せず転送しないよう、既定では 256 MiB を超える自動転送を明示エラーにします。
+`BookFile: no_book`はファイルパスではなく定跡無効化のUSI値として扱います。
+転送対象にはせず、sealed specとworkerへの`setoption name BookFile value no_book`に保持します。
 
 | 環境変数 | 値 | 説明 |
 | --- | --- | --- |
 | `SHOGIARENA_REMOTE_BOOK_TRANSFER` | `auto` | 既定。`SHOGIARENA_REMOTE_BOOK_MAX_MB` 以下なら自動転送し、超過時は停止 |
 | `SHOGIARENA_REMOTE_BOOK_TRANSFER` | `always` | サイズに関わらず content-hash 転送する |
-| `SHOGIARENA_REMOTE_BOOK_TRANSFER` | `preplaced` | 転送せず、worker 側に同じ path の book が事前配置されている前提で参照する |
+| `SHOGIARENA_REMOTE_BOOK_TRANSFER` | `preplaced` | remote pathの存在とfull SHA-256一致をdispatch前に要求する |
 | `SHOGIARENA_REMOTE_BOOK_MAX_MB` | 整数 | `auto` の上限 MiB。既定は `256` |
+| `SHOGIARENA_REMOTE_BOOK_PREPLACED_PATH` | absolute POSIX path | `preplaced`で必須のremote file path |
+| `SHOGIARENA_REMOTE_BOOK_PREPLACED_SHA256` | lowercase SHA-256 | `preplaced`で必須のexpected digest |
+| `SHOGIARENA_REMOTE_PREPLACED_RESOURCES` | JSON object | `--provision preplaced`で必須。全artifact logical IDをabsolute remote pathとexpected SHA-256へ対応付ける |
+
+Logical IDとdigestを手で組み立てる必要はありません。
+次のコマンドはengine binaryとfile／directory resourceをhashし、そのまま環境変数へ設定できる
+単一行JSONを返します。
+
+```powershell
+$env:SHOGIARENA_REMOTE_PREPLACED_RESOURCES = shogiarena worker-bundle preplaced-map `
+  --engine engine-a C:\artifacts\linux-x86_64\engine-a /opt/engines/engine-a `
+  --engine engine-b C:\artifacts\linux-x86_64\engine-b /opt/engines/engine-b `
+  --resource engine-a C:\eval\engine-a /opt/eval/engine-a
+```
+
+`LOCAL_PATH`には、Remote workerで実行するLinux x86_64 binaryのlocal copyを指定します。
+
+Coordinator上で動かすWindows `.exe`ではなく、`REMOTE_PATH`へ配置したbinaryと同じbytesを指定してください。
+
+`--engine NAME LOCAL_PATH REMOTE_PATH`と`--resource ENGINE_NAME LOCAL_PATH REMOTE_PATH`は
+必要な数だけ繰り返せます。
+出力するdigestは実行時のfile／canonical directory tree検証と同じ実装で計算します。
 
 ```bash
 # 大型 book を明示的に転送する
 SHOGIARENA_REMOTE_BOOK_TRANSFER=always \
-  shogiarena run tournament tournament.yaml --provision force
+  shogiarena run tournament tournament.yaml --provision cas
 
 # worker 側に事前配置した book を使う
+SHOGIARENA_REMOTE_PREPLACED_RESOURCES='{"<engine-name>-linux":{"path":"/opt/engines/engine","sha256":"<engineの64文字lowercase SHA-256>"},"<engine-name>-linux-resource-<book digest先頭12文字>":{"path":"/opt/books/user_book1.db","sha256":"<bookの64文字lowercase SHA-256>"}}' \
 SHOGIARENA_REMOTE_BOOK_TRANSFER=preplaced \
-  shogiarena run tournament tournament.yaml --provision none
+SHOGIARENA_REMOTE_BOOK_PREPLACED_PATH=/opt/books/user_book1.db \
+SHOGIARENA_REMOTE_BOOK_PREPLACED_SHA256=<64文字のlowercase SHA-256> \
+  shogiarena run tournament tournament.yaml --provision preplaced
 ```
 
-`preplaced` では転送しませんが、local 側で解決した book fingerprint は provenance に記録されます。
-記録された fingerprint と worker 側の配置が一致していることは、運用側で確認してください。
+`preplaced` は全artifact logical IDのmappingが存在し、local resource digest、expected digest、
+remote fileまたはcanonical directory tree digestがすべて一致した場合だけdispatchします。
+`<engine-name>`は各roleで解決されたengine名です。Engine binaryのlogical IDは
+`<engine-name>-linux`、path resourceは
+`<engine-name>-linux-resource-<local content SHA-256の先頭12文字>`です。
+Black/Whiteでengine名が異なる場合は、両roleのengine binaryとpath resourceをすべてmappingへ列挙します。
+不足したIDはpreflightの`preplaced resource contract is missing logical ID: ...`で確認できますが、
+通常は`worker-bundle preplaced-map`の出力を使ってください。
+Directory treeはplatform差を除くためdirectoryを`0755`、regular fileを`0644`へ正規化してdigest化します。
+`preplaced` directoryもこのmode契約を満たす必要があります。
+旧`--provision none`は検証を省略するため削除されました。
+
+### Remote設定の移行表
+
+| 旧設定・挙動 | 現行契約 |
+| --- | --- |
+| `--provision none` | `--provision preplaced`と全resourceのabsolute path / expected digest |
+| `--provision force` | `--provision cas`。immutable endpoint-aware CASを再検証して利用 |
+| CWD Git remote / shared checkout | wheel・lock・manifestから作るimmutable worker deployment |
+| top-level `configs/` overlay | `GameExecutionSpec`が列挙するartifactだけをbundleへ含める |
+| 暗黙のremote選択やlocal fallback | `system.instance_scheduling.policy`を`local` / `explicit` / `auto`で明示 |
+| Windows/macOS worker | Linux x86_64 workerへ移行 |
+
+旧値にsilent aliasはありません。Validation errorを確認し、元のrun configをbackupしてから
+上表へ明示的に書き換えてください。
+
+## Worker bundle、deployment、job
+
+Worker bundleはwheel、lock、manifest、宣言済みartifactから決まります。Endpoint/platform/
+content digest単位でstagingを検証してatomic publishし、公開済みdeploymentを上書きしません。
+
+各対局attemptは独立したjob IDとjob directoryを持ちます。Prepare/start/status/cancel/collect/ackは
+idempotentで、coordinator切断後は同じjob IDをstatus/collectします。新しいjobを推測作成しません。
+Prepare/resultの応答喪失は同じ操作を1回だけ再試行し、startの応答喪失は同じjobのstatusを
+確認して`prepared`の場合だけ再送します。再接続後も失敗した場合は結果を推測せずleaseを保持します。
+Heartbeat stale、process-group mismatch、startup/outer deadline、TERM/KILL escalation、
+collect/ack、orphan reaperの診断はjob statusとrun failure artifactへ残ります。
+
+Qualification対象はLinux x86_64 workerです。未対応platformや未検証のcloud固有障害まで
+成功を保証するものではないため、各runのcompletion、participation、artifact digestを確認してください。
 
 ## SSH 認証の設定
 
@@ -229,13 +329,15 @@ ssh-add ~/.ssh/id_rsa
 `slots` は、各インスタンスで同時に使える実行容量です。
 
 ShogiArena は engine の `Threads` / `USI_Threads` と `Ponder` / `USI_Ponder` から必要 slot 数を見積もり、`tournament.num_parallel` 分の pending games が `slots` と `max_engines` に収まるかを開始前に検査します。
-見積もりを自動に任せたい場合は `slots: null` を使います。
+`slots: null`はstartup health preflightで取得したCPU countを使います。
+preflightはdashboardの有効/無効に依存せずrun開始時に実行され、CPU countを取得できない場合はunknown capacityとしてdispatch前に停止します。
 算出方法は [トーナメント](tournaments.md#並列数とインスタンス容量) を参照してください。
 
 ### エンジン数の制限
 
 `max_engines` で、同時起動できるエンジンプロセス数を制限します。
-省略した場合は上限なしとして扱われます。
+省略した場合はresolved slot capacityを上限として使います。
+Capacityが一時的に使用中の場合は`allocation_timeout`まで待機し、期限到達時は対象instanceとgame IDを含むerrorで停止します。
 
 ## トラブルシューティング
 
@@ -298,8 +400,8 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 
 #### 同期に時間がかかる
 
-- `--provision none` で同期を無効化する（ファイルは事前に配置しておく）
-- 定跡データベースなどの大きなファイルは、事前にリモートへ配置しておく
+- CASは同一endpoint・同一digestをremote hash検証後に再利用する
+- 大きな既配置resourceは`preplaced`のpath/digest contractを使う
 
 ## 参考資料
 

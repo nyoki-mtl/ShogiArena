@@ -56,10 +56,14 @@ class _SseStreamRuntime:
         wrapped, seq = self._wrap_payload(self._stream_key, payload)
         chunk = serialize_sse_event(self._event_name, wrapped, event_id=str(seq))
         await self.response.write(chunk)
-        await self.response.drain()
 
     async def push_heartbeat(self) -> None:
         await self.push_event({"type": "heartbeat", "timestamp": int(time.time() * 1000)})
+
+    async def push_comment(self, comment: str = "heartbeat") -> None:
+        """Write an SSE comment without changing the client's Last-Event-ID."""
+
+        await self.response.write(f": {comment}\n\n".encode())
 
     async def finalize(self, *, logger: logging.Logger, log_message: str) -> None:
         try:

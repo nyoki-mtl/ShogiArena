@@ -70,6 +70,18 @@ def test_max_elo_drop_ignored_when_elo_unavailable() -> None:
     assert status == "passed"
 
 
+def test_max_elo_drop_fails_all_loss_sample_with_negative_infinite_elo() -> None:
+    status, reasons = determine_ltc_status(
+        _criteria(max_elo_drop=10.0),
+        winrate=0.0,
+        elo=None,
+        sprt_payload=None,
+        sprt_decision=None,
+    )
+    assert status == "failed"
+    assert reasons == ["elo -inf below allowed drop of 10.0"]
+
+
 def test_no_criteria_passes() -> None:
     status, reasons = determine_ltc_status(
         _criteria(),

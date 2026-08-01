@@ -56,6 +56,7 @@ export interface SpsaSummaryResponse {
     engine_stats?: Record<string, { wins?: number; losses?: number; draws?: number; games?: number }>;
     engine_instances?: Record<string, string | null | undefined>;
     engine_meta?: Record<string, JsonObject>;
+    operational_status?: JsonObject;
     [key: string]: unknown;
 }
 

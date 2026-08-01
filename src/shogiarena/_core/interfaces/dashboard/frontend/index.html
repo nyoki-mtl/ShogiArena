@@ -366,15 +366,7 @@
                     </section>
                 </section>
 
-                <section
-                    class="tab-content space-y-5"
-                    id="spsaTab"
-                    data-tab-content="spsa"
-                    aria-label="SPSA Analysis"
-                    data-detail-stream="sse"
-                    data-detail-stream-autostart="0"
-                    data-detail-stream-params="?view=slim&window=short&include=ltc_games"
-                >
+                <section class="tab-content space-y-5" id="spsaTab" data-tab-content="spsa" aria-label="SPSA Analysis">
                     <div id="errorContainer" class="text-sm text-dashboard-danger"></div>
                     <div id="spsaOverview" class="spsa-overview hidden"></div>
 
@@ -408,6 +400,61 @@
                                 <div class="secondary" id="deltaNormWindow">-</div>
                             </div>
                         </div>
+                        <section class="spsa-operational" aria-labelledby="spsaOperationalTitle">
+                            <header class="spsa-operational__header">
+                                <div>
+                                    <h3 id="spsaOperationalTitle">Operational status</h3>
+                                    <p>
+                                        Authoritative run and artifact state. Unknown values are not treated as healthy.
+                                    </p>
+                                </div>
+                                <span id="operationalHealth" class="spsa-operational__health" data-status="unknown"
+                                    >Unknown</span
+                                >
+                            </header>
+                            <dl class="spsa-operational__grid">
+                                <div>
+                                    <dt>Run / session</dt>
+                                    <dd id="operationalIdentity">Unknown</dd>
+                                </div>
+                                <div>
+                                    <dt>Completion</dt>
+                                    <dd id="operationalCompletion">Unknown</dd>
+                                </div>
+                                <div>
+                                    <dt>Committed / pending</dt>
+                                    <dd id="operationalProgress">Unknown</dd>
+                                </div>
+                                <div>
+                                    <dt>Accepted baseline / LTC</dt>
+                                    <dd id="operationalLtc">Unknown</dd>
+                                </div>
+                                <div>
+                                    <dt>Manifest contract</dt>
+                                    <dd id="operationalManifest">Unknown</dd>
+                                </div>
+                                <div>
+                                    <dt>Fixed-option preflight</dt>
+                                    <dd id="operationalPreflight">Unknown</dd>
+                                </div>
+                                <div>
+                                    <dt>Tunable manifest</dt>
+                                    <dd id="operationalTunable">Unknown</dd>
+                                </div>
+                                <div>
+                                    <dt>Ledger artifact</dt>
+                                    <dd id="operationalArtifact">Unknown</dd>
+                                </div>
+                                <div>
+                                    <dt>Remote execution</dt>
+                                    <dd id="operationalRemote">Not observed</dd>
+                                </div>
+                                <div>
+                                    <dt>Node multiplier</dt>
+                                    <dd id="operationalNodeMultiplier">Unknown</dd>
+                                </div>
+                            </dl>
+                        </section>
                     </div>
 
                     <div class="tab-content" id="updates-tab">

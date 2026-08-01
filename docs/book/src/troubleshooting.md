@@ -218,7 +218,7 @@ run の終了状態は `status` と `termination_reason` の組で読みます�
 | --- | --- | --- |
 | `schedule-complete` | 予定を消化して正常終了 | 対処不要 |
 | `sprt-finished` | SPRT が結論へ到達して早期終了 | 対処不要。`not_played` は予定との差 |
-| `cancelled` | 利用者が停止した | 故障ではない。resume で再開できる |
+| `cancelled` | 利用者が停止した | 故障ではない。通常のtournament/SPRTはresumeできる。SPSAは下記を参照 |
 | `timeout-burst` | 停滞起因の時間切れが閾値に達した | 下の項目を参照 |
 | `timeout-attribution-unknown` | 原因を断定できない時間切れが閾値に達した | 下の項目を参照 |
 | `transport-timeout` | 通信・プロトコル待ちの失敗が閾値に達した | エンジンの応答性とリモート接続を確認 |
@@ -258,7 +258,9 @@ run の終了状態は `status` と `termination_reason` の組で読みます�
 
 3. ホスト側の要因（他プロセスの負荷、スリープ・サスペンド、ウイルス対策のスキャン）を確認
 
-停止した run は完了済みの対局を保持しているので、resume で続きから再開できます。
+停止したrunは完了済みの対局を保持しているので、通常のtournament/SPRTはresumeできます。
+SPSAは1.2.0 ledgerの`cancelled_resumable`だけが再開可能です。
+Legacy JSON-only SPSA archiveはShogiArena 1.1.0で閲覧し、1.2.0では新しいrun directoryを使ってください。
 
 #### 対局が `ERROR` として記録される
 
@@ -407,15 +409,12 @@ ssh user@remote-server "mkdir -p ~/shogiarena"
 **原因**：リモート側にエンジンが配置されていません。
 
 **解決**：
-1. プロビジョニングを強制
+1. CAS配置を再実行
    ```bash
-   shogiarena run tournament tournament.yaml --provision force
+   shogiarena run tournament tournament.yaml --provision cas
    ```
 
-2. または、リモート側に手動で配置
-   ```bash
-   scp /local/path/to/engine user@remote-server:/remote/path/to/engine
-   ```
+2. 既配置resourceを使う場合はabsolute remote pathとexpected SHA-256を指定し、`--provision preplaced`で検証する
 
 ## データベース関連
 

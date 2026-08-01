@@ -29,7 +29,7 @@ from shogiarena._core.contexts.game_session.adapters.orchestration.game_item_bui
     build_tournament_game_items,
 )
 from shogiarena._core.contexts.game_session.adapters.orchestration.remote_control import (
-    ensure_remote_repo as _ensure_remote_repo_service,
+    ensure_remote_deployment as _ensure_remote_deployment_service,
 )
 from shogiarena._core.contexts.game_session.adapters.orchestration.remote_control import (
     get_remote_executor as _get_remote_executor_service,
@@ -79,6 +79,7 @@ from shogiarena._core.contexts.game_session.ports.pending_runtime import (
     PendingRuntimeState,
 )
 from shogiarena._core.contexts.game_session.ports.session_context import SessionContext
+from shogiarena._core.contexts.game_session.ports.worker_deployment import WorkerBundleBuildResult
 from shogiarena._core.contexts.instances.application.instance_models import Instance
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
 from shogiarena._core.contexts.tournament.domain.tournament_models import GameSpec
@@ -117,6 +118,7 @@ class TournamentOrchestrator(BaseOrchestrator):
         summary_updater: SummaryUpdateCallback | None = None,
         api_server: DashboardServerPort | None = None,  # Optional API server for SSE broadcasting
         cancelled_provider: Callable[[], set[str]] | None = None,
+        remote_worker_bundle: WorkerBundleBuildResult | None = None,
     ) -> None:
         """Initialize tournament orchestrator.
 
@@ -138,8 +140,10 @@ class TournamentOrchestrator(BaseOrchestrator):
             engine_factory_service=engine_factory_service,
             resource_poll_interval=config.system.resource_poll_interval,
             resource_poll_max_interval=config.system.resource_poll_max_interval,
+            resource_allocation_timeout=config.system.instance_scheduling.allocation_timeout,
             default_engine_handshake_timeout=config.system.engine_handshake_timeout,
             engine_lifecycle=config.tournament.engine_lifecycle,
+            remote_worker_bundle=remote_worker_bundle,
         )
         self.config = config
         self.run_dir = session.storage.run_dir
@@ -205,6 +209,7 @@ class TournamentOrchestrator(BaseOrchestrator):
         instance_pool = self.instance_pool
         if instance_pool is None:
             raise RuntimeError("Tournament orchestrator requires an instance pool")
+        await self.preflight_instance_health()
         preflight_parallel_resource_capacity(
             self,
             instance_pool,
@@ -389,6 +394,8 @@ class TournamentOrchestrator(BaseOrchestrator):
                 white_engine_name=game_spec.white_engine,
                 black_item_instance_override=black_item.instance_override,
                 white_item_instance_override=white_item.instance_override,
+                scheduling_policy=self.config.system.instance_scheduling.policy,
+                required_tags=tuple(self.config.system.instance_scheduling.required_tags),
             ),
         )
         dispatch = dispatch_selection.dispatch
@@ -454,7 +461,7 @@ class TournamentOrchestrator(BaseOrchestrator):
                 continue
             executor = _get_remote_executor_service(self, instance)
             try:
-                await _ensure_remote_repo_service(self, executor, instance)
+                await _ensure_remote_deployment_service(self, executor, instance)
             except (RuntimeError, ValueError, OSError) as exc:
                 logger.error("[%s] remote setup failed: %s", inst_id, exc, exc_info=True)
                 raise

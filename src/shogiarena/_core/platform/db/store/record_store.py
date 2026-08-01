@@ -124,6 +124,16 @@ class DBRecordStore:
         with self._repository.operation(commit=True):
             self._append(records, should_update=should_update)
 
+    def append_in_current_transaction(
+        self,
+        records: Iterable[rsshogi.record.Record | None],
+        *,
+        should_update: bool = False,
+    ) -> None:
+        """Caller-owned repository transactionへrecordを追加する。"""
+
+        self._append(records, should_update=should_update)
+
     @staticmethod
     def _has_timeout_attribution_table(session: Session) -> bool:
         """attribution table の有無を transaction 内で確認する（task 0052 / Decision 11）。

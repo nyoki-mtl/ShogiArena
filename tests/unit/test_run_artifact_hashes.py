@@ -13,6 +13,7 @@ from shogiarena._core.contexts.game_session.adapters.orchestration.engine_config
 from shogiarena._core.shared.kernel.json_types import JsonValue
 from shogiarena._core.shared.kernel.run_artifact_contract import (
     build_engine_manifest_payload,
+    build_provenance_payload,
     build_run_artifact_payload_bundle,
     build_schedule_payload,
 )
@@ -239,6 +240,43 @@ def test_run_artifact_provenance_hashes_binary_from_engine_yaml(tmp_path) -> Non
     assert manifest_engine["resolved_paths"]["engine_config"] == str(engine_yaml)
     assert before.schedule_hash == after.schedule_hash
     assert before.resume_hash != after.resume_hash
+
+
+def test_run_artifact_provenance_hashes_engine_yaml_options(tmp_path) -> None:
+    binary_path = tmp_path / "engine.bin"
+    engine_yaml = tmp_path / "engine.yaml"
+    binary_path.write_bytes(b"engine-v1")
+    engine_yaml.write_text(
+        f"engine_path: {binary_path}\noptions:\n  Threads: 1\n",
+        encoding="utf-8",
+    )
+    payload = {
+        "experiment_name": "demo",
+        "engines": [{"name": "engine-a", "engine_path": str(engine_yaml)}],
+    }
+
+    before = build_run_artifact_payload_bundle(payload).hashes
+    manifest_engine = build_engine_manifest_payload(payload["engines"][0])
+    engine_yaml.write_text(
+        f"engine_path: {binary_path}\noptions:\n  Threads: 2\n",
+        encoding="utf-8",
+    )
+    after = build_run_artifact_payload_bundle(payload).hashes
+
+    assert manifest_engine["effective_options"] == {"Threads": 1}
+    assert manifest_engine["bytes_hash"]["engine_config_sha256"]
+    assert before.resume_hash != after.resume_hash
+
+
+def test_resolved_overlay_options_are_bound_to_provenance(tmp_path) -> None:
+    binary_path = tmp_path / "engine.bin"
+    engine_yaml = tmp_path / "engine.yaml"
+    binary_path.write_bytes(b"engine")
+    engine_yaml.write_text(f"engine_path: {binary_path}\n", encoding="utf-8")
+    base = {"engines": [{"name": "engine", "engine_path": str(engine_yaml), "options": {"Threads": 1}}]}
+    changed = {"engines": [{"name": "engine", "engine_path": str(engine_yaml), "options": {"Threads": 2}}]}
+
+    assert provenance_hash(build_provenance_payload(base)) != provenance_hash(build_provenance_payload(changed))
 
 
 def test_artifact_engine_materialization_seals_resolved_binary(tmp_path) -> None:

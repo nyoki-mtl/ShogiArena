@@ -8,6 +8,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
+from shogiarena._core.contexts.spsa.ports.ledger_ports import (
+    SpsaLedgerHandlePort,
+    SpsaLedgerRuntimePort,
+    SpsaObservationLedgerPort,
+)
 from shogiarena._core.contexts.spsa.ports.spsa_store_port import (
     SpsaAnalysisPort,
     SpsaGameListingPort,
@@ -29,6 +34,7 @@ class SpsaRunnerState:
 
     # -- Domain inputs (populated during prepare_domain) -------------------
     params: list[ParamEntry] | None = None
+    experiment_initial_params: dict[str, float] | None = None
     sfens: list[str] | None = None
     update_items: list[int] | None = None
 
@@ -39,6 +45,14 @@ class SpsaRunnerState:
 
     # -- Service references (initialized during runner lifecycle) ----------
     db_service: DatabaseServicePort | None = None
+    ledger: SpsaLedgerHandlePort | None = None
+    ledger_runtime: SpsaLedgerRuntimePort | None = None
+    observation_ledger: SpsaObservationLedgerPort | None = None
+    has_resumable_terminal: bool = False
+    is_finalization_replay: bool = False
+    terminal_status: str | None = None
+    terminal_reason: str | None = None
+    terminal_resumable: bool = False
     spsa_store: SpsaStorePort | None = None
     spsa_summary_service: SpsaSummaryServicePort | None = None
     spsa_update_query_service: SpsaUpdateQueryPort | None = None

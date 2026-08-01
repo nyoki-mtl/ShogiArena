@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import rsshogi
@@ -14,6 +15,10 @@ from shogiarena._core.contexts.game_session.adapters.orchestration.config_spsa_m
 )
 from shogiarena._core.contexts.spsa.adapters.orchestrator import SpsaOrchestrator
 from shogiarena._core.contexts.spsa.adapters.runtime.ltc_regression import run_ltc_regression
+from shogiarena._core.contexts.spsa.domain.observation import (
+    SpsaIncompleteObservationError,
+    SpsaObservationError,
+)
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
 from shogiarena._core.shared.kernel.game_results import GameResult
 
@@ -52,10 +57,15 @@ class DummySpsaOrchestrator(SpsaOrchestrator):
         self._session_uuid = "session"
         self.num_workers = 1
         self._sfens = ["startpos"]
-        self.config = SimpleNamespace(space_path="space.yaml")
+        self.config = SimpleNamespace(
+            space_path="space.yaml",
+            run_seed="03" * 32,
+            experiment_name="ltc-test",
+        )
         self._stop_event = asyncio.Event()
         self._params_lock = asyncio.Lock()
         self.run_dir = tmp_path
+        self._ledger_runtime = Mock()
 
     def _append_spsa_event(self, payload: dict[str, object]) -> None:  # type: ignore[override]
         self._events.append(payload)
@@ -68,6 +78,19 @@ class DummySpsaOrchestrator(SpsaOrchestrator):
             -1.0,
             _make_record(GameResult.WHITE_WIN),
             _make_record(GameResult.BLACK_WIN),
+        )
+
+
+class DummyInvalidLtcOrchestrator(DummySpsaOrchestrator):
+    def __init__(self, tmp_path, result: GameResult) -> None:  # type: ignore[override]
+        super().__init__(tmp_path)
+        self._result = result
+
+    async def _run_game_pair(self, *args, **kwargs):  # type: ignore[override]
+        return (
+            0.0,
+            _make_record(self._result),
+            _make_record(GameResult.WHITE_WIN),
         )
 
 
@@ -153,6 +176,36 @@ async def test_ltc_regression_records_rejection_without_stopping(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    ("result", "error_type"),
+    [
+        (GameResult.ERROR, SpsaObservationError),
+        (GameResult.INVALID, SpsaObservationError),
+        (GameResult.PAUSED, SpsaIncompleteObservationError),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ltc_regression_rejects_non_game_outcomes_before_statistics(
+    tmp_path,
+    result: GameResult,
+    error_type: type[Exception],
+):
+    orch = DummyInvalidLtcOrchestrator(tmp_path, result)
+
+    with pytest.raises(error_type, match=result.name):
+        await run_ltc_regression(
+            orch,
+            update_idx=4,
+            tuned_params=[_make_param(3.0)],
+            baseline_params=[_make_param(1.0)],
+            baseline_update_idx=-1,
+        )
+
+    assert orch._records == []
+    assert not any(event.get("event") == "ltc_regression_result" for event in orch._events)
+    assert orch._ltc_last_completed is None
+
+
 @pytest.mark.asyncio
 async def test_ltc_regression_uses_sprt_acceptance(tmp_path):
     orch = DummySprtPassOrchestrator(tmp_path)
@@ -223,7 +276,8 @@ async def test_ltc_regression_uses_pentanomial_paired_submission(tmp_path):
         baseline_update_idx=-1,
     )
 
-    assert record["status"] == "pending"
+    assert record["status"] == "failed"
+    assert "sealed LTC pair budget exhausted without terminal SPRT decision" in record["fail_reasons"]
     assert record["sprt"] is not None
     assert record["sprt"]["decision"] == "continue"
     assert record["pairs_played"] == 2

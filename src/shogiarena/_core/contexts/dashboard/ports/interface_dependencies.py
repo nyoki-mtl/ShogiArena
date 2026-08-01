@@ -38,6 +38,7 @@ class DashboardGameRecordLoaderFn(Protocol):
         db_path: Path,
         *,
         game_name: str,
+        immutable: bool = ...,
     ) -> rsshogi.record.Record | None: ...
 
 
@@ -130,6 +131,7 @@ class DashboardGameQueryPort(Protocol):
         db_path: Path,
         *,
         game_name: str,
+        immutable: bool = ...,
     ) -> rsshogi.record.Record | None: ...
 
     def build_games_raw_payload(

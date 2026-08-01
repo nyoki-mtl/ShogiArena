@@ -73,6 +73,21 @@ OpenBench / ShogiBench へ提出する場合は、run 設定の `openbench` ブ�
 
 SPSA は、1 つのエンジン設定から plus/minus バリアントを生成し、対局結果からパラメータを更新します。
 
+> **1.2.0 SPSA実行契約**
+>
+> Observation分類、transactional ledger、LTC accepted baseline、resume契約のproduction
+> qualificationを完了し、Local/Remote SPSAを利用できます。
+> 1.2.0のledgerを持つ中断runはresumeできます。
+> Legacy JSON-only archiveは1.2.0で表示・resume・importできないため、ShogiArena 1.1.0で閲覧してください。
+
+### Validation level
+
+- `--validate-only`はrun configに加え、SPSA spaceのload/normalize、initial positions fileの存在と非空、instance sourceとengine `instance_id`の照合、artifact IDの構文検証まで行います。
+- `--dry-run`は同じ検証に加え、default composition root、run directoryの解決、local engine configのfixed-option preflightまで進みます。preflight artifactは一時ディレクトリだけに作成し、run archive、engine process、network accessは開始しません。
+- Artifactのfetch/build、`usi_tunables` handshake、Remote接続は`--dry-run`の対象外です。
+- Remote runはdispatch前にnetwork、worker platform、deployment、artifactを検証します。
+  `--dry-run`はnetworkへ接続しないため、このRemote preflightを実行しません。
+
 ```bash
 cp examples/configs/run/spsa/example.yaml spsa.yaml
 shogiarena run spsa spsa.yaml
@@ -138,11 +153,28 @@ dashboard:
 | `space` | 調整対象パラメータを定義する SPSA space ファイル |
 | `num_updates` | 更新回数 |
 | `pairs_per_update` | 1 更新あたりの対局ペア数 |
-| `inflight_factor` | 先行投入する更新数の係数 |
+| `inflight_factor` | 同一update内で同時に進めるpair投入量の係数。update間はbarrierで逐次 |
 | `algorithm` | SPSA のゲインスケジュール |
 | `variants.crn` | Common Random Numbers による分散削減 |
 | `variants.integer_rounding` | 整数パラメータの丸め方式 |
+| `variants.apply.clear_hash` | variant適用後に置換表を初期化する。`true`ではtuned engineの`Clear Hash` buttonが必須 |
 | `num_parallel` | SPSA 用の並列数 |
+
+`variants.apply.clear_hash`の既定値は`true`です。
+
+この設定では、tuned engineが名前と大文字小文字を含めて`Clear Hash`というUSI buttonを公開しない場合、preflightで実行を拒否します。
+
+これは再利用したengine processでplus variantの置換表をminus variantへ持ち越し、勾配測定へ方向性のある偏りを入れないための検査です。
+
+### 削除済みキーの移行
+
+| 削除済みキー | 移行先 |
+| --- | --- |
+| `spsa.update_mode` | 削除する。更新同期は常に barrier semantics で動作する |
+| `spsa.variants.instance_affinity` | engine の `instance_id` または `system.instance_scheduling` を使う |
+| `spsa.parameters_path` | versioned normalized space を `spsa.space` で指定する |
+
+これらのキーは互換 parser を持たず、指定すると config validation で拒否されます。
 
 ## 開始局面
 
@@ -172,6 +204,37 @@ run ディレクトリには通常の `game.db`、`manifest.json`、`state.json`
 ```bash
 shogiarena dashboard serve --run-dir /path/to/run
 ```
+
+### Ledger、terminal、resume
+
+新規runのoptimizer authorityは`<run-dir>/spsa/ledger.sqlite3`です。
+`events.jsonl`、`current.json`、`index.json`はdashboard互換projectionであり、
+resume元ではありません。Run seed、space/resume digest、parameter rounding、
+pair assignment、accepted LTC baseline、terminal reasonはledgerとsealed manifestで検証します。
+
+`completed`、`early_stopped`、`failed`は再開不可、`cancelled_resumable`だけが
+同一contract検証後に再開可能です。Legacy JSON-only archiveは1.2.0での表示、resume、
+silent ledger importを拒否します。閲覧にはShogiArena 1.1.0を使い、1.2.0で実行するときは
+新しいrun directoryを指定してください。
+
+Accepted updateの正本は`spsa/accepted-best.json`です。
+Ledger commit ID、parameter wire value、LTC decision、manifest、tunable manifest、
+baseline/tuned engineのprovenanceを保存するため、採用判断ではこのartifactを確認してください。
+
+Dashboardはarchived runを変更しません。SPSA revision feedはledger revisionだけを通知し、
+gap/reconnect時はREST snapshotを再取得します。Final terminal snapshotを取得してから接続を閉じます。
+
+### Backup / restore
+
+1. Runを停止し、worker jobがterminal/collectedであることを確認する。
+2. Run directory全体を別pathへcopyし、少なくとも`manifest.json`、`game.db`、
+   `spsa/ledger.sqlite3`、`completion_status.json`（存在する場合）のSHA-256を記録する。
+3. Migrationや調査はcopy側だけで行い、source archiveを変更しない。
+4. Restoreは変更済みdirectoryへ上書きせず、backupを新しいpathへcopyして開く。
+5. Schema/version、manifest、resume/space digestが拒否された場合はversionをstampし直さず、
+   そのschemaに対応するShogiArenaで確認するか、新しいrun directoryで開始する。
+
+Ledger単体のcopyは`game.db`とのcross-store整合性を失うためbackupとして不十分です。
 
 ## 関連
 

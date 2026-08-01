@@ -54,6 +54,16 @@ class SpsaTunableManifest:
 
 
 @dataclass(frozen=True, slots=True)
+class SpsaManifestRequest:
+    """Manifest transport requirements declared by a space source."""
+
+    required: bool
+    command: str
+    has_explicit_parameters: bool
+    has_selection: bool
+
+
+@dataclass(frozen=True, slots=True)
 class SpsaParameterSpec:
     """Normalized immutable SPSA parameter spec."""
 
@@ -88,6 +98,7 @@ class SpsaParameterSpec:
             value_encoding=self.value_encoding,
             scale=self.scale,
             significant_digits=self.significant_digits,
+            rounding=self.rounding,
         )
 
     def to_json(self) -> JsonObject:
@@ -148,20 +159,35 @@ class SpsaSpaceSpec:
         return [param.to_param_entry() for param in self.parameters]
 
 
-def load_spsa_space_spec(path: str | Path) -> SpsaSpaceSpec:
+def load_spsa_space_spec(
+    path: str | Path,
+    *,
+    manifest: SpsaTunableManifest | dict[str, object] | None = None,
+) -> SpsaSpaceSpec:
     """Load and normalize an SPSA space spec from YAML or JSON."""
     space_path = Path(path)
     if not space_path.exists():
         raise FileNotFoundError(f"SPSA space file not found: {space_path}")
-    if space_path.suffix.lower() == ".json":
-        raw = json.loads(space_path.read_text(encoding="utf-8"))
-    else:
-        loaded = OmegaConf.load(space_path)
-        raw = OmegaConf.to_container(loaded, resolve=True) if isinstance(loaded, DictConfig) else loaded
-    if not isinstance(raw, dict):
-        raise TypeError(f"SPSA space spec must be a mapping: {space_path}")
-    payload = coerce_json_object_serialized(raw, field_name="space")
-    return parse_spsa_space_spec(payload, source_path=space_path)
+    payload = _load_space_payload(space_path)
+    return parse_spsa_space_spec(payload, source_path=space_path, manifest=manifest)
+
+
+def inspect_spsa_manifest_request(path: str | Path) -> SpsaManifestRequest:
+    """Read only the manifest transport declaration from a space source."""
+
+    payload = _load_space_payload(Path(path))
+    target = _mapping(payload.get("target"), field="space.target")
+    manifest_node = target.get("tunable_manifest")
+    manifest_map = _mapping(manifest_node, field="space.target.tunable_manifest") if manifest_node else {}
+    command = coerce_str(manifest_map.get("command")) or "usi_tunables"
+    if "\n" in command or "\r" in command:
+        raise ValueError("space.target.tunable_manifest.command must be one line")
+    return SpsaManifestRequest(
+        required=bool(manifest_map.get("required", False)),
+        command=command,
+        has_explicit_parameters=isinstance(payload.get("parameters"), list),
+        has_selection=payload.get("select") is not None,
+    )
 
 
 def parse_spsa_space_spec(
@@ -231,13 +257,17 @@ def parse_spsa_tunable_manifest(raw: Mapping[str, object]) -> SpsaTunableManifes
         raise ValueError("manifest.tunables must be a non-empty list")
     tunables: list[SpsaTunableDescriptor] = []
     seen_ids: set[str] = set()
+    seen_options: set[str] = set()
     for index, raw_tunable in enumerate(raw_tunables):
         if not isinstance(raw_tunable, dict):
             raise TypeError(f"manifest.tunables[{index}] must be a mapping")
         descriptor = _parse_manifest_descriptor(raw_tunable, index=index)
         if descriptor.id in seen_ids:
             raise ValueError(f"duplicate manifest tunable id: {descriptor.id}")
+        if descriptor.option in seen_options:
+            raise ValueError(f"duplicate manifest tunable option: {descriptor.option}")
         seen_ids.add(descriptor.id)
+        seen_options.add(descriptor.option)
         tunables.append(descriptor)
     return SpsaTunableManifest(schema_version=schema_version, tunables=tuple(tunables))
 
@@ -248,6 +278,31 @@ def persist_normalized_space(run_dir: Path, space: SpsaSpaceSpec) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(out_path, space.to_json())
     return out_path
+
+
+def validate_space_against_manifest(
+    space: SpsaSpaceSpec,
+    manifest: SpsaTunableManifest,
+) -> None:
+    """Validate that every normalized parameter remains within the engine manifest contract."""
+
+    descriptors = manifest.by_id()
+    for parameter in space.parameters:
+        descriptor = descriptors.get(parameter.id)
+        if descriptor is None:
+            raise ValueError(f"SPSA parameter is not in tunable manifest: {parameter.id}")
+        if parameter.option != descriptor.option:
+            raise ValueError(f"SPSA parameter option conflicts with tunable manifest: {parameter.id}")
+        if parameter.value_type != descriptor.value_type:
+            raise ValueError(f"SPSA parameter value_type conflicts with tunable manifest: {parameter.id}")
+        if parameter.value_encoding != descriptor.value_encoding:
+            raise ValueError(f"SPSA parameter encoding conflicts with tunable manifest: {parameter.id}")
+        if parameter.scale != descriptor.scale:
+            raise ValueError(f"SPSA parameter scale conflicts with tunable manifest: {parameter.id}")
+        if descriptor.minimum is None or descriptor.maximum is None:
+            raise ValueError(f"SPSA tunable manifest has no bounds: {parameter.id}")
+        if parameter.minimum < descriptor.minimum or parameter.maximum > descriptor.maximum:
+            raise ValueError(f"SPSA parameter bounds exceed tunable manifest bounds: {parameter.id}")
 
 
 def _resolve_manifest_parameters(
@@ -307,6 +362,7 @@ def _descriptor_to_parameter(descriptor: SpsaTunableDescriptor, *, override: Jso
             "c_end": schedule.get("c_end", descriptor.c_end),
             "r_end": schedule.get("r_end", descriptor.r_end),
         },
+        **({"rounding": override["rounding"]} if "rounding" in override else {}),
         "significant_digits": override.get("significant_digits", descriptor.significant_digits),
     }
 
@@ -357,10 +413,8 @@ def _parse_parameter(raw_param: dict[str, JsonValue], *, index: int) -> SpsaPara
         raise ValueError(f"space.parameters[{index}].bounds.min must be less than bounds.max")
     if not minimum <= initial <= maximum:
         raise ValueError(f"space.parameters[{index}].initial must be within bounds")
-    if value_type == "int" and math.floor(maximum) < math.ceil(minimum):
-        # An int parameter whose bounds enclose no integer (e.g. min=2.2, max=2.8) would let the
-        # quantizer return a value outside [min, max].
-        raise ValueError(f"space.parameters[{index}].bounds contain no integer value for an int parameter")
+    if value_type == "int" and (not float(minimum).is_integer() or not float(maximum).is_integer()):
+        raise ValueError(f"space.parameters[{index}].bounds must be integral for an int parameter")
     schedule = _mapping(param.get("schedule"), field=f"space.parameters[{index}].schedule")
     c_end = _finite_float(schedule.get("c_end"), field=f"space.parameters[{index}].schedule.c_end")
     r_end = _finite_float(schedule.get("r_end"), field=f"space.parameters[{index}].schedule.r_end")
@@ -377,6 +431,11 @@ def _parse_parameter(raw_param: dict[str, JsonValue], *, index: int) -> SpsaPara
     scale = coerce_float(target.get("scale"))
     if encoding == "scaled_integer" and (scale is None or scale <= 0):
         raise ValueError(f"space.parameters[{index}].target.scale must be positive for scaled_integer")
+    if encoding == "scaled_integer" and scale is not None:
+        effective_minimum = math.ceil(minimum * scale)
+        effective_maximum = math.floor(maximum * scale)
+        if effective_minimum > effective_maximum:
+            raise ValueError(f"space.parameters[{index}].bounds contain no scaled_integer wire value at scale {scale}")
     significant_digits = _positive_int(
         param.get("significant_digits"),
         field=f"space.parameters[{index}].significant_digits",
@@ -404,6 +463,19 @@ def _mapping(value: JsonValue | None, *, field: str) -> JsonObject:
     if not isinstance(value, dict):
         raise TypeError(f"{field} must be a mapping")
     return {str(key): item for key, item in value.items()}
+
+
+def _load_space_payload(space_path: Path) -> JsonObject:
+    if not space_path.exists():
+        raise FileNotFoundError(f"SPSA space file not found: {space_path}")
+    if space_path.suffix.lower() == ".json":
+        raw = json.loads(space_path.read_text(encoding="utf-8"))
+    else:
+        loaded = OmegaConf.load(space_path)
+        raw = OmegaConf.to_container(loaded, resolve=True) if isinstance(loaded, DictConfig) else loaded
+    if not isinstance(raw, dict):
+        raise TypeError(f"SPSA space spec must be a mapping: {space_path}")
+    return coerce_json_object_serialized(raw, field_name="space")
 
 
 def _required_str(value: JsonValue | None, *, field: str) -> str:
@@ -466,11 +538,14 @@ def _parse_manifest_encoding(value: JsonValue | None, *, value_type: ValueType, 
 __all__ = [
     "SPACE_SCHEMA_VERSION",
     "SpsaParameterSpec",
+    "SpsaManifestRequest",
     "SpsaSpaceSpec",
     "SpsaTunableDescriptor",
     "SpsaTunableManifest",
     "load_spsa_space_spec",
+    "inspect_spsa_manifest_request",
     "parse_spsa_space_spec",
     "parse_spsa_tunable_manifest",
     "persist_normalized_space",
+    "validate_space_against_manifest",
 ]

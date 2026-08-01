@@ -6,10 +6,10 @@ import asyncio
 import inspect
 import logging
 import os
-import platform as _platform
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from shogiarena._core.platform.engine_provisioning.provisioning_ports import EngineRuntimeInstancePort
@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_REMOTE_BOOK_MAX_MB = 256
 _REMOTE_BOOK_TRANSFER_ENV = "SHOGIARENA_REMOTE_BOOK_TRANSFER"
 _REMOTE_BOOK_MAX_MB_ENV = "SHOGIARENA_REMOTE_BOOK_MAX_MB"
+_REMOTE_BOOK_PREPLACED_PATH_ENV = "SHOGIARENA_REMOTE_BOOK_PREPLACED_PATH"
+_REMOTE_BOOK_PREPLACED_SHA256_ENV = "SHOGIARENA_REMOTE_BOOK_PREPLACED_SHA256"
 
 BookTransferMode = Literal["auto", "always", "preplaced"]
 UsiOptionValidationMode: TypeAlias = Literal["strict", "warn", "raw", "allow_unlisted_combo_value"]
@@ -46,6 +48,8 @@ UsiOptionValidationMode: TypeAlias = Literal["strict", "warn", "raw", "allow_unl
 class _BookRemotePolicy:
     mode: BookTransferMode
     max_bytes: int
+    preplaced_path: str | None
+    preplaced_sha256: str | None
 
 
 def _resolve_book_remote_policy() -> _BookRemotePolicy:
@@ -66,7 +70,24 @@ def _resolve_book_remote_policy() -> _BookRemotePolicy:
             max_mb = max(0, int(raw_mb))
         except ValueError:
             logger.warning("Invalid %s=%r; using default %d MiB", _REMOTE_BOOK_MAX_MB_ENV, raw_mb, max_mb)
-    return _BookRemotePolicy(mode=mode, max_bytes=max_mb * 1024 * 1024)
+    preplaced_path = os.environ.get(_REMOTE_BOOK_PREPLACED_PATH_ENV)
+    preplaced_sha256 = os.environ.get(_REMOTE_BOOK_PREPLACED_SHA256_ENV)
+    if mode == "preplaced":
+        if not preplaced_path or not preplaced_sha256:
+            raise ValueError(
+                "preplaced book requires both "
+                f"{_REMOTE_BOOK_PREPLACED_PATH_ENV} and {_REMOTE_BOOK_PREPLACED_SHA256_ENV}"
+            )
+        if "\\" in preplaced_path or not PurePosixPath(preplaced_path).is_absolute():
+            raise ValueError(f"{_REMOTE_BOOK_PREPLACED_PATH_ENV} must be an absolute POSIX path")
+        if re.fullmatch(r"[0-9a-f]{64}", preplaced_sha256) is None:
+            raise ValueError(f"{_REMOTE_BOOK_PREPLACED_SHA256_ENV} must be a lowercase SHA-256 digest")
+    return _BookRemotePolicy(
+        mode=mode,
+        max_bytes=max_mb * 1024 * 1024,
+        preplaced_path=preplaced_path,
+        preplaced_sha256=preplaced_sha256,
+    )
 
 
 class _InstancePoolPort(Protocol):
@@ -87,6 +108,13 @@ class _EngineRuntimeSupportPort(Protocol):
     async def ensure_remote_dir_by_manifest(self, instance: object, local_dir: Path, remote_dir: str) -> None: ...
 
     async def ensure_remote_file(self, instance: object, local_file: Path, remote_file: str) -> None: ...
+
+    async def verify_remote_file_sha256(
+        self,
+        instance: object,
+        remote_file: str,
+        expected_sha256: str,
+    ) -> bool: ...
 
 
 class _BinaryResolutionConfigPort(Protocol):
@@ -334,15 +362,30 @@ class EngineRuntimeFactory:
         size = book_path.stat().st_size
 
         if policy.mode == "preplaced":
-            # 転送せず worker 側の同一パスを参照する（事前配置済み前提）。fingerprint は
-            # provenance (0015) に記録され、local/remote の同一性確認に使える。
+            assert policy.preplaced_path is not None
+            assert policy.preplaced_sha256 is not None
+            local_digest = self._support.file_sha256(book_path)
+            if local_digest != policy.preplaced_sha256:
+                raise ValueError(
+                    f"preplaced book digest does not match local resource: "
+                    f"expected {policy.preplaced_sha256}, got {local_digest}"
+                )
+            if not await self._support.verify_remote_file_sha256(
+                instance,
+                policy.preplaced_path,
+                policy.preplaced_sha256,
+            ):
+                raise ValueError(
+                    f"preplaced book does not exist or failed SHA-256 verification: {policy.preplaced_path}"
+                )
+            remote_book = PurePosixPath(policy.preplaced_path)
             logger.info(
-                "Opening book referenced as pre-placed on remote worker (no transfer): %s (%.1f MiB)",
-                book_path,
+                "Opening book verified as preplaced on remote worker: %s (%.1f MiB)",
+                remote_book,
                 size / (1024 * 1024),
             )
-            options["BookDir"] = str(book_path.parent)
-            options["BookFile"] = book_path.name
+            options["BookDir"] = str(remote_book.parent)
+            options["BookFile"] = remote_book.name
             handled.add("BookDir")
             handled.add("BookFile")
             return
@@ -434,15 +477,8 @@ class EngineRuntimeFactory:
         local_resolved: str,
     ) -> tuple[str, str]:
         if instance.is_ssh:
-            system_name = _platform.system()
-            if system_name.lower() != "linux":
-                raise RuntimeError(
-                    "SSH instances require running ShogiArena on a Linux host (WSL2 is supported). "
-                    f"Detected host platform: {system_name}. Please run orchestrator on Linux/WSL "
-                    "when using remote instances."
-                )
             path = Path(local_resolved)
-            instance_engine_dir = Path(instance.config.engine_dir)
+            instance_engine_dir = PurePosixPath(instance.config.engine_dir)
             engine_path_for_exec = str(instance_engine_dir / path.parent.name / path.name)
             working_dir_for_exec = str(instance_engine_dir / path.parent.name)
             lock = self._ensure_binary_locks.setdefault(engine_path_for_exec, asyncio.Lock())

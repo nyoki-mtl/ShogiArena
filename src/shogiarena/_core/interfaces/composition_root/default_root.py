@@ -60,6 +60,8 @@ from shogiarena._core.contexts.game_session.ports.dashboard_lifecycle_factory im
     DashboardScheduleBoundaryPort,
     InitDashboardHtmlFn,
 )
+from shogiarena._core.contexts.game_session.ports.game_execution_worker import GameExecutionWorkerPort
+from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import DashboardProfile
 from shogiarena._core.contexts.instances.adapters.engine_runtime_adapter import (
     EngineRuntimeAdapter,
     create_default_engine_runtime_factory,
@@ -88,6 +90,7 @@ class DefaultRoot:
 
     engine_factory_service: EngineFactoryService
     engine_runtime: EngineRuntimePort
+    game_execution_worker: GameExecutionWorkerPort
     tournament_runtime: TournamentRuntimePort
     spsa_runtime: SpsaRuntimePort
     init_dashboard_html: InitDashboardHtmlFn
@@ -182,6 +185,8 @@ def _create_api_server(
     *,
     host: str = "127.0.0.1",
     read_only: bool = False,
+    dashboard_num_workers: int = 0,
+    dashboard_profiles: tuple[DashboardProfile, ...] | None = None,
     schedule_boundary: DashboardScheduleBoundaryPort | None = None,
 ) -> ArenaAPIServer:
     resolved_run_dir = run_dir or db_path.parent
@@ -206,6 +211,8 @@ def _create_api_server(
         run_dir=resolved_run_dir,
         instance_pool=resolved_instance_pool,
         read_only=read_only,
+        dashboard_num_workers=dashboard_num_workers,
+        dashboard_profiles=dashboard_profiles,
         schedule_boundary=schedule_boundary,
         state=state,
         game_state=game_state,
@@ -232,9 +239,12 @@ def build_default_root() -> DefaultRoot:
     )
 
     # Engine runtime adapter
-    engine_runtime: EngineRuntimePort = EngineRuntimeAdapter(
+    engine_runtime_adapter = EngineRuntimeAdapter(
         engine_factory_service=engine_factory_service,
+        game_execution_instance_pool=InstancePool.ensure_default_local_pool(),
     )
+    engine_runtime: EngineRuntimePort = engine_runtime_adapter
+    game_execution_worker: GameExecutionWorkerPort = engine_runtime_adapter
 
     # Dashboard factories
     dashboard_html_fn: InitDashboardHtmlFn = init_dashboard_html
@@ -281,6 +291,7 @@ def build_default_root() -> DefaultRoot:
     return DefaultRoot(
         engine_factory_service=engine_factory_service,
         engine_runtime=engine_runtime,
+        game_execution_worker=game_execution_worker,
         tournament_runtime=tournament_runtime,
         spsa_runtime=spsa_runtime,
         init_dashboard_html=dashboard_html_fn,

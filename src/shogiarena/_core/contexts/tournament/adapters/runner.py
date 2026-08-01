@@ -49,6 +49,11 @@ from shogiarena._core.contexts.game_session.application.completion.session_servi
     TournamentSessionCompletionService,
 )
 from shogiarena._core.contexts.game_session.application.elo_rating_service import EloRatingService
+from shogiarena._core.contexts.game_session.application.remote_worker_bundle import (
+    REMOTE_WORKER_BUNDLE_FILENAME,
+    prepare_remote_worker_bundle,
+    worker_bundle_provenance,
+)
 from shogiarena._core.contexts.game_session.application.session.base_session_runner import BaseSessionRunner
 from shogiarena._core.contexts.game_session.application.session.execution_service import (
     TournamentSessionExecutionService,
@@ -97,6 +102,7 @@ from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import
     ProgressReporterPort,
     RunOptions,
 )
+from shogiarena._core.contexts.game_session.ports.worker_deployment import WorkerBundleBuildResult
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
 from shogiarena._core.contexts.tournament.adapters.dashboard_schedule_facade import DashboardScheduleFacade
@@ -296,6 +302,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
         )
         self._record_writer: RecordBinaryWriter | None = None
         self._frozen_run_config_payload: JsonObject | None = None
+        self._remote_worker_bundle: WorkerBundleBuildResult | None = None
 
     # ======================================================================
     # Schedule context
@@ -391,6 +398,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
             summary_updater=self._update_dashboard if self._dashboard_enabled else None,
             api_server=self.api_server,
             cancelled_provider=lambda: set(self._state.cancelled_game_ids),
+            remote_worker_bundle=self._remote_worker_bundle,
         )
         self._orchestrator = orchestrator
         self._tournament_orchestrator = orchestrator
@@ -958,7 +966,15 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
         frozen_payload = self._frozen_run_config_payload
         if frozen_payload is None:
             raise RuntimeError("inputs-only manifest must be written before prepare_domain")
+        self._remote_worker_bundle = prepare_remote_worker_bundle(
+            run_dir=self.run_dir,
+            instance_pool=getattr(self, "instance_pool", None),
+            is_resume=(self.run_dir / "state.json").is_file() and not self._run_options.should_skip_resume,
+        )
         resolved_payload = self.config.model_dump(mode="json")
+        remote_worker_provenance = worker_bundle_provenance(self._remote_worker_bundle)
+        if remote_worker_provenance is not None:
+            resolved_payload["_remote_worker_bundle"] = remote_worker_provenance
         try:
             sealed = self._run_metadata_service.seal_provenance_manifest(
                 run_dir=self.run_dir,
@@ -1041,6 +1057,7 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
                 "completed.flag",
                 "completion_status.json",
                 "manifest.json",
+                REMOTE_WORKER_BUNDLE_FILENAME,
             ],
             dirs=["spsa", "html", "static", "dashboard", "inputs", "results", "failures", "logs", "records"],
         )

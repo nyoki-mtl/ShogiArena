@@ -1,7 +1,7 @@
 import json
 import textwrap
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pydantic import ValidationError
@@ -54,6 +54,72 @@ def write_space(tmp: Path) -> Path:
     )
 
 
+@pytest.mark.parametrize(
+    ("configured_seed", "expected_seed"),
+    [
+        ("AB" * 32, "ab" * 32),
+        (None, None),
+    ],
+)
+def test_spsa_run_seed_is_optional_and_normalized(
+    tmp_path: Path,
+    configured_seed: str | None,
+    expected_seed: str | None,
+) -> None:
+    engine = write(tmp_path, "cfg/engine.yaml", 'engine_path: "/bin/echo"\n')
+    space = write_space(tmp_path)
+    seed_line = "" if configured_seed is None else f"run_seed: {configured_seed}"
+    config_path = write(
+        tmp_path,
+        "cfg/spsa-seed.yaml",
+        f"""
+        experiment_name: seeded
+        engines:
+          - engine_path: {json.dumps(str(engine))}
+        rules:
+          initial_positions:
+            type: file
+            source: {tmp_path}/sfens.txt
+          time_control:
+            node_limit: 1
+        spsa:
+          space: {space}
+          num_updates: 1
+          {seed_line}
+        """,
+    )
+    write(tmp_path, "sfens.txt", "startpos\n")
+
+    assert load_spsa_run_config(config_path).run_seed == expected_seed
+
+
+def test_spsa_run_seed_rejects_non_256_bit_value(tmp_path: Path) -> None:
+    engine = write(tmp_path, "cfg/engine.yaml", 'engine_path: "/bin/echo"\n')
+    space = write_space(tmp_path)
+    config_path = write(
+        tmp_path,
+        "cfg/spsa-invalid-seed.yaml",
+        f"""
+        engines:
+          - engine_path: {json.dumps(str(engine))}
+        rules:
+          initial_positions:
+            type: file
+            source: {tmp_path}/sfens.txt
+          time_control:
+            node_limit: 1
+        spsa:
+          space: {space}
+          num_updates: 1
+          run_seed: deadbeef
+        """,
+    )
+    write(tmp_path, "sfens.txt", "startpos\n")
+
+    with pytest.raises(ValidationError, match="run_seed"):
+        load_spsa_run_config(config_path)
+
+
 def test_spsa_engine_initializes_with_global_time_control(tmp_path: Path) -> None:
     """Engine YAML lacks per-engine time_control but global rules.time_control exists."""
     eng_yaml = write(
@@ -93,7 +159,11 @@ def test_spsa_engine_initializes_with_global_time_control(tmp_path: Path) -> Non
     storage = FilesystemRunStorage(tmp_path)
     session = SessionContext.build(storage=storage, num_workers=1, run_id="test")
     orch = SpsaOrchestrator(
-        cfg, session=session, hooks=NoopGameLifecycleHooks(), engine_factory_service=_mock_engine_factory_service
+        cfg,
+        session=session,
+        hooks=NoopGameLifecycleHooks(),
+        engine_factory_service=_mock_engine_factory_service,
+        ledger_runtime=Mock(game_result_kind=Mock(return_value=None)),
     )
     assert orch is not None
 
@@ -212,7 +282,11 @@ def test_spsa_engine_with_time_control_initializes(tmp_path: Path) -> None:
     storage = FilesystemRunStorage(tmp_path)
     session = SessionContext.build(storage=storage, num_workers=1, run_id="test")
     orch = SpsaOrchestrator(
-        cfg, session=session, hooks=NoopGameLifecycleHooks(), engine_factory_service=_mock_engine_factory_service
+        cfg,
+        session=session,
+        hooks=NoopGameLifecycleHooks(),
+        engine_factory_service=_mock_engine_factory_service,
+        ledger_runtime=Mock(game_result_kind=Mock(return_value=None)),
     )
     assert orch is not None
 

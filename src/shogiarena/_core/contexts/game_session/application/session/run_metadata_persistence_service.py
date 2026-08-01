@@ -26,6 +26,7 @@ from shogiarena._core.shared.kernel.run_artifact_hashes import (
     RunArtifactHashBundle,
     RunArtifactHashRequest,
     build_run_artifact_hash_bundle,
+    canonical_sha256,
 )
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int, coerce_str
 from shogiarena._core.shared.kernel.serialization import json_serialize
@@ -138,8 +139,14 @@ class RunMetadataPersistenceService:
             existing_resume_hash = coerce_str(self._object_or_empty(persisted.get("hashes")).get("resume_hash"))
             if existing_resume_hash != resume_hash:
                 raise RunManifestSealError("sealed manifest resume_hash does not match current provenance")
+            persisted_space = self._object_or_empty(persisted.get("inputs")).get("spsa_normalized_space")
+            expected_space = self._object_or_empty(manifest.get("inputs")).get("spsa_normalized_space")
+            if persisted_space != expected_space:
+                raise RunManifestSealError("sealed manifest normalized space digest does not match current provenance")
+            self._validate_spsa_normalized_space(run_dir=run_dir, manifest=manifest)
             return RunManifestSealResult(hashes=sealed_hashes, manifest=persisted)
 
+        self._validate_spsa_normalized_space(run_dir=run_dir, manifest=manifest)
         try:
             write_json_atomic(manifest_path, manifest)
         except (OSError, TypeError, ValueError) as exc:
@@ -201,9 +208,27 @@ class RunMetadataPersistenceService:
         spsa_payload = self._object_or_empty(schedule_payload.get("spsa"))
         engine_manifest_payloads: list[JsonObject] = []
         hash_source = None
+        tunable_handshake: JsonObject | None = None
+        normalized_space: JsonObject | None = None
+        fixed_option_preflight: JsonObject | None = None
+        remote_worker_bundle: JsonObject | None = None
         if status == "provenance_sealed":
             engine_manifest_payloads = build_engine_manifest_payloads(resolved_config_payload)
-            hash_source = build_provenance_payload(resolved_config_payload).get("hash_source")
+            provenance_payload = build_provenance_payload(resolved_config_payload)
+            hash_source = provenance_payload.get("hash_source")
+            raw_tunable_handshake = provenance_payload.get("spsa_tunable_handshake")
+            if isinstance(raw_tunable_handshake, dict):
+                tunable_handshake = raw_tunable_handshake
+                raw_normalized_space = tunable_handshake.get("normalized_space")
+                if not isinstance(raw_normalized_space, dict):
+                    raise RunManifestSealError("SPSA tunable handshake requires normalized_space")
+                normalized_space = self._object_or_empty(raw_normalized_space)
+            raw_fixed_option_preflight = provenance_payload.get("spsa_fixed_option_preflight")
+            if isinstance(raw_fixed_option_preflight, dict):
+                fixed_option_preflight = raw_fixed_option_preflight
+            raw_remote_worker_bundle = provenance_payload.get("remote_worker_bundle")
+            if isinstance(raw_remote_worker_bundle, dict):
+                remote_worker_bundle = raw_remote_worker_bundle
         return {
             "schema_version": 2,
             "status": status,
@@ -222,7 +247,43 @@ class RunMetadataPersistenceService:
             },
             "state": {"path": "state.json"},
             "database": {"path": "game.db"},
-            "inputs": {"config_resolved": "inputs/config_resolved.yaml"},
+            "inputs": {
+                "config_resolved": "inputs/config_resolved.yaml",
+                **(
+                    {
+                        "spsa_tunable_handshake": {
+                            "path": "spsa/tunable_handshake.json",
+                            "sha256": canonical_sha256(tunable_handshake),
+                        },
+                        "spsa_normalized_space": {
+                            "path": "spsa/space.normalized.json",
+                            "sha256": canonical_sha256(normalized_space),
+                        },
+                        **(
+                            {
+                                "spsa_fixed_option_preflight": {
+                                    "path": "spsa/fixed_option_preflight.json",
+                                    "sha256": canonical_sha256(fixed_option_preflight),
+                                }
+                            }
+                            if fixed_option_preflight is not None
+                            else {}
+                        ),
+                    }
+                    if tunable_handshake is not None
+                    else {}
+                ),
+                **(
+                    {
+                        "remote_worker_bundle": {
+                            "path": "remote-worker-bundle.zip",
+                            **remote_worker_bundle,
+                        }
+                    }
+                    if remote_worker_bundle is not None
+                    else {}
+                ),
+            },
             "tournament": self._tournament_payload(
                 tournament=tournament,
                 generate=generate,
@@ -244,6 +305,28 @@ class RunMetadataPersistenceService:
                 sprt_payload=self._object_or_empty(config_payload.get("sprt")) or None,
             )
         )
+
+    @classmethod
+    def _validate_spsa_normalized_space(cls, *, run_dir: Path, manifest: Mapping[str, object]) -> None:
+        normalized_entry = cls._object_or_empty(
+            cls._object_or_empty(manifest.get("inputs")).get("spsa_normalized_space")
+        )
+        if not normalized_entry:
+            return
+        if normalized_entry.get("path") != "spsa/space.normalized.json":
+            raise RunManifestSealError("sealed manifest normalized space path is invalid")
+        expected_sha256 = coerce_str(normalized_entry.get("sha256"))
+        if expected_sha256 is None:
+            raise RunManifestSealError("sealed manifest normalized space digest is missing")
+        normalized_path = run_dir / "spsa" / "space.normalized.json"
+        try:
+            raw = json.loads(normalized_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RunManifestSealError("sealed normalized space artifact is missing or invalid") from exc
+        if not isinstance(raw, Mapping):
+            raise RunManifestSealError("sealed normalized space artifact must contain an object")
+        if canonical_sha256(cls._object_or_empty(raw)) != expected_sha256:
+            raise RunManifestSealError("sealed normalized space artifact digest mismatch")
 
     def _build_sealed_hashes(
         self,

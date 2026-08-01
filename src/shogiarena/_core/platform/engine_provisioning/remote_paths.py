@@ -4,9 +4,66 @@ from __future__ import annotations
 
 import re
 import shlex
-from pathlib import Path
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 
 from shogiarena._core.platform.engine_provisioning.provisioning_ports import SshCommandTransportPort
+
+
+@dataclass(frozen=True, slots=True)
+class RemotePosixPath:
+    """Linux remote host上のpathを表すvalue object。"""
+
+    _value: PurePosixPath
+
+    def __init__(self, value: str | PurePosixPath) -> None:
+        raw = str(value)
+        if not raw:
+            raise ValueError("remote path must not be empty")
+        if "\\" in raw:
+            raise ValueError(f"remote path must use POSIX separators: {raw!r}")
+        if "\x00" in raw or "\n" in raw or "\r" in raw:
+            raise ValueError("remote path contains an unsupported control character")
+        object.__setattr__(self, "_value", PurePosixPath(raw))
+
+    def __str__(self) -> str:
+        return self._value.as_posix()
+
+    def __truediv__(self, child: str) -> RemotePosixPath:
+        if not child or "/" in child or "\\" in child or child in {".", ".."}:
+            raise ValueError(f"remote path child must be one safe component: {child!r}")
+        return RemotePosixPath(self._value / child)
+
+    def join_relative(self, relative: str) -> RemotePosixPath:
+        """Validated relative POSIX pathを結合する。"""
+
+        candidate = RemotePosixPath(relative)
+        if candidate.is_absolute or any(part == ".." for part in candidate._value.parts):
+            raise ValueError(f"remote path must be a descendant-relative path: {relative!r}")
+        return RemotePosixPath(self._value / candidate._value)
+
+    @property
+    def is_absolute(self) -> bool:
+        """pathがabsolute formかを返す。"""
+
+        return self._value.is_absolute()
+
+    @property
+    def parent(self) -> RemotePosixPath:
+        """親remote pathを返す。"""
+
+        return RemotePosixPath(self._value.parent)
+
+    @property
+    def name(self) -> str:
+        """末尾path componentを返す。"""
+
+        return self._value.name
+
+    def shell_quote(self) -> str:
+        """POSIX shell commandへ渡すためにpathをquoteする。"""
+
+        return shlex.quote(str(self))
 
 
 class RemoteProjectLocator:
@@ -51,16 +108,17 @@ class RemotePathResolver:
     def __init__(self, transport: SshCommandTransportPort) -> None:
         self._transport = transport
 
-    async def expand(self, expression: str) -> str:
-        if "$" not in expression and not expression.startswith("~"):
+    async def expand(self, expression: RemotePosixPath) -> RemotePosixPath:
+        raw_expression = str(expression)
+        if "$" not in raw_expression and not raw_expression.startswith("~"):
             return expression
         rc, stdout, stderr = await self._transport.run('printf "__HOME__=%s\\n" "$HOME"; env')
         if rc != 0 or not stdout:
             raise RuntimeError(f"Failed to resolve remote path: {expression}: {stderr or stdout}")
-        return _expand_shell_path(expression, _parse_env(stdout))
+        return RemotePosixPath(_expand_shell_path(raw_expression, _parse_env(stdout)))
 
-    async def file_exists(self, remote_path: str) -> bool:
-        command = f"test -f {shlex.quote(remote_path)}"
+    async def file_exists(self, remote_path: RemotePosixPath) -> bool:
+        command = f"test -f {remote_path.shell_quote()}"
         rc, _, _ = await self._transport.run(command)
         return rc == 0
 
@@ -92,4 +150,4 @@ def _expand_shell_path(expression: str, env: dict[str, str]) -> str:
     return _ENV_VAR_PATTERN.sub(replace_var, expanded)
 
 
-__all__ = ["RemotePathResolver", "RemoteProjectLocator"]
+__all__ = ["RemotePathResolver", "RemotePosixPath", "RemoteProjectLocator"]

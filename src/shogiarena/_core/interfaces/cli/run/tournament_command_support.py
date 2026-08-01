@@ -82,6 +82,7 @@ async def run_tournament_like(
             experiment_name=experiment_name,
             default_experiment=default_experiment,
             label=label,
+            base_dir=config_path.parent if config_path is not None else Path.cwd(),
         )
     elif base_config is None:
         raise CliArgumentError("configuration file is required when no CLI overrides are provided")

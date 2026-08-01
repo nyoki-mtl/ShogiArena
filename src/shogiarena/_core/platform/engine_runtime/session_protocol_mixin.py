@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import deque
 from typing import Any
@@ -11,6 +12,7 @@ from rsshogi.core import Move
 
 from shogiarena._core.platform.engine_runtime.usi_engine_session_models import UsiEngineState, UsiMateResult
 from shogiarena._core.platform.engine_runtime.usi_protocol_types import UsiThinkPV, move_from_usi
+from shogiarena._core.shared.kernel.json_types import JsonObject
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,8 @@ class AsyncUsiEngineProtocolMixin:
     _state: UsiEngineState
     _usiok_future: asyncio.Future[None] | None
     _readyok_future: asyncio.Future[None] | None
+    _tunable_manifest_future: asyncio.Future[JsonObject | None] | None
+    _pending_tunable_manifest: JsonObject | None
     _bestmove_future: asyncio.Future[Any] | None
     _mate_future: asyncio.Future[UsiMateResult] | None
     _pending_mate_result: UsiMateResult | None
@@ -113,6 +117,32 @@ class AsyncUsiEngineProtocolMixin:
             self._has_ready_once = True
             self._append_handshake_entry("in", line, state=UsiEngineState.READY.value)
             self._emit_lifecycle_event("readyok")
+            return
+        tunable_prefix = "info string shogiarena_tunables_json "
+        if line.startswith(tunable_prefix):
+            future = self._tunable_manifest_future
+            if future is None or future.done():
+                logger.warning("[%s] ignoring unsolicited tunable manifest", self.name)
+                return
+            if self._pending_tunable_manifest is not None:
+                future.set_exception(RuntimeError("Engine returned multiple SPSA tunable manifest payloads"))
+                return
+            try:
+                raw_manifest = json.loads(line.removeprefix(tunable_prefix))
+            except json.JSONDecodeError:
+                future.set_exception(ValueError("Engine returned malformed SPSA tunable manifest JSON"))
+                return
+            if not isinstance(raw_manifest, dict):
+                future.set_exception(TypeError("Engine SPSA tunable manifest must be a JSON object"))
+                return
+            self._pending_tunable_manifest = raw_manifest
+            return
+        if line == "usi_tunablesok":
+            future = self._tunable_manifest_future
+            if future is None or future.done():
+                logger.warning("[%s] ignoring unsolicited usi_tunablesok", self.name)
+                return
+            future.set_result(self._pending_tunable_manifest)
             return
         if line.startswith("id "):
             if self._state == UsiEngineState.WAITING_FOR_USIOK:
@@ -386,6 +416,7 @@ class AsyncUsiEngineProtocolMixin:
             self._analysis_handle = None
         self._set_future_exception(self._readyok_future, exc)
         self._set_future_exception(self._usiok_future, exc)
+        self._set_future_exception(self._tunable_manifest_future, exc)
         self._reset_current_info()
         self._info_handler = None
         if self._state not in {UsiEngineState.WILL_QUIT, UsiEngineState.QUIT_COMPLETED}:

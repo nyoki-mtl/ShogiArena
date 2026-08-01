@@ -18,6 +18,7 @@ from . import sprt as sprt_cmd
 from . import spsa as spsa_cmd
 from . import tournament as tournament_cmd
 from .config_builder import build_cli_config_payload
+from .provision_options import parse_provision_mode
 from .tournament_cli_options import add_tournament_common_args, flatten_block_tokens
 from .tournament_command_support import run_tournament_like
 
@@ -41,7 +42,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 def _register_run_tournament(run_sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = run_sub.add_parser(
         "tournament",
-        help="Run a tournament from a YAML configuration",
+        help="Run a local or SSH tournament from YAML",
     )
     add_tournament_common_args(parser)
     parser.set_defaults(async_handler=_run_tournament)
@@ -50,7 +51,7 @@ def _register_run_tournament(run_sub: argparse._SubParsersAction[argparse.Argume
 def _register_run_spsa(run_sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = run_sub.add_parser(
         "spsa",
-        help="Run an SPSA tuning session from a YAML configuration",
+        help="Run SPSA locally or on qualified Linux x86_64 SSH workers",
     )
     parser.add_argument("config", nargs="?", help="Path to SPSA configuration YAML")
     parser.add_argument(
@@ -77,9 +78,10 @@ def _register_run_spsa(run_sub: argparse._SubParsersAction[argparse.ArgumentPars
     )
     parser.add_argument(
         "--provision",
-        choices=["none", "force"],
-        default="none",
-        help="Provision engine directories to SSH instances before run",
+        type=parse_provision_mode,
+        default="cas",
+        metavar="{cas,preplaced}",
+        help="Remote resource placement mode (default: content-addressed cas)",
     )
     parser.add_argument(
         "--git-worktree",
@@ -199,6 +201,7 @@ async def _run_spsa(args: argparse.Namespace) -> None:
             experiment_name=experiment_name,
             default_experiment="spsa",
             label="spsa",
+            base_dir=config_path.parent if config_path is not None else Path.cwd(),
         )
     elif config_path is None:
         raise CliArgumentError("configuration file is required when no CLI overrides are provided")

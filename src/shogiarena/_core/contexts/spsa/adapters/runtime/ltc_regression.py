@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import math
-import random
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
@@ -18,7 +17,11 @@ from shogiarena._core.contexts.game_session.application.sprt_service import (
     SprtDecision,
     SprtResult,
 )
+from shogiarena._core.contexts.spsa.domain.ledger_models import LedgerPairAssignment
+from shogiarena._core.contexts.spsa.domain.observation import winner_code_from_result
+from shogiarena._core.contexts.spsa.domain.pair_identity import canonical_pair_ids
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
+from shogiarena._core.contexts.spsa.ports.ledger_ports import SpsaLedgerRuntimePort
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.statistics.pentanomial_pairing import should_sample_for_sprt, tested_score
@@ -28,6 +31,7 @@ from .ltc_regression_events import (
     append_ltc_result_event,
     append_ltc_start_event,
     determine_ltc_status,
+    fail_closed_ltc_status_at_budget,
     log_ltc_status,
 )
 from .tokens import PhaseLiteral, variant_token
@@ -48,6 +52,7 @@ class _LtcRunner(Protocol):
     _ltc_last_completed: int | None
     _sfens: list[str]
     num_workers: int
+    _ledger_runtime: SpsaLedgerRuntimePort
 
     def _append_spsa_event(self, payload: JsonObject) -> None: ...
 
@@ -55,7 +60,15 @@ class _LtcRunner(Protocol):
 
     def _ltc_normalize_result_for_sprt(self, result: GameResult, is_tuned_as_black: bool) -> GameResult: ...
 
-    def _make_rng(self, idx: int) -> random.Random: ...
+    def _make_rng(
+        self,
+        *,
+        domain: str,
+        update_idx: int,
+        pair_idx: int | None = None,
+        parameter_id: str | None = None,
+        counter: int = 0,
+    ) -> Any: ...
 
     def _run_game_pair(
         self,
@@ -69,6 +82,7 @@ class _LtcRunner(Protocol):
         tuned_variant_token: str | None,
         baseline_variant_token: str | None,
         event_family: str = "spsa",
+        pair_id: str,
         time_control_override: TimeControlLimits | None = None,
     ) -> Awaitable[tuple[float, rsshogi.record.Record, rsshogi.record.Record]]: ...
 
@@ -88,6 +102,7 @@ class _LtcStats:
 
     def accumulate_game(self, game: rsshogi.record.Record, *, is_tuned_as_black: bool) -> None:
         result = game.result
+        winner_code_from_result(result, is_tuned_as_black=is_tuned_as_black)
         self.total_games_played += 1
         if result.is_draw():
             self.draws += 1
@@ -104,7 +119,7 @@ class _LtcStats:
             else:
                 self.tuned_wins += 1
             return
-        self.draws += 1
+        raise AssertionError("winner_code_from_result accepted an unsupported SPSA result")
 
     def compute_metrics(self) -> tuple[float, float | None, float]:
         total = self.total_games_played
@@ -182,7 +197,6 @@ class _LtcRunContext:
     baseline_variant_token: str
     time_control_override: TimeControlLimits | None
     criteria: Any
-    rng: random.Random
     stats: _LtcStats
     sprt_tracker: _SprtTracker
 
@@ -229,7 +243,6 @@ def _prepare_ltc_run(
         baseline_variant_token=baseline_variant_token,
         time_control_override=time_control_override,
         criteria=criteria,
-        rng=runner._make_rng(0x5A5A0000 + int(update_idx)),
         stats=_LtcStats(),
         sprt_tracker=_build_sprt_tracker(criteria),
     )
@@ -248,18 +261,26 @@ async def run_ltc_regression(
     if context is None:
         return {}
 
+    assignments = _build_ltc_assignments(
+        runner,
+        update_idx=update_idx,
+        total_pairs=context.total_pairs,
+    )
+    runner._ledger_runtime.assign_ltc_pairs_and_start(
+        update_idx=update_idx,
+        assignments=assignments,
+    )
     await _run_ltc_pairs(
         runner,
         stats=context.stats,
         sprt_tracker=context.sprt_tracker,
-        total_pairs=context.total_pairs,
         update_idx=update_idx,
+        assignments=assignments,
         tuned_params=tuned_params,
         baseline_params=baseline_params,
         tuned_variant_token=context.tuned_variant_token,
         baseline_variant_token=context.baseline_variant_token,
         time_control_override=context.time_control_override,
-        rng=context.rng,
     )
     record = _finalize_ltc_regression(runner, update_idx=update_idx, context=context)
     runner._ltc_last_completed = update_idx
@@ -271,20 +292,18 @@ async def _run_ltc_pairs(
     *,
     stats: _LtcStats,
     sprt_tracker: _SprtTracker,
-    total_pairs: int,
     update_idx: int,
+    assignments: list[LedgerPairAssignment],
     tuned_params: list[ParamEntry],
     baseline_params: list[ParamEntry],
     tuned_variant_token: str,
     baseline_variant_token: str,
     time_control_override: TimeControlLimits | None,
-    rng: random.Random,
 ) -> None:
-    for pair_idx in range(total_pairs):
+    for pair_idx, assignment in enumerate(assignments):
         worker_slot = pair_idx % max(1, runner.num_workers)
-        if not runner._sfens:
-            raise RuntimeError("No SFENs available for LTC regression")
-        sfen = runner._sfens[rng.randrange(len(runner._sfens))]
+        pair_id = assignment.pair_id
+        sfen = str(assignment.opening["start_sfen"])
 
         score, game_black, game_white = await runner._run_game_pair(
             sfen,
@@ -296,6 +315,7 @@ async def _run_ltc_pairs(
             tuned_variant_token=tuned_variant_token,
             baseline_variant_token=baseline_variant_token,
             event_family="ltc",
+            pair_id=pair_id,
             time_control_override=time_control_override,
         )
 
@@ -314,6 +334,40 @@ async def _run_ltc_pairs(
             break
 
 
+def _build_ltc_assignments(
+    runner: _LtcRunner,
+    *,
+    update_idx: int,
+    total_pairs: int,
+) -> list[LedgerPairAssignment]:
+    if not runner._sfens:
+        raise RuntimeError("No SFENs available for LTC regression")
+    assignments: list[LedgerPairAssignment] = []
+    for pair_idx, pair_id in enumerate(canonical_pair_ids(kind="LTC", update_idx=update_idx, count=total_pairs)):
+        opening_idx = runner._make_rng(
+            domain="spsa.opening",
+            update_idx=update_idx,
+            pair_idx=pair_idx,
+            counter=1,
+        ).randrange(len(runner._sfens))
+        sfen = runner._sfens[opening_idx]
+        assignments.append(
+            LedgerPairAssignment(
+                pair_id=pair_id,
+                opening={"opening_idx": opening_idx, "start_sfen": sfen},
+                color_assignment={
+                    "games": [
+                        {"slot": "black", "tuned_as": "black", "game_id": f"{pair_id}-black"},
+                        {"slot": "white", "tuned_as": "white", "game_id": f"{pair_id}-white"},
+                    ]
+                },
+                flips={},
+                rounding_samples={},
+            )
+        )
+    return assignments
+
+
 def _finalize_ltc_regression(
     runner: _LtcRunner,
     *,
@@ -329,6 +383,12 @@ def _finalize_ltc_regression(
         elo=elo,
         sprt_payload=sprt_payload,
         sprt_decision=context.sprt_tracker.sprt_decision,
+    )
+    status, fail_reasons = fail_closed_ltc_status_at_budget(
+        status,
+        fail_reasons,
+        pairs_played=context.stats.pairs_completed,
+        total_pairs=context.total_pairs,
     )
     is_accepted = status == "passed"
     record = _build_ltc_record(

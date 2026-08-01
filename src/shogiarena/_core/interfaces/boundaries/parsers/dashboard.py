@@ -166,7 +166,11 @@ def _infer_profile_from_tournament_config(arena_cfg: _TournamentDashboardConfigP
     return "tournament"
 
 
-def load_tournament_config_for_dashboard(config_path: Path) -> tuple[Path, int, DashboardProfile]:
+def load_tournament_config_for_dashboard(
+    config_path: Path,
+    *,
+    run_dir_override: Path | None = None,
+) -> tuple[Path, int, DashboardProfile]:
     try:
         tournament_payload = parse_tournament_config_file(config_path)
         arena_cfg_raw = build_tournament_run_config(
@@ -183,7 +187,7 @@ def load_tournament_config_for_dashboard(config_path: Path) -> tuple[Path, int, 
     if num_parallel is None or num_parallel <= 0:
         raise ValueError("tournament config must define a positive tournament.num_parallel value")
 
-    resolved = latest_run_dir(config_path, arena_cfg.output_dir / "tournament")
+    resolved = run_dir_override or latest_run_dir(config_path, arena_cfg.output_dir / "tournament")
     if resolved is None:
         raise ValueError("run directory not found; specify --run-dir")
     parsed_num_parallel = coerce_int(num_parallel)
@@ -196,6 +200,7 @@ def load_spsa_config_for_dashboard(
     config_path: Path,
     *,
     original_error: Exception | None = None,
+    run_dir_override: Path | None = None,
 ) -> tuple[Path, int]:
     try:
         payload = parse_spsa_config_file(config_path)
@@ -214,7 +219,7 @@ def load_spsa_config_for_dashboard(
     if num_workers <= 0:
         raise ValueError("SPSA config must define positive spsa.num_parallel")
 
-    resolved = latest_run_dir(config_path, project_dirs.output_dir / "spsa")
+    resolved = run_dir_override or latest_run_dir(config_path, project_dirs.output_dir / "spsa")
     if resolved is None:
         raise ValueError("run directory not found; specify --run-dir") from original_error
     return resolved, num_workers

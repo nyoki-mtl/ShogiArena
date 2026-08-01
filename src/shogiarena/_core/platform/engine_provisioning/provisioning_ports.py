@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from shogiarena._core.contexts.instances.ports.secret_transport import (
@@ -27,6 +28,15 @@ class SshCommandTransportPort(Protocol):
 @runtime_checkable
 class SshStreamTransportPort(Protocol):
     def run_stream_lines(self, command: str, *, env: dict[str, str] | None = None) -> AsyncIterator[str]: ...
+
+
+@runtime_checkable
+class SshFileTransportPort(SshCommandTransportPort, Protocol):
+    async def mkdir(self, path: str, *, is_existing_ok: bool = True) -> None: ...
+
+    async def put_file(self, local: Path, remote: str) -> None: ...
+
+    async def endpoint_identity(self) -> str: ...
 
 
 @runtime_checkable
@@ -70,6 +80,7 @@ __all__ = [
     "RemoteSecretFileHandle",
     "RemoteSecretFileRequest",
     "SshCommandTransportPort",
+    "SshFileTransportPort",
     "SshSecretFileTransportPort",
     "SshStreamTransportPort",
 ]

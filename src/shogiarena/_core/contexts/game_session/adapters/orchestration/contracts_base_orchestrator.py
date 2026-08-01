@@ -15,7 +15,6 @@ import rsshogi.record
 from shogiarena._core.contexts.game_session.adapters.engine.pool import EnginePool
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_builders import (
     compute_max_ply_extra_options,
-    create_game_runner_from_rules,
     create_progress_queue,
 )
 from shogiarena._core.contexts.game_session.adapters.orchestration.remote_executor import RemoteExecutor
@@ -37,6 +36,9 @@ from shogiarena._core.contexts.game_session.application.progress.snapshot_models
 from shogiarena._core.contexts.game_session.ports.session_context import SessionContext
 from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import EngineLifecyclePolicy
 from shogiarena._core.contexts.game_session.ports.session_runner_ports import BeforeGameHookPort
+from shogiarena._core.contexts.game_session.ports.worker_deployment import WorkerBundleBuildResult
+from shogiarena._core.contexts.instances.application.health_checker import HealthChecker
+from shogiarena._core.contexts.instances.application.instance_models import Instance, InstanceMetrics
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
 from shogiarena._core.contexts.instances.ports.orchestrator_primitives import compute_pool_capacity
@@ -78,8 +80,10 @@ class BaseOrchestrator:
         engine_factory_service: EngineFactoryService,
         resource_poll_interval: float | None = None,
         resource_poll_max_interval: float | None = None,
+        resource_allocation_timeout: float | None = None,
         default_engine_handshake_timeout: float | None = None,
         engine_lifecycle: EngineLifecyclePolicy = "reuse",
+        remote_worker_bundle: WorkerBundleBuildResult | None = None,
     ) -> None:
         self.api_server: DashboardServerPort | None = api_server
         # Loop-lag probe for timeout attribution (task 0047); injected by the session runner.
@@ -88,17 +92,18 @@ class BaseOrchestrator:
         self._worker_tasks: set[asyncio.Task[None]] = set()
         self._running_tasks: set[asyncio.Task[None]] = set()
         self._stop_event = asyncio.Event()
-        self.game_runner: GameRunner | None = None
+        self._active_game_runners: set[GameRunner] = set()
         self.engine_pool: EnginePool | None = None
         self.instance_pool: InstancePool | None = session_context.instance_pool
         self.session_context: SessionContext = session_context
         self.db_service: DatabaseServicePort | None = db_service
         self._engine_factory_service = engine_factory_service
         self._hooks: GameLifecycleHooks = hooks
-        self._remote_repo_ready: set[str] = set()
         self._remote_executors: dict[str, RemoteExecutor] = {}
+        self._remote_worker_bundle = remote_worker_bundle
         self._resource_poll_interval = resource_poll_interval
         self._resource_poll_max_interval = resource_poll_max_interval
+        self._resource_allocation_timeout = resource_allocation_timeout
         self._default_engine_handshake_timeout = default_engine_handshake_timeout
         self._engine_lifecycle = engine_lifecycle
         self.extra_options: JsonObject | None = None
@@ -128,8 +133,8 @@ class BaseOrchestrator:
     def set_runtime_watchdog(self, probe: LoopLagProbePort | None) -> None:
         """timeout attribution 用の loop-lag probe を受け取る（session runner が注入）。"""
         self._runtime_watchdog = probe
-        if self.game_runner is not None:
-            self.game_runner.set_runtime_watchdog(probe)
+        for runner in self._active_game_runners:
+            runner.set_runtime_watchdog(probe)
 
     def _initialize_common_components(
         self,
@@ -159,19 +164,6 @@ class BaseOrchestrator:
         self.progress_sink: asyncio.Queue[tuple[int, int, str | None]] | None = (
             self.progress_queue if is_consumer_active else None
         )
-        self.game_runner = create_game_runner_from_rules(
-            rules,
-            list(engines),
-            self.progress_sink,
-        )
-        self.game_runner.set_engine_options_callback(self._handle_engine_options)
-        # Collect raw engine-I/O only while a client subscribes to a game's raw-I/O topics; the
-        # engine_status badge is fed cheaply by lifecycle events regardless (0046).
-        if self.api_server is not None:
-            self.game_runner.set_engine_io_wanted(self.api_server.has_engine_io_subscribers)
-        # Feed the loop-lag probe so timeout attribution can tell engine slowness from loop stalls (0047).
-        self.game_runner.set_runtime_watchdog(self._runtime_watchdog)
-        self.game_runner.set_timeout_reclassification(self._timeout_reclassification_enabled)
         self.extra_options = compute_max_ply_extra_options(rules)
 
     def _handle_engine_options(
@@ -308,6 +300,12 @@ class BaseOrchestrator:
         game_id: str
         black_limits: TimeControlLimits | None
         white_limits: TimeControlLimits | None
+        black_variant_options: JsonObject | None = None
+        white_variant_options: JsonObject | None = None
+        black_variant_id: str | None = None
+        white_variant_id: str | None = None
+        clear_hash_before_game: bool = False
+        after_variant_setoption: str = "none"
         before_game_hook: BeforeGameHookPort | None = None
         game_round: int | None = None
         schedule_metadata: JsonObject | None = None
@@ -315,9 +313,8 @@ class BaseOrchestrator:
 
     async def shutdown(self) -> None:
         logger.debug("Shutting down orchestrator")
-        gr = self.game_runner
-        if gr is not None:
-            gr.request_shutdown()
+        for runner in self._active_game_runners:
+            runner.request_shutdown()
         await self._progress_hub.shutdown()
 
         srt = self._summary_refresh_task
@@ -341,9 +338,41 @@ class BaseOrchestrator:
             await asyncio.gather(*list(rt), return_exceptions=True)
             rt.clear()
 
+        remote_executors = list(self._remote_executors.values())
+        self._remote_executors.clear()
+        if remote_executors:
+            close_results = await asyncio.gather(
+                *(executor.close() for executor in remote_executors),
+                return_exceptions=True,
+            )
+            for result in close_results:
+                if isinstance(result, BaseException):
+                    logger.error("Failed to close remote executor: %s", result)
+
         ep = self.engine_pool
         if ep is not None:
             await ep.shutdown_all()
+
+    async def preflight_instance_health(self) -> None:
+        """Probe configured instances independently of dashboard startup."""
+
+        pool = self.instance_pool
+        if pool is None:
+            return
+        instances = pool.list_instances()
+        timeout = min(self._resource_allocation_timeout or 30.0, 30.0)
+
+        async def probe(instance: Instance) -> None:
+            try:
+                metrics = await asyncio.wait_for(
+                    HealthChecker.check_instance_health(instance),
+                    timeout=timeout,
+                )
+            except (TimeoutError, OSError, RuntimeError, ValueError):
+                metrics = InstanceMetrics(is_reachable=False)
+            instance.update_metrics(metrics)
+
+        await asyncio.gather(*(probe(instance) for instance in instances))
 
     def request_stop(self) -> None:
         if not self._stop_event.is_set():

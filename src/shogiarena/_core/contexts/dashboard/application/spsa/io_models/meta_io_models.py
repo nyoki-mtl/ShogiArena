@@ -41,6 +41,21 @@ class LtcRegressionMetaConfig(BaseModel):
         return False
 
 
+class SpsaSessionRecord(BaseModel):
+    """One diagnostic session boundary within a cumulative SPSA run."""
+
+    session_uuid: str
+    session_started_at: str
+    session_start_params: dict[str, float] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="ignore")
+
+    @field_validator("session_start_params", mode="before")
+    @classmethod
+    def _coerce_session_start_params(cls, v: JsonValue | None) -> dict[str, float]:
+        return coerce_float_dict(v)
+
+
 class SpsaMetaData(BaseModel):
     """Top-level ``meta.json`` I/O schema."""
 
@@ -49,6 +64,9 @@ class SpsaMetaData(BaseModel):
     total: int | None = None
     experiment_name: str | None = None
     initial_params: dict[str, float] = Field(default_factory=dict)
+    experiment_initial_params: dict[str, float] = Field(default_factory=dict)
+    session_start_params: dict[str, float] = Field(default_factory=dict)
+    sessions: list[SpsaSessionRecord] = Field(default_factory=list)
     space_path: str | None = None
 
     engine_time_controls: dict[str, str] = Field(default_factory=dict)
@@ -87,6 +105,17 @@ class SpsaMetaData(BaseModel):
     @classmethod
     def _coerce_initial_params(cls, v: JsonValue | None) -> dict[str, float]:
         return coerce_float_dict(v)
+
+    @field_validator("experiment_initial_params", "session_start_params", mode="before")
+    @classmethod
+    def _coerce_projection_params(cls, v: JsonValue | None) -> dict[str, float]:
+        return coerce_float_dict(v)
+
+    @property
+    def effective_experiment_initial_params(self) -> dict[str, float]:
+        """Return the immutable run-start parameters."""
+
+        return dict(self.experiment_initial_params or self.initial_params)
 
     @field_validator("engine_time_controls", mode="before")
     @classmethod
@@ -198,4 +227,4 @@ class SpsaMetaData(BaseModel):
         return config or None
 
 
-__all__ = ["EngineStatEntry", "LtcRegressionMetaConfig", "SpsaMetaData"]
+__all__ = ["EngineStatEntry", "LtcRegressionMetaConfig", "SpsaMetaData", "SpsaSessionRecord"]

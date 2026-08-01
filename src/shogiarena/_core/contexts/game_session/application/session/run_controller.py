@@ -7,7 +7,8 @@ import logging
 import os
 import signal
 from collections.abc import Awaitable, Callable, Mapping, Sized
-from typing import Generic, Protocol, TypeVar, runtime_checkable
+from types import FrameType
+from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import OrchestratorPort
 
@@ -16,7 +17,12 @@ logger = logging.getLogger(__name__)
 TRunFlow = TypeVar("TRunFlow")
 
 _GRACEFUL_SHUTDOWN_WARN_SECONDS = 5.0
-_GRACEFUL_SHUTDOWN_SIGNALS: tuple[signal.Signals, ...] = (signal.SIGINT, signal.SIGTERM)
+_WINDOWS_BREAK_SIGNAL = getattr(signal, "SIGBREAK", None)
+_GRACEFUL_SHUTDOWN_SIGNALS: tuple[signal.Signals, ...] = (
+    signal.SIGINT,
+    signal.SIGTERM,
+    *((_WINDOWS_BREAK_SIGNAL,) if isinstance(_WINDOWS_BREAK_SIGNAL, signal.Signals) else ()),
+)
 
 
 def _resolve_shutdown_hard_timeout() -> float:
@@ -68,10 +74,12 @@ class RunController(Generic[TRunFlow]):
         attach_orchestrator: Callable[[OrchestratorPort[TRunFlow]], None],
         detach_orchestrator: Callable[[], None],
         stop_services: Callable[[], Awaitable[None]],
+        prepare_interrupted_stop: Callable[[bool], None] | None = None,
     ) -> None:
         self._attach_orchestrator = attach_orchestrator
         self._detach_orchestrator = detach_orchestrator
         self._stop_services = stop_services
+        self._prepare_interrupted_stop = prepare_interrupted_stop or (lambda _is_cancelled: None)
 
     async def run_orchestrator(
         self, orchestrator: OrchestratorPort[TRunFlow], run_coro: Awaitable[TRunFlow]
@@ -189,13 +197,25 @@ class RunController(Generic[TRunFlow]):
                 current.cancel()
 
         registered_signals: list[signal.Signals] = []
+        fallback_signal_handlers: list[tuple[signal.Signals, Any]] = []
+
+        def _fallback_signal_handler(signum: int, _frame: FrameType | None) -> None:
+            received_signal = signal.Signals(signum)
+            loop.call_soon_threadsafe(_on_shutdown_signal, received_signal)
+
         for shutdown_signal in _GRACEFUL_SHUTDOWN_SIGNALS:
             try:
                 loop.add_signal_handler(shutdown_signal, _on_shutdown_signal, shutdown_signal)
             except (NotImplementedError, ValueError, RuntimeError):
-                # Not supported on this platform, or the loop is not on the main thread
-                # (add_signal_handler raises ValueError there). Skip rather than abort the run.
-                logger.debug("Signal handlers are not available on this event loop: %s", shutdown_signal.name)
+                # Windows event loops do not implement add_signal_handler. Python's synchronous
+                # signal handler still receives CTRL_BREAK_EVENT in the main thread, so bridge it
+                # back into the running loop for the same graceful shutdown path.
+                try:
+                    previous = signal.signal(shutdown_signal, _fallback_signal_handler)
+                except (OSError, ValueError):
+                    logger.debug("Signal handlers are not available on this event loop: %s", shutdown_signal.name)
+                    continue
+                fallback_signal_handlers.append((shutdown_signal, previous))
                 continue
             registered_signals.append(shutdown_signal)
 
@@ -205,6 +225,7 @@ class RunController(Generic[TRunFlow]):
             logger.warning("Cancelled by user%s", f" ({signal_name})" if signal_name else "")
             orchestrator.request_stop()
             await _await_shutdown_task()
+            self._prepare_interrupted_stop(True)
             await self._stop_services()
             self._detach_orchestrator()
             return None
@@ -214,6 +235,7 @@ class RunController(Generic[TRunFlow]):
             logger.exception("Run failed; shutting down orchestrator")
             orchestrator.request_stop()
             await _await_shutdown_task()
+            self._prepare_interrupted_stop(False)
             await self._stop_services()
             self._detach_orchestrator()
             raise
@@ -227,6 +249,8 @@ class RunController(Generic[TRunFlow]):
                 await asyncio.gather(run_task, return_exceptions=True)
             for shutdown_signal in registered_signals:
                 loop.remove_signal_handler(shutdown_signal)
+            for shutdown_signal, previous in fallback_signal_handlers:
+                signal.signal(shutdown_signal, previous)
             if warn_task is not None:
                 warn_task.cancel()
 

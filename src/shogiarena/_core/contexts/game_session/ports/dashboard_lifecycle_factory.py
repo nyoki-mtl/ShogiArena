@@ -81,6 +81,8 @@ class DashboardApiServerFactory(Protocol):
         *,
         host: str = ...,
         read_only: bool = ...,
+        dashboard_num_workers: int = ...,
+        dashboard_profiles: tuple[DashboardProfile, ...] | None = ...,
         schedule_boundary: DashboardScheduleBoundaryPort | None = ...,
     ) -> DashboardApiServerPort: ...
 

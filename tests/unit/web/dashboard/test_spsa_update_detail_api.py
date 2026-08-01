@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from aiohttp.test_utils import make_mocked_request
@@ -29,8 +32,10 @@ from shogiarena._core.contexts.dashboard.ports.interface_dependencies import (
     DashboardInterfaceDependencies,
     configure_dashboard_interface_dependencies,
 )
+from shogiarena._core.contexts.dashboard.ports.spsa_service_ports import SpsaUpdateNotFoundError
 from shogiarena._core.contexts.spsa.ports.dashboard_factory import configure_dashboard_service_factory
 from shogiarena._core.interfaces.composition_root.default_root import _create_snapshot_storage
+from shogiarena._core.interfaces.dashboard.spsa import api as spsa_api_module
 from shogiarena._core.interfaces.dashboard.spsa.api import SpsaAPI
 
 
@@ -140,6 +145,46 @@ async def test_get_update_rejects_unknown_window(tmp_path) -> None:
     response = await api.get_update(request)
 
     assert response.status == 400
+
+
+@pytest.mark.asyncio
+async def test_get_update_distinguishes_unplanned_ledger_update(tmp_path) -> None:
+    api = _build_api(tmp_path, _build_detail_payload())
+
+    def _not_found(_idx: int) -> dict:
+        raise SpsaUpdateNotFoundError("SPSA update is not planned in the ledger")
+
+    api._update_query_service = SimpleNamespace(build_update_detail=_not_found)  # type: ignore[attr-defined]
+    request = make_mocked_request("GET", "/api/spsa/update/99", match_info={"idx": "99"})
+
+    response = await api.get_update(request)
+    payload = json.loads(response.text)
+
+    assert response.status == 404
+    assert payload["code"] == "update_not_found"
+
+
+@pytest.mark.asyncio
+async def test_correlation_analysis_runs_outside_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _build_api(tmp_path, _build_detail_payload())
+    calls: list[object] = []
+
+    async def _to_thread(function: Callable[..., object], *args: Any) -> object:
+        calls.append(function)
+        return function(*args)
+
+    api._analysis_cache = SimpleNamespace(  # type: ignore[attr-defined]
+        get_correlation_snapshot=lambda: {"status": "ready", "updated_at": 1}
+    )
+    monkeypatch.setattr(spsa_api_module.asyncio, "to_thread", _to_thread)
+
+    response = await api.get_correlation(make_mocked_request("GET", "/api/spsa/analysis/correlation"))
+
+    assert response.status == 200
+    assert len(calls) == 1
 
 
 @pytest.mark.asyncio

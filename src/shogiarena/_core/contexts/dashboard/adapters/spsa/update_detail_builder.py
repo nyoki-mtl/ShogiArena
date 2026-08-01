@@ -30,6 +30,7 @@ from shogiarena._core.shared.kernel.serialization import json_serialize
 logger = logging.getLogger(__name__)
 
 GameEventSnapshotLoader = Callable[[str], JsonObject | None]
+GameBatchLoader = Callable[[list[str]], dict[str, JsonObject]]
 
 
 class _PhaseWdlPayloadModel(BaseModel):
@@ -85,13 +86,25 @@ class SpsaUpdateDetailBuilder:
         *,
         store: DashboardSpsaStorePort,
         db_path: Path,
+        read_only: bool = False,
+        game_batch_loader: GameBatchLoader | None = None,
         game_event_snapshot_loader: GameEventSnapshotLoader,
     ) -> None:
         self._store = store
         self._db_path = db_path
+        self._read_only = read_only
+        self._load_game_records_batch = game_batch_loader
         self._load_game_event_snapshot = game_event_snapshot_loader
 
     def build(self, *, idx: int, detail_state: Mapping[str, JsonValue]) -> UpdateDetailResponse:
+        run_id = _as_optional_str(detail_state.get("run_id"))
+        ledger_state = _as_optional_str(detail_state.get("ledger_state"))
+        session_values = detail_state.get("session_uuids")
+        session_uuids = (
+            [value for value in session_values if isinstance(value, str) and value]
+            if isinstance(session_values, list)
+            else []
+        )
         params_obj = detail_state.get("params")
         params = dict(params_obj) if isinstance(params_obj, Mapping) else None
         variant_id = _as_optional_str(detail_state.get("variant_id"))
@@ -207,7 +220,22 @@ class SpsaUpdateDetailBuilder:
         if primary_pattern:
             ltc_patterns.append(primary_pattern)
 
-        repository = open_dashboard_repository(self._db_path)
+        if self._load_game_records_batch is not None:
+            hydrated = self._load_game_records_batch([*game_ids, *ltc_game_ids])
+            for game_id in game_ids:
+                record = register_game_record(game_id)
+                for key, value in hydrated.get(game_id, {}).items():
+                    record.setdefault(key, value)
+            for game_id in ltc_game_ids:
+                record = register_ltc_game_record(game_id)
+                for key, value in hydrated.get(game_id, {}).items():
+                    record.setdefault(key, value)
+
+        repository = (
+            open_dashboard_repository(self._db_path, immutable=self._read_only)
+            if self._load_game_records_batch is None
+            else None
+        )
 
         def hydrate_ltc_records_from_shogidb(db: ShogiRepositoryPort, ids: list[str]) -> None:
             record_store = DBRecordStore(db)
@@ -341,6 +369,9 @@ class SpsaUpdateDetailBuilder:
         wdl = WdlCounts(wins=wins, losses=losses, draws=draws)
         response_data: UpdateDetailResponse = {
             "update_idx": idx,
+            "run_id": run_id,
+            "ledger_state": ledger_state,
+            "session_uuids": session_uuids,
             "engines": {"baseline": base_name, "tuned": tuned_name},
             "wdl": wdl,
             "variant_id": variant_id,
@@ -364,6 +395,9 @@ class SpsaUpdateDetailBuilder:
         }
         payload_data = {
             "update_idx": response_data["update_idx"],
+            "run_id": response_data["run_id"],
+            "ledger_state": response_data["ledger_state"],
+            "session_uuids": response_data["session_uuids"],
             "engines": response_data["engines"],
             "wdl": response_data["wdl"],
             "variant_id": response_data["variant_id"],

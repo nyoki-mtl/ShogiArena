@@ -32,6 +32,7 @@ from shogiarena._core.contexts.game_session.application.progress.snapshot_payloa
 from shogiarena._core.contexts.game_session.ports.dashboard_lifecycle_factory import (
     DashboardScheduleBoundaryPort,
 )
+from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import DashboardProfile
 from shogiarena._core.interfaces.dashboard.api_server.diagnostics_mixin import (
     ArenaApiServerDiagnosticsMixin,
 )
@@ -77,6 +78,8 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
         instance_pool: object | None = None,
         *,
         read_only: bool = False,
+        dashboard_num_workers: int = 0,
+        dashboard_profiles: tuple[DashboardProfile, ...] | None = None,
         schedule_boundary: DashboardScheduleBoundaryPort | None = None,
         state: DashboardState,
         game_state: GameStateUpdater,
@@ -98,7 +101,13 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
 
         self._state = state
         self._game_state = game_state
-        self._static_handler = StaticAssetsHandler(self.run_dir)
+        self._static_handler = StaticAssetsHandler(
+            self.run_dir,
+            port=self.port,
+            read_only=self._is_read_only,
+            num_workers=dashboard_num_workers,
+            profiles=dashboard_profiles,
+        )
         self._event_bus = event_bus
         self._register_dashboard_event_handlers()
         self._game_query = game_query
@@ -119,6 +128,7 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
         self.spsa_api = SpsaAPI(
             db_path=self.db_path,
             run_dir=self.run_dir,
+            read_only=self._is_read_only,
             game_query=self._game_query,
         )
         self.match_api = MatchAPI(
@@ -154,7 +164,6 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
             game_state=self._game_state,
             snapshot_storage=snapshot_storage,
             publish=self._publish_ws,
-            spsa_notifier=self._spsa_notify,
             publish_assignment=self._publish_assignment_via_event_bus,
             normalize_snapshot=normalize_worker_snapshot_dto,
         )

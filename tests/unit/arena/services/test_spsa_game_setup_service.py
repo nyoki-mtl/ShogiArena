@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from shogiarena._core.contexts.game_session.application.orchestration.decision_service import (
     OrchestratorDispatchDecisionService,
@@ -23,9 +23,29 @@ class _EngineConfig:
 
 
 @dataclass
+class _RemoteConfig:
+    tags: list[str]
+    operating_system: str = "linux"
+    architecture: str = "x86_64"
+
+
+@dataclass
+class _RemoteMetrics:
+    is_reachable: bool = True
+    in_use_slots: int = 0
+    in_use_engines: int = 0
+
+
+@dataclass
 class _RemoteInstance:
     name: str
     is_ssh: bool
+    config: _RemoteConfig = field(default_factory=lambda: _RemoteConfig(tags=[]))
+    metrics: _RemoteMetrics = field(default_factory=_RemoteMetrics)
+    is_draining: bool = False
+    effective_slots: int | None = 8
+    max_engine_capacity: int = 4
+    is_engine_capacity_known: bool = True
 
 
 @dataclass
@@ -68,6 +88,7 @@ def test_resolve_builds_context_assignment_dispatch_and_event_payload() -> None:
                 "base": _EngineConfig(instance_id="inst-a"),
             },
             should_force_enginepool=False,
+            scheduling_policy="explicit",
         ),
         resolve_game_id=lambda: "game-generated",
         to_numeric_game_id=lambda game_id: 7,

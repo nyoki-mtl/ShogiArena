@@ -39,6 +39,7 @@ class UsiEngineConfig:
     working_directory: str | None = None
     engine_args: tuple[str, ...] = ()
     environment: dict[str, str] = field(default_factory=dict)
+    secret_environment: dict[str, str] = field(default_factory=dict)
     options: JsonObject = field(default_factory=dict)
     go_options: JsonObject = field(default_factory=dict)
     artifact: str | None = None
@@ -122,6 +123,11 @@ class UsiEngineConfig:
         engine_args = normalize_engine_args(parsed.engine_args)
 
         environment = to_environment_dict(parsed.environment)
+        secret_environment = to_environment_dict(parsed.secret_environment)
+        overlap = set(environment) & set(secret_environment)
+        if overlap:
+            joined = ", ".join(sorted(overlap))
+            raise ValueError(f"environment and secret_environment keys overlap: {joined}")
 
         options = to_string_dict(parsed.options, field="options")
 
@@ -198,6 +204,7 @@ class UsiEngineConfig:
             working_directory=working_dir,
             engine_args=engine_args,
             environment=environment,
+            secret_environment=secret_environment,
             options=options.copy(),
             go_options=go_options.copy(),
             artifact=artifact_str,

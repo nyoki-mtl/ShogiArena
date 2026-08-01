@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt
+from pydantic import BaseModel, ConfigDict, NonNegativeInt
 
 from shogiarena._core.interfaces.boundaries.parsers.json_object import BoundaryObject as _BoundaryObject
 from shogiarena._core.shared.kernel.contracts import parse_wire
@@ -26,20 +26,10 @@ class _SpsaStreamPayloadModel(BaseModel):
     data: _BoundaryObject | None = None
 
 
-class _SpsaWebSocketPayloadModel(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    type: str
-    updates: list[_BoundaryObject] = Field(default_factory=list)
-    total: NonNegativeInt | None = None
-    timestamp: NonNegativeInt | None = None
-
-
-SpsaPayloadKind: TypeAlias = Literal["stream", "websocket"]
+SpsaPayloadKind: TypeAlias = Literal["stream"]
 
 _PAYLOAD_MODEL_BY_KIND: dict[SpsaPayloadKind, type[BaseModel]] = {
     "stream": _SpsaStreamPayloadModel,
-    "websocket": _SpsaWebSocketPayloadModel,
 }
 
 

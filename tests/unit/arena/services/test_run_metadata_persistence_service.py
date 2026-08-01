@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from shogiarena._core.contexts.game_session.application.session.run_metadata_persistence_service import (
     RunManifestSealError,
     RunMetadataPersistenceService,
@@ -156,6 +158,63 @@ def test_seal_provenance_manifest_keeps_frozen_inputs_after_artifact_resolution(
     assert manifest["inputs_hash"] == inputs.hashes.config_fingerprint
     assert manifest["hashes"]["resume_hash"] == sealed.hashes.resume_hash
     assert manifest["engines"][0]["resolved_paths"]["engine_path"] == str(engine_path)
+
+
+def test_seal_provenance_manifest_links_spsa_handshake_evidence(tmp_path: Path) -> None:
+    service = RunMetadataPersistenceService()
+    run_dir = tmp_path / "run-spsa"
+    run_dir.mkdir(parents=True)
+    frozen = {"experiment_name": "spsa", "baseline": [], "tuned": [], "num_updates": 1}
+    normalized_space = {
+        "schema_version": "shogiarena.spsa.space.v1",
+        "target": {"protocol": "usi_options"},
+        "parameters": [],
+    }
+    handshake = {
+        "schema_version": "shogiarena.spsa.tunable-handshake.v1",
+        "status": "passed",
+        "normalized_space": normalized_space,
+    }
+    fixed_option_preflight = {
+        "schema_version": "shogiarena.spsa.fixed_option_preflight.v2",
+        "status": "passed",
+    }
+    (run_dir / "spsa").mkdir()
+    (run_dir / "spsa" / "space.normalized.json").write_text(
+        json.dumps(normalized_space),
+        encoding="utf-8",
+    )
+    inputs = service.write_inputs_only_manifest(run_dir=run_dir, config_payload=frozen)
+
+    service.seal_provenance_manifest(
+        run_dir=run_dir,
+        inputs_config_payload=inputs.config_payload,
+        resolved_config_payload={
+            **frozen,
+            "_spsa_tunable_handshake": handshake,
+            "_spsa_fixed_option_preflight": fixed_option_preflight,
+        },
+    )
+
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["inputs"]["spsa_tunable_handshake"]["path"] == "spsa/tunable_handshake.json"
+    assert len(manifest["inputs"]["spsa_tunable_handshake"]["sha256"]) == 64
+    assert manifest["inputs"]["spsa_normalized_space"]["path"] == "spsa/space.normalized.json"
+    assert len(manifest["inputs"]["spsa_normalized_space"]["sha256"]) == 64
+    assert manifest["inputs"]["spsa_fixed_option_preflight"]["path"] == "spsa/fixed_option_preflight.json"
+    assert len(manifest["inputs"]["spsa_fixed_option_preflight"]["sha256"]) == 64
+
+    (run_dir / "spsa" / "space.normalized.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(RunManifestSealError, match="normalized space artifact digest mismatch"):
+        service.seal_provenance_manifest(
+            run_dir=run_dir,
+            inputs_config_payload=inputs.config_payload,
+            resolved_config_payload={
+                **frozen,
+                "_spsa_tunable_handshake": handshake,
+                "_spsa_fixed_option_preflight": fixed_option_preflight,
+            },
+        )
 
 
 def test_seal_provenance_manifest_rejects_inputs_hash_mismatch(tmp_path: Path) -> None:

@@ -1,26 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from shogiarena._core.contexts.instances.application.instance_models import Instance, InstanceConfig, InstanceType
 from shogiarena._core.contexts.instances.application.ssh_transport import SshTransport
 from shogiarena._core.platform.engine_provisioning.provisioning_ports import (
-    RemoteSecretCommandFactory,
-    RemoteSecretFileHandle,
     RemoteSecretFileRequest,
 )
-from shogiarena._core.platform.engine_provisioning.remote_repo_manager import RemoteRepoSpec, RemoteRepoSynchronizer
-from shogiarena._core.platform.engine_provisioning.remote_stream_runner import (
-    RemoteStreamConsumer,
-    build_remote_runner_command,
-)
-from shogiarena._core.shared.kernel.json_types import JsonObject
 
 TOKEN = "ghp_remote_secret_value"
 
@@ -94,96 +84,6 @@ class _LifecycleTransport(SshTransport):
         self.uploads_by_path[remote] = local.read_bytes()
 
 
-class _RepoSecretTransport:
-    def __init__(self) -> None:
-        self.commands: list[str] = []
-        self.secret_commands: list[str] = []
-        self.secret_files: list[RemoteSecretFileRequest] = []
-
-    async def run(
-        self,
-        command: str,
-        *,
-        env: dict[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> tuple[int, str, str]:
-        self.commands.append(command)
-        if command == "test -e /repo":
-            return 1, "", ""
-        return 0, "", ""
-
-    async def run_with_secret_files(
-        self,
-        command_factory: RemoteSecretCommandFactory,
-        secret_files: Sequence[RemoteSecretFileRequest],
-        *,
-        env: dict[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> tuple[int, str, str]:
-        self.secret_files.extend(secret_files)
-        handles = {
-            request.file_id: RemoteSecretFileHandle(
-                file_id=request.file_id,
-                remote_path=f"/tmp/secret/{request.file_id}",
-            )
-            for request in secret_files
-        }
-        self.secret_commands.append(command_factory(handles))
-        return 0, "", ""
-
-    def run_stream_lines_with_secret_files(
-        self,
-        command_factory: RemoteSecretCommandFactory,
-        secret_files: Sequence[RemoteSecretFileRequest],
-        *,
-        env: dict[str, str] | None = None,
-    ) -> AsyncIterator[str]:
-        async def lines() -> AsyncIterator[str]:
-            yield "__REMOTE_EXIT_RC:0"
-
-        return lines()
-
-
-class _StreamSecretTransport:
-    def __init__(self) -> None:
-        self.command: str | None = None
-
-    def run_stream_lines(self, command: str, *, env: dict[str, str] | None = None) -> AsyncIterator[str]:
-        raise AssertionError("plain stream API should not be used")
-
-    async def run_with_secret_files(
-        self,
-        command_factory: RemoteSecretCommandFactory,
-        secret_files: Sequence[RemoteSecretFileRequest],
-        *,
-        env: dict[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> tuple[int, str, str]:
-        raise AssertionError("command API should not be used")
-
-    def run_stream_lines_with_secret_files(
-        self,
-        command_factory: RemoteSecretCommandFactory,
-        secret_files: Sequence[RemoteSecretFileRequest],
-        *,
-        env: dict[str, str] | None = None,
-    ) -> AsyncIterator[str]:
-        handles = {
-            request.file_id: RemoteSecretFileHandle(
-                file_id=request.file_id,
-                remote_path=f"/tmp/secret/{request.file_id}",
-            )
-            for request in secret_files
-        }
-        self.command = command_factory(handles)
-
-        async def lines() -> AsyncIterator[str]:
-            yield '{"type":"ok"}'
-            yield "__REMOTE_EXIT_RC:0"
-
-        return lines()
-
-
 @pytest.mark.asyncio
 async def test_secret_transport_cleans_up_after_nonzero_command() -> None:
     transport = _LifecycleTransport()
@@ -235,84 +135,3 @@ async def test_secret_stream_transport_cleans_up_on_early_close() -> None:
     assert transport.stream_closed is True
     assert transport.cleanup_count == 1
     assert all(TOKEN not in command for command in transport.commands)
-
-
-@pytest.mark.asyncio
-async def test_remote_repo_github_token_uses_secret_askpass_without_command_leak() -> None:
-    transport = _RepoSecretTransport()
-    synchronizer = RemoteRepoSynchronizer(
-        transport,
-        RemoteRepoSpec(base="/repo", url="https://github.com/example/private.git", ref="main"),
-    )
-
-    await synchronizer._clone_repository("/repo", TOKEN)
-    await synchronizer._fetch_updates("/repo", TOKEN)
-
-    captured_commands = [*transport.commands, *transport.secret_commands]
-    assert all(TOKEN not in command for command in captured_commands)
-    assert all("Authorization: Bearer" not in command for command in captured_commands)
-    assert all("http.extraHeader" not in command for command in captured_commands)
-    assert all("x-access-token:" not in command for command in captured_commands)
-    assert any("GIT_ASKPASS=/tmp/secret/git_askpass" in command for command in transport.secret_commands)
-    assert any("SHOGIARENA_GIT_TOKEN_FILE=/tmp/secret/github_token" in command for command in transport.secret_commands)
-    assert {request.file_id for request in transport.secret_files} == {"github_token", "git_askpass"}
-    assert any(request.file_id == "git_askpass" and request.mode == 0o700 for request in transport.secret_files)
-    assert any(
-        request.file_id == "github_token" and request.payload == TOKEN.encode("utf-8")
-        for request in transport.secret_files
-    )
-
-
-@pytest.mark.asyncio
-async def test_remote_repo_non_github_remote_does_not_use_secret_transport() -> None:
-    transport = _RepoSecretTransport()
-    synchronizer = RemoteRepoSynchronizer(
-        transport,
-        RemoteRepoSpec(base="/repo", url="https://evilgithub.com/example/repo.git", ref="main"),
-    )
-
-    await synchronizer._fetch_updates("/repo", TOKEN)
-
-    assert transport.secret_commands == []
-    assert transport.commands == [
-        "git -C /repo fetch --prune https://evilgithub.com/example/repo.git +refs/heads/*:refs/remotes/origin/*"
-    ]
-
-
-def test_remote_runner_command_uses_token_file_path_not_token_value() -> None:
-    command = build_remote_runner_command(
-        "/repo",
-        "/tmp/spec.json",
-        "{}",
-        github_token_file="/tmp/secret/github_token",
-    )
-
-    assert TOKEN not in command
-    assert "/tmp/secret/github_token" in command
-    assert 'GITHUB_TOKEN="$(cat "$GITHUB_TOKEN_FILE")' in command
-    assert "export GITHUB_TOKEN=" not in command
-
-
-@pytest.mark.asyncio
-async def test_remote_stream_consumer_uses_secret_stream_transport_for_token_file() -> None:
-    transport = _StreamSecretTransport()
-    consumer = RemoteStreamConsumer(SimpleNamespace(name="remote"), transport, logging.getLogger(__name__))
-
-    def build_command(handles: Mapping[str, RemoteSecretFileHandle]) -> str:
-        return build_remote_runner_command(
-            "/repo",
-            "/tmp/spec.json",
-            "{}",
-            github_token_file=handles["github_token"].remote_path,
-        )
-
-    events: list[JsonObject] = await consumer.collect_with_secret_files(
-        build_command,
-        [RemoteSecretFileRequest(file_id="github_token", payload=TOKEN.encode("utf-8"))],
-        timeout=None,
-        on_event=None,
-    )
-
-    assert events == [{"type": "ok", "message": None}]
-    assert transport.command is not None
-    assert TOKEN not in transport.command

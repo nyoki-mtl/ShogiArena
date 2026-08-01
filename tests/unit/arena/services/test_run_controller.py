@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import pytest
 
+from shogiarena._core.contexts.game_session.application.session import run_controller as run_controller_module
 from shogiarena._core.contexts.game_session.application.session.run_controller import RunController
 
 
@@ -42,6 +43,7 @@ async def test_run_controller_gracefully_stops_orchestrator_on_sigint(
     attached: list[object] = []
     detached: list[str] = []
     stop_services_calls: list[str] = []
+    interruption_calls: list[str] = []
     signal_handlers: dict[signal.Signals, Any] = {}
     removed_signals: list[signal.Signals] = []
 
@@ -52,6 +54,9 @@ async def test_run_controller_gracefully_stops_orchestrator_on_sigint(
         attach_orchestrator=attached.append,
         detach_orchestrator=lambda: detached.append("done"),
         stop_services=_stop_services,
+        prepare_interrupted_stop=lambda is_cancelled: interruption_calls.append(
+            "cancelled" if is_cancelled else "failed"
+        ),
     )
     orchestrator = _OrchestratorStub()
     loop = asyncio.get_running_loop()
@@ -75,10 +80,49 @@ async def test_run_controller_gracefully_stops_orchestrator_on_sigint(
     assert attached == [orchestrator]
     assert detached == ["done"]
     assert stop_services_calls == ["called"]
+    assert interruption_calls == ["cancelled"]
     assert orchestrator.request_stop_calls >= 1
     assert orchestrator.shutdown_calls == 1
     assert orchestrator.run_cancelled is True
-    assert removed_signals == [signal.SIGINT, signal.SIGTERM]
+    assert removed_signals == list(run_controller_module._GRACEFUL_SHUTDOWN_SIGNALS)
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGBREAK"), reason="Windows CTRL_BREAK signal only")
+@pytest.mark.asyncio
+async def test_run_controller_bridges_windows_signal_fallback_into_graceful_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    installed: dict[signal.Signals, Any] = {}
+    restored: list[signal.Signals] = []
+    previous = signal.SIG_DFL
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(loop, "add_signal_handler", lambda *_args: (_ for _ in ()).throw(NotImplementedError))
+
+    def _fake_signal(sig: signal.Signals, handler: Any) -> Any:
+        if handler == previous:
+            restored.append(sig)
+        else:
+            installed[sig] = handler
+        return previous
+
+    monkeypatch.setattr(signal, "signal", _fake_signal)
+    controller = RunController(
+        attach_orchestrator=lambda _orch: None,
+        detach_orchestrator=lambda: None,
+        stop_services=lambda: asyncio.sleep(0),
+    )
+    orchestrator = _OrchestratorStub()
+    task = asyncio.create_task(controller.run_orchestrator(cast(Any, orchestrator), orchestrator.run()))
+    await orchestrator.run_started.wait()
+
+    break_signal = signal.Signals(signal.SIGBREAK)
+    installed[break_signal](int(break_signal), None)
+    await orchestrator.shutdown_started.wait()
+    orchestrator.shutdown_release.set()
+
+    assert await task is None
+    assert orchestrator.run_cancelled is True
+    assert restored == list(run_controller_module._GRACEFUL_SHUTDOWN_SIGNALS)
 
 
 @pytest.mark.asyncio
@@ -124,15 +168,18 @@ async def test_run_controller_shuts_down_on_unexpected_exception(
 ) -> None:
     detached: list[str] = []
     stop_services_calls: list[str] = []
+    lifecycle_calls: list[str] = []
     signal_handlers: dict[signal.Signals, Any] = {}
 
     async def _stop_services() -> None:
         stop_services_calls.append("called")
+        lifecycle_calls.append("stop")
 
     controller = RunController(
         attach_orchestrator=lambda _orch: None,
         detach_orchestrator=lambda: detached.append("done"),
         stop_services=_stop_services,
+        prepare_interrupted_stop=lambda is_cancelled: lifecycle_calls.append("cancelled" if is_cancelled else "failed"),
     )
     orchestrator = _OrchestratorStub()
     orchestrator.shutdown_release.set()  # do not block shutdown
@@ -151,6 +198,7 @@ async def test_run_controller_shuts_down_on_unexpected_exception(
         await controller.run_orchestrator(cast(Any, orchestrator), _failing_run())
 
     assert stop_services_calls == ["called"]
+    assert lifecycle_calls == ["failed", "stop"]
     assert detached == ["done"]
     assert orchestrator.request_stop_calls >= 1
     assert orchestrator.shutdown_calls == 1

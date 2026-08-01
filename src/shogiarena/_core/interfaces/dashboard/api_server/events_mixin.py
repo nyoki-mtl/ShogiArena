@@ -69,9 +69,6 @@ class ArenaApiServerEventsMixin:
             )
         )
 
-    def _spsa_notify(self, snapshot: JsonObject) -> None:
-        self.spsa_api.notify_summary_snapshot(snapshot)
-
     def _ws_bootstrap_messages(self, worker_filter: set[int] | None) -> list[tuple[str, JsonObject]]:
         return self._broadcast.build_ws_bootstrap_messages(worker_filter=worker_filter)
 

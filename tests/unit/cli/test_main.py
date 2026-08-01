@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 
+import pytest
+
 cli_main = importlib.import_module("shogiarena._core.interfaces.cli.main")
 PARSER = cli_main.build_parser()
 
@@ -43,3 +45,18 @@ def test_engine_trace_flag_maps_to_should_trace_engine_for_run_spsa() -> None:
     args = PARSER.parse_args(["run", "spsa", "dummy.yaml", "--engine-trace"])
 
     assert args.should_trace_engine is True
+
+
+def test_run_help_reports_released_remote_and_spsa_scope(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["run", "--help"])
+
+    output = capsys.readouterr().out
+    normalized_output = " ".join(output.split())
+    assert exc_info.value.code == 0
+    assert "Run a local or SSH tournament from YAML" in output
+    assert "Run SPSA locally or on qualified Linux x86_64 SSH workers" in normalized_output
+    assert "qualification remains incomplete" not in output
+    assert "qualification-gated" not in output

@@ -225,6 +225,13 @@ class UsiEngineSession(Protocol):
 
     def get_usi_options(self) -> Mapping[str, UsiOption]: ...
 
+    async def request_tunable_manifest(
+        self,
+        *,
+        command: str = "usi_tunables",
+        timeout: float | None = None,
+    ) -> JsonObject | None: ...
+
     def register_io_log_handler(self, handler: UsiIoHandlerFn) -> Callable[[], None]: ...
 
     def register_lifecycle_handler(self, handler: EngineLifecycleHandlerFn) -> Callable[[], None]: ...

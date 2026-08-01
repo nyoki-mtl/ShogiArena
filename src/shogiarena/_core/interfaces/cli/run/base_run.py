@@ -70,6 +70,18 @@ class BaseRunCommand:
                 return pool
         return InstancePool.load_default_local()
 
+    @staticmethod
+    def validate_engine_instance_references(
+        engine_specs: Sequence[_EngineSpecPort],
+        instance_pool: InstancePool | None,
+    ) -> None:
+        """Engineが参照するinstance IDを実際のpoolへ照合する。"""
+        available = {instance.name for instance in instance_pool.list_instances()} if instance_pool else set()
+        for engine_spec in engine_specs:
+            instance_id = engine_spec.instance_id
+            if isinstance(instance_id, str) and instance_id and instance_id not in available:
+                raise CliError(f"engine references unknown instance_id: {instance_id}")
+
     def resolve_run_dir_path(
         self,
         config_file: Path,

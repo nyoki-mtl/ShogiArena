@@ -3,12 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 import rsshogi
 from typing_extensions import TypedDict
 
 from shogiarena._core.shared.kernel.game_results import GameResult
+from shogiarena._core.shared.kernel.json_types import JsonObject
+
+
+@dataclass(frozen=True)
+class SpsaGameDatabaseRecord:
+    """game.dbにcommit済みのSPSA observation source。"""
+
+    game_db_id: int
+    game_id: str
+    result: GameResult
+    participation_extras: tuple[JsonObject, ...]
 
 
 class _GameRecordPlayersRequired(TypedDict):
@@ -37,6 +49,12 @@ class DatabaseServicePort(Protocol):
         *,
         should_update: bool = False,
     ) -> None: ...
+    def append_record_with_participation(
+        self,
+        record: rsshogi.record.Record,
+        *,
+        participation: Iterable[object],
+    ) -> int: ...
     def get_game_id_by_name(self, game_name: str) -> int | None: ...
     def load_record(
         self,
@@ -46,3 +64,4 @@ class DatabaseServicePort(Protocol):
     ) -> rsshogi.record.Record | None: ...
     def record_game_participation(self, *, game_id: int, participation: Iterable[object]) -> None: ...
     def get_games_with_players(self, *, game_type: str) -> Sequence[GameRecordPlayers]: ...
+    def get_spsa_game_database_records(self, *, run_id: str) -> Sequence[SpsaGameDatabaseRecord]: ...

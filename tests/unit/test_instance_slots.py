@@ -1,7 +1,13 @@
+import asyncio
+
 import pytest
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_engine import EngineConfig
+from shogiarena._core.contexts.game_session.adapters.orchestration.remote_lifecycle import (
+    manage_remote_pair_instance_lifecycle,
+)
 from shogiarena._core.contexts.game_session.adapters.orchestration.resource_control import (
+    await_instance_resources,
     preflight_parallel_resource_capacity,
 )
 from shogiarena._core.contexts.instances.application.instance_models import (
@@ -200,3 +206,135 @@ def test_parallel_resource_preflight_rejects_engine_capacity() -> None:
 
     with pytest.raises(RuntimeError, match="would require 4 engine"):
         preflight_parallel_resource_capacity(_parallel_owner(), pool, _game_specs(2), 2, mode="error")
+
+
+@pytest.mark.asyncio
+async def test_resource_allocation_rejects_unknown_capacity_without_polling() -> None:
+    pool = InstancePool()
+    pool.add_instance(
+        InstanceConfig(
+            name="worker",
+            type=InstanceType.SSH,
+            engine_dir="",
+            host="worker",
+            slots=None,
+        )
+    )
+    owner = type(
+        "Owner",
+        (),
+        {
+            "_stop_event": asyncio.Event(),
+            "_resource_poll_interval": 0.001,
+            "_resource_poll_max_interval": 0.001,
+            "_resource_allocation_timeout": 0.01,
+        },
+    )()
+
+    with pytest.raises(RuntimeError, match="slot capacity is unknown"):
+        await await_instance_resources(
+            owner,
+            pool,
+            {"worker": ResourceRequest(slots=2, engines=2)},
+            game_id="game",
+        )
+
+
+@pytest.mark.asyncio
+async def test_resource_allocation_has_bounded_deadline() -> None:
+    pool = InstancePool()
+    instance = pool.add_instance(
+        InstanceConfig(
+            name="worker",
+            type=InstanceType.SSH,
+            engine_dir="",
+            host="worker",
+            slots=2,
+            max_engines=2,
+        )
+    )
+    instance.metrics.in_use_slots = 2
+    instance.metrics.in_use_engines = 2
+    owner = type(
+        "Owner",
+        (),
+        {
+            "_stop_event": asyncio.Event(),
+            "_resource_poll_interval": 0.001,
+            "_resource_poll_max_interval": 0.001,
+            "_resource_allocation_timeout": 0.01,
+        },
+    )()
+
+    with pytest.raises(TimeoutError, match="Timed out after 0.0s"):
+        await await_instance_resources(
+            owner,
+            pool,
+            {"worker": ResourceRequest(slots=2, engines=2)},
+            game_id="game",
+        )
+
+
+@pytest.mark.asyncio
+async def test_remote_pair_lifecycle_shares_capacity_and_active_game_registration() -> None:
+    pool = InstancePool()
+    instance = pool.add_instance(
+        InstanceConfig(
+            name="worker",
+            type=InstanceType.SSH,
+            engine_dir="",
+            host="worker",
+            slots=2,
+            max_engines=2,
+        )
+    )
+    owner = type(
+        "Owner",
+        (),
+        {
+            "instance_pool": pool,
+            "engine_configs": {
+                "black": EngineConfig(name="black", options={"Threads": 1}),
+                "white": EngineConfig(name="white", options={"Threads": 1}),
+            },
+            "extra_options": None,
+            "_stop_event": asyncio.Event(),
+            "_resource_poll_interval": 0.001,
+            "_resource_poll_max_interval": 0.001,
+            "_resource_allocation_timeout": 0.1,
+        },
+    )()
+    black_item = type(
+        "Item",
+        (),
+        {"pool_key": "black", "instance_override": None, "extra_options": None},
+    )()
+    white_item = type(
+        "Item",
+        (),
+        {"pool_key": "white", "instance_override": None, "extra_options": None},
+    )()
+
+    async with manage_remote_pair_instance_lifecycle(
+        owner,
+        game_id="spsa-game",
+        initial_sfen="startpos",
+        round_index=1,
+        instance_id="worker",
+        black_engine_name="black",
+        white_engine_name="white",
+        black_pool_key="black",
+        white_pool_key="white",
+        black_item=black_item,
+        white_item=white_item,
+        black_limits=None,
+        white_limits=None,
+    ):
+        assert instance.metrics.in_use_slots == 2
+        assert instance.metrics.in_use_engines == 2
+        assert "spsa-game" in instance.active_game_by_id
+        assert not pool.try_acquire_resources({"worker": ResourceRequest(slots=1, engines=1)})
+
+    assert instance.metrics.in_use_slots == 0
+    assert instance.metrics.in_use_engines == 0
+    assert instance.active_game_by_id == {}

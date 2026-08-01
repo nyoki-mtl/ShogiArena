@@ -15,7 +15,7 @@
  *   Diagnostics やテストで確実に検知できるよう、例外を捕捉して握りつぶさないでください。
  */
 import { requestJson } from '@/modules/shared/services/api';
-import { recordLiveDiagnosticsMetric } from '@/modules/live/utils/liveNamespace';
+import { getLiveViewSnapshotStore } from '@/modules/shared/stores/live-view-snapshot';
 import {
     applyConvergenceMetrics,
     applyMobilitySeries,
@@ -71,11 +71,7 @@ import {
     CORRELATION_CACHE_TTL_MS,
     DETAIL_FETCH_HYDRATION_METRIC,
     LTC_HYDRATION_METRIC,
-    LTC_BACKFILL_METRIC,
     LTC_RESULTS_CACHE_TTL_MS,
-    LTC_RESULTS_REST_BACKFILL_COOLDOWN_MS,
-    LTC_RESULTS_STREAM_STALE_MS,
-    LTC_RESULTS_STREAM_WARMUP_MS,
     LTC_SUMMARY_CACHE_TTL_MS,
     PARAMS_HYDRATION_METRIC,
     SUMMARY_HYDRATION_METRIC,
@@ -91,6 +87,14 @@ import type { ResumeCoordinator } from '@/modules/shared/services/resume-coordin
 const ANALYSIS_FETCH_TIMEOUT_MS = 15_000;
 
 import type { getState } from '../state';
+
+export function hydrateSpsaSummaryLiveView(core: DashboardCore, payload: SpsaSummaryResponse): void {
+    const liveView = payload.live_view;
+    if (!liveView || typeof liveView !== 'object' || Array.isArray(liveView)) {
+        return;
+    }
+    getLiveViewSnapshotStore(core).hydrateFromPayload(liveView, 'spsa.summary.live_view');
+}
 
 /**
  * `createSpsaFetchers` が依存する外部コンテキスト。
@@ -119,12 +123,7 @@ export type FetcherDeps = {
         context?: { view?: SpsaDetailViewMode; includeCount?: number; window?: SpsaDetailWindowMode | 'full' },
     ) => void;
     streamCacheState: SpsaStreamCacheState;
-    isCorrelationStreamActive: () => boolean;
-    isConvergenceStreamActive: () => boolean;
-    isLtcResultsStreamActive: () => boolean;
     resumeCoordinator?: ResumeCoordinator;
-    deriveStreamBackedLtcSummary: () => SpsaLtcSummary | null;
-    deriveStreamBackedLtcResults: (limit: number) => SpsaLtcResultsResponse | null;
 };
 
 export type SpsaFetchers = ReturnType<typeof createSpsaFetchers>;
@@ -183,7 +182,6 @@ const normalizeProgressSnapshot = (raw: unknown): SpsaUpdateProgress | null =>
 export function createSpsaFetchers(deps: FetcherDeps) {
     let correlationFetchPromise: Promise<SpsaCorrelationResponse> | null = null;
     let convergenceFetchPromise: Promise<SpsaConvergenceResponse> | null = null;
-    let lastLtcResultsBackfillAt = 0;
 
     /**
      * ネットワーク層の一時的な失敗に対する簡易リトライラッパー。
@@ -319,6 +317,7 @@ export function createSpsaFetchers(deps: FetcherDeps) {
             const normalized = normalizeSpsaSummary(data);
             const merged = mergeSpsaSummarySnapshot(normalized, 'rest');
             resolveSummary(merged);
+            hydrateSpsaSummaryLiveView(deps.core, data);
             setSummaryCache(merged, SUMMARY_CACHE_TTL_MS);
             deps.callbacks.onSummaryChanged?.();
             attempt.succeed();
@@ -502,25 +501,16 @@ export function createSpsaFetchers(deps: FetcherDeps) {
     };
 
     /**
-     * SPSA correlation 解析結果を取得し、SSE キャッシュと REST キャッシュを統合して返します。
+     * SPSA correlation 解析結果を REST から取得してキャッシュします。
      *
-     * - 可能な限り SSE ストリームからの最新データを優先し、足りない場合のみ REST をフォールバックとして利用します。
      * - REST からのレスポンスが契約違反だった場合（型不整合など）は例外としてそのまま呼び出し元へ伝播します。
      */
     const fetchCorrelationAnalysis = async (): Promise<SpsaCorrelationResponse> => {
         const now = Date.now();
-        const { correlationCache, latestCorrelationData } = deps.streamCacheState;
+        const { correlationCache } = deps.streamCacheState;
         if (correlationCache && now < correlationCache.expiresAt) {
             deps.recordHydrationCacheHit(ANALYSIS_HYDRATION_METRIC);
             return correlationCache.data;
-        }
-        if (deps.isCorrelationStreamActive() && latestCorrelationData) {
-            deps.recordHydrationCacheHit(ANALYSIS_HYDRATION_METRIC);
-            deps.streamCacheState.correlationCache = {
-                data: latestCorrelationData,
-                expiresAt: Date.now() + CORRELATION_CACHE_TTL_MS,
-            };
-            return latestCorrelationData;
         }
         if (deps.streamCacheState.correlationCache) {
             deps.streamCacheState.correlationCache = null;
@@ -544,7 +534,6 @@ export function createSpsaFetchers(deps: FetcherDeps) {
         )
             .then((response) => {
                 if (response.status === 'ready') {
-                    deps.streamCacheState.latestCorrelationData = response;
                     deps.streamCacheState.correlationCache = {
                         data: response,
                         expiresAt: Date.now() + CORRELATION_CACHE_TTL_MS,
@@ -562,8 +551,7 @@ export function createSpsaFetchers(deps: FetcherDeps) {
     /**
      * SPSA convergence 解析結果を取得し、必要に応じて REST で補完します。
      *
-     * - SSE ストリームが有効かつ新しいスナップショットがあればそれを優先します。
-     * - それ以外の場合は `GET /api/spsa/analysis/convergence?format=json` を叩き、
+     * - 有効なキャッシュがなければ `GET /api/spsa/analysis/convergence?format=json` を叩き、
      *   正常系ではメトリクス更新とキャッシュ設定を行います。
      * - ネットワークエラーは recoverable failure として `reportRecoverableFailure` に通知されますが、
      *   レスポンス構造の契約違反は例外として伝播し、呼び出し元で fail-fast させることを意図しています。
@@ -571,7 +559,7 @@ export function createSpsaFetchers(deps: FetcherDeps) {
     const fetchConvergenceAnalysis = async (): Promise<SpsaConvergenceResponse> => {
         const now = Date.now();
         const { latestConvergenceData, convergenceCacheExpiry } = deps.streamCacheState;
-        if (latestConvergenceData && (deps.isConvergenceStreamActive() || now < convergenceCacheExpiry)) {
+        if (latestConvergenceData && now < convergenceCacheExpiry) {
             deps.recordHydrationCacheHit(ANALYSIS_HYDRATION_METRIC);
             applyConvergenceMetrics(latestConvergenceData);
             return latestConvergenceData;
@@ -604,10 +592,7 @@ export function createSpsaFetchers(deps: FetcherDeps) {
                     }
                     if (payload.ltc_results?.summary) {
                         const now = Date.now();
-                        deps.streamCacheState.latestLtcResults = payload.ltc_results;
-                        deps.streamCacheState.latestLtcResultsAt = now;
-                        deps.streamCacheState.ltcResultsGapDetected =
-                            payload.ltc_results.total > payload.ltc_results.results.length;
+                        deps.streamCacheState.latestLtcResultsSnapshot = payload.ltc_results;
                         deps.streamCacheState.ltcSummaryCache = {
                             data: payload.ltc_results.summary,
                             expiresAt: now + 30_000,
@@ -647,21 +632,11 @@ export function createSpsaFetchers(deps: FetcherDeps) {
     /**
      * SPSA LTC の回帰サマリーを取得します。
      *
-     * - まず SSE ストリーム由来のスナップショットを優先し、存在しない場合のみ REST を利用します。
      * - REST レスポンスの構造検証は `normalizeSpsaSummary` 側に委ねられており、
      *   ここではキャッシュ戦略とフェッチ戦略のみに責務を絞ります。
      */
     const fetchLtcSummary = async (): Promise<SpsaLtcSummary> => {
         const now = Date.now();
-        const streamSummary = deps.deriveStreamBackedLtcSummary();
-        if (streamSummary) {
-            deps.recordHydrationCacheHit(LTC_HYDRATION_METRIC);
-            deps.streamCacheState.ltcSummaryCache = {
-                data: streamSummary,
-                expiresAt: now + LTC_SUMMARY_CACHE_TTL_MS,
-            };
-            return streamSummary;
-        }
         if (deps.streamCacheState.ltcSummaryCache && now < deps.streamCacheState.ltcSummaryCache.expiresAt) {
             deps.recordHydrationCacheHit(LTC_HYDRATION_METRIC);
             return deps.streamCacheState.ltcSummaryCache.data;
@@ -681,70 +656,35 @@ export function createSpsaFetchers(deps: FetcherDeps) {
      * SPSA LTC の個別結果一覧を取得します。
      *
      * - `limit` は [1, 500] にクランプされます。
-     * - SSE ストリームからの結果を優先しつつ、足りない場合は REST フェッチにフォールバックします。
+     * - convergence snapshot または同一 limit の REST cache があれば再利用します。
      */
     const fetchLtcResults = async (limit = 50): Promise<SpsaLtcResultsResponse> => {
         const normalizedLimit = Math.max(1, Math.min(limit, 500));
         const now = Date.now();
-        let streamPayload = deps.deriveStreamBackedLtcResults(normalizedLimit);
-        if (streamPayload) {
+        const snapshot = deps.streamCacheState.latestLtcResultsSnapshot;
+        if (snapshot && snapshot.results.length >= normalizedLimit) {
             deps.recordHydrationCacheHit(LTC_HYDRATION_METRIC);
+            const snapshotPayload = {
+                ...snapshot,
+                results: snapshot.results.slice(0, normalizedLimit),
+            };
             deps.streamCacheState.ltcResultsCache.set(normalizedLimit, {
-                data: streamPayload,
+                data: snapshotPayload,
                 expiresAt: now + LTC_RESULTS_CACHE_TTL_MS,
             });
-            return streamPayload;
+            return snapshotPayload;
         }
         const cached = deps.streamCacheState.ltcResultsCache.get(normalizedLimit);
         if (cached && now < cached.expiresAt) {
             deps.recordHydrationCacheHit(LTC_HYDRATION_METRIC);
             return cached.data;
         }
-        const streamActive = deps.isLtcResultsStreamActive();
-        const openedAt = deps.streamCacheState.ltcResultsStreamOpenedAt;
-        const warmingUp = streamActive && typeof openedAt === 'number' && now - openedAt < LTC_RESULTS_STREAM_WARMUP_MS;
-        if (!streamPayload && !cached && warmingUp) {
-            await new Promise((resolve) => setTimeout(resolve, 250));
-            streamPayload = deps.deriveStreamBackedLtcResults(normalizedLimit);
-            if (streamPayload) {
-                deps.recordHydrationCacheHit(LTC_HYDRATION_METRIC);
-                deps.streamCacheState.ltcResultsCache.set(normalizedLimit, {
-                    data: streamPayload,
-                    expiresAt: Date.now() + LTC_RESULTS_CACHE_TTL_MS,
-                });
-                return streamPayload;
-            }
-        }
-        const lastStreamAt = deps.streamCacheState.latestLtcResultsAt;
-        const streamStale = typeof lastStreamAt === 'number' ? now - lastStreamAt > LTC_RESULTS_STREAM_STALE_MS : true;
-        const gapDetected = deps.streamCacheState.ltcResultsGapDetected;
-        const missingStreamData = streamPayload == null;
-        const shouldBackfill =
-            missingStreamData &&
-            (gapDetected || !streamActive || streamStale) &&
-            now - lastLtcResultsBackfillAt >= LTC_RESULTS_REST_BACKFILL_COOLDOWN_MS;
-        if (cached && !shouldBackfill) {
-            deps.recordHydrationCacheHit(LTC_HYDRATION_METRIC);
-            return cached.data;
-        }
-        if (!shouldBackfill && cached) {
-            return cached.data;
-        }
-        if (shouldBackfill) {
-            recordLiveDiagnosticsMetric(LTC_BACKFILL_METRIC, {
-                triggered: 1,
-                gapDetected: gapDetected ? 1 : 0,
-                streamInactive: streamActive ? 0 : 1,
-                streamStale: streamStale ? 1 : 0,
-            });
-        }
         const query = new URLSearchParams({ limit: String(normalizedLimit) });
         const payload = await fetchJson<SpsaLtcResultsResponse>(`/api/spsa/ltc/results?${query.toString()}`, {
             title: 'Failed to fetch LTC regression results',
             notifyOffline: true,
         });
-        lastLtcResultsBackfillAt = Date.now();
-        deps.streamCacheState.ltcResultsGapDetected = false;
+        deps.streamCacheState.latestLtcResultsSnapshot = payload;
         deps.streamCacheState.ltcResultsCache.set(normalizedLimit, {
             data: payload,
             expiresAt: now + LTC_RESULTS_CACHE_TTL_MS,

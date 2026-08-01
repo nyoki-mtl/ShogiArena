@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 from shogiarena._core.contexts.spsa.application.dashboard.event_updates_state_models import (
     _build_empty_wdl_counts,
@@ -20,8 +20,6 @@ from shogiarena._core.shared.kernel.scalar_coercion.api import (
     timestamp_to_iso,
 )
 from shogiarena._core.shared.kernel.variant_tokens import format_variant_token
-
-SnapshotPersistFn = Callable[[Mapping[str, JsonValue], Mapping[str, JsonValue]], None]
 
 
 def _format_variant_label(update_idx: int) -> str:
@@ -125,7 +123,6 @@ def collect_updates_from_events(
     events: Sequence[Mapping[str, JsonValue]],
     *,
     now_ts: int | None = None,
-    persist_best_params_snapshot: SnapshotPersistFn | None = None,
 ) -> list[JsonObject]:
     """Aggregate update records from SPSA events."""
 
@@ -268,15 +265,6 @@ def collect_updates_from_events(
                 ltc_entry["tuned_variant_token"] = value
             if event_ts is not None:
                 ltc_entry["completed_at"] = event_ts
-            if coerce_bool(ltc_entry.get("is_accepted")) and persist_best_params_snapshot is not None:
-                persist_best_params_snapshot(
-                    {
-                        "update_idx": idx,
-                        "params": state.params,
-                        "variant_id": _format_variant_label(idx),
-                    },
-                    ltc_entry,
-                )
             continue
 
         if event_type == "game_result":

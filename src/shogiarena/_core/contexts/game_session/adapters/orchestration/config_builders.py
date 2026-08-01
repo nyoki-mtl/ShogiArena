@@ -7,19 +7,14 @@ focused on orchestration control flow.
 from __future__ import annotations
 
 import asyncio
-import subprocess
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from shogiarena._core.contexts.game_session.adapters.orchestration.time_control import (
-    compute_time_control_from_rules,
-)
 from shogiarena._core.contexts.game_session.application.progress.snapshot_normalizer import to_json_value
-from shogiarena._core.contexts.match.application.runner import GameRunner
-from shogiarena._core.contexts.match.domain.adjudication import AdjudicationConfig
 from shogiarena._core.platform.settings import project_dirs
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.overlay_options import select_overlay_options
@@ -76,6 +71,29 @@ _BOOL_ENGINE_OVERLAY_KEYS = frozenset(
 _INT_ENGINE_OVERLAY_KEYS = frozenset({"mate_default_ply_limit", "mate_default_node_limit"})
 
 
+@dataclass(frozen=True, slots=True)
+class UsiOptionLayers:
+    """固定precedenceを保ったarena側USI option layer。"""
+
+    artifact_overlay: JsonObject
+    arena: JsonObject
+    declared_overlays: JsonObject
+    inline: JsonObject
+
+    def merged(self) -> JsonObject:
+        """artifact < arena < declared overlay < inlineでmergeする。"""
+
+        merged: JsonObject = {}
+        for layer in (
+            self.artifact_overlay,
+            self.arena,
+            self.declared_overlays,
+            self.inline,
+        ):
+            merged.update(layer)
+        return merged
+
+
 def _engine_overlay_target_field(key: str) -> str | None:
     for field_name, field_info in EngineConfig.model_fields.items():
         if key == field_name or key == field_info.alias:
@@ -107,7 +125,15 @@ def _apply_engine_overlay(engine_spec: EngineConfig, payload: Mapping[str, JsonV
 
 def build_usi_options(base_extra: JsonObject | None, engine_spec: EngineConfig) -> JsonObject | None:
     """Merge arena-level extra options with engine-specific overlays/options."""
-    overlay: JsonObject = {}
+    layers = build_usi_option_layers(base_extra, engine_spec)
+    merged = layers.merged()
+    return merged or None
+
+
+def build_usi_option_layers(base_extra: JsonObject | None, engine_spec: EngineConfig) -> UsiOptionLayers:
+    """Resolverへ渡すoption layerをprecedenceを潰さず構築する。"""
+
+    artifact_overlay: JsonObject = {}
     artifact = engine_spec.artifact
     if isinstance(artifact, str) and artifact.strip():
         repo_name = artifact.split("/", 1)[0]
@@ -115,9 +141,9 @@ def build_usi_options(base_extra: JsonObject | None, engine_spec: EngineConfig) 
         if overlay_path is not None:
             payload = _load_overlay_payload(overlay_path)
             _apply_engine_overlay(engine_spec, payload)
-            overlay.update(_extract_overlay_options(payload, path=overlay_path))
+            artifact_overlay.update(_extract_overlay_options(payload, path=overlay_path))
 
-    base = base_extra or {}
+    arena = dict(base_extra or {})
     options_overlays = engine_spec.options_overlays
     for overlay_path in options_overlays:
         if not isinstance(overlay_path, Path):
@@ -127,19 +153,18 @@ def build_usi_options(base_extra: JsonObject | None, engine_spec: EngineConfig) 
     overlay_opts = engine_spec.load_overlay_options()
     inline_opts = {str(k): v for k, v in engine_spec.options.items()}
 
-    if not overlay and not base and not overlay_opts and not inline_opts:
-        return None
-    merged: JsonObject = dict(overlay)
-    for key, value in base.items():
-        merged[str(key)] = value
-    for key, value in overlay_opts.items():
-        merged[str(key)] = value
-    for key, value in inline_opts.items():
-        merged[str(key)] = value
-    if not merged:
-        return None
+    for layer in (artifact_overlay, arena, overlay_opts, inline_opts):
+        _resolve_option_paths(layer)
+    return UsiOptionLayers(
+        artifact_overlay=artifact_overlay,
+        arena=arena,
+        declared_overlays=overlay_opts,
+        inline=inline_opts,
+    )
 
-    for key, value in list(merged.items()):
+
+def _resolve_option_paths(options: JsonObject) -> None:
+    for key, value in list(options.items()):
         if not isinstance(value, str):
             continue
         resolved = resolve_path_like(
@@ -147,8 +172,7 @@ def build_usi_options(base_extra: JsonObject | None, engine_spec: EngineConfig) 
             output_dir=project_dirs.output_dir,
             engine_dir=project_dirs.engine_dir,
         )
-        merged[key] = resolved
-    return merged
+        options[key] = resolved
 
 
 def compute_max_ply_extra_options(rules: Any) -> JsonObject | None:
@@ -183,38 +207,6 @@ def compute_max_ply_extra_options(rules: Any) -> JsonObject | None:
     return {key: moves_value}
 
 
-def create_game_runner_from_rules(
-    rules: Any,
-    engines: list[Any],
-    progress_queue: asyncio.Queue[tuple[int, int, str | None]] | None,
-) -> GameRunner:
-    """Create a ``GameRunner`` configured from tournament/SPSA rules."""
-    tc_limits, _ = compute_time_control_from_rules(rules, engines)
-
-    adjudication_cfg: AdjudicationConfig | None = None
-    adj_settings = rules.adjudication
-    resign_threshold = adj_settings.resign_threshold_cp
-    enable_resign = resign_threshold is not None
-    is_max_plies_enabled = adj_settings.is_max_plies_enabled
-    max_plies_value = adj_settings.max_plies
-    if enable_resign or is_max_plies_enabled:
-        adjudication_cfg = AdjudicationConfig(
-            is_resign_enabled=enable_resign,
-            resign_score_cp=int(resign_threshold) if enable_resign and resign_threshold is not None else 0,
-            resign_move_count=adj_settings.resign_move_count,
-            is_resign_two_sided=adj_settings.is_resign_two_sided,
-            is_max_plies_enabled=is_max_plies_enabled,
-            max_plies=int(max_plies_value) if is_max_plies_enabled and max_plies_value is not None else 0,
-        )
-
-    return GameRunner(
-        progress_queue=progress_queue,
-        time_control_limits=tc_limits,
-        adjudication_config=adjudication_cfg,
-        repetition_occurrences_to_draw=int(rules.repetition_occurrences_to_draw),
-    )
-
-
 def build_engine_config_map(engines: list[Any]) -> dict[str, Any]:  # I/O boundary: engine specs are heterogeneous
     """Build a name-to-engine-spec map from a list of engine specs."""
     mapped: dict[str, Any] = {}  # I/O boundary: values remain opaque until orchestrator wiring
@@ -226,18 +218,6 @@ def build_engine_config_map(engines: list[Any]) -> dict[str, Any]:  # I/O bounda
     return mapped
 
 
-def detect_git_remote_and_ref() -> tuple[str, str]:
-    """Return the repository remote URL and current HEAD commit."""
-    try:
-        remote_url = subprocess.check_output(["git", "config", "--get", "remote.origin.url"], text=True).strip()
-        head_ref = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError("Failed to read git remote information") from exc
-    if not remote_url or not head_ref:
-        raise RuntimeError("Git remote URL or HEAD ref is empty")
-    return remote_url, head_ref
-
-
 def create_progress_queue() -> asyncio.Queue[tuple[int, int, str | None]]:
     """Factory for the progress queue shared by orchestrators."""
     return asyncio.Queue()
@@ -245,9 +225,9 @@ def create_progress_queue() -> asyncio.Queue[tuple[int, int, str | None]]:
 
 __all__ = [
     "build_engine_config_map",
+    "build_usi_option_layers",
     "build_usi_options",
     "compute_max_ply_extra_options",
-    "create_game_runner_from_rules",
     "create_progress_queue",
-    "detect_git_remote_and_ref",
+    "UsiOptionLayers",
 ]

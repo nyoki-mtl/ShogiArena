@@ -26,6 +26,12 @@ class LocalExecutionSpecRequest(Generic[TEngineItem]):
     game_id: str
     black_limits: object
     white_limits: object
+    black_variant_options: JsonObject | None = None
+    white_variant_options: JsonObject | None = None
+    black_variant_id: str | None = None
+    white_variant_id: str | None = None
+    clear_hash_before_game: bool = False
+    after_variant_setoption: str = "none"
     game_round: int | None = None
     schedule_metadata: JsonObject | None = None
     before_game_hook: BeforeGameHookPort | None = None
@@ -47,6 +53,18 @@ def build_local_execution_spec(
         "black_limits": request.black_limits,
         "white_limits": request.white_limits,
     }
+    if request.black_variant_options:
+        payload["black_variant_options"] = request.black_variant_options
+    if request.white_variant_options:
+        payload["white_variant_options"] = request.white_variant_options
+    if request.black_variant_id is not None:
+        payload["black_variant_id"] = request.black_variant_id
+    if request.white_variant_id is not None:
+        payload["white_variant_id"] = request.white_variant_id
+    if request.clear_hash_before_game:
+        payload["clear_hash_before_game"] = True
+    if request.after_variant_setoption != "none":
+        payload["after_variant_setoption"] = request.after_variant_setoption
     if request.game_round is not None:
         payload["game_round"] = request.game_round
     if request.schedule_metadata is not None:

@@ -2,8 +2,9 @@
 
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from shogiarena._core.shared.kernel.json_types import JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import OptionalText, coerce_int
@@ -12,7 +13,7 @@ from .instance_config_models import InstanceConfig, InstancesConfig, InstanceTyp
 
 
 class _InstanceConfigInput(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     name: str
     type: InstanceType = InstanceType.LOCAL
@@ -24,6 +25,8 @@ class _InstanceConfigInput(BaseModel):
     slots: int | None = None
     max_engines: int | None = None
     tags: list[str] = Field(default_factory=list)
+    operating_system: Literal["linux"] = "linux"
+    architecture: Literal["x86_64"] = "x86_64"
     is_strict_host_key_checking: bool = True
     should_install_requirements: bool = False
 
@@ -54,9 +57,15 @@ class _InstanceConfigInput(BaseModel):
             raise TypeError("tags must be a list")
         return [str(item) for item in value]
 
+    @model_validator(mode="after")
+    def _validate_type_specific_fields(self) -> Self:
+        if self.type == InstanceType.SSH and not self.host:
+            raise ValueError("host is required for SSH instances")
+        return self
+
 
 class _InstancesConfigInput(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     instances: list[_InstanceConfigInput] = Field(default_factory=list)
 
@@ -98,6 +107,8 @@ def parse_instances_config(data: Mapping[str, JsonValue]) -> InstancesConfig:
             slots=inst_data.slots,
             max_engines=inst_data.max_engines,
             tags=list(inst_data.tags),
+            operating_system=inst_data.operating_system,
+            architecture=inst_data.architecture,
             is_strict_host_key_checking=inst_data.is_strict_host_key_checking,
             should_install_requirements=inst_data.should_install_requirements,
         )

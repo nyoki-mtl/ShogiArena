@@ -20,6 +20,7 @@ def test_resolve_paths_and_overrides(tmp_path: Path) -> None:
         "working_directory": "{output_dir}/runs",
         "engine_args": ["--threads", "4"],
         "environment": {"OMP_NUM_THREADS": 1},
+        "secret_environment": {"ENGINE_LICENSE": "SHOGIARENA_SECRET_ENGINE_LICENSE"},
         "options": {"EvalDir": "{output_dir}/evals/book", "Hash": 64},
         "go_options": {"nodes": 1000},
         "enable_early_ponder": True,
@@ -32,6 +33,7 @@ def test_resolve_paths_and_overrides(tmp_path: Path) -> None:
     assert resolved.engine_path == str((engines_dir / "bin").resolve())
     assert resolved.working_directory == str((output_dir / "runs").resolve())
     assert resolved.environment == {"OMP_NUM_THREADS": "1"}
+    assert resolved.secret_environment == {"ENGINE_LICENSE": "SHOGIARENA_SECRET_ENGINE_LICENSE"}
     assert resolved.options["Hash"] == 64
     assert resolved.options["EvalDir"] == str((evals_dir / "book").resolve())
     assert resolved.go_options == {"nodes": 1000}
@@ -53,6 +55,18 @@ def test_resolve_paths_and_overrides(tmp_path: Path) -> None:
     assert resolved.options["EvalDir"] == str((evals_dir / "book").resolve())
     assert resolved.go_options["nodes"] == 1000
     assert resolved.is_early_ponder_enabled is True
+
+
+def test_from_mapping_rejects_secret_and_non_secret_environment_overlap() -> None:
+    with pytest.raises(ValueError, match="environment and secret_environment keys overlap"):
+        UsiEngineConfig.from_mapping(
+            {
+                "name": "test",
+                "engine_path": "/tmp/dummy",
+                "environment": {"ENGINE_TOKEN": "plaintext"},
+                "secret_environment": {"ENGINE_TOKEN": "SHOGIARENA_SECRET_ENGINE_TOKEN"},
+            }
+        )
 
 
 def test_from_mapping_normalizes_go_options() -> None:

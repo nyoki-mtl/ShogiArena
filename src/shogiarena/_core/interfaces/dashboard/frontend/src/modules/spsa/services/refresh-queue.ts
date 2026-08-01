@@ -25,9 +25,21 @@ export function createRefreshQueue({ performRefresh }: RefreshQueueDeps): Refres
 
         const executeQueue = async (initialOptions: SpsaRefreshOptions): Promise<void> => {
             let nextOptions: SpsaRefreshOptions | null = initialOptions;
+            let firstError: unknown;
+            let failed = false;
             while (nextOptions) {
-                await performRefresh(nextOptions);
+                try {
+                    await performRefresh(nextOptions);
+                } catch (error) {
+                    if (!failed) {
+                        failed = true;
+                        firstError = error;
+                    }
+                }
                 nextOptions = consumeQueuedRefreshRequest();
+            }
+            if (failed) {
+                throw firstError;
             }
         };
 

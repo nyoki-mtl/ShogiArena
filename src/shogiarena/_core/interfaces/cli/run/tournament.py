@@ -21,6 +21,10 @@ from shogiarena._core.interfaces.cli.main import CliError
 from shogiarena._core.interfaces.composition_root.default_root import build_default_root
 from shogiarena._core.platform.settings.facade import current_settings
 from shogiarena._core.platform.settings.loader import validate_overlays
+from shogiarena._core.shared.kernel.remote_provisioning import (
+    remote_provisioning_scope,
+    resolve_remote_provisioning_policy,
+)
 from shogiarena._core.shared.kernel.run_manifest_reader import read_sealed_manifest_resume_hash
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_bool, coerce_int, coerce_optional_text
 from shogiarena._core.shared.kernel.serialization import json_serialize
@@ -70,10 +74,18 @@ async def run_tournament_command(
         else load_tournament_run_config(config_file)
     )
     validate_overlays(current_settings())
+    instance_pool = cmd.resolve_instance_pool(config.instances)
+    cmd.validate_engine_instance_references(config.engines, instance_pool)
 
     if should_validate_only:
         LOGGER.info("Validated tournament config: %s", config_file)
         return
+
+    if not is_dry_run:
+        try:
+            provisioning_policy = resolve_remote_provisioning_policy(provision_mode)
+        except ValueError as exc:
+            raise CliError(f"Invalid remote provisioning configuration: {exc}") from exc
 
     cmd.apply_git_worktree(config.engines, git_worktree)
     cmd.clear_hash_cache(config)
@@ -100,11 +112,6 @@ async def run_tournament_command(
     if resume_dir is not None:
         run_dir = resume_dir
 
-    instance_pool = cmd.resolve_instance_pool(config.instances)
-
-    if instance_pool and provision_mode == "force" and not is_dry_run:
-        await cmd.provision_engines(config.engines, instance_pool)
-
     if is_dry_run:
         _dry_run_schedule(config)
         return
@@ -113,13 +120,14 @@ async def run_tournament_command(
     storage = create_tournament_run_storage(run_dir, runtime=root.tournament_runtime)
 
     try:
-        await run_tournament_session(
-            config,
-            storage=storage,
-            should_skip_resume=should_skip_resume,
-            instance_pool=instance_pool,
-            runtime=root.tournament_runtime,
-        )
+        with remote_provisioning_scope(provisioning_policy):
+            await run_tournament_session(
+                config,
+                storage=storage,
+                should_skip_resume=should_skip_resume,
+                instance_pool=instance_pool,
+                runtime=root.tournament_runtime,
+            )
     except RunManifestSealError as exc:
         message = "Run manifest is not compatible with current config/provenance. Use --no-resume to start fresh."
         raise CliError(message) from exc
@@ -152,10 +160,18 @@ async def run_generate_command(
         else load_tournament_run_config(config_file)
     )
     validate_overlays(current_settings())
+    instance_pool = cmd.resolve_instance_pool(config.instances)
+    cmd.validate_engine_instance_references(config.engines, instance_pool)
 
     if should_validate_only:
         LOGGER.info("Validated generate config: %s", config_file)
         return
+
+    if not is_dry_run:
+        try:
+            provisioning_policy = resolve_remote_provisioning_policy(provision_mode)
+        except ValueError as exc:
+            raise CliError(f"Invalid remote provisioning configuration: {exc}") from exc
 
     cmd.apply_git_worktree(config.engines, git_worktree)
     cmd.clear_hash_cache(config)
@@ -182,11 +198,6 @@ async def run_generate_command(
     if resume_dir is not None:
         run_dir = resume_dir
 
-    instance_pool = cmd.resolve_instance_pool(config.instances)
-
-    if instance_pool and provision_mode == "force" and not is_dry_run:
-        await cmd.provision_engines(config.engines, instance_pool)
-
     if is_dry_run:
         _dry_run_schedule(config)
         return
@@ -195,13 +206,14 @@ async def run_generate_command(
     storage = create_tournament_run_storage(run_dir, runtime=root.tournament_runtime)
 
     try:
-        await run_tournament_session(
-            config,
-            storage=storage,
-            should_skip_resume=should_skip_resume,
-            instance_pool=instance_pool,
-            runtime=root.tournament_runtime,
-        )
+        with remote_provisioning_scope(provisioning_policy):
+            await run_tournament_session(
+                config,
+                storage=storage,
+                should_skip_resume=should_skip_resume,
+                instance_pool=instance_pool,
+                runtime=root.tournament_runtime,
+            )
     except RunManifestSealError as exc:
         message = "Run manifest is not compatible with current config/provenance. Use --no-resume to start fresh."
         raise CliError(message) from exc

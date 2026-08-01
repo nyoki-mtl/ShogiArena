@@ -13,6 +13,7 @@ from aiohttp import web
 from shogiarena._core.contexts.dashboard.application.state_container import DashboardState
 from shogiarena._core.interfaces.dashboard.instances.api import InstancesAPI
 from shogiarena._core.interfaces.dashboard.security import DASHBOARD_READ_ONLY_KEY
+from shogiarena._core.interfaces.dashboard.spsa.api import SpsaAPI
 from shogiarena._core.interfaces.dashboard.ws_server import LiveWebSocketHub
 from shogiarena._core.shared.kernel.json_types import JsonValue
 
@@ -29,6 +30,7 @@ class ArenaApiServerRuntimeMixin:
     _instances_health_task: asyncio.Task[None] | None
     instances_api: InstancesAPI
     ws_hub: LiveWebSocketHub
+    spsa_api: SpsaAPI
     _state: DashboardState
 
     def broadcast_summary_update(self, payload: Mapping[str, JsonValue], *, source: str = "tournament") -> None:
@@ -77,6 +79,7 @@ class ArenaApiServerRuntimeMixin:
         )
 
     async def _on_cleanup(self, _app: web.Application) -> None:
+        self.spsa_api.close()
         if self._instances_health_task is None:
             return
         self._instances_health_task.cancel()

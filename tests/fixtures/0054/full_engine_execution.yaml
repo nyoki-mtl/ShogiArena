@@ -1,0 +1,34 @@
+name: Phase2FullFieldEngine
+engine_path: "__ENGINE_PATH__"
+working_directory: "__WORKING_DIRECTORY__"
+engine_args:
+  - "--usi"
+environment:
+  OMP_NUM_THREADS: "2"
+secret_environment:
+  ENGINE_LICENSE: "SHOGIARENA_SECRET_ENGINE_LICENSE"
+options:
+  Threads: 2
+  Hash: 128
+  EvalDir: "__EVAL_DIRECTORY__"
+  EvalFile: "model.bin"
+go_options:
+  nodes: 1000
+enable_early_ponder: true
+handshake_timeout: 12.5
+mate_default_ply_limit: 7
+mate_wait_for_bestmove: true
+isready_sync_strategy: wait
+isready_lock_template: "{Hash}.lock"
+isready_lock_check_templates:
+  - "{Hash}.ready"
+isready_lock_skip_if_exists: true
+io:
+  collect_info_strings: true
+  collect_raw_io: true
+  collect_stderr: false
+  collect_outbound: true
+option_validation:
+  default: warn
+  overrides:
+    Hash: strict

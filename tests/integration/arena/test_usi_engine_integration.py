@@ -40,7 +40,17 @@ def _write_mock_usi_engine(script_path: Path) -> Path:
                     send("id name IntegrationMock")
                     send("id author TestHarness")
                     send("option name Threads type spin default 1 min 1 max 1")
+                    send("option name Tune.Threads type spin default 4 min 1 max 16")
                     send("usiok")
+                elif line == "usi_tunables":
+                    send(
+                        'info string shogiarena_tunables_json '
+                        '{"schema_version":"shogiarena.usi_tunables.v1","tunables":['
+                        '{"id":"threads","option":"Tune.Threads","value_type":"int",'
+                        '"encoding":"integer","default":4,"min":1,"max":16,'
+                        '"schedule":{"c_end":1,"r_end":1}}]}'
+                    )
+                    send("usi_tunablesok")
                 elif line == "isready":
                     send("readyok")
                 elif line == "usinewgame":
@@ -132,6 +142,10 @@ async def test_async_usi_engine_state_machine_with_subprocess(tmp_path: Path) ->
 
     async with AsyncUsiEngine(config=config, bridge=bridge) as engine:
         await _wait_for_state(engine, UsiEngineState.READY)
+        manifest = await engine.request_tunable_manifest(timeout=1.0)
+        assert manifest is not None
+        assert manifest["schema_version"] == "shogiarena.usi_tunables.v1"
+        assert engine.get_usi_options()["Tune.Threads"].maximum == 16
 
         await engine.new_game()
         await _wait_for_state(engine, UsiEngineState.READY)

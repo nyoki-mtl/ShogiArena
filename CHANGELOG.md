@@ -3,9 +3,75 @@
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html),
+except for the explicitly documented 1.2.0 breaking-change exception.
 
 ## [Unreleased]
+
+## [1.2.0] - 2026-08-01
+
+1.2.0はRemote実行とSPSA state modelを保守可能な単一契約へ収束させるため、
+stable CLIと公開設定schemaへ意図的な破壊的変更を含む例外リリースです。
+削除した契約のcompatibility shimは提供しません。
+
+### Added
+
+- **統一実行契約**: Local/Remoteが同じversioned `GameExecutionSpec`、timeout、result、provenance契約を使うようにした。
+- **Remote worker bundle**: `shogiarena worker-bundle build`でwheel、lock、manifestからimmutable bundleを生成する。
+  Installed wheelだけの環境でもsource checkoutへ依存せずbundleを構築でき、worker minimum versionを実行前に検証する。
+- **Remote artifact配置**: endpoint-aware CASと、absolute path／SHA-256検証付き`preplaced` modeを追加した。
+  `worker-bundle preplaced-map`はengineとfile／directory resourceのlogical ID mappingを生成する。
+- **Durable Remote jobs**: 対局attemptごとのjob directory、atomic status/heartbeat/result、idempotent prepare/start/cancel/collect/ack、
+  lease、orphan reaper、secret file transportを追加した。
+- **SPSA ledger**: optimizer authorityをschema version 3のSQLite ledgerへ移し、sealed RNG、pair assignment、
+  observation、LTC baseline/decision、terminal reason、revisionを永続化した。
+- **Accepted-best artifact**: 採用済みparameterとledger、manifest、engine、tunable、LTC provenanceを
+  `spsa/accepted-best.json`へ保存する。
+- **SPSA dashboard**: archived zero-write projection、REST snapshot、durable revision feed、terminal eventを追加した。
+- **Local platform contract**: Windows x86_64、Linux x86_64／arm64、macOS Intel／Apple Siliconを正しいprovenanceで表現する。
+
+### Changed
+
+- **Remote実行（破壊的変更）**: Remote workerをLinux x86_64に限定し、shared Git checkout、CWD推測、
+  縮小Remote spec、固定`.tmp/spec.json`、旧worker protocolを削除した。
+- **Remote provisioning（破壊的変更）**: `--provision`は`cas`または`preplaced`だけを受理する。
+  未検証の`none`とmutableな`force`は削除した。
+- **Remote scheduling（破壊的変更）**: assignmentは`system.instance_scheduling.policy`の
+  `local`／`explicit`／`auto`で明示し、暗黙のlocal fallbackを行わない。
+- **SPSA設定（破壊的変更）**: `spsa.update_mode`、`spsa.parameters_path`、
+  `spsa.variants.instance_affinity`を削除し、update間は常にbarrier semanticsで実行する。
+- **SPSA archive（破壊的変更）**: Legacy JSON-only archiveのresume、import、dashboard表示を削除した。
+  Current ledger runは`cancelled_resumable`だけを同一contractで再開できる。
+- **SPSA dashboard wire（破壊的変更）**: 旧SPSA payloadのSSE／WebSocketを削除し、
+  ledger revision feedとREST snapshotへ統一した。
+- **Instance設定（破壊的変更）**: `instances.yaml`の未知keyを無視せずfail closedで拒否する。
+- **Resume identity**: worker bundle/deployment digestとminimum worker versionをsealed manifestとresume hashへ含める。
+
+### Fixed
+
+- Current ledger SPSA runをproduction CLIからcancel、resume、completeできるようにした。
+- Crash後のSPSA hot journalをwritable recoveryしてからread-only authority validationへ進むようにした。
+- Legacy SPSA archiveで未処理tracebackを出さず、既存bytesを変更しないactionable errorを返すようにした。
+- Prepared Remote deploymentをendpoint内でreuseし、control failure時だけfull sealを再検証するようにした。
+- 別のuv project内へインストールした場合も、利用者projectではなくinstalled ShogiArena distributionからworker bundleを構築するようにした。
+- Remote directory artifact verificationをworker bundleと同じ`uv`／Python authorityへ統合した。
+- Remote status pollingからworker Python起動を除去し、実測worker CPU占有を約99.9%削減した。
+- Local artifact digestをstat identity単位でreuseし、2 engineの毎局hash時間を実測約75.9 msから約1.0 msへ削減した。
+- SPSA variantをengine process startup keyから外し、4 updatesのgameplay processを8個から2個へ削減した。
+- `variants.apply.clear_hash: true`でtuned engineが`Clear Hash` buttonを公開しない場合、測定開始前に拒否するようにした。
+- `accepted-best.json`の補助投影失敗でledger resumeを停止せず、正本ledgerから再投影できるようにした。
+- Dashboard terminal revisionがREST event projection cacheを無効化するようにした。
+
+### Migration
+
+- `spsa.update_mode`は削除し、設定から取り除く。1.2.0は常にupdate間barrierを使う。
+- `spsa.parameters_path`は`spsa.space`へ置き換える。
+- `spsa.variants.instance_affinity`はengineの`instance_id`または`system.instance_scheduling`へ置き換える。
+- `--provision none`は全resourceを検証する`--provision preplaced`へ、`--provision force`はimmutableな`--provision cas`へ置き換える。
+- Legacy JSON-only SPSA archiveはShogiArena 1.1.0で閲覧する。
+  1.2.0では既存archiveを変更せず、新しいrun directoryから開始する。
+- Remote workerはLinux x86_64へ移し、`worker-bundle`で生成したdeploymentを使う。
+- `instances.yaml`のvalidation errorが示す未知keyを削除または現行fieldへ移す。
 
 ## [1.1.0] - 2026-07-26
 
@@ -273,7 +339,8 @@ dashboard 無効の長時間 run で event loop が秒単位で停止し、進�
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.0.0...v1.0.2
 [1.0.0]: https://github.com/nyoki-mtl/ShogiArena/compare/v0.5.4...v1.0.0

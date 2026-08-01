@@ -51,6 +51,7 @@ async def test_process_stores_baseline_when_ltc_passes() -> None:
         append_spsa_event=lambda _payload: None,
         write_params=lambda _entries: None,
         persist_revert_index=lambda p, ts, extra: persisted.append((p, ts, extra)),
+        commit_ltc_decision=lambda _evidence, _passed, _accepted, _reverted, _baseline: None,
     )
 
     assert len(stored) == 1
@@ -91,6 +92,7 @@ async def test_process_reverts_params_when_ltc_fails() -> None:
         append_spsa_event=lambda payload: events.append(payload),
         write_params=lambda entries: writes.append(_clone(entries)),
         persist_revert_index=lambda p, ts, extra: persisted.append((dict(p), ts, dict(extra))),
+        commit_ltc_decision=lambda _evidence, _passed, _accepted, _reverted, _baseline: None,
     )
 
     assert params[0].value == 1.0
@@ -135,6 +137,7 @@ async def test_process_reverts_shared_runner_parameter_objects_in_place() -> Non
         append_spsa_event=lambda _payload: None,
         write_params=lambda _entries: None,
         persist_revert_index=lambda _p, _ts, _extra: None,
+        commit_ltc_decision=lambda _evidence, _passed, _accepted, _reverted, _baseline: None,
     )
 
     assert runner_params[0] is orchestrator_params[0]

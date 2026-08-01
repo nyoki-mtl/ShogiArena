@@ -11,6 +11,7 @@ from typing import Any, Literal
 from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
 from shogiarena._core.platform.engine_runtime.usi_engine_session_models import UsiOptionValidationMode
 from shogiarena._core.platform.engine_runtime.usi_protocol_types import UsiOption
+from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,8 @@ class AsyncUsiEngineOptionsMixin:
     _is_started: bool
     _handshake_timeout: float
     _options: dict[str, UsiOption]
+    _tunable_manifest_future: asyncio.Future[JsonObject | None] | None
+    _pending_tunable_manifest: JsonObject | None
     name: str
 
     start: Any
@@ -28,6 +31,37 @@ class AsyncUsiEngineOptionsMixin:
     _maybe_log_handshake_command: Any
     trigger_isready: Any
     _emit_lifecycle_event: Any
+
+    async def request_tunable_manifest(
+        self,
+        *,
+        command: str = "usi_tunables",
+        timeout: float | None = None,
+    ) -> JsonObject | None:
+        """Request one engine-origin SPSA tunable manifest."""
+
+        normalized_command = command.strip()
+        if not normalized_command or "\n" in normalized_command or "\r" in normalized_command:
+            raise ValueError("SPSA tunable manifest command must be one non-empty line")
+        if self._tunable_manifest_future is not None and not self._tunable_manifest_future.done():
+            raise RuntimeError("SPSA tunable manifest request is already pending")
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[JsonObject | None] = loop.create_future()
+        self._tunable_manifest_future = future
+        self._pending_tunable_manifest = None
+        try:
+            await self._send_command(normalized_command)
+            return await asyncio.wait_for(
+                asyncio.shield(future),
+                timeout=self._handshake_timeout if timeout is None else timeout,
+            )
+        except TimeoutError as exc:
+            raise TimeoutError(f"Timed out waiting for {normalized_command} response") from exc
+        finally:
+            if not future.done():
+                future.cancel()
+            self._tunable_manifest_future = None
+            self._pending_tunable_manifest = None
 
     async def _apply_config_options(self) -> None:
         applied_count = 0

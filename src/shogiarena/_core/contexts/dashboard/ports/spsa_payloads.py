@@ -195,6 +195,9 @@ class UpdateDetailResponse(TypedDict, total=False):
     """``build_update_detail`` が返す更新詳細レスポンス。"""
 
     update_idx: int
+    run_id: str | None
+    ledger_state: str | None
+    session_uuids: list[str]
     engines: dict[str, str | None]
     wdl: WdlCounts
     variant_id: str | None
@@ -342,6 +345,9 @@ class SpsaSummaryPayload(TypedDict, total=False):
     engine_instances: dict[str, str | None]
     engine_stats: dict[str, dict[str, int | float]]
     spsa_config: JsonObject | None
+    current_session_uuid: str | None
+    resume_boundaries: list[JsonObject]
+    operational_status: JsonObject
     live_view: LiveViewSnapshot
 
 

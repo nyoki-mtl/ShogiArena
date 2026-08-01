@@ -103,6 +103,8 @@ class AsyncUsiEngine(
         self._monitor_task: asyncio.Task[None] | None = None
         self._usiok_future: asyncio.Future[None] | None = None
         self._readyok_future: asyncio.Future[None] | None = None
+        self._tunable_manifest_future: asyncio.Future[JsonObject | None] | None = None
+        self._pending_tunable_manifest: JsonObject | None = None
         self._bestmove_future: asyncio.Future[Any] | None = None
         self._mate_future: asyncio.Future[UsiMateResult] | None = None
         self._pending_mate_result: UsiMateResult | None = None

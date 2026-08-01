@@ -206,6 +206,7 @@ export interface NormalizedSpsaSummary {
     engineInstances: Record<string, string | null | undefined>;
     engineStats: Record<string, { wins?: number; losses?: number; draws?: number; games?: number }>;
     engineMeta: Record<string, JsonObject>;
+    operationalStatus: JsonObject;
 }
 
 export type SpsaDataStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -253,9 +254,11 @@ export interface SpsaCacheEntry<T> {
     expiresAt: number;
 }
 
+export type SpsaConnectionStatus = 'connecting' | 'open' | 'hidden' | 'offline' | 'recovering' | 'closed';
+
 export interface SpsaConnectionState {
     eventSource: EventSource | null;
-    eventSourceStatus: 'idle' | 'connecting' | 'open' | 'closed';
+    eventSourceStatus: SpsaConnectionStatus;
     abortControllers: Set<AbortController>;
     refreshInFlight: boolean;
     refreshPromise: Promise<void> | null;

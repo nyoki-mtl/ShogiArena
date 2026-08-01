@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,6 +12,18 @@ from shogiarena._core.platform.db.store.arena_db_adapter import ArenaDBAdapter
 from shogiarena._core.platform.db.store.repository_factory import SQLiteShogiDBFactory
 from shogiarena._core.shared.kernel.database_types import DatabaseServicePort
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
+
+
+class _SnapshotArenaDBAdapter(ArenaDBAdapter):
+    def __init__(self, factory: SQLiteShogiDBFactory, temp_dir: tempfile.TemporaryDirectory[str]) -> None:
+        super().__init__(factory)
+        self._temp_dir = temp_dir
+
+    def close(self) -> None:
+        try:
+            super().close()
+        finally:
+            self._temp_dir.cleanup()
 
 
 @dataclass(slots=True)
@@ -24,6 +38,26 @@ class RunStorage:
         if self._db_service is None:
             self._db_service = ArenaDBAdapter(self._db_factory)
         return self._db_service
+
+    def read_only_db_service(self) -> DatabaseServicePort:
+        """Open a private snapshot without changing run-tree WAL sidecars."""
+
+        source = self.run_dir / "game.db"
+        temp_dir = tempfile.TemporaryDirectory(prefix="shogiarena-resume-db-")
+        snapshot_root = Path(temp_dir.name)
+        try:
+            for suffix in ("", "-wal"):
+                candidate = Path(f"{source}{suffix}")
+                if candidate.is_file():
+                    shutil.copy2(candidate, snapshot_root / candidate.name)
+            snapshot = snapshot_root / source.name
+            return _SnapshotArenaDBAdapter(
+                SQLiteShogiDBFactory(snapshot, read_only=True),
+                temp_dir,
+            )
+        except BaseException:
+            temp_dir.cleanup()
+            raise
 
     def resolve_path(self, relative_path: str) -> Path:
         return (self.run_dir / relative_path).resolve()

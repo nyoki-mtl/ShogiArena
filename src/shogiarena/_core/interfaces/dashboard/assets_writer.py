@@ -175,6 +175,31 @@ def _write_profile_metadata(run_dir: Path, profiles: Sequence[DashboardProfile])
     metadata_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _apply_primary_profile(html_content: str, selected_profiles: tuple[DashboardProfile, ...]) -> str:
+    primary_profile = selected_profiles[0]
+    replacements = {
+        PROFILE_PLACEHOLDER: primary_profile,
+        "__LIVE_TAB_ACTIVE__": "active" if primary_profile == "tournament" else "",
+        "__LIVE_TAB_SELECTED__": "true" if primary_profile == "tournament" else "false",
+        "__SPSA_TAB_ACTIVE__": "active" if primary_profile == "spsa" else "",
+        "__SPSA_TAB_SELECTED__": "true" if primary_profile == "spsa" else "false",
+        "__MATCH_TAB_ACTIVE__": "active" if primary_profile == "match" else "",
+        "__MATCH_TAB_SELECTED__": "true" if primary_profile == "match" else "false",
+        "__SPRT_TAB_ACTIVE__": "active" if primary_profile == "sprt" else "",
+        "__SPRT_TAB_SELECTED__": "true" if primary_profile == "sprt" else "false",
+        "__GENERATE_TAB_ACTIVE__": "active" if primary_profile == "generate" else "",
+        "__GENERATE_TAB_SELECTED__": "true" if primary_profile == "generate" else "false",
+        "__LIVE_CONTENT_ACTIVE__": "active" if primary_profile == "tournament" else "",
+        "__SPSA_CONTENT_ACTIVE__": "active" if primary_profile == "spsa" else "",
+        "__MATCH_CONTENT_ACTIVE__": "active" if primary_profile == "match" else "",
+        "__GENERATE_CONTENT_ACTIVE__": "active" if primary_profile == "generate" else "",
+        "__SPRT_CONTENT_ACTIVE__": "active" if primary_profile == "sprt" else "",
+    }
+    for key, value in replacements.items():
+        html_content = html_content.replace(key, value)
+    return html_content
+
+
 def _resolve_dashboard_asset_dirs() -> tuple[Path, Path]:
     """Resolve static/template roots for dashboard asset generation."""
 
@@ -185,6 +210,60 @@ def _resolve_dashboard_asset_dirs() -> tuple[Path, Path]:
         return static_dir, template_root
 
     raise FileNotFoundError("Dashboard static/frontend assets are missing under interfaces/dashboard.")
+
+
+def render_dashboard_html(
+    run_dir: Path,
+    num_workers: int,
+    *,
+    api_port: int,
+    profiles: Sequence[DashboardProfile] | None = None,
+) -> str:
+    """Render the dashboard entrypoint without writing into the run directory."""
+
+    static_dir, template_root = _resolve_dashboard_asset_dirs()
+    manifest_path = static_dir / "dist" / ".vite" / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError("Dashboard build manifest not found. Run `npm run frontend:build` before packaging.")
+    try:
+        manifest = _ManifestModel.model_validate_json(manifest_path.read_text(encoding="utf-8")).root
+    except ValidationError as exc:
+        raise ValueError(f"Dashboard manifest schema is invalid: {exc}") from exc
+    entry = manifest.get("src/main.ts")
+    if not entry or not entry.file:
+        raise KeyError("Dashboard manifest entry src/main.ts must include file")
+
+    styles_html = "\n".join(
+        f'        <link rel="stylesheet" href="static/dist/{css_file}" />' for css_file in entry.css
+    )
+    module_preloads = [
+        f'        <link rel="modulepreload" href="static/dist/{manifest[name].file}" />'
+        for name in entry.imports
+        if name in manifest and manifest[name].file
+    ]
+    scripts_html = "\n".join(
+        [*module_preloads, f'        <script type="module" src="static/dist/{entry.file}"></script>']
+    )
+    runtime_script = "\n".join(
+        (
+            f"    <script>window.ARENA_API_PORT = {api_port};",
+            f"    window.__ARENA_NUM_WORKERS__ = {num_workers};",
+            f"    window.__ARENA_RUN_DIR__ = {json.dumps(str(run_dir), ensure_ascii=False)};</script>",
+        )
+    )
+    guidelines_json = json.dumps(
+        load_live_diagnostics_guidelines(run_dir / "live_diagnostics.yml"),
+        ensure_ascii=False,
+    )
+    rendered = _render_template(
+        template_root / "index.html",
+        runtime_script,
+        styles_html + ("\n" if styles_html else ""),
+        scripts_html + "\n",
+        guidelines_json,
+    )
+    rendered = rendered.replace('<script src="data/arena_port.js"></script>', "")
+    return _apply_primary_profile(rendered, _normalize_profiles(profiles))
 
 
 def write_dashboard_assets(

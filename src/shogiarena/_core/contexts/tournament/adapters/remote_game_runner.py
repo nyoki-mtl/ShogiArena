@@ -7,8 +7,14 @@ from typing import Any
 
 import rsshogi
 
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_builders import (
+    build_usi_option_layers,
+)
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_engine import EngineConfig
 from shogiarena._core.contexts.game_session.adapters.orchestration.contracts_base_orchestrator import BaseOrchestrator
+from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution_materializer import (
+    resolve_effective_handshake_timeout,
+)
 from shogiarena._core.contexts.game_session.adapters.orchestration.participation_records import (
     attach_participation_metadata as _attach_participation_metadata_service,
 )
@@ -20,9 +26,6 @@ from shogiarena._core.contexts.game_session.adapters.orchestration.remote_contro
 )
 from shogiarena._core.contexts.game_session.adapters.orchestration.remote_lifecycle import (
     manage_remote_pair_instance_lifecycle as _manage_remote_pair_instance_lifecycle_service,
-)
-from shogiarena._core.contexts.game_session.adapters.orchestration.remote_options import (
-    build_remote_pair_option_context,
 )
 from shogiarena._core.contexts.game_session.adapters.orchestration.remote_pair_execution import (
     execute_remote_pair_game as _execute_remote_pair_game_service,
@@ -57,14 +60,12 @@ async def run_remote_tournament_game(
 
     black_name = str(game_spec.black_engine)
     white_name = str(game_spec.white_engine)
-    option_context = build_remote_pair_option_context(
-        engine_configs=engine_configs,
-        extra_options=extra_options,
-        black_engine_name=black_name,
-        white_engine_name=white_name,
-    )
-    black_cfg_spec = option_context.black_spec
-    white_cfg_spec = option_context.white_spec
+    black_cfg_spec = engine_configs.get(black_name)
+    white_cfg_spec = engine_configs.get(white_name)
+    if black_cfg_spec is None or white_cfg_spec is None:
+        raise ValueError(f"Missing engine config for remote game {game_spec.game_id}")
+    black_option_layers = build_usi_option_layers(extra_options, black_cfg_spec)
+    white_option_layers = build_usi_option_layers(extra_options, white_cfg_spec)
 
     max_plies = max_plies_from_rules(rules)
     prepared_spec = None
@@ -92,15 +93,30 @@ async def run_remote_tournament_game(
             remote_instance=remote_instance,
             black_config_path=black_item.config_path,
             white_config_path=white_item.config_path,
-            black_options=option_context.black_options,
-            white_options=option_context.white_options,
+            black_option_layers=black_option_layers,
+            white_option_layers=white_option_layers,
+            black_path_option_names=tuple(black_cfg_spec.path_options) if black_cfg_spec is not None else (),
+            white_path_option_names=tuple(white_cfg_spec.path_options) if white_cfg_spec is not None else (),
+            black_go_options=dict(black_cfg_spec.go_options),
+            white_go_options=dict(white_cfg_spec.go_options),
+            black_handshake_timeout_s=resolve_effective_handshake_timeout(
+                black_cfg_spec.handshake_timeout,
+                orchestrator._default_engine_handshake_timeout,
+            ),
+            white_handshake_timeout_s=resolve_effective_handshake_timeout(
+                white_cfg_spec.handshake_timeout,
+                orchestrator._default_engine_handshake_timeout,
+            ),
             start_sfen=game_spec.initial_sfen,
             game_id=game_spec.game_id,
+            run_id=orchestrator.session_context.run_id,
             black_name=black_name,
             white_name=white_name,
             black_limits=black_limits,
             white_limits=white_limits,
             max_plies=max_plies,
+            rules=rules,
+            timeout_reclassification_enabled=orchestrator._timeout_reclassification_enabled,
             engine_factory_service=orchestrator._engine_factory_service,
         )
 
@@ -136,6 +152,16 @@ async def run_remote_tournament_game(
         instance_id=instance_id,
         started_at=remote_result.started_at,
         completed_at=remote_result.completed_at,
+        remote_execution={
+            "endpoint_identity": remote_result.endpoint_identity,
+            "deployment_id": remote_result.deployment_id,
+            "job_id": remote_result.job_id,
+            "attempt_id": remote_result.attempt_id,
+            "execution_digest": remote_result.worker_result.execution_digest,
+            "coordinator_transport_started_at": remote_result.started_at.isoformat(),
+            "coordinator_transport_completed_at": remote_result.completed_at.isoformat(),
+        },
+        worker_provenance=remote_result.worker_result.provenance,
     )
     _attach_participation_metadata_service(
         game_record=game_info,

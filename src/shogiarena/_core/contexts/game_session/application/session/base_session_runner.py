@@ -144,18 +144,13 @@ class BaseSessionRunner(ABC, Generic[TFinal, TRun]):
             attach_orchestrator=self.attach_orchestrator,
             detach_orchestrator=self._detach_orchestrator,
             stop_services=self.stop_services,
+            prepare_interrupted_stop=self._prepare_interrupted_stop,
         )
         self._session_flow = SessionFlow(cast(SessionRunnerPort[TRun], self))
         self._result_store = result_store
         # Production stall watchdog for the run's event loop (task 0047, log-only for now).
         self._watchdog: RuntimeWatchdog | None = None
-        # Write to the base class because the static cleanup helpers read
-        # BaseSessionRunner._active_dashboard_manager; writing to type(self) (the concrete
-        # subclass) left those reads on the no-op default, so asset cleanup never ran. (One
-        # active manager per process; runs are sequential.)
-        BaseSessionRunner._active_dashboard_manager = self._dashboard_manager
 
-    _active_dashboard_manager: _DashboardAssetLifecyclePort = _NoopDashboardAssetLifecycle()
     dashboard_profiles: tuple[DashboardProfile, ...] = ("tournament", "spsa", "match", "sprt")
 
     @staticmethod
@@ -196,6 +191,11 @@ class BaseSessionRunner(ABC, Generic[TFinal, TRun]):
             self._orchestrator = None
         await self.stop_services()
 
+    def _prepare_interrupted_stop(self, is_cancelled: bool) -> None:
+        """Subclass hook invoked before RunController closes persistence services."""
+
+        del is_cancelled
+
     # --- Services stop (subclass hook) -----------------------------------
     async def stop_services(self) -> None:
         if self._has_closed_services:
@@ -227,14 +227,12 @@ class BaseSessionRunner(ABC, Generic[TFinal, TRun]):
         return
 
     # --- Run directory cleanup -------------------------------------------
-    @staticmethod
-    def cleanup_run_dir(run_dir: Path, *, files: list[str] | None = None, dirs: list[str] | None = None) -> None:
+    def cleanup_run_dir(self, run_dir: Path, *, files: list[str] | None = None, dirs: list[str] | None = None) -> None:
         """Remove known artifacts in run_dir with logging."""
-        BaseSessionRunner._active_dashboard_manager.cleanup_run_dir(run_dir, files=files, dirs=dirs)
+        self._dashboard_manager.cleanup_run_dir(run_dir, files=files, dirs=dirs)
 
-    @staticmethod
-    def cleanup_dashboard_assets(run_dir: Path) -> None:
-        BaseSessionRunner._active_dashboard_manager.cleanup_dashboard_assets(run_dir)
+    def cleanup_dashboard_assets(self, run_dir: Path) -> None:
+        self._dashboard_manager.cleanup_dashboard_assets(run_dir)
 
     # --- Orchestrator execution wrapper ---------------------------------
     async def run_orchestrator(self, orchestrator: OrchestratorPort[Any], run_coro: Awaitable[Any]) -> TRun | None:

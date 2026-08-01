@@ -15,6 +15,7 @@ class _FakeSupport:
     def __init__(self) -> None:
         self.file_transfers: list[tuple[Path, str]] = []
         self.dir_transfers: list[tuple[Path, str]] = []
+        self.preplaced_is_verified = True
 
     def detect_remote_target_cpu(self, instance: object) -> str:
         return "ZEN3"
@@ -34,6 +35,14 @@ class _FakeSupport:
     async def ensure_remote_file(self, instance: object, local_file: Path, remote_file: str) -> None:
         self.file_transfers.append((local_file, remote_file))
 
+    async def verify_remote_file_sha256(
+        self,
+        instance: object,
+        remote_file: str,
+        expected_sha256: str,
+    ) -> bool:
+        return self.preplaced_is_verified
+
 
 def _make_factory(support: _FakeSupport) -> EngineRuntimeFactory:
     def _unused(*args: object, **kwargs: object) -> object:
@@ -49,7 +58,7 @@ def _make_factory(support: _FakeSupport) -> EngineRuntimeFactory:
 
 
 def _ssh_instance(tmp_path: Path) -> Instance:
-    config = InstanceConfig(name="remote", type=InstanceType.SSH, engine_dir="", project_root=str(tmp_path / "proj"))
+    config = InstanceConfig(name="remote", type=InstanceType.SSH, engine_dir="", project_root="/remote/proj")
     return Instance(config=config)
 
 
@@ -143,15 +152,50 @@ async def test_preplaced_mode_skips_transfer(tmp_path: Path, monkeypatch) -> Non
     book_dir.mkdir()
     (book_dir / "user_book1.db").write_bytes(b"#YANEURAOU-DB2016 1.00\n")
     monkeypatch.setenv("SHOGIARENA_REMOTE_BOOK_TRANSFER", "preplaced")
+    monkeypatch.setenv("SHOGIARENA_REMOTE_BOOK_PREPLACED_PATH", "/opt/books/user_book1.db")
+    monkeypatch.setenv("SHOGIARENA_REMOTE_BOOK_PREPLACED_SHA256", "0123456789abcdef" * 4)
 
     options = {"BookDir": str(book_dir), "BookFile": "user_book1.db", "USI_OwnBook": "true"}
     await factory._rewrite_options_for_remote(instance, options)
 
-    # 転送せず、worker 側の同一パスを参照する（composite 維持）。
+    # 転送せず、検証済みremote pathを参照する（composite 維持）。
     assert support.file_transfers == []
     assert support.dir_transfers == []
-    assert options["BookDir"] == str(book_dir)
+    assert options["BookDir"] == "/opt/books"
     assert options["BookFile"] == "user_book1.db"
+
+
+@pytest.mark.asyncio
+async def test_preplaced_mode_requires_path_and_digest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    support = _FakeSupport()
+    factory = _make_factory(support)
+    instance = _ssh_instance(tmp_path)
+    book = tmp_path / "book.db"
+    book.write_bytes(b"book")
+    monkeypatch.setenv("SHOGIARENA_REMOTE_BOOK_TRANSFER", "preplaced")
+    monkeypatch.delenv("SHOGIARENA_REMOTE_BOOK_PREPLACED_PATH", raising=False)
+    monkeypatch.delenv("SHOGIARENA_REMOTE_BOOK_PREPLACED_SHA256", raising=False)
+
+    options = {"BookDir": str(tmp_path), "BookFile": book.name, "USI_OwnBook": "true"}
+    with pytest.raises(ValueError, match="requires both"):
+        await factory._rewrite_options_for_remote(instance, options)
+
+
+@pytest.mark.asyncio
+async def test_preplaced_mode_rejects_failed_remote_hash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    support = _FakeSupport()
+    support.preplaced_is_verified = False
+    factory = _make_factory(support)
+    instance = _ssh_instance(tmp_path)
+    book = tmp_path / "book.db"
+    book.write_bytes(b"book")
+    monkeypatch.setenv("SHOGIARENA_REMOTE_BOOK_TRANSFER", "preplaced")
+    monkeypatch.setenv("SHOGIARENA_REMOTE_BOOK_PREPLACED_PATH", "/opt/books/book.db")
+    monkeypatch.setenv("SHOGIARENA_REMOTE_BOOK_PREPLACED_SHA256", "0123456789abcdef" * 4)
+
+    options = {"BookDir": str(tmp_path), "BookFile": book.name, "USI_OwnBook": "true"}
+    with pytest.raises(ValueError, match="failed SHA-256 verification"):
+        await factory._rewrite_options_for_remote(instance, options)
 
 
 @pytest.mark.asyncio

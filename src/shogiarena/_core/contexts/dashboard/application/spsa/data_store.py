@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypeGuard
 
@@ -15,7 +14,6 @@ from shogiarena._core.contexts.dashboard.ports.spsa_payloads import UpdateEntry
 from shogiarena._core.contexts.dashboard.ports.spsa_service_ports import DashboardSpsaStorePort
 from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_or_none as _as_json_object
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
-from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_float, coerce_int, coerce_optional_text
 from shogiarena._core.shared.kernel.serialization import json_serialize
 
 from .event_types import SpsaEvent, parse_spsa_event
@@ -42,6 +40,10 @@ class SpsaStore(DashboardSpsaStorePort):
     def spsa_path(self, filename: str) -> Path:
         """Get path to a file in the SPSA directory."""
         return self._run_dir / "spsa" / filename
+
+    def run_path(self, filename: str) -> Path:
+        """Get path to a file in the run directory."""
+        return self._run_dir / filename
 
     @staticmethod
     def load_json_file(path: Path) -> JsonValue | None:
@@ -131,7 +133,7 @@ class SpsaStore(DashboardSpsaStorePort):
         return IndexMetadata.model_validate(meta_map)
 
     def load_event_entries(self) -> list[SpsaEvent]:
-        """Load events.jsonl, scoped by current session UUID.
+        """Load the cumulative run-wide events.jsonl history.
 
         各エントリは読み込み境界で ``parse_spsa_event`` により型安全に正規化される。
         """
@@ -139,20 +141,14 @@ class SpsaStore(DashboardSpsaStorePort):
         if not events_path.exists():
             return []
         raw_entries = self.load_json_lines(events_path)
-        session_uuid = self.current_session_uuid()
-        if session_uuid:
-            raw_entries = [e for e in raw_entries if coerce_optional_text(e.get("session_uuid")) == session_uuid]
         return [parse_spsa_event(entry) for entry in raw_entries]
 
     def load_ltc_results(self) -> list[SpsaEvent]:
-        """Load ltc/results.jsonl, scoped by current session UUID."""
+        """Load the cumulative run-wide LTC result history."""
         results_path = self.spsa_path("ltc/results.jsonl")
         if not results_path.exists():
             return []
         raw_entries = self.load_json_lines(results_path)
-        session_uuid = self.current_session_uuid()
-        if session_uuid:
-            raw_entries = [e for e in raw_entries if coerce_optional_text(e.get("session_uuid")) == session_uuid]
         return [parse_spsa_event(entry) for entry in raw_entries]
 
     @staticmethod
@@ -185,58 +181,3 @@ class SpsaStore(DashboardSpsaStorePort):
                 if isinstance(raw_name, str):
                     tuned_name = raw_name
         return base_name, tuned_name
-
-    def save_best_params_snapshot(
-        self,
-        *,
-        variant_token: str,
-        update_idx: int,
-        params: Mapping[str, float],
-        metadata: Mapping[str, JsonValue] | None = None,
-    ) -> None:
-        """Persist a snapshot of accepted best parameters into run_dir."""
-        normalized_token = variant_token.strip()
-        if not normalized_token:
-            return
-        safe_update_idx = coerce_int(update_idx)
-        if safe_update_idx is None:
-            return
-
-        target_dir = self.spsa_path("best_params")
-        try:
-            target_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            logger.warning("Failed to create best_params directory at %s: %s", target_dir, exc)
-            return
-
-        snapshot_path = target_dir / f"{normalized_token}.json"
-        if snapshot_path.exists():
-            return
-
-        sanitized_params: dict[str, float] = {}
-        for key, value in params.items():
-            numeric = coerce_float(value)
-            if numeric is None:
-                continue
-            sanitized_params[key] = numeric
-
-        if not sanitized_params:
-            return
-
-        payload: JsonObject = {
-            "variant": normalized_token,
-            "update_idx": safe_update_idx,
-            "saved_at": datetime.now(UTC).isoformat(),
-            "params": sanitized_params,
-        }
-        if metadata:
-            metadata_map = _as_json_object(metadata)
-            if metadata_map is not None:
-                payload["metadata"] = metadata_map
-
-        try:
-            snapshot_path.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
-            )
-        except OSError as exc:
-            logger.warning("Failed to write best params snapshot to %s: %s", snapshot_path, exc)

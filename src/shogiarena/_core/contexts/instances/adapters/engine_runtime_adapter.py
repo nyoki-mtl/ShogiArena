@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution_worker import (
+    GameExecutionWorkerAdapter,
+)
+from shogiarena._core.contexts.game_session.ports.game_execution_spec import GameExecutionSpec
+from shogiarena._core.contexts.game_session.ports.game_execution_worker import GameExecutionOutcome
 from shogiarena._core.contexts.instances.application.engine_process_spawner import EngineProcessSpawner
 from shogiarena._core.contexts.instances.application.instance_models import Instance
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
@@ -25,8 +31,39 @@ from shogiarena._core.shared.kernel.serialization import json_serialize
 class EngineRuntimeAdapter:
     """Adapter delegating engine runtime creation to the engine factory."""
 
-    def __init__(self, *, engine_factory_service: EngineFactoryService) -> None:
+    def __init__(
+        self,
+        *,
+        engine_factory_service: EngineFactoryService,
+        game_execution_instance_pool: InstancePool,
+    ) -> None:
         self._engine_factory_service = engine_factory_service
+        self._game_execution_worker = GameExecutionWorkerAdapter(
+            engine_factory_service=engine_factory_service,
+            instance_pool=game_execution_instance_pool,
+        )
+
+    async def execute(
+        self,
+        spec: GameExecutionSpec,
+        *,
+        execution_root: Path,
+        progress_queue: asyncio.Queue[tuple[int, int, str | None]],
+        secret_values: Mapping[str, str] | None = None,
+    ) -> GameExecutionOutcome:
+        """Sealed GameExecutionSpecを共通workerへ委譲する。"""
+
+        return await self._game_execution_worker.execute(
+            spec,
+            execution_root=execution_root,
+            progress_queue=progress_queue,
+            secret_values=secret_values,
+        )
+
+    def request_shutdown(self) -> None:
+        """実行中の一局へ停止を伝播する。"""
+
+        self._game_execution_worker.request_shutdown()
 
     @staticmethod
     def _coerce_config_path(config_path: Any) -> Path:
@@ -151,6 +188,14 @@ class _DefaultEngineRuntimeSupport:
             _DefaultEngineRuntimeSupport._require_instance(instance),
             local_file,
             remote_file,
+        )
+
+    @staticmethod
+    async def verify_remote_file_sha256(instance: object, remote_file: str, expected_sha256: str) -> bool:
+        return await Provisioner.verify_remote_file_sha256(
+            _DefaultEngineRuntimeSupport._require_instance(instance),
+            remote_file,
+            expected_sha256,
         )
 
 

@@ -5,120 +5,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import signal
 import sys
-import tempfile
 import traceback
-from collections.abc import Awaitable, Mapping
 from json import JSONDecodeError
 from pathlib import Path
-from typing import Protocol, TypedDict
 
-import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
-from rsshogi.types import Color
+from packaging.version import InvalidVersion, Version
+from pydantic import ValidationError
 
-from shogiarena._core.contexts.match.application.adjudication_builders import max_plies_only_adjudication
-from shogiarena._core.contexts.match.application.engine_participant import EngineParticipant
-from shogiarena._core.contexts.match.application.runner import GameRunner
-from shogiarena._core.interfaces.cli.run.engine_loader import load_engine
-from shogiarena._core.shared.kernel.json_types import JsonObject, JsonScalar, JsonValue
-from shogiarena._core.shared.kernel.scalar_coercion.api import OptionalText, coerce_int
-from shogiarena._core.shared.kernel.serialization import json_serialize
-from shogiarena._core.shared.kernel.time_control import TimeControlLimits
-
-
-class _ClosableEnginePort(Protocol):
-    async def close(self) -> None: ...
-
-
-class _RemoteEngineSpec(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    engine_path: str
-    options: dict[str, JsonScalar] | None = None
-    name: str | None = None
-
-    @field_validator("engine_path", mode="before")
-    @classmethod
-    def _coerce_engine_path(cls, value: JsonValue | None) -> str:
-        normalized = str(value or "").strip()
-        if not normalized:
-            raise ValueError("engine_path must be a non-empty string")
-        return normalized
-
-    @field_validator("options", mode="before")
-    @classmethod
-    def _coerce_options(cls, value: JsonValue | Mapping[str, JsonValue] | None) -> dict[str, JsonScalar] | None:
-        if value is None:
-            return None
-        if not isinstance(value, dict):
-            raise TypeError("options must be a JSON object when provided")
-        normalized: dict[str, JsonScalar] = {}
-        for key, item in value.items():
-            serialized = json_serialize(item)
-            if isinstance(serialized, dict | list):
-                raise TypeError("options values must be JSON scalar values")
-            normalized[str(key)] = serialized
-        return normalized
-
-    @field_validator("name", mode="before")
-    @classmethod
-    def _coerce_name(cls, value: JsonValue | None) -> str | None:
-        if value is None:
-            return None
-        normalized = str(value).strip()
-        return normalized or None
-
-
-class _RemoteTimeControlSpec(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    black: dict[str, JsonScalar]
-    white: dict[str, JsonScalar]
-
-    @field_validator("black", "white", mode="before")
-    @classmethod
-    def _coerce_side_tc(cls, value: JsonValue | Mapping[str, JsonValue] | None) -> dict[str, JsonScalar]:
-        if not isinstance(value, dict):
-            raise TypeError("time_control.black/white must be JSON objects")
-        normalized: dict[str, JsonScalar] = {}
-        for key, item in value.items():
-            serialized = json_serialize(item)
-            if isinstance(serialized, dict | list):
-                raise TypeError("time_control values must be JSON scalar values")
-            normalized[str(key)] = serialized
-        return normalized
-
-
-class _RemotePairSpec(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    game_id: OptionalText = None
-    initial_sfen: OptionalText = None
-    max_plies: int = 0
-    time_control: _RemoteTimeControlSpec
-    black: _RemoteEngineSpec
-    white: _RemoteEngineSpec
-
-    @field_validator("max_plies", mode="before")
-    @classmethod
-    def _coerce_max_plies(cls, value: JsonValue | None) -> int:
-        if value is None:
-            return 0
-        parsed = coerce_int(value)
-        if parsed is None:
-            raise ValueError("max_plies must be an integer")
-        return max(0, parsed)
-
-
-class _RunContext(TypedDict):
-    runner: GameRunner
-    streamer: asyncio.Task[None] | None
-    black_engine: _ClosableEnginePort | None
-    white_engine: _ClosableEnginePort | None
-    black_participant: EngineParticipant | None
-    white_participant: EngineParticipant | None
+from shogiarena import __version__
+from shogiarena._core.contexts.game_session.ports.game_execution_spec import GameExecutionSpec
+from shogiarena._core.interfaces.composition_root.default_root import build_default_root
+from shogiarena._core.shared.kernel.json_types import JsonObject
 
 
 def register_internal(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -159,12 +59,20 @@ async def _remote_run_pair_command(args: argparse.Namespace) -> None:
         _emit_json_error("spec root must be a JSON object")
         raise SystemExit(2)
     try:
-        validated = _RemotePairSpec.model_validate(spec)
+        sealed_spec = GameExecutionSpec.model_validate(spec)
     except ValidationError as exc:
-        _emit_json_error(f"invalid spec JSON: {exc}")
+        _emit_json_error(f"invalid GameExecutionSpec JSON: {exc}")
         raise SystemExit(2) from exc
-
-    rc = await run_from_spec(validated)
+    try:
+        worker_version = Version(__version__)
+        minimum_version = Version(str(sealed_spec.minimum_worker_version))
+    except InvalidVersion as exc:
+        _emit_json_error(f"invalid worker version contract: {exc}")
+        raise SystemExit(2) from exc
+    if worker_version < minimum_version:
+        _emit_json_error(f"worker version {worker_version} does not satisfy minimum {minimum_version}")
+        raise SystemExit(2)
+    rc = await run_game_execution_spec(sealed_spec, execution_root=spec_path.parent)
     if rc != 0:
         raise SystemExit(rc)
 
@@ -197,160 +105,88 @@ async def _stream_progress(queue: asyncio.Queue[tuple[int, int, str | None]]) ->
                 return
 
 
-def _write_temp_engine_yaml(engine_path: str, options: Mapping[str, JsonScalar] | None, name: str | None) -> Path:
-    data: JsonObject = {
-        "name": name or Path(engine_path).stem,
-        "engine_path": engine_path,
-    }
-    if options:
-        data["options"] = json_serialize(dict(options))
-    temp_dir = Path(tempfile.mkdtemp(prefix="arena_engine_"))
-    temp_file = temp_dir / "engine.yaml"
-    temp_file.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    return temp_file
-
-
-async def run_from_spec(spec: Mapping[str, JsonValue] | _RemotePairSpec) -> int:
-    try:
-        spec_obj = spec if isinstance(spec, _RemotePairSpec) else _RemotePairSpec.model_validate(spec)
-    except ValidationError as exc:
-        _emit_json_error(f"invalid spec JSON: {exc}")
-        return 2
+async def run_game_execution_spec(spec: GameExecutionSpec, *, execution_root: Path) -> int:
+    """Versioned GameExecutionSpecをcomposition rootの共通workerで実行する。"""
 
     progress_q: asyncio.Queue[tuple[int, int, str | None]] = asyncio.Queue()
-    runner = GameRunner(progress_queue=progress_q)
-
-    ctx: _RunContext = {
-        "runner": runner,
-        "streamer": None,
-        "black_engine": None,
-        "white_engine": None,
-        "black_participant": None,
-        "white_participant": None,
+    worker = build_default_root().game_execution_worker
+    secret_refs = {
+        *spec.black_engine.process.secret_environment_refs.values(),
+        *spec.white_engine.process.secret_environment_refs.values(),
     }
-
-    loop = asyncio.get_running_loop()
-
-    def _on_signal(sig: signal.Signals) -> None:
-        try:
-            ctx["runner"].request_shutdown()
-        except (RuntimeError, OSError) as exc:
-            sys.stderr.write(f"[signal] failed to request shutdown: {exc}\n")
-        streamer_task = ctx["streamer"]
-        if streamer_task is not None:
-            streamer_task.cancel()
-        try:
-            sys.stdout.write(
-                json.dumps({"type": "error", "message": f"received signal: {sig.name}"}, ensure_ascii=False) + "\n"
-            )
-            sys.stdout.flush()
-        except OSError as exc:
-            sys.stderr.write(f"[signal] failed to emit error event: {exc}\n")
-
-    def _install_handler(sig: signal.Signals) -> None:
-        try:
-            loop.add_signal_handler(sig, lambda: _on_signal(sig))
-        except (NotImplementedError, RuntimeError, ValueError, OSError) as exc:
-            sys.stderr.write(f"[signal] add_signal_handler failed for {str(sig)}: {exc}\n")
-
-    # SIGHUP does not exist on Windows; referencing it unconditionally raises AttributeError.
-    _signals = [signal.SIGINT, signal.SIGTERM]
-    _sighup = getattr(signal, "SIGHUP", None)
-    if _sighup is not None:
-        _signals.append(_sighup)
-    for _sig in _signals:
-        _install_handler(_sig)
-
-    max_plies = spec_obj.max_plies
-    if max_plies > 0:
-        runner.adjudication_config = max_plies_only_adjudication(max_plies)
-
     try:
-        black_limits = TimeControlLimits.model_validate(spec_obj.time_control.black)
-        white_limits = TimeControlLimits.model_validate(spec_obj.time_control.white)
-    except ValidationError as exc:
-        _emit_json_error(f"invalid time_control: {exc}")
+        secret_values = _load_engine_secret_values(secret_refs)
+    except ValueError as exc:
+        _emit_json_error(str(exc))
         return 2
-
-    black_path = Path(spec_obj.black.engine_path)
-    white_path = Path(spec_obj.white.engine_path)
-    black_options = spec_obj.black.options
-    white_options = spec_obj.white.options
-    black_name = spec_obj.black.name
-    white_name = spec_obj.white.name
-
-    b_yaml = _write_temp_engine_yaml(str(black_path), black_options, black_name)
-    w_yaml = _write_temp_engine_yaml(str(white_path), white_options, white_name)
-
+    missing_refs = sorted(secret_ref for secret_ref in secret_refs if secret_ref not in secret_values)
+    if missing_refs:
+        _emit_json_error(f"required secret references are unavailable: {', '.join(missing_refs)}")
+        return 2
+    loop = asyncio.get_running_loop()
+    installed_signals: list[signal.Signals] = []
+    for sig in _worker_signals():
+        try:
+            loop.add_signal_handler(sig, worker.request_shutdown)
+            installed_signals.append(sig)
+        except (NotImplementedError, RuntimeError, ValueError, OSError):
+            continue
     streamer = asyncio.create_task(_stream_progress(progress_q))
-    ctx["streamer"] = streamer
-
     try:
-        black_engine = await load_engine(str(b_yaml), engine_name=black_name)
-        white_engine = await load_engine(str(w_yaml), engine_name=white_name)
-        ctx["black_engine"] = black_engine
-        ctx["white_engine"] = white_engine
-
-        black_participant = EngineParticipant(
-            black_engine,
-            name_override=black_name,
-            role=Color.BLACK,
+        outcome = await worker.execute(
+            spec,
+            execution_root=execution_root,
+            progress_queue=progress_q,
+            secret_values=secret_values,
         )
-        white_participant = EngineParticipant(
-            white_engine,
-            name_override=white_name,
-            role=Color.WHITE,
-        )
-        ctx["black_participant"] = black_participant
-        ctx["white_participant"] = white_participant
-
-        game_id = spec_obj.game_id or "game_remote"
-        sfen = spec_obj.initial_sfen or "startpos"
-
-        await runner.run_game(
-            black_participant,
-            white_participant,
-            initial_sfen=sfen,
-            game_id=game_id,
-            black_time_control_limits=black_limits,
-            white_time_control_limits=white_limits,
-        )
-
         try:
             await asyncio.wait_for(streamer, timeout=2.0)
         except TimeoutError:
             sys.stderr.write("[runner] streamer drain timed out; continuing\n")
-
+        sys.stdout.write(json.dumps(outcome.result.model_dump(mode="json"), ensure_ascii=False) + "\n")
+        sys.stdout.flush()
         return 0
     except asyncio.CancelledError:
+        worker.request_shutdown()
         _emit_json_error("cancelled by signal")
         return 1
-    except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+    except (OSError, RuntimeError, TimeoutError, ValueError, TypeError) as exc:
+        worker.request_shutdown()
         tb = traceback.format_exc()
         message = f"remote game failed: {type(exc).__name__}: {exc}".rstrip()
         _emit_json_error(message, trace=tb[-4000:])
         return 1
     finally:
         streamer.cancel()
+        await asyncio.gather(streamer, return_exceptions=True)
+        for sig in installed_signals:
+            loop.remove_signal_handler(sig)
 
-        shutdown_tasks: list[Awaitable[None]] = []
-        participant = ctx["black_participant"]
-        if participant is not None:
-            shutdown_tasks.append(participant.shutdown())
-        elif ctx["black_engine"] is not None:
-            shutdown_tasks.append(ctx["black_engine"].close())
 
-        participant = ctx["white_participant"]
-        if participant is not None:
-            shutdown_tasks.append(participant.shutdown())
-        elif ctx["white_engine"] is not None:
-            shutdown_tasks.append(ctx["white_engine"].close())
+def _load_engine_secret_values(secret_refs: set[str]) -> dict[str, str]:
+    values = {secret_ref: os.environ[secret_ref] for secret_ref in secret_refs if secret_ref in os.environ}
+    bundle_path = os.environ.get("SHOGIARENA_ENGINE_SECRET_BUNDLE_FILE")
+    if not bundle_path:
+        return values
+    try:
+        payload = json.loads(Path(bundle_path).read_text(encoding="utf-8"))
+    except (OSError, JSONDecodeError) as exc:
+        raise ValueError("failed to load engine secret bundle") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("engine secret bundle must contain a JSON object")
+    for secret_ref in secret_refs:
+        value = payload.get(secret_ref)
+        if isinstance(value, str):
+            values[secret_ref] = value
+    return values
 
-        if shutdown_tasks:
-            try:
-                await asyncio.gather(*shutdown_tasks, return_exceptions=True)
-            except asyncio.CancelledError:
-                sys.stderr.write("[cleanup] shutdown cancelled\n")
+
+def _worker_signals() -> list[signal.Signals]:
+    signals = [signal.SIGINT, signal.SIGTERM]
+    sighup = getattr(signal, "SIGHUP", None)
+    if sighup is not None:
+        signals.append(sighup)
+    return signals
 
 
 __all__ = ["register", "register_internal"]

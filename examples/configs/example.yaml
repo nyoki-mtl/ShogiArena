@@ -11,6 +11,7 @@ log_level: INFO                      # 任意。既定: INFO。DEBUG にする�
 # output_dir: "{output_dir}"         # 任意。既定: settings.yaml が無ければ `./shogiarena_output`
 instances:                            # 任意。既定: CLI --instances または local.yaml
   - "./resources/instances/local_example.yaml"   # YAML ファイルやディレクトリを列挙可能（相対パスは設定ファイルからの相対）
+  - "./resources/instances/ssh_example.yaml"     # SSH engineのinstance_idと照合
   # - "./resources/instances"                    # ディレクトリを指定すると *.yaml / *.yml をまとめて読み込む
 
 # レーティングの初期値と K 値
@@ -83,7 +84,7 @@ engines:                    # 必須。最低 2 エントリ以上が必要
     # isready_lock_template: "{DNN_Model}.{DNN_Batch_Size}.serialized"  # 任意。初回 isready を直列化するロックキー
     # isready_lock_check_templates: ["{DNN_Model}.*.{DNN_Batch_Size}*.serialized"]  # 任意。既存ビルド検知 (glob 可)
     # isready_lock_skip_if_exists: true  # 任意。検知できたらロックを省略
-    instance_id: "local-main"                    # 任意。既定: null
+    instance_id: "local-dev"                     # 任意。既定: null
     cpu_affinity: "0-3"                          # 任意。既定: null
 
   - name: "Dev Engine"
@@ -96,7 +97,7 @@ engines:                    # 必須。最低 2 エントリ以上が必要
     time_control:                                             # 任意。既定: null
       fixed_time_ms: null
       node_limit: 500000
-    instance_id: "remote-linux-01"                            # 任意。既定: null
+    instance_id: "remote-linux-01"                           # 任意。既定: null
     cpu_affinity: [4, 5]                                      # 任意。既定: null
 
 # サポートされているプレースホルダ:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import random
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Generic, Literal, TypeVar
@@ -24,6 +23,8 @@ class SpsaPendingReservationRequest:
     is_tuned_as_black: bool
     worker_idx: int
     event_family: str
+    pair_id: str
+    game_slot: Literal["black", "white"]
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class SpsaRunGamePairRequest(Generic[ParamT]):
     phase: PhaseLiteral
     reserved_ids: tuple[str, str]
     event_family: str
+    pair_id: str
     tuned_options: JsonObject | None = None
     current_options: JsonObject | None = None
 
@@ -56,7 +58,24 @@ class SpsaUpdateBatchExecutionRequest:
     inflight_factor: int
     is_crn_enabled: bool
     sfens: Sequence[str]
+    opening_indices: Sequence[int]
     event_family: str = "spsa"
+
+
+@dataclass(frozen=True)
+class SpsaPairAssignmentRequest:
+    """Deterministic pair identity and opening resolved before dispatch."""
+
+    update_idx: int
+    pair_id: str
+    batch_idx: int
+    opening_idx: int
+    start_sfen: str
+    reserved_ids: tuple[str, str]
+
+
+RecordPairAssignmentPort = Callable[[SpsaPairAssignmentRequest], None]
+AssignmentsReadyPort = Callable[[], None]
 
 
 class SpsaUpdateBatchExecutionService:
@@ -66,7 +85,6 @@ class SpsaUpdateBatchExecutionService:
         self,
         *,
         request: SpsaUpdateBatchExecutionRequest,
-        rng: random.Random,
         tuned_plus: Sequence[ParamT],
         tuned_minus: Sequence[ParamT],
         tuned_plus_options: JsonObject | None,
@@ -74,6 +92,8 @@ class SpsaUpdateBatchExecutionService:
         current_params: Sequence[ParamT],
         reserve_pending_game: ReservePendingGamePort,
         run_game_pair: RunGamePairPort[ParamT, RunResultT],
+        record_pair_assignment: RecordPairAssignmentPort | None = None,
+        on_assignments_ready: AssignmentsReadyPort | None = None,
     ) -> tuple[float, float]:
         if not request.sfens:
             raise RuntimeError("SPSA requires at least one SFEN for batch execution")
@@ -81,18 +101,14 @@ class SpsaUpdateBatchExecutionService:
         max_concurrent = min(request.num_workers * request.inflight_factor, request.batch_size * 2)
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        # Resolve the opening for every batch item up front, in batch order, so the
-        # assignment is deterministic and reproducible on resume. Drawing inside the
-        # concurrent section below would make rng consumption depend on async
-        # scheduling order (non-reproducible).
-        if request.is_crn_enabled:
-            # Repeated-block CRN: the same pair offset reuses the same opening
-            # across update batches.
-            opening_indices = [batch_idx % len(request.sfens) for batch_idx in range(request.batch_size)]
-        else:
-            opening_indices = [rng.randrange(len(request.sfens)) for _ in range(request.batch_size)]
+        opening_indices = list(request.opening_indices)
+        if len(opening_indices) != request.batch_size:
+            raise ValueError("SPSA opening assignment count must match batch_size")
+        if any(index < 0 or index >= len(request.sfens) for index in opening_indices):
+            raise ValueError("SPSA opening assignment is outside the SFEN range")
 
         def reserve_pair(*, phase: PhaseLiteral, worker_slot: int) -> tuple[str, str]:
+            pair_id = f"spsa-u{request.update_idx:06d}-p{len(reserved_pairs):06d}"
             return (
                 reserve_pending_game(
                     SpsaPendingReservationRequest(
@@ -101,6 +117,8 @@ class SpsaUpdateBatchExecutionService:
                         is_tuned_as_black=True,
                         worker_idx=worker_slot,
                         event_family=request.event_family,
+                        pair_id=pair_id,
+                        game_slot="black",
                     )
                 ),
                 reserve_pending_game(
@@ -110,13 +128,35 @@ class SpsaUpdateBatchExecutionService:
                         is_tuned_as_black=False,
                         worker_idx=worker_slot,
                         event_family=request.event_family,
+                        pair_id=pair_id,
+                        game_slot="white",
                     )
                 ),
             )
 
+        reserved_pairs: list[tuple[str, str]] = []
+        for batch_idx in range(request.batch_size):
+            worker_slot = int((request.update_idx * request.batch_size + batch_idx) % max(1, request.num_workers))
+            reserved_pairs.append(reserve_pair(phase="plus", worker_slot=worker_slot))
+
+        if record_pair_assignment is not None:
+            for batch_idx, opening_idx in enumerate(opening_indices):
+                record_pair_assignment(
+                    SpsaPairAssignmentRequest(
+                        update_idx=request.update_idx,
+                        pair_id=f"spsa-u{request.update_idx:06d}-p{batch_idx:06d}",
+                        batch_idx=batch_idx,
+                        opening_idx=opening_idx,
+                        start_sfen=request.sfens[opening_idx],
+                        reserved_ids=reserved_pairs[batch_idx],
+                    )
+                )
+        if on_assignments_ready is not None:
+            on_assignments_ready()
+
         async def run_batch_item(batch_idx: int) -> tuple[float, float]:
             worker_slot = int((request.update_idx * request.batch_size + batch_idx) % max(1, request.num_workers))
-            plus_reserved = reserve_pair(phase="plus", worker_slot=worker_slot)
+            plus_reserved = reserved_pairs[batch_idx]
 
             sfen = request.sfens[opening_indices[batch_idx]]
             async with semaphore:
@@ -130,6 +170,7 @@ class SpsaUpdateBatchExecutionService:
                         phase="plus",
                         reserved_ids=plus_reserved,
                         event_family=request.event_family,
+                        pair_id=f"spsa-u{request.update_idx:06d}-p{batch_idx:06d}",
                         tuned_options=tuned_plus_options,
                         current_options=tuned_minus_options,
                     )
@@ -146,6 +187,7 @@ class SpsaUpdateBatchExecutionService:
 
 __all__ = [
     "SpsaPendingReservationRequest",
+    "SpsaPairAssignmentRequest",
     "SpsaRunGamePairRequest",
     "SpsaUpdateBatchExecutionRequest",
     "SpsaUpdateBatchExecutionService",

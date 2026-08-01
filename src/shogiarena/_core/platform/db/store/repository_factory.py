@@ -49,14 +49,15 @@ class BaseFactory:
         )
 
 
-def build_sqlite_read_only_uri(db_path: str | Path) -> str:
+def build_sqlite_read_only_uri(db_path: str | Path, *, immutable: bool = False) -> str:
     """SQLite が authority と解釈しない read-only file URI を組み立てる。"""
 
     resolved = Path(db_path).expanduser().resolve().as_posix()
     # UNC の先頭 ``//server/share`` をそのまま残すと SQLite URI の authority に
     # 解釈される。slash を percent-encode し、decode 後の filename だけを UNC にする。
     encoded = quote(resolved, safe=":")
-    return f"file:{encoded}?mode=ro"
+    immutable_query = "&immutable=1" if immutable else ""
+    return f"file:{encoded}?mode=ro{immutable_query}"
 
 
 class SQLiteShogiDBFactory(BaseFactory):
@@ -66,12 +67,13 @@ class SQLiteShogiDBFactory(BaseFactory):
         should_echo: bool = False,
         *,
         read_only: bool = False,
+        immutable: bool = False,
     ) -> None:
         db_path_str = db_path.as_posix() if isinstance(db_path, Path) else db_path
         if read_only:
             if db_path_str == ":memory:":
                 raise ValueError("read-only SQLite databases require a filesystem path")
-            sqlite_uri = build_sqlite_read_only_uri(db_path_str)
+            sqlite_uri = build_sqlite_read_only_uri(db_path_str, immutable=immutable)
             database_url = f"sqlite+pysqlite:///{sqlite_uri}&uri=true"
         else:
             database_url = f"sqlite+pysqlite:///{db_path_str}"

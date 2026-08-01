@@ -40,6 +40,7 @@ export interface SpsaSummaryResponse {
     engine_stats?: Record<string, { wins?: number; losses?: number; draws?: number; games?: number }>;
     engine_instances?: Record<string, string | null | undefined>;
     engine_meta?: Record<string, JsonObject>;
+    operational_status?: JsonObject;
     [key: string]: unknown;
 }
 
@@ -338,17 +339,6 @@ export interface SpsaUpdateDetailRequestOptions {
     readonly window?: SpsaDetailWindowMode;
 }
 
-export interface DashboardSpsaDetailStreamExperiment {
-    readonly enabled: boolean;
-    readonly endpoint?: string;
-    readonly autoStart?: boolean;
-    readonly params?: string;
-}
-
-export interface DashboardSpsaExperimentalFeatures {
-    readonly detailStream?: DashboardSpsaDetailStreamExperiment;
-}
-
 export interface DashboardSpsaPublicApi {
     connect: () => void;
     disconnect: (reason?: string) => void;
@@ -374,7 +364,6 @@ export interface DashboardSpsaPublicApi {
         payload: unknown,
         context?: { view?: SpsaDetailViewMode; includeCount?: number; window?: SpsaDetailWindowMode | 'full' },
     ) => void;
-    experimental?: DashboardSpsaExperimentalFeatures;
 }
 
 export interface DashboardSpsaApi extends DashboardSpsaPublicApi {}

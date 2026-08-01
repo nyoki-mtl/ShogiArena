@@ -85,6 +85,7 @@ class TournamentRunConfig(BaseModel):
                 "engine_handshake_timeout",
                 "path_preflight",
                 "resource_capacity_preflight",
+                "instance_scheduling",
                 "extras",
             }
             payload: dict[str, JsonValue] = {k: source[k] for k in source if k in allowed_keys}

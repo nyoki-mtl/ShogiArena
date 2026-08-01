@@ -9,8 +9,9 @@ from pydantic import ValidationError
 from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session, aliased
 
+from shogiarena._core.shared.kernel.database_types import SpsaGameDatabaseRecord
 from shogiarena._core.shared.kernel.game_results import GameResult
-from shogiarena._core.shared.kernel.json_coercion import to_json_object
+from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_or_none, to_json_object
 from shogiarena._core.shared.kernel.json_types import JsonValue
 from shogiarena._core.shared.kernel.participation_records import (
     EngineArtifactSnapshot,
@@ -129,6 +130,62 @@ class ArenaDBAdapter:
         should_update: bool = False,
     ) -> None:
         self._get_record_store().append(record_list, should_update=should_update)
+
+    def append_record_with_participation(
+        self,
+        record: rsshogi.record.Record,
+        *,
+        participation: Iterable[object],
+    ) -> int:
+        """Recordとparticipation identityを一つのgame.db transactionで保存する。"""
+
+        game_name = record.game_name
+        if game_name is None:
+            raise ValueError("Record.game_name must be defined")
+        db = self._get_db()
+        with db.operation(commit=True) as session:
+            self._get_record_store().append_in_current_transaction([record])
+            game_id = session.execute(select(Game.id).where(Game.game_name == game_name)).scalar_one()
+            self._record_game_participation(session, game_id=int(game_id), participation=participation)
+            return int(game_id)
+
+    def get_spsa_game_database_records(self, *, run_id: str) -> list[SpsaGameDatabaseRecord]:
+        """Run identity付きSPSA gameをledger reconciliation用に読む。"""
+
+        db = self._get_db()
+        with db.operation() as session:
+            rows = session.execute(
+                select(
+                    Game.id,
+                    Game.game_name,
+                    Game.game_result,
+                    GameInstanceParticipation.extra,
+                )
+                .join(GameInstanceParticipation, GameInstanceParticipation.game_id == Game.id)
+                .where(Game.game_type == "spsa")
+                .where(GameInstanceParticipation.run_id == run_id)
+                .order_by(Game.id.asc(), GameInstanceParticipation.role.asc())
+            )
+            grouped: dict[int, tuple[str, GameResult, list[JsonValue]]] = {}
+            for game_id, game_name, raw_result, raw_extra in rows:
+                entry = grouped.setdefault(
+                    int(game_id),
+                    (str(game_name), self._coerce_game_result(raw_result), []),
+                )
+                entry[2].append(raw_extra)
+
+        records: list[SpsaGameDatabaseRecord] = []
+        for game_db_id, (game_id, result, raw_extras) in grouped.items():
+            extras = tuple(parsed for extra in raw_extras if (parsed := coerce_json_object_or_none(extra)) is not None)
+            records.append(
+                SpsaGameDatabaseRecord(
+                    game_db_id=game_db_id,
+                    game_id=game_id,
+                    result=result,
+                    participation_extras=extras,
+                )
+            )
+        return records
 
     def upsert_engine_artifact(self, snapshot: EngineArtifactSnapshot | None) -> EngineArtifact | None:
         if snapshot is None:

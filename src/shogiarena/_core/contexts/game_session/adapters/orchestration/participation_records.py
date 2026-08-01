@@ -6,6 +6,10 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
+from shogiarena._core.contexts.game_session.ports.game_execution_spec import (
+    EngineExecutionSpec,
+    GameExecutionSpec,
+)
 from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
 from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine
 from shogiarena._core.shared.kernel.book_provenance import build_book_provenance
@@ -67,6 +71,7 @@ def collect_participation_records_local(
             go_options=dict(black_config.go_options),
             environment=dict(black_config.environment),
             engine_info=dict(black_engine.engine_info),
+            execution_metadata={"fixed_option_evidence_scope": "local_source"},
         )
     )
     records.append(
@@ -88,6 +93,7 @@ def collect_participation_records_local(
             go_options=dict(white_config.go_options),
             environment=dict(white_config.environment),
             engine_info=dict(white_engine.engine_info),
+            execution_metadata={"fixed_option_evidence_scope": "local_source"},
         )
     )
     return records
@@ -106,54 +112,133 @@ def collect_participation_records_remote_pair(
     instance_id: str | None,
     started_at: datetime,
     completed_at: datetime,
+    remote_execution: Mapping[str, object] | None = None,
+    worker_provenance: Mapping[str, object] | None = None,
 ) -> list[GameParticipationRecord]:
-    black_section = coerce_json_object_or_none(spec_payload.get("black")) if spec_payload is not None else None
-    white_section = coerce_json_object_or_none(spec_payload.get("white")) if spec_payload is not None else None
-    black_binary = black_section.get("engine_path") if black_section is not None else None
-    white_binary = white_section.get("engine_path") if white_section is not None else None
-    black_engine_options = (
-        coerce_json_object_or_none(black_section.get("options")) if black_section is not None else None
+    if spec_payload is None:
+        raise ValueError("remote participation requires a sealed GameExecutionSpec")
+    sealed = GameExecutionSpec.model_validate(spec_payload)
+    engine_identity = (
+        coerce_json_object_or_none(worker_provenance.get("engine_identity")) if worker_provenance is not None else None
     )
-    white_engine_options = (
-        coerce_json_object_or_none(white_section.get("options")) if white_section is not None else None
+    remote_execution_payload: JsonObject = coerce_json_object_serialized(
+        remote_execution or {},
+        field_name="remote_execution",
     )
+    if worker_provenance is not None:
+        worker_timestamps = coerce_json_object_or_none(worker_provenance.get("timestamps"))
+        if worker_timestamps is not None:
+            remote_execution_payload["worker_execution_timestamps"] = worker_timestamps
 
     return [
-        _construct_participation_record(
-            orchestrator,
+        _remote_participation_record(
+            orchestrator=orchestrator,
             role="black",
             engine_name=black_engine_name,
-            display_name=black_engine_name,
-            spec=black_spec,
-            engine_config=None,
-            binary_path=str(black_binary) if isinstance(black_binary, str) else None,
+            config_spec=black_spec,
+            execution_spec=sealed.black_engine,
+            pool_key=black_pool_key,
             instance_id=instance_id,
             started_at=started_at,
             completed_at=completed_at,
-            pool_key=black_pool_key,
-            engine_options=black_engine_options,
-            go_options=None,
-            environment=None,
-            engine_info=None,
+            engine_identity=engine_identity,
+            remote_execution=remote_execution_payload,
         ),
-        _construct_participation_record(
-            orchestrator,
+        _remote_participation_record(
+            orchestrator=orchestrator,
             role="white",
             engine_name=white_engine_name,
-            display_name=white_engine_name,
-            spec=white_spec,
-            engine_config=None,
-            binary_path=str(white_binary) if isinstance(white_binary, str) else None,
+            config_spec=white_spec,
+            execution_spec=sealed.white_engine,
+            pool_key=white_pool_key,
             instance_id=instance_id,
             started_at=started_at,
             completed_at=completed_at,
-            pool_key=white_pool_key,
-            engine_options=white_engine_options,
-            go_options=None,
-            environment=None,
-            engine_info=None,
+            engine_identity=engine_identity,
+            remote_execution=remote_execution_payload,
         ),
     ]
+
+
+def _remote_participation_record(
+    *,
+    orchestrator: Any,
+    role: Literal["black", "white"],
+    engine_name: str,
+    config_spec: EngineConfig | None,
+    execution_spec: EngineExecutionSpec,
+    pool_key: str,
+    instance_id: str | None,
+    started_at: datetime,
+    completed_at: datetime,
+    engine_identity: Mapping[str, object] | None,
+    remote_execution: Mapping[str, object] | None,
+) -> GameParticipationRecord:
+    process = execution_spec.process
+    artifact = process.artifact
+    entrypoint = artifact.entrypoint
+    binary_path = f"{process.working_directory}/{entrypoint}" if entrypoint is not None else None
+    effective_options: JsonObject = dict(execution_spec.usi.static_options)
+    effective_options.update(execution_spec.usi.variant_options)
+    for resource in execution_spec.usi.path_resources:
+        effective_options.update(resource.option_values)
+    reported = coerce_json_object_or_none(engine_identity.get(role)) if engine_identity is not None else None
+    artifact_snapshot = EngineArtifactSnapshot(
+        logical_name=artifact.logical_id,
+        artifact=artifact.logical_id,
+        binary_path=binary_path,
+        metadata={
+            "sha256": artifact.sha256,
+            "kind": artifact.kind,
+            "target_platform": artifact.target_platform.model_dump(mode="json"),
+        },
+    )
+    execution_metadata: JsonObject = {
+        "fixed_option_evidence_scope": "remote_runtime",
+        "fixed_option_file_set": {
+            "scope": "remote_runtime",
+            "status": "inventory_only",
+            "source": "sealed_game_execution_spec_artifact_inventory",
+            "engine_artifact": {
+                "logical_id": artifact.logical_id,
+                "sha256": artifact.sha256,
+                "entrypoint": artifact.entrypoint,
+            },
+            "path_resources": [
+                {
+                    "logical_id": resource.artifact.logical_id,
+                    "sha256": resource.artifact.sha256,
+                    "target_relative_path": resource.target_relative_path,
+                }
+                for resource in execution_spec.usi.path_resources
+            ],
+        },
+        "resolved_engine_arguments": list(process.arguments),
+        "non_secret_environment_keys": sorted(process.environment),
+        "remote_execution": coerce_json_object_serialized(
+            remote_execution or {},
+            field_name="remote_execution",
+        ),
+    }
+    return _construct_participation_record(
+        orchestrator,
+        role=role,
+        engine_name=engine_name,
+        display_name=engine_name,
+        spec=config_spec,
+        engine_config=None,
+        binary_path=binary_path,
+        instance_id=instance_id,
+        started_at=started_at,
+        completed_at=completed_at,
+        pool_key=pool_key,
+        engine_options=effective_options,
+        go_options=execution_spec.usi.go_options,
+        environment=None,
+        engine_info=reported,
+        artifact_snapshot=artifact_snapshot,
+        execution_metadata=execution_metadata,
+    )
 
 
 def attach_participation_metadata(
@@ -274,13 +359,16 @@ def _construct_participation_record(
     go_options: Mapping[str, object] | None,
     environment: Mapping[str, object] | None,
     engine_info: Mapping[str, object] | None,
+    artifact_snapshot: EngineArtifactSnapshot | None = None,
+    execution_metadata: Mapping[str, object] | None = None,
 ) -> GameParticipationRecord:
-    artifact_snapshot = _engine_artifact_snapshot(
-        engine_name=engine_name,
-        spec=spec,
-        engine_config=engine_config,
-        binary_path=binary_path,
-    )
+    if artifact_snapshot is None:
+        artifact_snapshot = _engine_artifact_snapshot(
+            engine_name=engine_name,
+            spec=spec,
+            engine_config=engine_config,
+            binary_path=binary_path,
+        )
     inst_snapshot = _instance_snapshot(orchestrator, instance_id)
 
     build_flags: JsonObject = {}
@@ -323,6 +411,13 @@ def _construct_participation_record(
         )
     if pool_key:
         extras["pool_key"] = pool_key
+    if execution_metadata:
+        extras.update(
+            coerce_json_object_serialized(
+                execution_metadata,
+                field_name="execution_metadata",
+            )
+        )
     extras = {k: v for k, v in extras.items() if v}
 
     return GameParticipationRecord(

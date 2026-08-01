@@ -102,6 +102,11 @@ class SshTransport:
     async def put_file(self, local: Path, remote: str) -> None:  # pragma: no cover - interface
         raise NotImplementedError
 
+    async def endpoint_identity(self) -> str:  # pragma: no cover - interface
+        """Connected SSH endpoint identity including the server host key."""
+
+        raise NotImplementedError
+
     async def write_bytes(self, remote: str, data: bytes) -> None:  # pragma: no cover - interface
         """Write bytes to remote file atomically where possible."""
         tmp = remote + ".tmp"
@@ -315,6 +320,15 @@ class _AsyncSshTransport(SshTransport):
         if parent:
             await self.mkdir(parent, is_existing_ok=True)
         await sftp.put(str(local), remote)
+
+    async def endpoint_identity(self) -> str:
+        conn = await self._ensure_connection()
+        host_key = conn.get_server_host_key()
+        if host_key is None:
+            raise SshTransportError("Connected SSH endpoint did not expose a server host key")
+        fingerprint = host_key.get_fingerprint("sha256")
+        config = self._connection_config
+        return f"ssh://{config.user}@{config.host}:{config.port}?host_key={fingerprint}"
 
     async def _ensure_connection(self) -> SSHClientConnection:
         if self._conn is None:

@@ -144,8 +144,7 @@ def test_progress_sink_is_detached_without_a_consumer(tmp_path: Path) -> None:
 
     assert orchestrator.api_server is None
     assert orchestrator.progress_sink is None
-    assert orchestrator.game_runner is not None
-    assert orchestrator.game_runner.progress_queue is None
+    assert orchestrator._active_game_runners == set()  # noqa: SLF001
 
 
 @pytest.mark.asyncio

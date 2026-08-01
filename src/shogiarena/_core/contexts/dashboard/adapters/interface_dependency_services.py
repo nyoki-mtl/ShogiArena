@@ -51,8 +51,9 @@ class DashboardGameQueryAdapter:
         db_path: Path,
         *,
         game_name: str,
+        immutable: bool = False,
     ) -> rsshogi.record.Record | None:
-        return self.game_record_loader(db_path, game_name=game_name)
+        return self.game_record_loader(db_path, game_name=game_name, immutable=immutable)
 
     def build_games_raw_payload(
         self,

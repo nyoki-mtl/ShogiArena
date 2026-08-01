@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import random
-
 import pytest
 
 from shogiarena._core.contexts.game_session.application.orchestration.update_batch_execution_service import (
@@ -35,9 +33,9 @@ async def test_execute_runs_crn_batch_with_shared_sfen_per_pair() -> None:
             inflight_factor=1,
             is_crn_enabled=True,
             sfens=["s1", "s2"],
+            opening_indices=[0, 1],
             event_family="spsa",
         ),
-        rng=random.Random(7),
         tuned_plus=[1],
         tuned_minus=[2],
         tuned_plus_options={"P": 1},
@@ -77,9 +75,9 @@ async def test_execute_raises_when_sfens_are_empty() -> None:
                 inflight_factor=1,
                 is_crn_enabled=False,
                 sfens=[],
+                opening_indices=[],
                 event_family="spsa",
             ),
-            rng=random.Random(0),
             tuned_plus=[1],
             tuned_minus=[2],
             tuned_plus_options={},

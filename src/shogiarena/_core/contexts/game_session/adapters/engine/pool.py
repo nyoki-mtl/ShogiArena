@@ -276,8 +276,130 @@ class EnginePool:
             finally:
                 self._waiters.discard(wait_event)
 
-    async def release(self, engine_name: str, engine: AsyncUsiEngine, instance_override: str | None = None) -> None:
-        slot_key = self._slot_key(engine_name, instance_override)
+    async def acquire_from_mapping(
+        self,
+        engine_name: str,
+        config_mapping: Mapping[str, object],
+        *,
+        contract_digest: str,
+        instance_override: str | None = None,
+        cpu_affinity: tuple[int, ...] | None = None,
+        handshake_timeout: float = 10.0,
+    ) -> AsyncUsiEngine:
+        """封印済み engine contract 由来の mapping だけから engine を取得する。"""
+
+        slot_name = f"{engine_name}#spec-{contract_digest}"
+        slot_key = self._slot_key(slot_name, instance_override)
+        if slot_key not in self._locks:
+            self._locks[slot_key] = asyncio.Lock()
+
+        while True:
+            capacity_blocked_instance: str | None = None
+            async with self._locks[slot_key]:
+                pool = self.pools.setdefault(slot_key, [])
+                in_use = self.in_use.setdefault(slot_key, set())
+                while pool:
+                    engine = pool.pop()
+                    if engine.is_running:
+                        in_use.add(engine)
+                        self._log_pool_state(slot_key, "Reused engine from spec pool")
+                        return engine
+                    await engine.close()
+                    self._detach_engine_instance(engine)
+
+                if len(pool) + len(in_use) < self.max_instances:
+                    instance_id = self._resolve_instance_id(engine_name, instance_override)
+                    instance = self._resolve_instance(engine_name, instance_override)
+                    if instance is not None and instance.metrics.engine_processes >= instance.max_engine_capacity:
+                        capacity_blocked_instance = instance.name
+                    else:
+                        if instance is not None:
+                            instance.add_engine_processes(1)
+                        try:
+                            engine = await self._engine_factory_service.create_engine_from_mapping(
+                                config_mapping,
+                                timeout=handshake_timeout,
+                                engine_name=engine_name,
+                                instance_id=instance_id,
+                                instance_pool=self._instance_pool,
+                                cpu_affinity=cpu_affinity,
+                            )
+                        except BaseException:
+                            if instance is not None:
+                                instance.remove_engine_processes(1)
+                                self._notify_waiters()
+                            raise
+                        if instance is not None:
+                            self._engine_instance_ids[engine] = instance.name
+                        in_use.add(engine)
+                        self._log_pool_state(slot_key, "Created engine from spec")
+                        return engine
+
+            if capacity_blocked_instance is not None and await self._evict_idle_engine_for_instance(
+                capacity_blocked_instance,
+                exclude_slot_key=slot_key,
+            ):
+                self._notify_waiters()
+                continue
+            wait_event = asyncio.Event()
+            self._waiters.add(wait_event)
+            try:
+                try:
+                    await asyncio.wait_for(wait_event.wait(), timeout=0.5)
+                except TimeoutError:
+                    pass
+            finally:
+                self._waiters.discard(wait_event)
+
+    async def acquire_pair_from_mappings(
+        self,
+        a: tuple[str, Mapping[str, object], str, str | None, tuple[int, ...] | None, float],
+        b: tuple[str, Mapping[str, object], str, str | None, tuple[int, ...] | None, float],
+    ) -> tuple[AsyncUsiEngine, AsyncUsiEngine]:
+        """Spec-derived mapping の二局分を安定順で取得する。"""
+
+        first, second = (
+            (a, b)
+            if self._slot_key(f"{a[0]}#spec-{a[2]}", a[3]) <= self._slot_key(f"{b[0]}#spec-{b[2]}", b[3])
+            else (b, a)
+        )
+        first_engine = await self.acquire_from_mapping(
+            first[0],
+            first[1],
+            contract_digest=first[2],
+            instance_override=first[3],
+            cpu_affinity=first[4],
+            handshake_timeout=first[5],
+        )
+        try:
+            second_engine = await self.acquire_from_mapping(
+                second[0],
+                second[1],
+                contract_digest=second[2],
+                instance_override=second[3],
+                cpu_affinity=second[4],
+                handshake_timeout=second[5],
+            )
+        except BaseException:
+            await self.release(
+                first[0],
+                first_engine,
+                first[3],
+                contract_digest=first[2],
+            )
+            raise
+        return (first_engine, second_engine) if first is a else (second_engine, first_engine)
+
+    async def release(
+        self,
+        engine_name: str,
+        engine: AsyncUsiEngine,
+        instance_override: str | None = None,
+        *,
+        contract_digest: str | None = None,
+    ) -> None:
+        slot_name = f"{engine_name}#spec-{contract_digest}" if contract_digest is not None else engine_name
+        slot_key = self._slot_key(slot_name, instance_override)
         if slot_key not in self._locks:
             return
 

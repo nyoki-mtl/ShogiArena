@@ -28,8 +28,13 @@ export function createBootstrapManager(deps: BootstrapDeps): BootstrapManager {
     let bootstrapAttempts = 0;
     let bootstrapRetryTimer: number | null = null;
     let bootstrapPromise: Promise<void> | null = null;
+    let bootstrapAbortController: AbortController | null = null;
+    let generation = 0;
 
     const resetHydrationState = (): void => {
+        generation += 1;
+        bootstrapAbortController?.abort();
+        bootstrapAbortController = null;
         bootstrapStarted = false;
         bootstrapAttempts = 0;
         if (bootstrapRetryTimer !== null) {
@@ -64,6 +69,10 @@ export function createBootstrapManager(deps: BootstrapDeps): BootstrapManager {
         }
         bootstrapStarted = true;
         bootstrapAttempts += 1;
+        const attemptGeneration = generation;
+        const abortController = new AbortController();
+        bootstrapAbortController = abortController;
+        const signal = abortController.signal;
         const attempt = (async () => {
             const withBootstrapReporting = async <T>(promise: Promise<T>, context: string): Promise<T> => {
                 try {
@@ -78,17 +87,18 @@ export function createBootstrapManager(deps: BootstrapDeps): BootstrapManager {
 
             await Promise.all([
                 withBootstrapReporting(
-                    fetchers.requestSummary(true, undefined, { propagateError: true }),
+                    fetchers.requestSummary(true, signal, { propagateError: true }),
                     'SpsaApi.bootstrap(summary)',
                 ),
                 withBootstrapReporting(
-                    fetchers.requestParams(true, undefined, { propagateError: true }),
+                    fetchers.requestParams(true, signal, { propagateError: true }),
                     'SpsaApi.bootstrap(params)',
                 ),
                 withBootstrapReporting(
                     fetchers.requestUpdates({
                         limit: INITIAL_BOOTSTRAP_UPDATES_LIMIT,
                         offset: 0,
+                        signal,
                         propagateError: true,
                     }),
                     'SpsaApi.bootstrap(updates)',
@@ -97,6 +107,9 @@ export function createBootstrapManager(deps: BootstrapDeps): BootstrapManager {
             bootstrapAttempts = 0;
         })()
             .catch((error) => {
+                if (attemptGeneration !== generation) {
+                    return;
+                }
                 if (!isAbortError(error)) {
                     reportRecoverableFailure('SpsaApi.bootstrap', error, { notifyOffline: true });
                     scheduleBootstrapRetry();
@@ -104,8 +117,14 @@ export function createBootstrapManager(deps: BootstrapDeps): BootstrapManager {
                 throw error;
             })
             .finally(() => {
+                if (attemptGeneration !== generation) {
+                    return;
+                }
                 bootstrapStarted = false;
                 bootstrapPromise = null;
+                if (bootstrapAbortController === abortController) {
+                    bootstrapAbortController = null;
+                }
             });
 
         bootstrapPromise = attempt;
@@ -113,9 +132,12 @@ export function createBootstrapManager(deps: BootstrapDeps): BootstrapManager {
     };
 
     const beginBootstrapSequence = (): Promise<void> => {
+        const expectedGeneration = generation;
         return bootstrapInitialData()
             .then(() => {
-                startRealtimeStreams();
+                if (expectedGeneration === generation) {
+                    startRealtimeStreams();
+                }
             })
             .catch((error) => {
                 throw error;

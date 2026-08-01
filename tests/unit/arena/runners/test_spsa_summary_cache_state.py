@@ -1,18 +1,15 @@
 from __future__ import annotations
 
-import json
-
 from shogiarena._core.contexts.spsa.application.dashboard.summary_accumulator import SummaryAccumulator
 from shogiarena._core.contexts.spsa.application.dashboard.summary_cache_state import (
     SummaryCacheState,
     create_empty_summary_cache_state,
-    load_summary_cache_state,
-    persist_summary_cache_state,
+    refresh_summary_cache_state_from_events,
 )
 
 
-def test_summary_cache_state_roundtrip(tmp_path) -> None:
-    cache_path = tmp_path / "summary-cache.json"
+def test_summary_cache_state_rebuilds_from_authoritative_events(tmp_path) -> None:
+    events_path = tmp_path / "events.jsonl"
     state = SummaryCacheState(
         aggregates=SummaryAccumulator.from_dict(
             {
@@ -22,47 +19,72 @@ def test_summary_cache_state_roundtrip(tmp_path) -> None:
                 "step_history": [0.1, 0.2],
             }
         ),
-        session_uuid="session-1",
-        events_offset=10,
-        events_size=20,
+        events_offset=100,
+        events_size=100,
         events_mtime_ns=30,
     )
+    events_path.write_text(
+        '{"event":"game_result","session_uuid":"session-2","winner":1}\n',
+        encoding="utf-8",
+    )
 
-    assert persist_summary_cache_state(cache_path, cache_version=4, state=state) is True
-
-    loaded = load_summary_cache_state(cache_path, cache_version=4)
-
-    assert loaded is not None
-    assert loaded.session_uuid == "session-1"
-    assert loaded.events_offset == 10
-    assert loaded.events_size == 20
-    assert loaded.events_mtime_ns == 30
-    assert loaded.aggregates.wins == 3
-    assert loaded.aggregates.losses == 1
-    assert loaded.aggregates.updates_seen == {1, 2}
-    assert list(loaded.aggregates.step_history) == [0.1, 0.2]
+    assert refresh_summary_cache_state_from_events(
+        state,
+        events_path=events_path,
+    )
+    assert state.aggregates.wins == 1
+    assert state.aggregates.losses == 0
+    assert state.aggregates.updates_seen == set()
 
 
-def test_load_summary_cache_state_returns_none_for_version_mismatch(tmp_path) -> None:
-    cache_path = tmp_path / "summary-cache.json"
-    cache_path.write_text(json.dumps({"version": 1}), encoding="utf-8")
+def test_partial_jsonl_tail_is_consumed_once_after_newline_completion(tmp_path) -> None:
+    events_path = tmp_path / "events.jsonl"
+    state = create_empty_summary_cache_state()
+    complete = b'{"event":"update","update_idx":1}\n'
+    partial = b'{"event":"update","update_idx":2,"note":"'
+    utf8_bytes = "棋".encode()
+    events_path.write_bytes(complete + partial + utf8_bytes[:2])
 
-    assert load_summary_cache_state(cache_path, cache_version=2) is None
+    assert refresh_summary_cache_state_from_events(
+        state,
+        events_path=events_path,
+    )
+    partial_offset = len(complete)
+    assert state.events_offset == partial_offset
+    assert state.aggregates.updates_seen == {1}
+
+    with events_path.open("ab") as handle:
+        handle.write(utf8_bytes[2:] + b'"}\n')
+
+    assert refresh_summary_cache_state_from_events(
+        state,
+        events_path=events_path,
+    )
+    assert state.events_offset == events_path.stat().st_size
+    assert state.aggregates.updates_seen == {1, 2}
+
+    assert not refresh_summary_cache_state_from_events(
+        state,
+        events_path=events_path,
+    )
+    assert state.aggregates.updates_seen == {1, 2}
 
 
-def test_load_summary_cache_state_returns_none_for_malformed_json(tmp_path) -> None:
-    cache_path = tmp_path / "summary-cache.json"
-    cache_path.write_text("{bad", encoding="utf-8")
+def test_long_event_history_applies_only_appended_projection(tmp_path) -> None:
+    events_path = tmp_path / "events.jsonl"
+    state = create_empty_summary_cache_state()
+    historical_event = b'{"event":"game_result","winner":1}\n'
+    events_path.write_bytes(historical_event * 10_000)
 
-    assert load_summary_cache_state(cache_path, cache_version=1) is None
+    assert refresh_summary_cache_state_from_events(state, events_path=events_path)
+    historical_offset = state.events_offset
+    assert historical_offset == events_path.stat().st_size
+    assert state.aggregates.wins == 10_000
 
+    with events_path.open("ab") as handle:
+        handle.write(b'{"event":"game_result","winner":0}\n')
 
-def test_load_summary_cache_state_defaults_missing_aggregates(tmp_path) -> None:
-    cache_path = tmp_path / "summary-cache.json"
-    cache_path.write_text(json.dumps({"version": 1, "session_uuid": "abc"}), encoding="utf-8")
-
-    loaded = load_summary_cache_state(cache_path, cache_version=1)
-
-    assert loaded is not None
-    assert loaded.session_uuid == "abc"
-    assert loaded.aggregates.to_dict() == create_empty_summary_cache_state().aggregates.to_dict()
+    assert refresh_summary_cache_state_from_events(state, events_path=events_path)
+    assert state.events_offset > historical_offset
+    assert state.aggregates.wins == 10_000
+    assert state.aggregates.losses == 1

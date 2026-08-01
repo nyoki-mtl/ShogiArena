@@ -1,5 +1,4 @@
 import type { DashboardGamesApi } from '@/modules/games/types';
-import type { DashboardCore } from '@/types/dashboard';
 import type {
     DashboardSpsaPublicApi,
     NormalizedSpsaUpdateDetail,
@@ -35,14 +34,9 @@ import {
     refreshParameterSelection,
 } from '../components/updates';
 import { getCachedUpdateDetail, getUpdateFromCache, setUpdateExpanded, getState } from '../state';
-import { createDetailStreamController, createDetailStreamNotifier } from './detail-stream';
 import { getAnalysisPipeline } from './analysis-pipeline';
 import { createAnalysisStateMachine } from './analysis-state-machine';
-import {
-    SPSA_DETAIL_DEFAULT_WINDOW,
-    SPSA_DETAIL_REQUIRED_INCLUDES,
-    type SpsaDetailResolvedWindow,
-} from '@/modules/spsa/constants';
+import { SPSA_DETAIL_REQUIRED_INCLUDES, type SpsaDetailResolvedWindow } from '@/modules/spsa/constants';
 import type { JsonObject } from '@/types/shared';
 
 interface EventOptions {
@@ -66,7 +60,6 @@ const TAB_CONTENT_SELECTOR = '.tab-content';
 const ACTION_UPDATE_DETAIL = 'spsa:update-detail';
 const ACTION_SWITCH_TAB = 'spsa:switch-tab';
 const ACTION_FOCUS_PARAMETER = 'spsa:focus-parameter';
-const DEFAULT_DETAIL_STREAM_PARAMS = `view=slim&window=${SPSA_DETAIL_DEFAULT_WINDOW}&include=ltc_games`;
 const REQUIRED_DETAIL_INCLUDES = new Set<SpsaDetailInclude>(SPSA_DETAIL_REQUIRED_INCLUDES);
 const pendingDetailIncludes = new Map<number, Set<SpsaDetailInclude>>();
 const inflightDetailRequests = new Map<number, symbol>();
@@ -78,7 +71,6 @@ const isSpsaTabId = (value: string): value is SpsaTabId => (SPSA_TABS as readonl
 type SpsaWindow = Window & {
     DashboardGames?: DashboardGamesApi;
     DashboardNavigation?: DashboardNavigationApi;
-    DashboardCore?: DashboardCore;
 };
 
 function openVariantGameInLiveView(gameId: string, status: string): void {
@@ -135,7 +127,6 @@ export function setupSpsaEvents({ root, api, state }: EventOptions): SpsaEventBi
             const idx = row?.dataset.updateIdx ? Number(row.dataset.updateIdx) : Number(target.dataset.updateIdx);
             if (Number.isFinite(idx)) {
                 void handleUpdateRowClick(api, state, idx);
-                syncDetailStreamFocus();
             }
             return;
         }
@@ -164,50 +155,10 @@ export function setupSpsaEvents({ root, api, state }: EventOptions): SpsaEventBi
     renderUpdatesLoading();
     root.addEventListener('click', onClick);
 
-    const detailStreamExperiment = api.experimental?.detailStream;
-    const detailStreamAutoStart = detailStreamExperiment?.autoStart ?? false;
-    const detailStreamNotifier = createDetailStreamNotifier(window.DashboardCore);
-    const detailStream = detailStreamExperiment?.enabled
-        ? createDetailStreamController({
-              state,
-              api,
-              endpoint: detailStreamExperiment.endpoint,
-              params: detailStreamExperiment.params ?? DEFAULT_DETAIL_STREAM_PARAMS,
-              autoStreamIdle: detailStreamAutoStart,
-              notifier: detailStreamNotifier,
-          })
-        : null;
-    if (detailStream && detailStreamAutoStart) {
-        detailStream.start();
-    }
-
-    const syncDetailStreamFocus = () => {
-        if (!detailStream || detailStreamAutoStart) {
-            return;
-        }
-        const targets = Array.from(state.updates.expanded);
-        detailStream.updateTargets(targets);
-        if (targets.length > 0) {
-            detailStream.start();
-        }
-    };
-
-    const clearDetailStreamFocus = () => {
-        if (!detailStream || detailStreamAutoStart) {
-            return;
-        }
-        detailStream.updateTargets([]);
-    };
-
     const switchTabBinding = (tabName: SpsaTabId) => {
         switchTab(root, tabName, api, state);
         activeTab = tabName;
         api.notifyTabChange?.(tabName);
-        if (tabName === 'updates') {
-            syncDetailStreamFocus();
-        } else {
-            clearDetailStreamFocus();
-        }
     };
 
     const resolveInitialTab = (): SpsaTabId => {
@@ -246,7 +197,6 @@ export function setupSpsaEvents({ root, api, state }: EventOptions): SpsaEventBi
         api.ensureDetailHydration?.('updates');
         renderUpdatesTable(state);
         void handleUpdateRowClick(api, state, updateIdx);
-        syncDetailStreamFocus();
         if (options?.scroll === false) return;
         renderUpdatesTable(state);
         const row = root.querySelector<HTMLElement>(`.update-row[data-update-idx="${updateIdx}"]`);
@@ -263,8 +213,6 @@ export function setupSpsaEvents({ root, api, state }: EventOptions): SpsaEventBi
     return {
         destroy: () => {
             root.removeEventListener('click', onClick);
-            detailStream?.updateTargets([]);
-            detailStream?.stop();
             // Stop the analysis state machines and any pending retry so stale timers cannot fire
             // against a torn-down binding (the machines clear their own warming/error timers).
             correlationStateMachine.destroy();

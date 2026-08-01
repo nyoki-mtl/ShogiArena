@@ -24,6 +24,7 @@ shogiarena [global-options] <command> ...
 | `results` | run 結果の集計と provenance 検証 |
 | `dashboard` | 保存済み run のダッシュボード表示 |
 | `replay-position` | 保存済み局面の再検索 |
+| `worker-bundle` | Remote worker bundleとpreplaced mappingの生成 |
 
 ## `config`
 
@@ -37,6 +38,19 @@ shogiarena config repo set yaneuraou \
 ```
 
 `config init` は標準の `output_dir`、`engine_dir`、artifact 用の設定を作成します。
+
+## `worker-bundle`
+
+```bash
+shogiarena worker-bundle build --output /absolute/path/worker-bundle.zip
+shogiarena worker-bundle preplaced-map \
+  --engine ENGINE_NAME LOCAL_BINARY /absolute/remote/engine \
+  --resource ENGINE_NAME LOCAL_FILE_OR_DIRECTORY /absolute/remote/resource
+```
+
+`preplaced-map`はengine binaryとpath resourceをhashし、`--provision preplaced`で使う
+`SHOGIARENA_REMOTE_PREPLACED_RESOURCES`の単一行JSONを標準出力へ返します。
+`--engine`と`--resource`は繰り返し指定できます。
 
 ## `run`
 
@@ -62,7 +76,7 @@ shogiarena run tournament [config.yaml] [options]
 | `--experiment-name NAME` | 自動生成の run 名を上書きする |
 | `--run-dir PATH` | run ディレクトリを明示指定する |
 | `--no-resume` | 再開せず新規に実行する |
-| `--provision {none,force}` | SSH インスタンスへの配置を制御する |
+| `--provision {cas,preplaced}` | SSH resourceをCAS配置またはpath/digest検証済み既配置として扱う |
 | `--git-worktree {strict,clean,allow-dirty}` | artifact build 前の Git worktree の扱いを指定する |
 | `--path-preflight {off,warn,error}` | パス系 USI オプションを事前検査する |
 | `--engine KEY=VALUE ...` | engine 定義を CLI から追加する（repeatable） |

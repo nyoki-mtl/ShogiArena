@@ -89,6 +89,53 @@
         @apply mt-1 text-xs text-dashboard-muted;
     }
 
+    #spsaTab .spsa-operational {
+        @apply rounded-xl bg-dashboard-surface p-5;
+        box-shadow: var(--shadow-dashboard-card);
+    }
+
+    #spsaTab .spsa-operational__header {
+        @apply mb-4 flex flex-wrap items-start justify-between gap-3;
+    }
+
+    #spsaTab .spsa-operational__header h3 {
+        @apply text-base font-semibold text-dashboard-heading;
+    }
+
+    #spsaTab .spsa-operational__header p {
+        @apply mt-1 text-xs text-dashboard-muted;
+    }
+
+    #spsaTab .spsa-operational__health {
+        @apply rounded-full bg-dashboard-surfaceMuted px-3 py-1 text-xs font-semibold text-dashboard-muted;
+    }
+
+    #spsaTab .spsa-operational__health[data-status="healthy"] {
+        @apply bg-emerald-100 text-emerald-800;
+    }
+
+    #spsaTab .spsa-operational__health[data-status="degraded"] {
+        @apply bg-amber-100 text-amber-800;
+    }
+
+    #spsaTab .spsa-operational__grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        @apply gap-px overflow-hidden rounded-lg bg-dashboard-border;
+    }
+
+    #spsaTab .spsa-operational__grid > div {
+        @apply min-w-0 bg-dashboard-surfaceMuted p-3;
+    }
+
+    #spsaTab .spsa-operational__grid dt {
+        @apply text-xs font-medium uppercase tracking-wide text-dashboard-muted;
+    }
+
+    #spsaTab .spsa-operational__grid dd {
+        @apply mt-1 break-words font-mono text-xs text-dashboard-heading;
+    }
+
     #spsaTab .overview-charts {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));

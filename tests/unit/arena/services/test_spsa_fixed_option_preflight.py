@@ -1,12 +1,15 @@
 import json
 import textwrap
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
+from shogiarena._core.contexts.instances.application.instance_config_models import InstanceConfig, InstanceType
+from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.spsa.adapters.fixed_option_preflight import (
     FIXED_OPTION_PREFLIGHT_FILENAME,
+    run_verified_spsa_fixed_option_preflight,
     run_yaneuraou_fixed_option_preflight,
 )
 from shogiarena._core.contexts.spsa.adapters.runner_session_lifecycle import prepare_spsa_domain_inputs
@@ -18,6 +21,8 @@ class _Engine:
     name: str | None
     engine_path: Path | None
     artifact: str | None = None
+    options: dict[str, object] = field(default_factory=dict)
+    instance_id: str | None = None
 
 
 def _write(path: Path, content: str) -> Path:
@@ -101,6 +106,7 @@ def test_preflight_missing_option_files_passes_with_checked_engine(tmp_path: Pat
 
     assert report.has_conflicts is False
     payload = _report_payload(tmp_path)
+    assert payload["status"] == "passed"
     engines = payload["engines"]
     assert isinstance(engines, list)
     assert engines[0]["status"] == "checked"
@@ -133,23 +139,193 @@ def test_preflight_non_conflicting_fixed_options_pass(tmp_path: Path) -> None:
     assert option_files[0]["conflicts"] == []
 
 
-def test_preflight_skips_remote_engine_path(tmp_path: Path) -> None:
-    engine_config = _write_engine_config(tmp_path, "ssh://worker.example/bin/YaneuraOu")
+def test_dry_run_preflight_treats_named_local_instance_as_local(tmp_path: Path) -> None:
+    engine_binary = _write(tmp_path / "engine" / "YaneuraOu", "")
+    engine_config = _write_engine_config(tmp_path, str(engine_binary))
+    pool = InstancePool()
+    pool.add_instance(
+        InstanceConfig(
+            name="local-worker",
+            type=InstanceType.LOCAL,
+            engine_dir="",
+            slots=1,
+        )
+    )
 
     report = run_yaneuraou_fixed_option_preflight(
-        engines=[_Engine(name="remote", engine_path=engine_config)],
+        engines=[_Engine(name="local", engine_path=engine_config, instance_id="local-worker")],
         target_option_names=["Tune.Param1"],
         run_dir=tmp_path,
         output_dir=tmp_path / "out",
         engine_dir=tmp_path / "engines",
+        instance_pool=pool,
     )
 
-    assert report.has_conflicts is False
+    assert report.status == "passed"
+    engines = _report_payload(tmp_path)["engines"]
+    assert isinstance(engines, list)
+    runtime_evidence = engines[0]["runtime_evidence"]
+    assert runtime_evidence == {
+        "scope": "local_runtime",
+        "status": "covered_by_local_source",
+        "option_files": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_fresh_preflight_treats_named_local_instance_as_local(tmp_path: Path) -> None:
+    engine_binary = _write(tmp_path / "engine" / "YaneuraOu", "")
+    engine_config = _write_engine_config(tmp_path, str(engine_binary))
+    pool = InstancePool()
+    pool.add_instance(
+        InstanceConfig(
+            name="local-worker",
+            type=InstanceType.LOCAL,
+            engine_dir="",
+            slots=1,
+        )
+    )
+
+    report = await run_verified_spsa_fixed_option_preflight(
+        engines=[_Engine(name="local", engine_path=engine_config, instance_id="local-worker")],
+        target_option_names=["Tune.Param1"],
+        run_dir=tmp_path,
+        output_dir=tmp_path / "out",
+        engine_dir=tmp_path / "engines",
+        instance_pool=pool,
+    )
+
+    assert report.status == "passed"
+    assert report.engines[0].runtime_evidence_scope == "local_runtime"
+    assert report.engines[0].runtime_evidence_status == "covered_by_local_source"
+
+
+def test_preflight_rejects_unverified_remote_engine_path(tmp_path: Path) -> None:
+    engine_config = _write_engine_config(tmp_path, "ssh://worker.example/bin/YaneuraOu")
+
+    with pytest.raises(ValueError, match="remote execution requires verified runtime fixed-option files"):
+        run_yaneuraou_fixed_option_preflight(
+            engines=[_Engine(name="remote", engine_path=engine_config)],
+            target_option_names=["Tune.Param1"],
+            run_dir=tmp_path,
+            output_dir=tmp_path / "out",
+            engine_dir=tmp_path / "engines",
+        )
+
     payload = _report_payload(tmp_path)
+    assert payload["status"] == "unverified_remote"
     engines = payload["engines"]
     assert isinstance(engines, list)
     assert engines[0]["status"] == "skipped"
     assert engines[0]["reason"] == "remote_engine_path"
+    assert engines[0]["local_source_evidence"]["status"] == "unavailable"
+    assert engines[0]["runtime_evidence"] == {
+        "scope": "remote_runtime",
+        "status": "unverified",
+        "option_files": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_remote_runtime_missing_option_files_are_verified(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine_binary = _write(tmp_path / "engine" / "YaneuraOu", "")
+    engine_config = _write_engine_config(tmp_path, str(engine_binary))
+    pool = InstancePool()
+    pool.add_instance(
+        InstanceConfig(
+            name="worker",
+            type=InstanceType.SSH,
+            engine_dir="",
+            project_root="/srv/arena",
+            host="worker.example",
+            user="arena",
+        )
+    )
+
+    class _Transport:
+        def __init__(self) -> None:
+            self.commands: list[str] = []
+
+        async def connect(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+        async def run(self, command: str) -> tuple[int, str, str]:
+            self.commands.append(command)
+            return 44, "", ""
+
+    transport = _Transport()
+    monkeypatch.setattr(
+        "shogiarena._core.contexts.spsa.adapters.fixed_option_preflight.create_transport",
+        lambda _instance: transport,
+    )
+
+    report = await run_verified_spsa_fixed_option_preflight(
+        engines=[_Engine(name="remote", engine_path=engine_config, instance_id="worker")],
+        target_option_names=["Tune.Param1"],
+        run_dir=tmp_path,
+        output_dir=tmp_path / "out",
+        engine_dir=tmp_path / "engines",
+        instance_pool=pool,
+    )
+
+    assert report.status == "passed"
+    payload = _report_payload(tmp_path)
+    engines = payload["engines"]
+    assert isinstance(engines, list)
+    assert engines[0]["runtime_evidence"]["status"] == "verified"
+    runtime_files = engines[0]["runtime_evidence"]["option_files"]
+    assert [item["status"] for item in runtime_files] == ["missing", "missing"]
+    assert runtime_files[0]["path"] == "/srv/arena/data/engines/engine/engine_options.txt"
+    assert len(transport.commands) == 2
+
+
+def test_preflight_fails_when_base_static_option_conflicts(tmp_path: Path) -> None:
+    engine_binary = _write(tmp_path / "engine" / "YaneuraOu", "")
+    engine_config = _write_engine_config(tmp_path, str(engine_binary))
+
+    with pytest.raises(ValueError, match="config static options"):
+        run_yaneuraou_fixed_option_preflight(
+            engines=[
+                _Engine(
+                    name="tuned",
+                    engine_path=engine_config,
+                    options={"tune.param1": 3},
+                )
+            ],
+            target_option_names=["Tune.Param1"],
+            run_dir=tmp_path,
+            output_dir=tmp_path / "out",
+            engine_dir=tmp_path / "engines",
+        )
+
+    payload = _report_payload(tmp_path)
+    assert payload["status"] == "conflict"
+    engines = payload["engines"]
+    assert isinstance(engines, list)
+    assert engines[0]["static_options"]["conflicts"] == ["Tune.Param1"]
+
+
+def test_preflight_parse_failure_writes_failed_artifact(tmp_path: Path) -> None:
+    engine_config = _write(tmp_path / "cfg" / "engine.yaml", "- invalid\n")
+
+    with pytest.raises(TypeError):
+        run_yaneuraou_fixed_option_preflight(
+            engines=[_Engine(name="tuned", engine_path=engine_config)],
+            target_option_names=["Tune.Param1"],
+            run_dir=tmp_path,
+            output_dir=tmp_path / "out",
+            engine_dir=tmp_path / "engines",
+        )
+
+    payload = _report_payload(tmp_path)
+    assert payload["status"] == "failed"
+    assert payload["failure"]["type"] == "TypeError"
 
 
 def test_prepare_spsa_domain_inputs_runs_fixed_option_preflight(tmp_path: Path) -> None:

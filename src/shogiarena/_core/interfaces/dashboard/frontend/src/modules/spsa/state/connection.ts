@@ -26,8 +26,6 @@ export function cancelOngoingRequests(): void {
         controller.abort();
     }
     state.connection.abortControllers.clear();
-    state.connection.refreshInFlight = false;
-    state.connection.refreshPromise = null;
     state.connection.queuedRefresh = null;
 }
 

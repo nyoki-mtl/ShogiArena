@@ -31,6 +31,8 @@ def _ensure_spsa_dir(run_dir: Path) -> Path:
 
 def append_event(run_dir: Path, session_uuid: str, payload: dict[str, JsonValue]) -> None:
     data: JsonObject = {str(key): value for key, value in payload.items()}
+    data.setdefault("projection_schema", "shogiarena.spsa.runtime-compat-export.v1")
+    data.setdefault("projection_source", "runtime-cache; ledger remains authoritative")
     data.setdefault("session_uuid", session_uuid)
     data.setdefault("ts", int(time.time() * 1000))
 
@@ -124,13 +126,14 @@ def update_index_json(
     metadata["last_update_idx"] = max(coerce_int(metadata.get("last_update_idx")) or -1, update_idx)
     metadata["total_updates"] = len(updates_list)
     metadata["last_updated"] = timestamp
+    metadata["projection_schema"] = "shogiarena.spsa.runtime-compat-export.v1"
+    metadata["projection_source"] = "runtime-cache; ledger remains authoritative"
     config_map: JsonObject = {}
     normalized_config = json_serialize(config)
     if isinstance(normalized_config, dict):
         config_map = {str(key): value for key, value in normalized_config.items()}
     metadata["int_rounding_policy"] = config_map.get("int_rounding")
     metadata["crn_used"] = config_map.get("crn_enabled")
-    metadata["update_mode"] = config_map.get("update_mode")
 
     write_json_atomic(index_path, update_data)
 
@@ -182,6 +185,8 @@ def record_ltc_result(
         if isinstance(normalized_metadata, dict):
             metadata = {str(key): value for key, value in normalized_metadata.items()}
     index_data["metadata"] = metadata
+    metadata["projection_schema"] = "shogiarena.spsa.runtime-compat-export.v1"
+    metadata["projection_source"] = "runtime-cache; ledger remains authoritative"
 
     metadata["ltc_regression"] = {
         "last_update_idx": out_record.get("update_idx"),

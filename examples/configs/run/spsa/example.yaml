@@ -3,7 +3,8 @@
 # SPSA example targeting the generic ShogiArena SPSA space protocol.
 
 engines:
-  - artifact: "rshogi-az/local"
+  # 実行前に、使用するSPSA対応engineのrepo名とcommit SHAへ置き換えてください。
+  - artifact: "your-spsa-engine/0000000000000000000000000000000000000000"
     options:
       Threads: 1
       USI_Hash: 256

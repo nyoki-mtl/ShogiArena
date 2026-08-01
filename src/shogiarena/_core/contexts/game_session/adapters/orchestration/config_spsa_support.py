@@ -6,7 +6,6 @@ import logging
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -44,17 +43,25 @@ def _get_spsa_int(node: Mapping[str, JsonValue], name: str, default: int) -> int
     raw = node.get(name)
     if raw is None:
         return default
-    parsed = coerce_int(raw)
+    parsed = _coerce_spsa_integral_int(raw)
     if parsed is None:
         raise TypeError(f"spsa.{name} must be an integer")
     return parsed
+
+
+def _coerce_spsa_integral_int(value: JsonValue | None) -> int | None:
+    """Parse an SPSA integer without truncating fractional numeric values."""
+
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    return coerce_int(value)
 
 
 def _get_spsa_optional_int(node: Mapping[str, JsonValue], name: str) -> int | None:
     raw = node.get(name)
     if raw is None:
         return None
-    parsed = coerce_int(raw)
+    parsed = _coerce_spsa_integral_int(raw)
     if parsed is None:
         raise TypeError(f"spsa.{name} must be an integer when provided")
     return parsed
@@ -136,6 +143,8 @@ def _map_engine(x: Mapping[str, JsonValue]) -> EngineConfig:
 
     if has_art:
         art = str(x["artifact"]).strip()
+        if not re.fullmatch(r"[A-Za-z0-9._-]+/[A-Fa-f0-9]{6,40}", art):
+            raise ValueError("Engine artifact must be '<repo>/<commit_hash>' (hex)")
         bo = coerce_engine_option_map(x.get("build_options"), field_name="engines[0].build_options")
 
         # Build merged options: overlay -> options_overlays -> inline options(dict)
@@ -220,21 +229,3 @@ def _warn_unknown_keys(section: Mapping[str, JsonValue], allowed: set[str], *, l
     extras = sorted(k for k in section.keys() if k not in allowed)
     if extras:
         logger.warning("Unknown keys in %s: %s", label, ", ".join(extras))
-
-
-def _parse_int_rounding(raw: JsonValue | None) -> Literal["none", "stochastic"]:
-    normalized = (coerce_str(raw) or "none").lower()
-    if normalized == "none":
-        return "none"
-    if normalized == "stochastic":
-        return "stochastic"
-    raise ValueError("spsa.int_rounding must be 'none' or 'stochastic'")
-
-
-def _parse_update_mode(raw: JsonValue | None) -> Literal["immediate", "barrier"]:
-    normalized = (coerce_str(raw) or "immediate").lower()
-    if normalized == "immediate":
-        return "immediate"
-    if normalized == "barrier":
-        return "barrier"
-    raise ValueError("spsa.update_mode must be 'immediate' or 'barrier'")

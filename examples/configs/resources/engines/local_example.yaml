@@ -16,6 +16,8 @@ engine_args:                                    # 任意。既定: []
 environment:                                    # 任意。既定: {}
   OMP_NUM_THREADS: "2"                          # 例: OpenMP の使用コア数を制限
   # LD_LIBRARY_PATH: "./.repos/MyEngine/lib"   # 例: 依存ライブラリの検索パス（相対パスまたは絶対パス）
+# secret_environment:                           # 任意。child env key: per-job secret reference
+#   ENGINE_LICENSE: "SHOGIARENA_SECRET_ENGINE_LICENSE" # 値そのものはconfig/spec/manifestへ書かない
 options:                                        # 任意。既定: {} (USI setoption に変換)
   Threads: 2                                    # 例: スレッド数。値は文字列化されます
   MultiPV: 1

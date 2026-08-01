@@ -22,10 +22,17 @@ class EngineTraceLoggerNamesPort(Protocol):
     def engine_trace_logger_names(self) -> tuple[str, ...]: ...
 
 
+class SpsaDryRunPreflightPort(Protocol):
+    """Port for production-composition SPSA dry-run checks."""
+
+    def preflight_dry_run(self, config: Any, *, work_dir: Path, instance_pool: object | None) -> None: ...
+
+
 @runtime_checkable
 class SpsaRuntimePort(
     SessionRuntimePort[Any, SpsaRunConfigBuildRequest],
     EngineTraceLoggerNamesPort,
+    SpsaDryRunPreflightPort,
     Protocol,
 ):
     """Port for SPSA config parsing and session execution."""

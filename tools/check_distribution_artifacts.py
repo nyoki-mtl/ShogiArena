@@ -17,6 +17,9 @@ STATIC_ROOT = f"{PACKAGE_ROOT}/_core/interfaces/dashboard/static"
 MANIFEST_PATH = f"{STATIC_ROOT}/dist/.vite/manifest.json"
 BUILD_META_PATH = f"{STATIC_ROOT}/build-meta.json"
 NOTICES_PATH = f"{STATIC_ROOT}/THIRD_PARTY_NOTICES.md"
+WORKER_BUILD_PYPROJECT_PATH = f"{PACKAGE_ROOT}/_worker_bundle_resources/pyproject.toml"
+WORKER_BUILD_LOCK_PATH = f"{PACKAGE_ROOT}/_worker_bundle_resources/uv.lock"
+WORKER_BUILD_README_PATH = f"{PACKAGE_ROOT}/_worker_bundle_resources/README.md"
 TSSHOGI_LICENSE_PATH = f"{STATIC_ROOT}/licenses/tsshogi-LICENSE"
 ZOD_LICENSE_PATH = f"{STATIC_ROOT}/licenses/zod-LICENSE"
 TSSHOGI_LICENSE_SHA256 = "c0ca95de4fb3a389348aa3b19a0a24c3fe154fca7d37a33081e47babb6a7d9e5"
@@ -76,6 +79,9 @@ def _inspect_wheel(wheel_path: Path) -> None:
             MANIFEST_PATH,
             BUILD_META_PATH,
             NOTICES_PATH,
+            WORKER_BUILD_PYPROJECT_PATH,
+            WORKER_BUILD_LOCK_PATH,
+            WORKER_BUILD_README_PATH,
             TSSHOGI_LICENSE_PATH,
             ZOD_LICENSE_PATH,
         }
@@ -136,6 +142,9 @@ def _smoke_extracted_wheel(wheel_path: Path) -> None:
         sys.path.insert(0, str(temp_dir))
         try:
             import shogiarena
+            from shogiarena._core.contexts.game_session.application.worker_bundle_builder import (
+                build_worker_bundle,
+            )
             from shogiarena._core.interfaces.dashboard.assets_writer import write_dashboard_assets
             from shogiarena._core.interfaces.dashboard.static_handler import StaticAssetsHandler
 
@@ -158,6 +167,15 @@ def _smoke_extracted_wheel(wheel_path: Path) -> None:
                 raise RuntimeError("Extracted wheel failed to materialize dashboard index.html")
             if not (run_dashboard / "static" / "dist" / ".vite" / "manifest.json").is_file():
                 raise RuntimeError("Extracted wheel failed to materialize dashboard static assets")
+
+            worker_bundle = build_worker_bundle(
+                output_path=(temp_dir / "runtime" / "remote-worker-bundle.zip").resolve(),
+            )
+            if worker_bundle.manifest.package_version != shogiarena.__version__:
+                raise RuntimeError(
+                    "Extracted wheel produced a worker bundle with a different package version: "
+                    f"wheel={shogiarena.__version__}, worker={worker_bundle.manifest.package_version}"
+                )
 
             _check_installed_wheel_typing(temp_dir)
         finally:
@@ -240,6 +258,7 @@ def _inspect_sdist(sdist_path: Path) -> None:
         f"{root}/src/{NOTICES_PATH}",
         f"{root}/src/{TSSHOGI_LICENSE_PATH}",
         f"{root}/src/{ZOD_LICENSE_PATH}",
+        f"{root}/uv.lock",
     }
     missing = sorted(required - names)
     if missing:

@@ -21,6 +21,7 @@ _DIRECT_ENGINE_RUNTIME_KEYS = (
     "working_directory",
     "engine_args",
     "environment",
+    "secret_environment",
     "go_options",
     "build_options",
     "enable_early_ponder",
@@ -58,6 +59,7 @@ def build_cli_config_payload(
     experiment_name: str | None,
     default_experiment: str,
     label: str,
+    base_dir: Path | None = None,
 ) -> ConfigPayload:
     payload: ConfigPayload = dict(base or {})
     if experiment_name:
@@ -76,7 +78,7 @@ def build_cli_config_payload(
         if tokens:
             apply_section_overrides(payload, section, tokens)
 
-    _normalize_rules_paths(payload)
+    _normalize_rules_paths(payload, base_dir=base_dir or Path.cwd())
     return payload
 
 
@@ -233,7 +235,7 @@ def _normalize_engine_overlays(engines: list[ConfigPayload]) -> None:
         engine["options_overlays"] = resolved
 
 
-def _normalize_rules_paths(payload: ConfigPayload) -> None:
+def _normalize_rules_paths(payload: ConfigPayload, *, base_dir: Path) -> None:
     rules = payload.get("rules")
     if not isinstance(rules, dict):
         return
@@ -244,6 +246,9 @@ def _normalize_rules_paths(payload: ConfigPayload) -> None:
     initial_positions: JsonObject = {str(key): json_serialize(value) for key, value in initial_positions_raw.items()}
     source = initial_positions.get("source")
     if isinstance(source, str) and source.strip():
-        initial_positions["source"] = str(Path(resolve_path_like(source)).resolve())
+        resolved_source = Path(resolve_path_like(source))
+        if not resolved_source.is_absolute():
+            resolved_source = base_dir / resolved_source
+        initial_positions["source"] = str(resolved_source.resolve())
         rules_map["initial_positions"] = initial_positions
         payload["rules"] = rules_map

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import rsshogi
 import rsshogi.record
@@ -19,14 +20,15 @@ from shogiarena._core.contexts.game_session.adapters.orchestration.game_executio
 from shogiarena._core.contexts.game_session.adapters.orchestration.game_item_builders import (
     build_spsa_game_items,
 )
+from shogiarena._core.contexts.game_session.adapters.orchestration.participation_records import (
+    attach_participation_metadata,
+)
 from shogiarena._core.contexts.game_session.application.orchestration.completion_emission_service import (
     OrchestratorCompletionEmissionRequest,
 )
 from shogiarena._core.contexts.game_session.application.orchestration.concurrent_executor import numeric_game_id
 from shogiarena._core.contexts.game_session.application.orchestration.engine_option_hook_service import (
-    SpsaEngineOptionHookPort,
     SpsaEngineOptionHookRequest,
-    apply_engine_option_hooks,
 )
 from shogiarena._core.contexts.game_session.application.orchestration.event_payload_service import (
     build_status_payload,
@@ -59,9 +61,21 @@ from shogiarena._core.contexts.instances.ports.orchestrator_primitives import (
     make_role_pool_key,
 )
 from shogiarena._core.contexts.spsa.adapters.runtime.tokens import phase_symbol, variant_token
+from shogiarena._core.contexts.spsa.domain.observation import (
+    SpsaIncompleteObservationError,
+    SpsaObservationError,
+    winner_code_from_result,
+)
+from shogiarena._core.contexts.spsa.domain.participation_identity import (
+    SpsaParticipationIdentity,
+    attach_spsa_participation_identity,
+    parse_spsa_participation_identity,
+)
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry, PhaseLiteral, SpsaGamePayload
+from shogiarena._core.contexts.spsa.ports.ledger_ports import SpsaLedgerRuntimePort
 from shogiarena._core.shared.kernel.game_results import GameResult, game_result_name
 from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.participation_records import extract_participation
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
 
 logger = logging.getLogger(__name__)
@@ -85,10 +99,15 @@ class SpsaOrchestratorGameplayMixin:
     _game_execution_service: Any
     _completion_emission_service: Any
     extra_options: JsonObject | None
+    session_context: Any
+    _ledger_runtime: SpsaLedgerRuntimePort
 
     _make_rng: Any
     _build_engine_option_map: Any
+    _build_engine_option_maps_for_pair: Any
     _make_game_id: Any
+    _reserve_pending_game: Any
+    _stop_event: Any
     _append_spsa_event: Any
     _run_remote_game: Any
     _emit_game_completion: Any
@@ -108,43 +127,72 @@ class SpsaOrchestratorGameplayMixin:
         tuned_option_map: JsonObject | None = None,
         baseline_option_map: JsonObject | None = None,
         event_family: str = "spsa",
+        pair_id: str,
         time_control_override: TimeControlLimits | None = None,
     ) -> tuple[float, rsshogi.record.Record, rsshogi.record.Record]:
         """Play a tuned-vs-baseline pair (tuned black/white) and return mean score."""
-        black_reserved = reserved_ids[0] if reserved_ids else None
-        white_reserved = reserved_ids[1] if reserved_ids else None
-        r_b, gi_b = await self._run_game(
-            start_sfen=start_sfen,
-            tuned_params=tuned_params,
-            current_params=current_params,
-            worker_idx=worker_idx,
-            is_tuned_as_black=True,
-            update_idx=update_idx,
-            phase=phase,
-            preassigned_game_id=black_reserved,
-            tuned_variant_token=tuned_variant_token,
-            baseline_variant_token=baseline_variant_token,
-            tuned_option_map=tuned_option_map,
-            baseline_option_map=baseline_option_map,
-            event_family=event_family,
-            time_control_override=time_control_override,
-        )
-        r_w, gi_w = await self._run_game(
-            start_sfen=start_sfen,
-            tuned_params=tuned_params,
-            current_params=current_params,
-            worker_idx=worker_idx,
-            is_tuned_as_black=False,
-            update_idx=update_idx,
-            phase=phase,
-            preassigned_game_id=white_reserved,
-            tuned_variant_token=tuned_variant_token,
-            baseline_variant_token=baseline_variant_token,
-            tuned_option_map=tuned_option_map,
-            baseline_option_map=baseline_option_map,
-            event_family=event_family,
-            time_control_override=time_control_override,
-        )
+        black_reserved = reserved_ids[0] if reserved_ids else f"{pair_id}-black"
+        white_reserved = reserved_ids[1] if reserved_ids else f"{pair_id}-white"
+        retry_available = True
+
+        async def run_side(*, is_tuned_as_black: bool, reserved_id: str) -> tuple[int, rsshogi.record.Record]:
+            nonlocal retry_available
+
+            async def execute(game_id: str) -> tuple[int, rsshogi.record.Record]:
+                return await self._run_game(
+                    start_sfen=start_sfen,
+                    tuned_params=tuned_params,
+                    current_params=current_params,
+                    worker_idx=worker_idx,
+                    is_tuned_as_black=is_tuned_as_black,
+                    update_idx=update_idx,
+                    phase=phase,
+                    preassigned_game_id=game_id,
+                    tuned_variant_token=tuned_variant_token,
+                    baseline_variant_token=baseline_variant_token,
+                    tuned_option_map=tuned_option_map,
+                    baseline_option_map=baseline_option_map,
+                    event_family=event_family,
+                    pair_id=pair_id,
+                    time_control_override=time_control_override,
+                )
+
+            try:
+                return await execute(reserved_id)
+            except SpsaIncompleteObservationError:
+                raise
+            except SpsaObservationError as first_error:
+                if retry_available:
+                    retry_available = False
+                    retry_id = f"{reserved_id}-retry1"
+                    self._reserve_pending_game(
+                        update_idx=update_idx,
+                        phase=phase,
+                        is_tuned_as_black=is_tuned_as_black,
+                        worker_idx=worker_idx,
+                        event_family=event_family,
+                        game_id=retry_id,
+                    )
+                    try:
+                        return await execute(retry_id)
+                    except SpsaIncompleteObservationError:
+                        raise
+                    except SpsaObservationError as retry_error:
+                        failure = retry_error
+                else:
+                    failure = first_error
+                self._ledger_runtime.record_variant_quarantine(
+                    update_idx=update_idx,
+                    pair_id=pair_id,
+                    variant_id=variant_token(update_idx) + phase_symbol(phase),
+                    failure_classification=str(failure),
+                )
+                if failure is first_error:
+                    raise failure from None
+                raise failure from first_error
+
+        r_b, gi_b = await run_side(is_tuned_as_black=True, reserved_id=black_reserved)
+        r_w, gi_w = await run_side(is_tuned_as_black=False, reserved_id=white_reserved)
         score = ((-1.0, +1.0, 0.0)[r_b] + (-1.0, +1.0, 0.0)[r_w]) / 2.0
         return score, gi_b, gi_w
 
@@ -164,6 +212,7 @@ class SpsaOrchestratorGameplayMixin:
         tuned_option_map: JsonObject | None = None,
         baseline_option_map: JsonObject | None = None,
         event_family: str = "spsa",
+        pair_id: str,
         time_control_override: TimeControlLimits | None = None,
     ) -> tuple[int, rsshogi.record.Record]:
         """Run a single SPSA game with structure aligned to TournamentOrchestrator.
@@ -172,12 +221,15 @@ class SpsaOrchestratorGameplayMixin:
         0 for baseline win, 2 for draw.
         """
         if tuned_option_map is None or baseline_option_map is None:
-            rng = self._make_rng(update_idx + worker_idx)
-            tuned_option_map = self._build_engine_option_map(tuned_params, rng=rng, should_allow_stochastic=True)
-            baseline_option_map = self._build_engine_option_map(
+            try:
+                pair_idx = int(pair_id.rsplit("-p", 1)[1])
+            except (IndexError, ValueError) as exc:
+                raise RuntimeError(f"Invalid SPSA pair id: {pair_id}") from exc
+            tuned_option_map, baseline_option_map = self._build_engine_option_maps_for_pair(
+                tuned_params,
                 current_params,
-                rng=rng,
-                should_allow_stochastic=True,
+                update_idx=update_idx,
+                pair_idx=pair_idx,
             )
 
         tuned_token = tuned_variant_token or variant_token(update_idx)
@@ -219,6 +271,8 @@ class SpsaOrchestratorGameplayMixin:
                 instance_pool=self.instance_pool,
                 engine_configs=self.engine_configs,
                 should_force_enginepool=should_force_enginepool,
+                scheduling_policy=self.config.system.instance_scheduling.policy,
+                required_tags=tuple(self.config.system.instance_scheduling.required_tags),
             ),
             resolve_game_id=lambda: self._make_game_id(tuned_token, phase),
             to_numeric_game_id=numeric_game_id,
@@ -229,6 +283,20 @@ class SpsaOrchestratorGameplayMixin:
         dispatch_selection = setup.dispatch_selection
         event_common = setup.event_common
         game_id = assignment.game_id
+        restored_result_kind = self._ledger_runtime.game_result_kind(game_id=game_id)
+        if restored_result_kind is not None:
+            if restored_result_kind == "INCOMPLETE":
+                raise SpsaIncompleteObservationError(f"SPSA observation is incomplete: {game_id}")
+            if restored_result_kind == "FAILED_OBSERVATION":
+                raise SpsaObservationError(f"SPSA observation failed: {game_id}")
+            restored_game = _build_restored_game(
+                game_id=game_id,
+                start_sfen=start_sfen,
+                black_player=context.black_player_label,
+                white_player=context.white_player_label,
+                result_kind=restored_result_kind,
+            )
+            return self._calculate_winner_code(restored_game, is_tuned_as_black), restored_game
         # Prepare engine items and per-side time control limits
         black_item, white_item, black_limits, white_limits = self._prepare_game_items(
             is_tuned_as_black=is_tuned_as_black,
@@ -257,13 +325,10 @@ class SpsaOrchestratorGameplayMixin:
 
         class _SpsaBeforeGameHook:
             async def run(self, request: BeforeGameHookRequest) -> BeforeGameHookResult | None:
-                names = await apply_engine_option_hooks(
-                    engines_by_key={
-                        pool_key: cast(SpsaEngineOptionHookPort, engine)
-                        for pool_key, engine in request.engines_by_pool_key.items()
-                    },
-                    request=hook_request,
-                )
+                names = {
+                    hook_request.tuned_pool_key: hook_request.tuned_label,
+                    hook_request.baseline_pool_key: hook_request.baseline_label,
+                }
                 if not names:
                     return None
                 return BeforeGameHookResult(display_name_overrides=names)
@@ -272,6 +337,7 @@ class SpsaOrchestratorGameplayMixin:
 
         dispatch = dispatch_selection.dispatch
         selected_remote_instance = dispatch_selection.selected_remote_instance
+        local_attempt_id = f"local-{uuid.uuid4().hex}"
         if preassigned_game_id is None:
             pending_payload = build_status_payload(
                 event_common=event_common,
@@ -309,6 +375,21 @@ class SpsaOrchestratorGameplayMixin:
                 baseline_label=context.baseline_label,
                 tuned_options=tuned_option_map,
                 baseline_options=baseline_option_map,
+                black_engine_id=(
+                    (self.config.tuned[0] if is_tuned_as_black else self.config.baseline[0]).name or black_item.pool_key
+                ),
+                white_engine_id=(
+                    (self.config.baseline[0] if is_tuned_as_black else self.config.tuned[0]).name or white_item.pool_key
+                ),
+                tuned_variant_id=tuned_token,
+                baseline_variant_id=baseline_token,
+                clear_hash_before_game=bool(self.config.variants.apply.is_clear_hash_enabled),
+                after_variant_setoption=str(self.config.variants.apply.after_setoption),
+                black_item=black_item,
+                white_item=white_item,
+                update_idx=update_idx,
+                pair_id=pair_id,
+                observation_kind="LTC" if event_family == "ltc" else "SPSA",
             )
 
         gi = await self._game_execution_service.execute(
@@ -326,6 +407,12 @@ class SpsaOrchestratorGameplayMixin:
                     game_id=game_id,
                     black_limits=black_limits,
                     white_limits=white_limits,
+                    black_variant_options=(tuned_option_map if is_tuned_as_black else baseline_option_map),
+                    white_variant_options=(baseline_option_map if is_tuned_as_black else tuned_option_map),
+                    black_variant_id=(tuned_token if is_tuned_as_black else baseline_token),
+                    white_variant_id=(baseline_token if is_tuned_as_black else tuned_token),
+                    clear_hash_before_game=bool(self.config.variants.apply.is_clear_hash_enabled),
+                    after_variant_setoption=str(self.config.variants.apply.after_setoption),
                     before_game_hook=_hook,
                     on_game_start=mark_running_once,
                 ),
@@ -334,6 +421,23 @@ class SpsaOrchestratorGameplayMixin:
             run_remote_with_instance=_run_remote_with_instance,
             execute_local=lambda spec: _execute_game_service(self, spec),
         )
+        participation = extract_participation(gi)
+        if selected_remote_instance is None:
+            participation = attach_spsa_participation_identity(
+                participation,
+                identity=SpsaParticipationIdentity(
+                    run_id=self.session_context.run_id,
+                    update_idx=update_idx,
+                    pair_id=pair_id,
+                    attempt_id=local_attempt_id,
+                    observation_kind="LTC" if event_family == "ltc" else "SPSA",
+                ),
+            )
+            attach_participation_metadata(game_record=gi, participation_records=participation)
+        else:
+            parsed_identity = parse_spsa_participation_identity(tuple(record.extra or {} for record in participation))
+            if parsed_identity.pair_id != pair_id:
+                raise RuntimeError("Remote SPSA participation pair identity does not match dispatch")
 
         gi.update_metadata(
             {
@@ -343,8 +447,12 @@ class SpsaOrchestratorGameplayMixin:
             }
         )
 
-        # Winner wrt tuned perspective
-        winner = self._calculate_winner_code(gi, is_tuned_as_black)
+        observation_error: SpsaObservationError | None = None
+        try:
+            winner = self._calculate_winner_code(gi, is_tuned_as_black)
+        except SpsaObservationError as exc:
+            observation_error = exc
+            winner = None
 
         payload = SpsaGamePayload(
             update_idx=update_idx,
@@ -365,6 +473,13 @@ class SpsaOrchestratorGameplayMixin:
             emit_game_completion=self._emit_game_completion,
         )
         event_common["worker_idx"] = final_worker_idx
+        if observation_error is not None:
+            if self._stop_event.is_set():
+                raise SpsaIncompleteObservationError(
+                    f"SPSA observation interrupted by stop request: {game_id}"
+                ) from observation_error
+            raise observation_error
+        assert winner is not None
         return winner, gi
 
     def _prepare_game_items(
@@ -421,9 +536,33 @@ class SpsaOrchestratorGameplayMixin:
 
     @staticmethod
     def _calculate_winner_code(game_info: rsshogi.record.Record, is_tuned_as_black: bool) -> int:
-        result = game_info.result
-        if result.is_black_win():
-            return 1 if is_tuned_as_black else 0
-        if result.is_white_win():
-            return 0 if is_tuned_as_black else 1
-        return 2
+        return winner_code_from_result(game_info.result, is_tuned_as_black=is_tuned_as_black)
+
+
+def _build_restored_game(
+    *,
+    game_id: str,
+    start_sfen: str,
+    black_player: str,
+    white_player: str,
+    result_kind: str,
+) -> rsshogi.record.Record:
+    result = {
+        "BLACK_WIN": GameResult.BLACK_WIN,
+        "WHITE_WIN": GameResult.WHITE_WIN,
+        "DRAW": GameResult.DRAW_BY_REPETITION,
+    }[result_kind]
+    return rsshogi.record.Record.from_dict(
+        {
+            "metadata": {
+                "game_name": game_id,
+                "game_type": "spsa",
+                "black_player": black_player,
+                "white_player": white_player,
+                "attributes": {"game_name": game_id, "game_type": "spsa"},
+            },
+            "init_position_sfen": normalize_usi_position(start_sfen),
+            "moves": [],
+            "result": {"result": result.name, "ply_count": 0},
+        }
+    )
