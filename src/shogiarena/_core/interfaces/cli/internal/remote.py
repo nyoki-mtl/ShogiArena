@@ -12,11 +12,13 @@ import traceback
 from json import JSONDecodeError
 from pathlib import Path
 
-from packaging.version import InvalidVersion, Version
 from pydantic import ValidationError
 
 from shogiarena import __version__
-from shogiarena._core.contexts.game_session.ports.game_execution_spec import GameExecutionSpec
+from shogiarena._core.contexts.game_session.ports.game_execution_spec import (
+    GameExecutionSpec,
+    validate_minimum_worker_version,
+)
 from shogiarena._core.interfaces.composition_root.default_root import build_default_root
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
@@ -64,14 +66,10 @@ async def _remote_run_pair_command(args: argparse.Namespace) -> None:
         _emit_json_error(f"invalid GameExecutionSpec JSON: {exc}")
         raise SystemExit(2) from exc
     try:
-        worker_version = Version(__version__)
-        minimum_version = Version(str(sealed_spec.minimum_worker_version))
-    except InvalidVersion as exc:
-        _emit_json_error(f"invalid worker version contract: {exc}")
+        validate_minimum_worker_version(sealed_spec, worker_version=__version__)
+    except ValueError as exc:
+        _emit_json_error(str(exc))
         raise SystemExit(2) from exc
-    if worker_version < minimum_version:
-        _emit_json_error(f"worker version {worker_version} does not satisfy minimum {minimum_version}")
-        raise SystemExit(2)
     rc = await run_game_execution_spec(sealed_spec, execution_root=spec_path.parent)
     if rc != 0:
         raise SystemExit(rc)

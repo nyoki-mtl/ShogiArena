@@ -153,7 +153,7 @@ def prepare_spsa_run_directory(
             "Legacy JSON-only SPSA run has no spsa/ledger.sqlite3; "
             "existing artifacts were not migrated. Use --no-resume to start a fresh run."
         )
-    if not should_skip_resume and (resolved_run_dir / "state.json").exists():
+    if not should_skip_resume and (resolved_run_dir / "spsa" / "ledger.sqlite3").is_file():
         return resolved_run_dir, dict(config_payload)
     resolved_run_dir.mkdir(parents=True, exist_ok=True)
     if should_skip_resume:
@@ -369,7 +369,7 @@ def prepare_spsa_domain_inputs(
             output_dir=project_dirs.output_dir,
             engine_dir=project_dirs.engine_dir,
         )
-    is_resume = state_path.exists()
+    is_resume = ledger_path.is_file()
     if is_resume:
         if authority_completed_updates is None or authority_theta is None:
             raise ValueError("SPSA resume requires validated ledger authority")

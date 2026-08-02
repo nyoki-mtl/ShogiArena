@@ -83,7 +83,10 @@ def test_resume_projection_rebuilds_accepted_best_from_latest_ledger_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    commit = {"update_idx": 3}
+    commit = {
+        "update_idx": 3,
+        "parameters": [{"parameter_id": "p", "option_name": "USI_P", "value": 3.0}],
+    }
     runtime = SimpleNamespace(
         latest_accepted_update_idx=lambda: 3,
         accepted_best_commit=lambda *, update_idx: commit if update_idx == 3 else None,
@@ -124,7 +127,7 @@ def test_resume_projection_rebuilds_accepted_best_from_latest_ledger_commit(
     runner._project_accepted_best()
 
     assert captured["ledger_commit"] == commit
-    assert captured["parameter_wire_values"] == {"USI_P": 2}
+    assert captured["parameter_wire_values"] == {"USI_P": 3}
     assert captured["baseline_engine_count"] == 1
     assert captured["tuned_engine_count"] == 1
 

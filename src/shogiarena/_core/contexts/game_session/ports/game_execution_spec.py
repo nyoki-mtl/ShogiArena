@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Annotated, Literal, Self, TypeAlias
 
+from packaging.version import InvalidVersion, Version
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -376,6 +377,18 @@ def parse_game_execution_spec(payload: Mapping[str, object]) -> GameExecutionSpe
     )
 
 
+def validate_minimum_worker_version(spec: GameExecutionSpec, *, worker_version: str) -> None:
+    """実行前にworker versionがsealed specの下限を満たすことを検証する。"""
+
+    try:
+        installed = Version(worker_version)
+        minimum = Version(str(spec.minimum_worker_version))
+    except InvalidVersion as exc:
+        raise ValueError(f"invalid worker version contract: {exc}") from exc
+    if installed < minimum:
+        raise ValueError(f"worker version {installed} does not satisfy minimum {minimum}")
+
+
 __all__ = [
     "GAME_EXECUTION_PROTOCOL_VERSION",
     "GAME_EXECUTION_SPEC_SCHEMA_VERSION",
@@ -401,4 +414,5 @@ __all__ = [
     "TimeoutPolicySpec",
     "parse_game_execution_spec",
     "seal_game_execution_spec",
+    "validate_minimum_worker_version",
 ]

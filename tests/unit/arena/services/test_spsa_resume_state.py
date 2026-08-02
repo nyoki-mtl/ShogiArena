@@ -17,6 +17,7 @@ from shogiarena._core.contexts.spsa.adapters.runner import SpsaRunner
 from shogiarena._core.contexts.spsa.adapters.runner_session_lifecycle import (
     materialize_spsa_engine_configs,
     prepare_spsa_domain_inputs,
+    prepare_spsa_run_directory,
 )
 from shogiarena._core.contexts.spsa.adapters.tunable_manifest_preflight import (
     TUNABLE_HANDSHAKE_FILENAME,
@@ -113,6 +114,24 @@ def _prepare(
 
 def _tunable_evidence(config: _Config) -> dict[str, object]:
     space = load_spsa_space_spec(config.space_path)
+    advertised_options = [
+        {
+            "name": "TuneTempo",
+            "type": "string",
+            "default": "10",
+            "minimum": None,
+            "maximum": None,
+            "choices": [],
+        },
+        {
+            "name": "Clear Hash",
+            "type": "button",
+            "default": None,
+            "minimum": None,
+            "maximum": None,
+            "choices": [],
+        },
+    ]
     return {
         "schema_version": TUNABLE_HANDSHAKE_SCHEMA,
         "status": "passed",
@@ -123,23 +142,10 @@ def _tunable_evidence(config: _Config) -> dict[str, object]:
         "instance_id": None,
         "engine_name": "tuned",
         "manifest": None,
-        "advertised_options": [
-            {
-                "name": "TuneTempo",
-                "type": "string",
-                "default": "10",
-                "minimum": None,
-                "maximum": None,
-                "choices": [],
-            },
-            {
-                "name": "Clear Hash",
-                "type": "button",
-                "default": None,
-                "minimum": None,
-                "maximum": None,
-                "choices": [],
-            },
+        "advertised_options": advertised_options,
+        "clear_hash_engines": [
+            {"role": "baseline", "index": 0, "advertised_options": advertised_options},
+            {"role": "tuned", "index": 0, "advertised_options": advertised_options},
         ],
         "normalized_space": space.to_json(),
     }
@@ -247,6 +253,60 @@ def _initialize_resume_ledger(tmp_path: Path, config: _Config) -> tuple[SpsaLedg
 
 def _tree_bytes(root: Path) -> dict[Path, bytes]:
     return {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+
+
+def test_ledger_without_state_is_resume_candidate_before_manifest_write(tmp_path: Path) -> None:
+    ledger_path = tmp_path / "spsa" / "ledger.sqlite3"
+    ledger_path.parent.mkdir(parents=True)
+    ledger_path.write_bytes(b"ledger-authority")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(b'{"status":"provenance_sealed"}')
+
+    class _Metadata:
+        def write_inputs_only_manifest(self, **_kwargs: object) -> object:
+            raise AssertionError("resume candidate must not rewrite manifest.json")
+
+    run_dir, frozen = prepare_spsa_run_directory(
+        run_dir=tmp_path,
+        should_skip_resume=False,
+        config_payload={"experiment_name": "resume-test"},
+        run_metadata_service=_Metadata(),  # type: ignore[arg-type]
+        cleanup_run_dir=lambda *_args, **_kwargs: None,
+    )
+
+    assert run_dir == tmp_path
+    assert frozen == {"experiment_name": "resume-test"}
+    assert manifest_path.read_bytes() == b'{"status":"provenance_sealed"}'
+
+
+def test_ledger_without_state_rebuilds_state_from_authority(tmp_path: Path) -> None:
+    config = _write_inputs(tmp_path)
+    _prepare(tmp_path, config)
+    _create_ledger(tmp_path)
+    (tmp_path / "state.json").unlink()
+
+    _prepare(tmp_path, config, completed_updates=0, theta={"tempo": 10.0})
+
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert state["completed_updates"] == 0
+    assert state["resume_hash"] == "resume-hash"
+
+
+def test_ledger_without_state_restores_sealed_run_seed(tmp_path: Path) -> None:
+    config = _write_inputs(tmp_path)
+    _prepare(tmp_path, config)
+    ledger, _runtime = _initialize_resume_ledger(tmp_path, config)
+    ledger.close()
+    (tmp_path / "state.json").unlink()
+
+    resolved = runner_module._resolve_spsa_run_seed(
+        configured_seed=None,
+        run_dir=tmp_path,
+        should_skip_resume=False,
+        experiment_name="resume-test",
+    )
+
+    assert resolved == RUN_SEED
 
 
 def test_read_only_db_snapshot_includes_live_wal_without_mutating_run_tree(tmp_path: Path) -> None:

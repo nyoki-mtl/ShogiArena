@@ -15,6 +15,7 @@ from typing import Any, Protocol, cast
 import rsshogi.record
 from rsshogi.types import Color
 
+from shogiarena import __version__
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_builders import (
     build_usi_option_layers,
 )
@@ -60,7 +61,10 @@ from shogiarena._core.contexts.game_session.application.session.run_failure_reco
     RunFailureRecordService,
 )
 from shogiarena._core.contexts.game_session.domain.failure_records import coerce_failure_phase
-from shogiarena._core.contexts.game_session.ports.game_execution_spec import EngineExecutionSpec
+from shogiarena._core.contexts.game_session.ports.game_execution_spec import (
+    EngineExecutionSpec,
+    validate_minimum_worker_version,
+)
 from shogiarena._core.contexts.game_session.ports.session_runner_ports import BeforeGameHookPort, BeforeGameHookRequest
 from shogiarena._core.contexts.instances.application.instance_models import InstanceActiveGameSide
 from shogiarena._core.contexts.instances.application.instance_pool import ResourceRequest
@@ -186,6 +190,7 @@ async def execute_game(orchestrator: Any, spec: Any) -> rsshogi.record.Record:
             engine_lifecycle=owner._engine_lifecycle,
             timeout_reclassification_enabled=owner._timeout_reclassification_enabled,
         )
+        validate_minimum_worker_version(resolved_execution.spec, worker_version=__version__)
         persist_game_execution_manifest(
             run_dir=owner.run_dir,
             game_id=game_spec.game_id,

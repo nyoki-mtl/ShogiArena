@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_engine import EngineConfig
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_spsa_models import SpsaRunConfig
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
@@ -94,10 +95,33 @@ async def run_tunable_manifest_preflight(
     if manifest is not None:
         validate_space_against_manifest(space, manifest)
     _validate_selected_options(space=space, advertised=advertised)
-    _validate_clear_hash_option(
-        required=config.variants.apply.is_clear_hash_enabled,
-        advertised=advertised,
-    )
+    clear_hash_required = config.variants.apply.is_clear_hash_enabled
+    _validate_clear_hash_option(required=clear_hash_required, advertised=advertised, role="tuned[0]")
+    clear_hash_engines: list[JsonObject] = [
+        _clear_hash_engine_evidence(role="tuned", index=0, engine_config=engine_config, advertised=advertised)
+    ]
+    if clear_hash_required:
+        remaining_engines = [
+            *(("baseline", index, candidate) for index, candidate in enumerate(config.baseline)),
+            *(("tuned", index, candidate) for index, candidate in enumerate(config.tuned) if index > 0),
+        ]
+        for role, index, candidate in remaining_engines:
+            candidate_advertised = await _preflight_clear_hash_engine(
+                engine_config=candidate,
+                role=role,
+                index=index,
+                default_timeout=config.system.engine_handshake_timeout,
+                engine_factory_service=engine_factory_service,
+                instance_pool=instance_pool,
+            )
+            clear_hash_engines.append(
+                _clear_hash_engine_evidence(
+                    role=role,
+                    index=index,
+                    engine_config=candidate,
+                    advertised=candidate_advertised,
+                )
+            )
     evidence: JsonObject = {
         "schema_version": TUNABLE_HANDSHAKE_SCHEMA,
         "status": "passed",
@@ -109,11 +133,34 @@ async def run_tunable_manifest_preflight(
         "engine_name": engine_config.name,
         "manifest": manifest_payload,
         "advertised_options": [_option_payload(option) for _, option in sorted(advertised.items())],
+        "clear_hash_engines": clear_hash_engines,
         "normalized_space": space.to_json(),
     }
     persist_normalized_space(run_dir, space)
     write_json_atomic(run_dir / "spsa" / TUNABLE_HANDSHAKE_FILENAME, evidence)
     return space, evidence
+
+
+async def run_clear_hash_role_preflight(
+    *,
+    config: SpsaRunConfig,
+    engine_factory_service: EngineFactoryService,
+    instance_pool: InstancePool,
+) -> None:
+    """Validate Clear Hash against every engine role reused by SPSA."""
+
+    if not config.variants.apply.is_clear_hash_enabled:
+        return
+    for role, engines in (("baseline", config.baseline), ("tuned", config.tuned)):
+        for index, engine_config in enumerate(engines):
+            await _preflight_clear_hash_engine(
+                engine_config=engine_config,
+                role=role,
+                index=index,
+                default_timeout=config.system.engine_handshake_timeout,
+                engine_factory_service=engine_factory_service,
+                instance_pool=instance_pool,
+            )
 
 
 def validate_sealed_tunable_evidence(
@@ -135,7 +182,9 @@ def validate_sealed_tunable_evidence(
         validate_space_against_manifest(space, manifest)
     advertised = _options_from_evidence(payload.get("advertised_options"))
     _validate_selected_options(space=space, advertised=advertised)
-    _validate_clear_hash_option(required=clear_hash_required, advertised=advertised)
+    _validate_clear_hash_option(required=clear_hash_required, advertised=advertised, role="tuned[0]")
+    if clear_hash_required and payload.get("clear_hash_engines") is not None:
+        _validate_sealed_clear_hash_engines(payload.get("clear_hash_engines"))
     if payload.get("normalized_space") != space.to_json():
         raise ValueError("SPSA sealed tunable handshake normalized space mismatch")
     try:
@@ -163,14 +212,90 @@ def _validate_selected_options(*, space: SpsaSpaceSpec, advertised: Mapping[str,
             raise ValueError(f"SPSA float tunable must be advertised as string: {parameter.option}")
 
 
-def _validate_clear_hash_option(*, required: bool, advertised: Mapping[str, UsiOption]) -> None:
+def _validate_clear_hash_option(*, required: bool, advertised: Mapping[str, UsiOption], role: str) -> None:
     if not required:
         return
     option = advertised.get("Clear Hash")
     if option is None or option.option_type != "button":
+        subject = "the tuned engine" if role == "tuned[0]" else f"the {role} engine"
         raise ValueError(
-            "SPSA variants.apply.clear_hash=true requires the tuned engine to advertise 'Clear Hash' as a USI button"
+            f"SPSA variants.apply.clear_hash=true requires {subject} to advertise 'Clear Hash' as a USI button"
         )
+
+
+def _clear_hash_engine_evidence(
+    *,
+    role: str,
+    index: int,
+    engine_config: EngineConfig,
+    advertised: Mapping[str, UsiOption],
+) -> JsonObject:
+    return {
+        "role": role,
+        "index": index,
+        "name": engine_config.name,
+        "instance_id": engine_config.instance_id,
+        "advertised_options": [_option_payload(option) for _, option in sorted(advertised.items())],
+    }
+
+
+async def _preflight_clear_hash_engine(
+    *,
+    engine_config: EngineConfig,
+    role: str,
+    index: int,
+    default_timeout: float | None,
+    engine_factory_service: EngineFactoryService,
+    instance_pool: InstancePool,
+) -> dict[str, UsiOption]:
+    config_path = engine_config.engine_path
+    if config_path is None:
+        raise ValueError(f"SPSA Clear Hash preflight requires a resolved {role}[{index}] engine config")
+    timeout = float(engine_config.handshake_timeout or default_timeout or 120.0)
+    engine = await engine_factory_service.create_engine(
+        Path(config_path),
+        timeout=timeout,
+        engine_name=str(engine_config.name or f"{role}-{index}-preflight"),
+        instance_id=engine_config.instance_id,
+        instance_pool=instance_pool,
+        cpu_affinity=engine_config.cpu_affinity,
+        option_validation="strict",
+    )
+    if not isinstance(engine, _TunableEngine):
+        await _close_if_supported(engine)
+        raise TypeError(f"{role}[{index}] engine runtime does not support SPSA Clear Hash preflight")
+    try:
+        await engine.start()
+        advertised = dict(engine.get_usi_options())
+    finally:
+        await engine.close()
+    _validate_clear_hash_option(required=True, advertised=advertised, role=f"{role}[{index}]")
+    return advertised
+
+
+def _validate_sealed_clear_hash_engines(raw: object) -> None:
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("SPSA sealed tunable handshake has no Clear Hash engine evidence")
+    identities: set[tuple[str, int]] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("SPSA sealed Clear Hash engine evidence must be an object")
+        role = item.get("role")
+        index = item.get("index")
+        if (
+            not isinstance(role, str)
+            or role not in {"baseline", "tuned"}
+            or not isinstance(index, int)
+            or isinstance(index, bool)
+            or index < 0
+        ):
+            raise ValueError("SPSA sealed Clear Hash engine identity is invalid")
+        identity = (role, index)
+        if identity in identities:
+            raise ValueError(f"SPSA sealed Clear Hash engine identity is duplicated: {role}[{index}]")
+        identities.add(identity)
+        advertised = _options_from_evidence(item.get("advertised_options"))
+        _validate_clear_hash_option(required=True, advertised=advertised, role=f"{role}[{index}]")
 
 
 def _option_payload(option: UsiOption) -> JsonObject:
@@ -223,6 +348,7 @@ async def _close_if_supported(engine: Any) -> None:
 __all__ = [
     "TUNABLE_HANDSHAKE_FILENAME",
     "TUNABLE_HANDSHAKE_SCHEMA",
+    "run_clear_hash_role_preflight",
     "run_tunable_manifest_preflight",
     "validate_sealed_tunable_evidence",
 ]

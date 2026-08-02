@@ -88,6 +88,7 @@ from shogiarena._core.contexts.spsa.adapters.runner_session_lifecycle import (
 )
 from shogiarena._core.contexts.spsa.adapters.tunable_manifest_preflight import (
     TUNABLE_HANDSHAKE_FILENAME,
+    run_clear_hash_role_preflight,
     run_tunable_manifest_preflight,
     validate_sealed_tunable_evidence,
 )
@@ -308,7 +309,6 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         if (
             self.run_dir is not None
             and not self._run_options.should_skip_resume
-            and (self.run_dir / "state.json").is_file()
             and (self.run_dir / "spsa" / "ledger.sqlite3").is_file()
         ):
             recover_spsa_ledger(self.run_dir)
@@ -438,7 +438,7 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         frozen_payload = self._frozen_run_config_payload
         if frozen_payload is None:
             raise RuntimeError("inputs-only manifest must be written before prepare_domain")
-        is_resume = state_path.exists()
+        is_resume = ledger_path.is_file()
         self._remote_worker_bundle = prepare_remote_worker_bundle(
             run_dir=self.run_dir,
             instance_pool=getattr(self, "instance_pool", None),
@@ -461,6 +461,14 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
                 evidence=raw_evidence,
                 clear_hash_required=self.config.variants.apply.is_clear_hash_enabled,
             )
+            if self.config.variants.apply.is_clear_hash_enabled and tunable_evidence.get("clear_hash_engines") is None:
+                if self.instance_pool is None:
+                    raise RuntimeError("SPSA Clear Hash preflight requires an instance pool")
+                await run_clear_hash_role_preflight(
+                    config=self.config,
+                    engine_factory_service=self._engine_factory_service,
+                    instance_pool=self.instance_pool,
+                )
         else:
             self._materialize_new_engine_configs()
             if self.instance_pool is None:
@@ -946,10 +954,30 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         helper = object.__new__(SpsaOrchestratorUpdateMixin)
         helper.config = self.config
         try:
+            ledger_commit = runtime.accepted_best_commit(update_idx=update_idx)
+            accepted_params = helper._clone_param_entries(params)
+            raw_parameters = ledger_commit.get("parameters")
+            if not isinstance(raw_parameters, list):
+                raise ValueError("accepted-best ledger parameters must be a list")
+            accepted_values: dict[str, float] = {}
+            for item in raw_parameters:
+                if not isinstance(item, dict):
+                    raise ValueError("accepted-best ledger parameter must be an object")
+                parameter_id = item.get("parameter_id")
+                value = item.get("value")
+                if not isinstance(parameter_id, str) or not isinstance(value, int | float) or isinstance(value, bool):
+                    raise ValueError("accepted-best ledger parameter identity or value is invalid")
+                accepted_values[parameter_id] = float(value)
+            for entry in accepted_params:
+                if entry.is_not_used:
+                    continue
+                if entry.name not in accepted_values:
+                    raise ValueError(f"accepted-best ledger value is missing: {entry.name}")
+                entry.value = accepted_values[entry.name]
             persist_accepted_best(
                 run_dir=self.storage.run_dir,
-                ledger_commit=runtime.accepted_best_commit(update_idx=update_idx),
-                parameter_wire_values=helper._build_engine_option_map(params),
+                ledger_commit=ledger_commit,
+                parameter_wire_values=helper._build_engine_option_map(accepted_params),
                 baseline_engine_count=len(self.config.baseline),
                 tuned_engine_count=len(self.config.tuned),
             )
@@ -1065,7 +1093,7 @@ def _resolve_spsa_run_seed(
     should_skip_resume: bool,
     experiment_name: str | None,
 ) -> str:
-    if should_skip_resume or run_dir is None or not (run_dir / "state.json").is_file():
+    if should_skip_resume or run_dir is None:
         return configured_seed or secrets.token_hex(32)
     ledger_path = run_dir / "spsa" / "ledger.sqlite3"
     if not ledger_path.is_file():

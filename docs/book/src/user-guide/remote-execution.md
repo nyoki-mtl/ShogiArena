@@ -272,6 +272,10 @@ Directory treeはplatform差を除くためdirectoryを`0755`、regular fileを`
 
 Worker bundleはwheel、lock、manifest、宣言済みartifactから決まります。Endpoint/platform/
 content digest単位でstagingを検証してatomic publishし、公開済みdeploymentを上書きしません。
+Resume時のbundle不一致はexpected digestとactual digestを表示します。
+Sealed `remote-worker-bundle.zip`を復元できない場合は、`--no-resume`で新しいrunを開始してください。
+
+`GameExecutionSpec.minimum_worker_version`はRemote workerだけでなくLocal実行でもengine起動前に検証します。
 
 各対局attemptは独立したjob IDとjob directoryを持ちます。Prepare/start/status/cancel/collect/ackは
 idempotentで、coordinator切断後は同じjob IDをstatus/collectします。新しいjobを推測作成しません。

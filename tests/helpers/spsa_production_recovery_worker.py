@@ -239,6 +239,24 @@ def setup(run_dir: Path, *, terminal: bool) -> None:
         resume_hash=_RESUME_HASH,
     )
     space = load_spsa_space_spec(config.space_path)
+    advertised_options = [
+        {
+            "name": "Threads",
+            "type": "spin",
+            "default": "1",
+            "minimum": 1,
+            "maximum": 8,
+            "choices": [],
+        },
+        {
+            "name": "Clear Hash",
+            "type": "button",
+            "default": None,
+            "minimum": None,
+            "maximum": None,
+            "choices": [],
+        },
+    ]
     handshake = {
         "schema_version": TUNABLE_HANDSHAKE_SCHEMA,
         "status": "passed",
@@ -249,23 +267,10 @@ def setup(run_dir: Path, *, terminal: bool) -> None:
         "instance_id": None,
         "engine_name": "engine",
         "manifest": None,
-        "advertised_options": [
-            {
-                "name": "Threads",
-                "type": "spin",
-                "default": "1",
-                "minimum": 1,
-                "maximum": 8,
-                "choices": [],
-            },
-            {
-                "name": "Clear Hash",
-                "type": "button",
-                "default": None,
-                "minimum": None,
-                "maximum": None,
-                "choices": [],
-            },
+        "advertised_options": advertised_options,
+        "clear_hash_engines": [
+            {"role": "baseline", "index": 0, "advertised_options": advertised_options},
+            {"role": "tuned", "index": 0, "advertised_options": advertised_options},
         ],
         "normalized_space": space.to_json(),
     }

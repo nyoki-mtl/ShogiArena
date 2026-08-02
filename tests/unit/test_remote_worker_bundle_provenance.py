@@ -71,7 +71,9 @@ def test_resume_bundle_mismatch_rejects_without_modifying_run_artifacts(tmp_path
     (run_dir / "manifest.json").write_text('{"status":"provenance_sealed"}', encoding="utf-8")
     before = _snapshot(run_dir)
 
-    with pytest.raises(ValueError, match="does not match the sealed run bytes"):
+    expected_digest = sha256(b"changed-bundle").hexdigest()
+    actual_digest = sha256(b"sealed-bundle").hexdigest()
+    with pytest.raises(ValueError, match="does not match the sealed run bytes") as error:
         prepare_remote_worker_bundle(
             run_dir=run_dir,
             instance_pool=_remote_pool(),
@@ -79,6 +81,10 @@ def test_resume_bundle_mismatch_rejects_without_modifying_run_artifacts(tmp_path
             builder=_builder(b"changed-bundle"),
         )
 
+    message = str(error.value)
+    assert expected_digest in message
+    assert actual_digest in message
+    assert "--no-resume" in message
     assert _snapshot(run_dir) == before
 
 

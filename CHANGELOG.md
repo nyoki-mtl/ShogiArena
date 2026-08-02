@@ -8,6 +8,20 @@ except for the explicitly documented 1.2.0 breaking-change exception.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-08-02
+
+### Fixed
+
+- `variants.apply.clear_hash: true`のSPSAで、再利用するbaselineとtunedの全engine roleが`Clear Hash` buttonを公開することを測定前に検証するようにした。
+- `state.json`が欠落してもledgerが存在するSPSA runをfresh runとして扱わず、sealed manifestを保持したままledger authorityからresume stateを再構築するようにした。
+- LTCを間欠実行するSPSAで、`accepted-best.json`のparameter valueとwire valueを同じaccepted updateから生成するようにした。
+- Remote worker bundleのresume拒否にexpected digest、actual digest、復旧方法を表示するようにした。
+- Local実行でもsealed `minimum_worker_version`をengine起動前に検証するようにした。
+
+1.2.0で作成したSPSA runのtunable handshakeに全engine roleの証跡がない場合、
+1.2.1はresume時に全roleの`Clear Hash` preflightを実行します。
+設定schemaとledger schemaの変更はありません。
+
 ## [1.2.0] - 2026-08-01
 
 1.2.0はRemote実行とSPSA state modelを保守可能な単一契約へ収束させるため、

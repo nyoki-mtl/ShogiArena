@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from shogiarena._core.contexts.game_session.adapters.orchestration import game_execution
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_engine import EngineConfig
 from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution import execute_game
 from shogiarena._core.contexts.instances.application.instance_models import InstanceConfig, InstanceType
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
@@ -103,3 +105,71 @@ async def test_execute_game_releases_resources_when_prepare_fails_after_reservat
     assert instance.metrics.in_use_slots == 0
     assert instance.metrics.in_use_engines == 0
     assert instance.active_game_by_id == {}
+
+
+@pytest.mark.asyncio
+async def test_local_execution_rejects_worker_version_before_engine_acquisition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = _Owner(tmp_path / "run")
+    owner.extra_options = {}
+    owner.session_context = SimpleNamespace(run_id="run")
+    owner.config = SimpleNamespace(rules=object())
+    owner._engine_lifecycle = "reuse"
+    owner._timeout_reclassification_enabled = True
+    engine_config = EngineConfig(name="engine", engine_path=tmp_path / "engine.yaml")
+    resource_context = game_execution._ResourceContext(
+        resource_requirements={},
+        is_slots_reserved=False,
+        instance_role_map={},
+        black_engine_spec=engine_config,
+        white_engine_spec=engine_config,
+    )
+    game_spec = SimpleNamespace(
+        black_item=_GameSpec.black_item,
+        white_item=_GameSpec.white_item,
+        initial_sfen=_GameSpec.initial_sfen,
+        game_id=_GameSpec.game_id,
+        black_limits=_GameSpec.black_limits,
+        white_limits=_GameSpec.white_limits,
+        black_variant_options={},
+        white_variant_options={},
+        black_variant_id=None,
+        white_variant_id=None,
+        clear_hash_before_game=False,
+        after_variant_setoption="none",
+        before_game_hook=None,
+        game_round=None,
+        schedule_metadata=None,
+        on_game_start=None,
+    )
+    layers = SimpleNamespace(
+        artifact_overlay={},
+        arena={},
+        declared_overlays={},
+        inline={},
+    )
+
+    async def _prepare(*_args: object) -> object:
+        return resource_context
+
+    monkeypatch.setattr(game_execution, "_prepare_resource_context", _prepare)
+    monkeypatch.setattr(game_execution, "build_usi_option_layers", lambda *_args: layers)
+    monkeypatch.setattr(
+        game_execution,
+        "resolve_local_game_execution",
+        lambda **_kwargs: SimpleNamespace(spec=object()),
+    )
+
+    def _reject_version(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("worker version 1.2.0 does not satisfy minimum 1.2.1")
+
+    monkeypatch.setattr(
+        game_execution,
+        "validate_minimum_worker_version",
+        _reject_version,
+    )
+
+    with pytest.raises(ValueError, match="does not satisfy minimum"):
+        await execute_game(owner, game_spec)

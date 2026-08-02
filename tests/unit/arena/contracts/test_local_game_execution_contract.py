@@ -18,6 +18,7 @@ from shogiarena._core.contexts.game_session.adapters.orchestration.local_game_ex
     _local_platform,
     resolve_local_game_execution,
 )
+from shogiarena._core.contexts.game_session.ports.game_execution_spec import validate_minimum_worker_version
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
 
 
@@ -131,6 +132,59 @@ def test_local_contract_preserves_spsa_variant_and_persists_manifest(tmp_path: P
     content = path.read_text(encoding="utf-8")
     assert resolved.spec.execution_digest in content
     assert "engine_provenance" in content
+
+
+def test_local_contract_rejects_worker_below_sealed_minimum(tmp_path: Path) -> None:
+    rules = SimpleNamespace(
+        adjudication=SimpleNamespace(
+            resign_threshold_cp=None,
+            resign_move_count=5,
+            is_resign_two_sided=True,
+            is_max_plies_enabled=True,
+            max_plies=240,
+            should_sync_max_plies_with_engine=True,
+        ),
+        repetition_occurrences_to_draw=4,
+    )
+    limits = TimeControlLimits(fixed_time_ms=100)
+    resolved = resolve_local_game_execution(
+        run_id="run",
+        game_id="game",
+        initial_sfen="startpos",
+        black_name="black",
+        white_name="white",
+        black_config_path=_engine_config(tmp_path, "black"),
+        white_config_path=_engine_config(tmp_path, "white"),
+        black_artifact_overlay_options={},
+        white_artifact_overlay_options={},
+        black_arena_options={},
+        white_arena_options={},
+        black_overlay_options={},
+        white_overlay_options={},
+        black_inline_options={},
+        white_inline_options={},
+        black_variant_options={},
+        white_variant_options={},
+        black_variant_id=None,
+        white_variant_id=None,
+        clear_hash_before_game=False,
+        after_variant_setoption="none",
+        black_path_option_names=(),
+        white_path_option_names=(),
+        black_go_options={},
+        white_go_options={},
+        black_handshake_timeout_s=12.0,
+        white_handshake_timeout_s=12.0,
+        black_limits=limits,
+        white_limits=limits,
+        rules=rules,
+        engine_lifecycle="reuse",
+        timeout_reclassification_enabled=True,
+    )
+    newer_spec = resolved.spec.model_copy(update={"minimum_worker_version": "99.0.0"})
+
+    with pytest.raises(ValueError, match="does not satisfy minimum 99.0.0"):
+        validate_minimum_worker_version(newer_spec, worker_version="1.2.0")
 
 
 def test_remote_assignment_is_persisted_idempotently_and_resume_conflict_fails(

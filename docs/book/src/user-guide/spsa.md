@@ -211,6 +211,8 @@ shogiarena dashboard serve --run-dir /path/to/run
 `events.jsonl`、`current.json`、`index.json`はdashboard互換projectionであり、
 resume元ではありません。Run seed、space/resume digest、parameter rounding、
 pair assignment、accepted LTC baseline、terminal reasonはledgerとsealed manifestで検証します。
+`state.json`が欠落していてもledgerが存在する場合はfresh runとして上書きせず、
+ledgerからresume stateを再構築します。
 
 `completed`、`early_stopped`、`failed`は再開不可、`cancelled_resumable`だけが
 同一contract検証後に再開可能です。Legacy JSON-only archiveは1.2.0での表示、resume、
@@ -220,6 +222,11 @@ silent ledger importを拒否します。閲覧にはShogiArena 1.1.0を使い�
 Accepted updateの正本は`spsa/accepted-best.json`です。
 Ledger commit ID、parameter wire value、LTC decision、manifest、tunable manifest、
 baseline/tuned engineのprovenanceを保存するため、採用判断ではこのartifactを確認してください。
+Parameterの`value`と`wire_value`は同じaccepted updateから生成されます。
+
+`variants.apply.clear_hash: true`では、update間でprocessを再利用するbaselineとtunedの全engineが
+`Clear Hash` buttonを公開する必要があります。1.2.0で作成したrunに全roleの証跡がない場合、
+1.2.1はresume時に全roleをlive preflightします。
 
 Dashboardはarchived runを変更しません。SPSA revision feedはledger revisionだけを通知し、
 gap/reconnect時はREST snapshotを再取得します。Final terminal snapshotを取得してから接続を閉じます。

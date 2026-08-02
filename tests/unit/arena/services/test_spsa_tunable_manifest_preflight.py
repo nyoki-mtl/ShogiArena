@@ -107,9 +107,18 @@ class _Factory:
         return self.engine
 
 
+class _SequenceFactory:
+    def __init__(self, engines: list[_Engine]) -> None:
+        self.engines = iter(engines)
+
+    async def create_engine(self, _path: Path, **_kwargs: object) -> _Engine:
+        return next(self.engines)
+
+
 def _config(space_path: Path, *, instance_id: str | None = None):
     return SimpleNamespace(
         space_path=str(space_path),
+        baseline=[],
         tuned=[
             SimpleNamespace(
                 engine_path=space_path.parent / "engine.yaml",
@@ -260,6 +269,35 @@ async def test_clear_hash_enabled_requires_usi_button(tmp_path: Path) -> None:
             instance_pool=InstancePool(),
         )
 
+    assert not (tmp_path / "spsa" / TUNABLE_HANDSHAKE_FILENAME).exists()
+
+
+@pytest.mark.asyncio
+async def test_clear_hash_enabled_validates_baseline_engine_role(tmp_path: Path) -> None:
+    tuned = _Engine(_manifest())
+    baseline = _Engine(None)
+    baseline.options.pop("Clear Hash")
+    config = _config(_write_space(tmp_path))
+    config.baseline = [
+        SimpleNamespace(
+            engine_path=tmp_path / "baseline.yaml",
+            name="baseline",
+            instance_id=None,
+            cpu_affinity=None,
+            handshake_timeout=2.0,
+        )
+    ]
+
+    with pytest.raises(ValueError, match=r"baseline\[0\].*'Clear Hash'"):
+        await run_tunable_manifest_preflight(
+            config=config,  # type: ignore[arg-type]
+            run_dir=tmp_path,
+            engine_factory_service=_SequenceFactory([tuned, baseline]),  # type: ignore[arg-type]
+            instance_pool=InstancePool(),
+        )
+
+    assert tuned.closed is True
+    assert baseline.closed is True
     assert not (tmp_path / "spsa" / TUNABLE_HANDSHAKE_FILENAME).exists()
 
 

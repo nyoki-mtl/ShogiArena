@@ -43,9 +43,18 @@ def prepare_remote_worker_bundle(
     with tempfile.TemporaryDirectory(prefix="shogiarena-worker-resume-") as temporary:
         staged = builder(output_path=(Path(temporary) / REMOTE_WORKER_BUNDLE_FILENAME).resolve())
         if not bundle_path.is_file():
-            raise ValueError("Remote worker bundle is missing from the sealed run")
-        if _sha256_file(bundle_path) != staged.bundle_sha256:
-            raise ValueError("Remote worker bundle does not match the sealed run bytes")
+            raise ValueError(
+                "Remote worker bundle is missing from the sealed run; "
+                f"expected digest {staged.bundle_sha256}, actual digest missing. "
+                "Restore the sealed remote-worker-bundle.zip or use --no-resume to start a fresh run."
+            )
+        actual_digest = _sha256_file(bundle_path)
+        if actual_digest != staged.bundle_sha256:
+            raise ValueError(
+                "Remote worker bundle does not match the sealed run bytes; "
+                f"expected digest {staged.bundle_sha256}, actual digest {actual_digest}. "
+                "Restore the sealed remote-worker-bundle.zip or use --no-resume to start a fresh run."
+            )
         return staged.model_copy(update={"bundle_path": bundle_path})
 
 
