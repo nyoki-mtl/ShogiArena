@@ -15,7 +15,7 @@ from shogiarena._core.interfaces.cli.config_file_loaders import parse_spsa_confi
 from shogiarena._core.interfaces.composition_root.default_root import build_default_root
 from shogiarena._core.interfaces.dashboard.assets_writer import DashboardProfile, read_dashboard_profiles_metadata
 from shogiarena._core.platform.settings import project_dirs
-from shogiarena._core.shared.kernel.run_paths import latest_run_dir
+from shogiarena._core.shared.kernel.run_paths import latest_run_dir, latest_run_dir_for_key
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int, coerce_optional_text
 
 _VALID_DASHBOARD_PROFILES: set[str] = {"tournament", "spsa", "match", "sprt", "generate"}
@@ -46,6 +46,8 @@ class _TournamentDashboardConfigPort(Protocol):
     tournament: _TournamentConfigSectionPort
     output_dir: Path
 
+    def get_schedule_hash(self) -> str: ...
+
 
 def pick_free_port(start: int, attempts: int = 20) -> int:
     import socket
@@ -64,20 +66,33 @@ def pick_free_port(start: int, attempts: int = 20) -> int:
 
 def detect_worker_count(run_dir: Path) -> int:
     workers_dir = run_dir / "dashboard" / "data" / "workers"
-    if not workers_dir.exists():
-        return 0
+    if workers_dir.exists():
+        indices: list[int] = []
+        for worker_file in workers_dir.glob("worker_*.js"):
+            stem = worker_file.stem
+            parts = stem.split("_", maxsplit=1)
+            idx = coerce_int(parts[1]) if len(parts) > 1 else None
+            if idx is None:
+                continue
+            indices.append(idx)
+        if indices:
+            return max(indices) + 1
 
-    indices: list[int] = []
-    for worker_file in workers_dir.glob("worker_*.js"):
-        stem = worker_file.stem
-        parts = stem.split("_", maxsplit=1)
-        idx = coerce_int(parts[1]) if len(parts) > 1 else None
-        if idx is None:
-            continue
-        indices.append(idx)
-    if not indices:
+    manifest_path = run_dir / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
         return 0
-    return max(indices) + 1
+    if not isinstance(manifest, Mapping):
+        return 0
+    for section_name in ("tournament", "spsa"):
+        section = manifest.get(section_name)
+        if not isinstance(section, Mapping):
+            continue
+        num_parallel = coerce_int(section.get("num_parallel"))
+        if num_parallel is not None and num_parallel > 0:
+            return num_parallel
+    return 0
 
 
 def _detect_spsa_artifacts(run_dir: Path) -> bool:
@@ -187,13 +202,19 @@ def load_tournament_config_for_dashboard(
     if num_parallel is None or num_parallel <= 0:
         raise ValueError("tournament config must define a positive tournament.num_parallel value")
 
-    resolved = run_dir_override or latest_run_dir(config_path, arena_cfg.output_dir / "tournament")
+    profile = _infer_profile_from_tournament_config(arena_cfg)
+    output_kind = "generate" if profile == "generate" else "tournament"
+    resolved = run_dir_override or latest_run_dir_for_key(
+        arena_cfg.output_dir / output_kind,
+        config_path.stem,
+        arena_cfg.get_schedule_hash(),
+    )
     if resolved is None:
         raise ValueError("run directory not found; specify --run-dir")
     parsed_num_parallel = coerce_int(num_parallel)
     if parsed_num_parallel is None or parsed_num_parallel <= 0:
         raise ValueError("tournament config must define a positive tournament.num_parallel value")
-    return resolved, parsed_num_parallel, _infer_profile_from_tournament_config(arena_cfg)
+    return resolved, parsed_num_parallel, profile
 
 
 def load_spsa_config_for_dashboard(

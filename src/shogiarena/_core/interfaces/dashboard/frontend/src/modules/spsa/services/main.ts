@@ -272,7 +272,10 @@ export function installSpsaModule(owner: ArenaWindow = defaultWindow): Dashboard
             if (eventsBinding?.getActiveTab() === 'convergence') {
                 refreshConvergenceCharts?.();
             }
-            queueAnalysisRefresh({ immediate: true, force: true });
+            // Correlation is recomputed server-side over every update, and the revision feed
+            // fires every few seconds during a live run. Only refresh it while its tab is
+            // showing; switching to the tab forces a fresh fetch on its own.
+            queueAnalysisRefresh({ immediate: true });
         };
 
         const api = createSpsaApi({
@@ -401,7 +404,8 @@ export function installSpsaModule(owner: ArenaWindow = defaultWindow): Dashboard
             eventsBinding?.refreshParameterAnalysis(options);
         refreshConvergenceCharts = () => eventsBinding?.refreshConvergence();
         notifyAnalysisStale = () => {
-            queueAnalysisRefresh({ immediate: true, force: true });
+            // Staleness is already recorded by the hydrator; recompute only for a visible tab.
+            queueAnalysisRefresh({ immediate: true });
         };
         flushPendingAnalysisRefresh();
 

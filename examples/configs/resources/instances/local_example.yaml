@@ -2,12 +2,29 @@
 # ------------------------------------------------------------------
 # - `name` は任意 (省略時はファイル名の stem)。CLI `--engine instance_id=...` やダッシュボードで利用します。
 # - `type` は必須で `local` を指定します。engine_dir / project_root は自動計算かつ指定不可。
-# - `slots` / `max_engines` / `tags` は任意。`slots` は null で自動判定。
+# - `slots` / `max_engines` / `tags` は任意。`slots` は null で自動判定 (CPU 数)。
 # - `is_strict_host_key_checking` は SSH 用の設定ですが、local でも bool 値として保持されます (既定 true)。
+#
+# 同時対局数の決まり方
+# ------------------------------------------------------------------
+# **1 対局は engine プロセスを 2 つ使います** (先手役と後手役)。同一 engine 同士の対局でも
+# プロセスは 2 つ起動し、slot も 1 プロセスにつき 1 つ消費します。したがって
+#
+#     同時対局数 = min(max_engines, slots) / 2
+#
+# となり、`max_engines: 4` は「4 対局」ではなく **2 対局** です。
+# run 設定側の `num_parallel` を上げても、ここが上限なら増えません。
+#
+# この設定ファイルを使わない場合、ローカルインスタンスは `slots: 4` の既定で生成されます
+# (= 同時 2 対局)。それ以上出したいときは、出力ディレクトリの `instances/local.yaml` に置くか、
+# run 設定の `instances:` から参照してください。
+#
+# 目安として、engine の `Threads` と掛けた総スレッド数が物理コア数を超えないようにします。
+#     総スレッド数 = 同時対局数 x 2 x engine の Threads
 
 name: local-dev                      # 任意。既定: ファイル名の stem (ここでは "local_example")
 type: local                          # 必須。ローカル実行を意味する固定値
-slots: 8                             # 任意。null で自動判定。同時実行スロットの上限目安
-max_engines: 4                       # 任意。既定: null -> slots と同じ値に解釈
+slots: 16                            # 任意。null で自動判定 (CPU 数)。1 engine プロセスにつき 1 消費
+max_engines: 8                       # 任意。既定: null -> slots と同値。8 engine = 同時 4 対局
 tags: ["local", "zen4"]              # 任意。既定: []。ダッシュボードなどでのフィルタリング用途
 is_strict_host_key_checking: true    # 任意。既定: true。local では動作への影響は最小

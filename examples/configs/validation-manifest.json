@@ -4,10 +4,6 @@
     "command": ["run", "tournament"]
   },
   {
-    "config": "examples/configs/arena_full_reference.yaml",
-    "command": ["run", "tournament"]
-  },
-  {
     "config": "examples/configs/run/tournament/example.yaml",
     "command": ["run", "tournament"]
   },

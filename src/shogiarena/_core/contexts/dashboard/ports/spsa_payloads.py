@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal, TypedDict
 
 from shogiarena._core.contexts.dashboard.application.live.view_payloads import LiveViewSnapshot
@@ -18,6 +19,26 @@ from shogiarena._core.shared.kernel.wdl_counts import WdlCounts
 # ---------------------------------------------------------------------------
 
 AnalysisStatus = Literal["ready", "warming", "error"]
+
+
+@dataclass(frozen=True, slots=True)
+class SpsaRevisionState:
+    """Revision feed が 1 回のポーリングで観測する状態。
+
+    ``revision`` は ``event_revisions`` に基づく **durable ledger revision** で、
+    provenance evidence として `operational_status.ledger.revision` と同じ値を指す。
+    このテーブルは variant quarantine / LTC 判定 / terminal でしか増えないため、
+    通常の update commit や対局結果では変化しない。
+
+    ``data_generation`` は projector が保持する **投影データの版**で、
+    update / pair / game observation / LTC 結果のいずれかが変化するたびに進む。
+    dashboard が描画する内容の変化はこちらで検出する。
+    """
+
+    run_id: str
+    revision: int
+    data_generation: int
+    is_terminal: bool
 
 
 class _AnalysisSnapshotBase(TypedDict, total=False):

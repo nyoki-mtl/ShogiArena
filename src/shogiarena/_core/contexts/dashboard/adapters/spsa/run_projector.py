@@ -12,9 +12,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import aliased
 
 from shogiarena._core.contexts.dashboard.adapters.db_repository import open_dashboard_repository
+from shogiarena._core.contexts.dashboard.ports.spsa_payloads import SpsaRevisionState
 from shogiarena._core.contexts.spsa.adapters.ledger_store import SpsaLedger, open_spsa_ledger
 from shogiarena._core.contexts.spsa.application.dashboard.summary_accumulator import SummaryAccumulator
 from shogiarena._core.platform.db.store.entities import EngineArtifact, Game, GameInstanceParticipation, Player
+from shogiarena._core.platform.db.store.repository import ShogiRepositoryPort
 from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_or_none
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
@@ -31,6 +33,8 @@ class SpsaRunProjector:
         self._db_path = db_path
         self._immutable_db = immutable_db
         self._lock = threading.RLock()
+        self._repository_lock = threading.Lock()
+        self._repository: ShogiRepositoryPort | None = None
         self._closed = False
         self._run_id = self._load_run_id()
         self._run_status = self._load_run_status()
@@ -63,12 +67,22 @@ class SpsaRunProjector:
         with self._lock:
             return self._revision
 
-    def revision_state(self) -> tuple[str, int, bool]:
-        """Return the durable run identity and latest ledger revision."""
+    def revision_state(self) -> SpsaRevisionState:
+        """Return the run identity, durable ledger revision, and projected data version.
+
+        ``event_revisions`` は quarantine / LTC 判定 / terminal でしか増えないため、
+        durable revision だけを見ていると通常の update commit と対局結果を取りこぼす。
+        dashboard の更新契機には ``data_generation`` を使う。
+        """
 
         self.refresh()
         with self._lock:
-            return self._run_id, self._revision, self._run_status == "terminal"
+            return SpsaRevisionState(
+                run_id=self._run_id,
+                revision=self._revision,
+                data_generation=self._generation,
+                is_terminal=self._run_status == "terminal",
+            )
 
     @property
     def generation(self) -> int:
@@ -710,11 +724,13 @@ class SpsaRunProjector:
         }
 
     def _load_latest_remote_status(self) -> tuple[JsonObject, JsonObject]:
-        repository = open_dashboard_repository(self._db_path, immutable=self._immutable_db)
+        repository = self._resolve_repository()
         if repository is None:
             return {"status": "not_observed"}, {"status": "not_applicable", "value": None}
-        try:
-            row = repository.session.execute(
+        # `operation()` ends the session boundary, so the next call observes newly written
+        # games. The engine and its pool stay alive, which is the expensive part to rebuild.
+        with repository.operation() as session:
+            row = session.execute(
                 select(
                     GameInstanceParticipation.instance_id,
                     GameInstanceParticipation.extra,
@@ -725,8 +741,6 @@ class SpsaRunProjector:
                 .order_by(GameInstanceParticipation.game_id.desc())
                 .limit(1)
             ).first()
-        finally:
-            repository.close_db()
         if row is None:
             return {"status": "not_observed"}, {"status": "not_applicable", "value": None}
         extra = coerce_json_object_or_none(row[1]) or {}
@@ -784,19 +798,37 @@ class SpsaRunProjector:
             update = self._updates.get(update_idx)
             return dict(update) if update is not None else None
 
+    def _resolve_repository(self) -> ShogiRepositoryPort | None:
+        """Return the projector-owned game database repository, opening it once.
+
+        ``open_dashboard_repository`` は呼び出しごとに SQLAlchemy engine を作るため、
+        summary のように高頻度で叩かれる経路では engine 生成が支配的コストになる。
+        engine は使い回し、session だけを呼び出しごとに閉じて読み取りを新鮮に保つ。
+        """
+
+        with self._repository_lock:
+            if self._repository is not None:
+                return self._repository
+            repository = open_dashboard_repository(self._db_path, immutable=self._immutable_db)
+            if repository is None:
+                # The database may not exist yet; retry on the next call.
+                return None
+            self._repository = repository
+            return repository
+
     def load_game_records(self, game_ids: list[str]) -> dict[str, JsonObject]:
         """Batch-hydrate requested game metadata with one database query."""
 
         requested = list(dict.fromkeys(game_ids))
         if not requested:
             return {}
-        repository = open_dashboard_repository(self._db_path, immutable=self._immutable_db)
+        repository = self._resolve_repository()
         if repository is None:
             return {}
-        try:
-            black = aliased(Player)
-            white = aliased(Player)
-            rows = repository.session.execute(
+        black = aliased(Player)
+        white = aliased(Player)
+        with repository.operation() as session:
+            rows = session.execute(
                 select(
                     Game.game_name,
                     black.player_name,
@@ -810,30 +842,33 @@ class SpsaRunProjector:
                 .join(white, Game.white_player)
                 .where(Game.game_name.in_(requested))
             ).all()
-            return {
-                str(game_name): {
-                    "game_id": str(game_name),
-                    "black_player": str(black_player),
-                    "white_player": str(white_player),
-                    "game_result": str(game_result),
-                    "num_moves": int(num_moves),
-                    "start_time": start_date.isoformat() if start_date is not None else None,
-                    "end_time": end_date.isoformat() if end_date is not None else None,
-                    "status": "completed",
-                }
-                for game_name, black_player, white_player, game_result, num_moves, start_date, end_date in rows
+        return {
+            str(game_name): {
+                "game_id": str(game_name),
+                "black_player": str(black_player),
+                "white_player": str(white_player),
+                "game_result": str(game_result),
+                "num_moves": int(num_moves),
+                "start_time": start_date.isoformat() if start_date is not None else None,
+                "end_time": end_date.isoformat() if end_date is not None else None,
+                "status": "completed",
             }
-        finally:
-            repository.close_db()
+            for game_name, black_player, white_player, game_result, num_moves, start_date, end_date in rows
+        }
 
     def close(self) -> None:
-        """Release the instance-owned ledger connection."""
+        """Release the instance-owned ledger connection and game database repository."""
 
         with self._lock:
             if self._closed:
                 return
             self._ledger.close()
             self._closed = True
+        with self._repository_lock:
+            repository = self._repository
+            self._repository = None
+        if repository is not None:
+            repository.close_db()
 
 
 __all__ = ["SpsaRunProjectionError", "SpsaRunProjector"]

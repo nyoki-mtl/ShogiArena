@@ -51,6 +51,7 @@ from shogiarena._core.contexts.game_session.ports.worker_deployment import Worke
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
 from shogiarena._core.contexts.spsa.adapters.accepted_best import persist_accepted_best
+from shogiarena._core.contexts.spsa.adapters.derived_json_scheduler import SpsaDerivedJsonScheduler
 from shogiarena._core.contexts.spsa.adapters.fixed_option_preflight import (
     FIXED_OPTION_PREFLIGHT_FILENAME,
     run_verified_spsa_fixed_option_preflight,
@@ -126,6 +127,8 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
     """
 
     dashboard_profiles: tuple[DashboardProfile, ...] = ("spsa",)
+    # Class-level default so teardown stays safe for instances built without __init__.
+    _derived_json_scheduler: SpsaDerivedJsonScheduler | None = None
 
     def __init__(
         self,
@@ -179,6 +182,7 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         self._engine_factory_service = engine_factory_service
         self._frozen_run_config_payload: JsonObject | None = None
         self._remote_worker_bundle: WorkerBundleBuildResult | None = None
+        self._derived_json_scheduler: SpsaDerivedJsonScheduler | None = None
 
         # -- Typed mutable state -------------------------------------------
         self._state = SpsaRunnerState()
@@ -256,6 +260,10 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
     async def _stop_additional_services(self) -> None:
         cleanup_error: BaseException | None = None
         terminal_error: BaseException | None = None
+        # Stop background projections before the terminal commit so a stale in-flight
+        # projection cannot overwrite the terminal view.
+        if self._derived_json_scheduler is not None:
+            await self._derived_json_scheduler.drain()
         if self._state.db_service is not None:
             try:
                 self._state.db_service.close()
@@ -291,6 +299,9 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         except BaseException as exc:  # noqa: BLE001 - always close the ledger after terminalization attempt
             terminal_error = exc
         finally:
+            if self._derived_json_scheduler is not None:
+                self._derived_json_scheduler.close()
+                self._derived_json_scheduler = None
             if self._state.ledger is not None:
                 self._state.ledger.close()
                 self._state.ledger = None
@@ -420,6 +431,7 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
             summary_updater=self._update_dashboard if self.is_dashboard_enabled else None,
             api_server=self.api_server,
             ledger_runtime=self._state.ledger_runtime,
+            derived_json_scheduler=self._derived_json_scheduler,
             remote_worker_bundle=self._remote_worker_bundle,
         )
 
@@ -668,6 +680,7 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         self._state.ledger = ledger
         self._state.ledger_runtime = ledger_runtime
         self._state.observation_ledger = SpsaObservationLedger(ledger.connection)
+        self._derived_json_scheduler = SpsaDerivedJsonScheduler(run_dir=self.run_dir, run_id=run_id)
         self._project_accepted_best()
 
     def _materialize_new_engine_configs(self) -> None:
@@ -922,7 +935,10 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
             )
 
         if is_persisted:
-            self._project_derived_json()
+            # The derived JSON views are rebuilt from the whole run, so projecting inline here
+            # blocks the loop for progressively longer as the run grows. The ledger stays
+            # authoritative, so the compatibility views only need eventual freshness.
+            self._request_derived_json_projection()
             self.progress.on_game_complete(
                 {
                     "game_id": event.game_id,
@@ -933,6 +949,12 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
             )
 
     def _project_derived_json(self) -> None:
+        """Rebuild the compatibility JSON views synchronously.
+
+        run 開始と terminal でのみ使う。実行中の hot path からは
+        :meth:`_request_derived_json_projection` を使うこと。
+        """
+
         if self._state.ledger_runtime is None:
             return
         run_dir = self.run_dir
@@ -942,6 +964,14 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
             self._state.ledger_runtime.project_derived_json(run_dir=run_dir)
         except (OSError, ValueError) as exc:
             logger.warning("SPSA ledger remains authoritative after derived JSON projection failure: %s", exc)
+
+    def _request_derived_json_projection(self) -> None:
+        """Schedule a coalesced off-loop projection of the compatibility JSON views."""
+
+        scheduler = self._derived_json_scheduler
+        if scheduler is None:
+            return
+        scheduler.request()
 
     def _project_accepted_best(self) -> None:
         runtime = self._state.ledger_runtime

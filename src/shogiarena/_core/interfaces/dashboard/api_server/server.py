@@ -14,6 +14,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from shogiarena._core.contexts.dashboard.application.archived_schedule import build_archived_schedule_snapshot
 from shogiarena._core.contexts.dashboard.application.broadcast import BroadcastHandler
 from shogiarena._core.contexts.dashboard.application.event_bus import EventBus
 from shogiarena._core.contexts.dashboard.application.events import DashboardEvent
@@ -147,9 +148,26 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
         )
         self.book_api = BookAPI(db_path=self.db_path, game_query=self._game_query)
 
+        archived_schedule = (
+            build_archived_schedule_snapshot(self.run_dir, db_path=self.db_path, game_query=self._game_query)
+            if self._is_read_only
+            else None
+        )
+        if archived_schedule is not None:
+            summary = self._state.get_summary_snapshot("tournament")
+            if summary is not None:
+                summary = copy.deepcopy(summary)
+                summary["is_summary_ready"] = True
+                summary["games"] = {
+                    "completed": archived_schedule.get("completed_games", 0),
+                    "total": archived_schedule.get("total_games", 0),
+                    "cancelled": archived_schedule.get("cancelled_games", 0),
+                }
+                self._state.set_summary_snapshot("tournament", attach_live_view_payload(summary))
         self.scheduler_api = SchedulerAPI(
             schedule_boundary,
             games_snapshot_supplier=self._copy_games_snapshot,
+            archived_schedule_supplier=(lambda: archived_schedule) if archived_schedule is not None else None,
         )
 
         self.ws_hub = LiveWebSocketHub(

@@ -4,33 +4,24 @@
 
 ## このページの要点
 
-- LTC（Long Time Control）回帰テストは、短時間チューニングで得たパラメータが**長時間対局でも有効か**を検証する
-- 一定回数の SPSA 更新ごとに自動的に実行され、SPRT またはスコアベースの基準でパス/フェイルを判定する
-- フェイルした場合、パラメータは前回のパス時点まで**自動リバート**される
-- 「短時間では有効だが長時間では無効」な局所最適への陥落を防ぐ安全装置
+- 一定回数の SPSA 更新ごとに、長い持ち時間でチューニング済みパラメータとベースラインを対局させ、劣化していればパラメータをリバートする機能
+- ShogiArena は設定項目として実装しているが、既定では無効であり、`examples/` の設定にも含めていない
+- チューニングを止めずに挟める標本サイズでは、判定できるのが破綻に近い劣化に限られる。この機能を回す動機である 10〜30 Elo の劣化は、検査を通過してしまう
+- Stockfish/fishtest は SPSA の実行中に LTC 検証を挟まず、チューニング終了後に独立したランで検証する
 
-## なぜ LTC 回帰テストが必要か
+## 何をする機能か
 
-SPSA チューニングは通常、短い持ち時間（STC: Short Time Control）で実行されます。
-対局のスループットを最大化するためです。
+SPSA チューニングは短い持ち時間（**STC**：Short Time Control）で実行します。
+1 局あたりの費用を下げて、勾配推定に使える標本数を稼ぐためです。
 
-しかし、STC と LTC では探索の性質が変わるため、STC で最適なパラメータが LTC でも最適とは限りません。
+ところが STC と長い持ち時間（**LTC**：Long Time Control）では探索の性質が変わります。
+読みの深さが違えば、探索パラメータの最適値も違ってきます。
+STC で得た改善が LTC では消える、あるいは劣化に転じる。
+この乖離を **STC 過学習**と呼びます。
 
-```text
-STC の特性:
-- 読みの深さが浅い → 評価関数の粗い調整が有効
-- 時間切れ負けのリスク → 高速な指し手生成が有利
-- ノイズが大きい → 偶然の勝ちが多い
-
-LTC の特性:
-- 読みが深い → 精密な評価が重要
-- 時間に余裕がある → 探索効率が重要
-- ノイズが小さい → 真の実力差が現れやすい
-```
-
-LTC 回帰テストは、STC でのチューニング結果が LTC でも性能劣化していないことを定期的に確認します。
-
-## 動作の流れ
+LTC 回帰テストは、この乖離をチューニングの実行中に検出しようとする機能です。
+`every_n_updates` 回の更新ごとに、そのときのパラメータと直前の合格時点のパラメータを LTC で対局させます。
+劣化と判定されればパラメータを合格時点まで戻し、そうでなければ現在のパラメータを新しい基準点として記録します。
 
 ```text
 SPSA 更新ループ
@@ -47,11 +38,106 @@ SPSA 更新ループ
   │
   ├─ 更新 51 ... 99
   │
-  ├─ 更新 100
-  │     └─► LTC 回帰テスト実行
-  │           ...
   └─ ...
 ```
+
+## どのくらいの劣化を検出できるか
+
+### 判定は点推定の比較
+
+`max_elo_drop` の判定は、推定した Elo 差をしきい値とそのまま比較します。
+信頼区間は使いません。
+
+```python
+max_elo_drop = _criterion_value(criteria, "max_elo_drop")
+allowed_elo_drop = abs(max_elo_drop) if max_elo_drop is not None else None
+if allowed_elo_drop is not None and (winrate <= 0.0 or (elo is not None and elo < -allowed_elo_drop)):
+    status = "failed"
+```
+
+したがって検出力は、推定量の標準誤差だけで決まります。
+
+### 標準誤差と検出率
+
+引き分け率を \\(d\\)、対局数を \\(n\\) とすると、勝率 50% 付近での Elo 推定量の標準誤差は次のようになります。
+
+\\[
+\sigma_{\text{Elo}} \approx \frac{400}{\ln 10} \cdot \frac{2\sqrt{1-d}}{\sqrt{n}}
+\\]
+
+`total_pairs: 100`（200 局）で引き分け率を 5% とすると 24 Elo です。
+CRN と先後入れ替えによってペア内の結果に正の相関がつくぶんだけ下がり、実効的には 22 Elo 前後になります。
+
+この標準誤差のもとで、しきい値を `max_elo_drop: 50.0` に置いたときの判定確率は次のとおりです。
+
+| 真のレート差 | `failed` になる確率 |
+|---:|---:|
+| 0（差なし） | 1.2% |
+| \\(-20\\) Elo | 9% |
+| \\(-30\\) Elo | 18% |
+| \\(-50\\) Elo | 50% |
+| \\(-80\\) Elo | 91% |
+| \\(-100\\) Elo | 99% |
+
+しきい値は点推定と直接比較されるので、真にしきい値ちょうどだけ劣化しているとき、検出率は 50% になります。
+実用的に捉えられるのは 80 Elo 規模から先です。
+
+### 10〜30 Elo を検出するのに要る標本
+
+STC 過学習として想定される劣化は 10〜30 Elo です。
+有意水準 5%、検出力 90% で 20 Elo の劣化を検出するには、標準誤差を 6.8 Elo まで下げる必要があります。
+上の式を逆に解くと、**2000 局規模**が要ります。
+
+LTC を STC の 4 倍の持ち時間で回すなら、費用は STC 換算で 8000 局です。
+`pairs_per_update: 2` で 1000 更新のチューニング本体が 4000 局ですから、検査 1 回でチューニング全体の 2 倍を使うことになります。
+実行中に挟める標本サイズではありません。
+
+## LTC でなければ捉えられないもの
+
+標本サイズを増やせないなら、検出できる範囲だけを目的にすればよいのではないか。
+つまり 80 Elo 規模の破綻を捕まえる装置として割り切る、という考え方はありえます。
+
+その範囲の劣化は、LTC を使わなくても見えます。
+パラメータが破綻した領域に入れば、STC の対局でも同じだけ勝率が落ちるからです。
+LTC が STC より多くを語るのは、両者で最適値がずれる場合に限られます。
+そしてそのずれの大きさが、前節で「検出できない」と結論した 10〜30 Elo です。
+
+| 失敗モード | LTC が要るか | 検出に要る標本 |
+|---|---|---|
+| パラメータの破綻（80 Elo 規模） | 不要。STC で同じだけ見える | 少ない |
+| STC 過学習（10〜30 Elo） | 必要 | 2000 局規模 |
+
+**LTC でしか捉えられない劣化と、実行中に検出できる劣化が重ならない。**
+ShogiArena がこの機能を既定で無効にし、`examples/` の設定からも外しているのはこのためです。
+
+なお、SPSA の更新値は空間定義の `bounds` でクリップされます（[勾配推定](./gradient.md) を参照）。
+破綻領域への逸脱そのものが起きにくいため、破綻検知としての需要も小さくなります。
+
+## fishtest のワークフロー
+
+fishtest ではランの停止規則が `sprt`、`spsa`、`numgames` の排他選択です。
+SPSA ランに SPRT の設定は存在せず、パラメータ更新にも検証やロールバックの段階がありません。
+
+```python
+def apply_spsa_result_updates(spsa, w_params, *, result, game_pairs):
+    for param, w_param in zip(spsa["params"], w_params):
+        param["theta"] = clip_spsa_param_value(
+            param, w_param["R"] * w_param["c"] * result * w_param["flip"])
+```
+
+fishtest における LTC はランの持ち時間に対する分類であって、SPSA の一部ではありません。
+`tc_base` が 40 秒以上のランを LTC として扱い、用途は UI のフィルタと PGN の保持期間です。
+分類関数が `"sprt" in args` を要求するため、SPSA ランは LTC 判定の対象にもなりません。
+
+検証は、SPSA が終わったあとに独立したランとして行います。
+
+1. STC で SPSA を回し、パラメータを得る
+2. 得られたパラメータで別のランを立て、STC の SPRT で master と比較する
+3. 通れば LTC（STC の 6 倍）の SPRT ランで再検証する
+4. 通ればマージする
+
+SPRT は結論が出るまで対局を続けられるので、固定 200 局の検査と違って、検出したい差に見合う標本サイズへ到達します。
+ShogiArena で同じことをするには、チューニング終了後に `run sprt` を使ってください（[SPRT](../sprt/index.md) を参照）。
 
 ## 設定
 
@@ -73,173 +159,50 @@ class LtcPassCriteria(BaseModel):
     sprt: SprtConfig | None = None      # SPRT による判定
 ```
 
-3 種類の基準を組み合わせ可能です。`max_elo_drop` は正値と負値のどちらでも同じ許容低下量として扱います。
+3 種類の基準を組み合わせられます。
+複数を指定した場合、いずれか一つでも劣化を捉えた時点でフェイルになります。
+`max_elo_drop` は正値と負値のどちらでも同じ許容低下量として扱います。
 
-### 設定例
+### リバートの挙動
 
-```yaml
-ltc_regression:
-  enabled: true
-  every_n_updates: 50        # 50 更新ごとに実行
-  total_pairs: 200           # 最大 200 ペア
-  time_control:
-    type: "byoyomi"
-    main_time: 60            # 本時間 60 秒
-    byoyomi_time: 1          # 秒読み 1 秒
-    byoyomi_periods: 30      # 秒読み 30 回
-  pass_criteria:
-    min_winrate: 0.50         # 勝率 50% 以上
-    sprt:
-      elo0: 0.0
-      elo1: 5.0
-      alpha: 0.05
-      beta: 0.05
-```
-
-## 判定ロジック
-
-### LTC 対局の実行
-
-チューニング済みパラメータ vs ベースラインパラメータで対局します。
-
-```python
-async def run_ltc_regression(
-    orchestrator, *,
-    tuned_params: list[ParamEntry],
-    baseline_params: list[ParamEntry],
-    ...
-) -> dict[str, Any]:
-    if sprt_config is not None:
-        sprt = Sprt(
-            elo0=float(sprt_config.elo0),
-            elo1=float(sprt_config.elo1),
-            alpha=float(sprt_config.alpha),
-            beta=float(sprt_config.beta),
-        )
-
-    for pair_idx in range(total_pairs):
-        score, gi_b, gi_w = await orchestrator._run_game_pair(...)
-
-        # SPRT に結果を提出
-        _submit_to_sprt(gi_b, tuned_as_black=True)
-        _submit_to_sprt(gi_w, tuned_as_black=False)
-
-        # SPRT が判定に到達したら早期終了
-        if sprt_decision != SprtDecision.CONTINUE:
-            break
-```
-
-### パス/フェイルの判定
-
-```python
-status = "passed"
-
-# 勝率チェック
-if min_winrate is not None and winrate < min_winrate:
-    status = "failed"
-
-# SPRT チェック
-if sprt_decision == SprtDecision.ACCEPT_H0:
-    status = "failed"     # 改善なしと判定
-elif sprt_decision == SprtDecision.CONTINUE:
-    status = "pending"    # 判定未確定
-
-```
-
-### パス時の処理
-
-```python
-if status == "passed":
-    # 現在のパラメータを新しい基準点として保存
-    self._store_ltc_baseline(post_update_snapshot, update_idx)
-```
-
-### フェイル時の処理
-
-```python
-elif status == "failed":
-    # 前の基準点までパラメータをリバート
-    params.clear()
-    params.extend(baseline_params)
-    write_params(params_path, params)
-```
-
-## 判定基準の選び方
-
-### SPRT ベース（推奨）
-
-SPRT は判定に必要なだけ対局を続け、結論が出た時点で打ち切ります。
-固定の対局数を先に決めなくてよいぶん、無駄な LTC 対局を減らせます。
-
-```yaml
-pass_criteria:
-  sprt:
-    elo0: -5.0    # 5 Elo の劣化まで許容
-    elo1: 0.0     # 改善なしが帰無仮説
-    alpha: 0.05
-    beta: 0.05
-```
-
-> **注**：LTC 回帰では「劣化していないこと」を確認するため、elo0 と elo1 の設定が通常の SPRT と逆になることがあります。
-
-### 勝率ベース
-
-設定は単純ですが、必要な対局数を統計的に決めないため、`total_pairs` が小さいと偶然の勝率で判定が揺れます。
-
-```yaml
-pass_criteria:
-  min_winrate: 0.50   # 最低でも 50% 以上
-```
-
-### 複合基準
-
-複数の基準を組み合わせると、いずれか一つでも劣化を捉えた時点でフェイルにできます。
-
-```yaml
-pass_criteria:
-  min_winrate: 0.48        # 最低勝率
-  max_elo_drop: 10.0       # 最大 10 Elo の劣化まで許容
-  sprt:
-    elo0: -5.0
-    elo1: 0.0
-    alpha: 0.05
-    beta: 0.05
-```
-
-## 設計上のトレードオフ
-
-### every_n_updates の設定
-
-| 値 | LTC 頻度 | メリット | デメリット |
-|:---:|:---:|:---|:---|
-| 10 | 高い | 劣化を早期に検出 | チューニング全体が遅くなる |
-| 50 | 中 | バランスが良い | 中程度の遅延 |
-| 200 | 低い | チューニングが速い | 劣化の検出が遅れる |
-
-### total_pairs の設定
-
-| 値 | 精度 | 時間 | 推奨用途 |
-|:---:|:---:|:---:|:---|
-| 50 | 低い | 短い | スクリーニング |
-| 200 | 中 | 中 | 一般的なチューニング |
-| 500+ | 高い | 長い | 重要なリリース前の検証 |
-
-## リバートの影響
-
-LTC 回帰テストでフェイルしてリバートが発生した場合:
-
-1. パラメータは前回のパス時点に戻る
-2. SPSA 更新は次の反復から継続する
-3. ゲインスケジュールは**リセットされない**（\\(k\\) は増加し続ける）
+フェイルするとパラメータは前回のパス時点に戻り、SPSA 更新は次の反復から継続します。
+ゲインスケジュールは**リセットされません**（\\(k\\) は増加し続けます）。
 
 ゲインスケジュールを据え置くことで、フェイル後のチューニングは以前より小さいステップサイズで進みます。
 リバート直前と同じ経路をそのままなぞる可能性は下がり、同じ局所最適へ再突入しにくくなります。
+
+## 有効化する場合の注意
+
+### pass_criteria に sprt を置くとき
+
+`total_pairs` を使い切っても SPRT が決着しない場合、`fail_closed_ltc_status_at_budget()` が `pending` を `failed` に変換します。
+
+```python
+def fail_closed_ltc_status_at_budget(status, fail_reasons, *, pairs_played, total_pairs):
+    if status != "pending" or pairs_played < total_pairs:
+        return status, fail_reasons
+    return "failed", [*fail_reasons, LTC_SPRT_BUDGET_EXHAUSTED_REASON]
+```
+
+判定不能を安全側へ倒す設計ですが、結果としてパラメータはリバートされます。
+SPRT が決着するには数千局規模の `total_pairs` が要るため、それより小さい予算で `sprt` を指定すると、劣化していなくても高い確率でリバートが起きます。
+
+### しきい値を標本サイズと釣り合わせる
+
+`max_elo_drop` は点推定と比較されるので、標準誤差より小さいしきい値には意味がありません。
+上の式で標準誤差を求め、その 2 倍以上を目安にしてください。
+200 局なら標準誤差が 22 Elo 前後で、50 Elo のしきい値に対する誤検知率が 1.2% です。
+
+誤検知はラン全体で累積します。
+1000 更新を `every_n_updates: 250` で回せば検査は 4 回になり、どこかで誤ってリバートする確率は 5% 前後です。
 
 ## 実装リファレンス
 
 | ファイル | 関数/クラス | 役割 |
 |---------|----------|------|
 | `_core/contexts/spsa/adapters/runtime/ltc_regression.py` | `run_ltc_regression()` | LTC 回帰テストの本体 |
+| `_core/contexts/spsa/adapters/runtime/ltc_regression_events.py` | `determine_ltc_status()` | パス/フェイル/保留の判定 |
+| `_core/contexts/spsa/adapters/runtime/ltc_regression_events.py` | `fail_closed_ltc_status_at_budget()` | 予算枯渇時の fail-closed 変換 |
 | `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `LtcRegressionConfig` | LTC 設定 |
 | `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `LtcPassCriteria` | パス判定基準 |
 

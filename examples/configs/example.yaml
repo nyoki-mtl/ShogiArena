@@ -78,7 +78,7 @@ engines:                    # 必須。最低 2 エントリ以上が必要
     options_overlays:                            # 任意。既定: []
       - "./resources/engines/overlays/example.yaml"
     options:                                     # 任意。既定: {}
-      Threads: 4
+      Threads: 2
       USI_Hash: 2048
       # BookDir: "./data/books/no_book"  # パスオプションの例（相対パスまたは絶対パス）
     # isready_lock_template: "{DNN_Model}.{DNN_Batch_Size}.serialized"  # 任意。初回 isready を直列化するロックキー

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from shogiarena._core.contexts.spsa.application.space_spec import (
+    inspect_spsa_manifest_request,
     parse_spsa_space_spec,
     parse_spsa_tunable_manifest,
 )
@@ -166,6 +169,17 @@ def test_space_select_requires_manifest() -> None:
                 "select": [{"id": "cpuct"}],
             }
         )
+
+
+def test_manifest_request_rejects_empty_selection(tmp_path: Path) -> None:
+    space_path = tmp_path / "space.yaml"
+    space_path.write_text(
+        "schema_version: shogiarena.spsa.space.v1\ntarget: {protocol: usi_options}\nselect: []\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="space.select must be a non-empty list"):
+        inspect_spsa_manifest_request(space_path)
 
 
 def test_space_select_rejects_unknown_manifest_id() -> None:

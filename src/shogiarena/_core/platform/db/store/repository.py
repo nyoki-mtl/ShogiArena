@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from typing import Protocol, runtime_checkable
@@ -56,7 +57,8 @@ class ShogiRepository:
         self._session_factory = session_factory
         self._is_read_only = is_read_only
         self._is_schema_ready = False
-        self._is_in_operation = False
+        self._open_operation_sessions: set[Session] = set()
+        self._operation_guard_lock = threading.Lock()
         self._is_closed = False
 
     def _ensure_open(self) -> None:
@@ -93,16 +95,22 @@ class ShogiRepository:
         入れ子にはできない。scoped session なので内側は外側と同じ Session を返し、
         内側の commit が外側の未確定分まで確定させ、内側の remove が外側の
         commit / rollback を no-op にする。原子性が静かに壊れるため、fail fast にする。
+
+        入れ子の判定は yield する Session そのもので行う。scoped session は
+        thread / asyncio task ごとに別の Session を返すので、この単位で見れば
+        「同じ Session を二重に開いた」ときだけ検出できる。repository を共有する
+        別スレッドからの同時呼び出しは、そもそも別の Session なので影響しない。
         """
 
         self._ensure_schema_ready()
-        if self._is_in_operation:
-            raise RuntimeError(
-                "ShogiRepository.operation() cannot be nested: the inner boundary would commit the outer "
-                "transaction and silence the outer rollback. Pass the yielded session down instead."
-            )
         session = self._session_factory()
-        self._is_in_operation = True
+        with self._operation_guard_lock:
+            if session in self._open_operation_sessions:
+                raise RuntimeError(
+                    "ShogiRepository.operation() cannot be nested: the inner boundary would commit the outer "
+                    "transaction and silence the outer rollback. Pass the yielded session down instead."
+                )
+            self._open_operation_sessions.add(session)
         try:
             yield session
             if commit:
@@ -111,7 +119,8 @@ class ShogiRepository:
             session.rollback()
             raise
         finally:
-            self._is_in_operation = False
+            with self._operation_guard_lock:
+                self._open_operation_sessions.discard(session)
             self._session_factory.remove()
 
     def close_db(self) -> None:

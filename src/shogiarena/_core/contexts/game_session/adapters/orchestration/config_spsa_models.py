@@ -52,7 +52,13 @@ class LtcPassCriteria(BaseModel):
 
 
 class LtcRegressionConfig(BaseModel):
-    """LTC regression test configuration."""
+    """LTC regression test configuration.
+
+    Disabled by default and left out of the shipped examples on purpose. At a sample size
+    small enough to interleave with tuning, the check only resolves breakage-scale losses,
+    not the 10-30 Elo STC overfit it exists to catch. Verify with a standalone SPRT run
+    after tuning instead; see docs/book/src/internals/spsa/ltc-regression.md.
+    """
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True, extra="forbid")
 

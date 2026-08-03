@@ -116,6 +116,7 @@ async def run_tournament_command(
         _dry_run_schedule(config)
         return
 
+    cmd.announce_run_directory(run_dir)
     root = build_default_root()
     storage = create_tournament_run_storage(run_dir, runtime=root.tournament_runtime)
 
@@ -202,6 +203,7 @@ async def run_generate_command(
         _dry_run_schedule(config)
         return
 
+    cmd.announce_run_directory(run_dir)
     root = build_default_root()
     storage = create_tournament_run_storage(run_dir, runtime=root.tournament_runtime)
 

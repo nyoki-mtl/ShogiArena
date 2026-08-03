@@ -6,6 +6,7 @@ import json
 import logging
 from collections.abc import Mapping
 from pathlib import Path
+from threading import Lock
 from typing import TypeGuard
 
 import yaml
@@ -36,6 +37,9 @@ class SpsaStore(DashboardSpsaStorePort):
         run_dir: Path,
     ) -> None:
         self._run_dir = run_dir
+        self._meta_cache_lock = Lock()
+        self._meta_cache_signature: tuple[int, int] | None = None
+        self._meta_cache: SpsaMetaData | None = None
 
     def spsa_path(self, filename: str) -> Path:
         """Get path to a file in the SPSA directory."""
@@ -77,14 +81,36 @@ class SpsaStore(DashboardSpsaStorePort):
         return entries
 
     def load_meta_data(self) -> SpsaMetaData:
-        """Load meta.json as a typed Pydantic model."""
+        """Load meta.json as a typed Pydantic model.
+
+        ``meta.json`` は全パラメータの初期値とセッションごとの開始値を持つため、
+        パラメータ数と再開回数に比例して大きくなる。summary / params / progress の
+        各経路が呼び出しごとに読み直すと無視できないコストになるので、
+        mtime と size が変わらない限り解析結果を再利用する。
+        """
+
         meta_path = self.spsa_path("meta.json")
-        if not meta_path.exists():
+        signature = self._stat_signature(meta_path)
+        if signature is None:
             return SpsaMetaData()
+        with self._meta_cache_lock:
+            if self._meta_cache is not None and self._meta_cache_signature == signature:
+                return self._meta_cache
+
         raw_meta = self.load_json_file(meta_path)
-        if not isinstance(raw_meta, dict):
-            return SpsaMetaData()
-        return SpsaMetaData.model_validate(raw_meta)
+        meta_data = SpsaMetaData.model_validate(raw_meta) if isinstance(raw_meta, dict) else SpsaMetaData()
+        with self._meta_cache_lock:
+            self._meta_cache = meta_data
+            self._meta_cache_signature = signature
+        return meta_data
+
+    @staticmethod
+    def _stat_signature(path: Path) -> tuple[int, int] | None:
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        return stat.st_mtime_ns, stat.st_size
 
     def current_session_uuid(self) -> str | None:
         """Get current session UUID from meta.json."""

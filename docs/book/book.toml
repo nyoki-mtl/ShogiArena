@@ -9,6 +9,8 @@ build-dir = "build"
 create-missing = false
 
 [output.html]
+# 数式は theme/head.hbs で MathJax を読み込んで描画する。
+# mdbook 0.5 で mathjax-support オプションが廃止されたため、theme 側に置いている。
 default-theme = "navy"
 preferred-dark-theme = "ayu"
 git-repository-url = "https://github.com/nyoki-mtl/ShogiArena"

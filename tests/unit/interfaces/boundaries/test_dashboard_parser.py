@@ -20,6 +20,25 @@ def test_detect_worker_count(tmp_path: Path) -> None:
     assert dashboard_boundaries.detect_worker_count(run_dir) == 3
 
 
+def test_detect_worker_count_falls_back_to_sealed_manifest(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"tournament": {"num_parallel": 2}}),
+        encoding="utf-8",
+    )
+
+    assert dashboard_boundaries.detect_worker_count(run_dir) == 2
+
+
+def test_detect_worker_count_ignores_invalid_manifest_fallback(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "manifest.json").write_text("{invalid", encoding="utf-8")
+
+    assert dashboard_boundaries.detect_worker_count(run_dir) == 0
+
+
 def test_infer_run_state_match_profile(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -58,6 +77,7 @@ def test_load_tournament_config_for_dashboard_reads_profile(monkeypatch: pytest.
         sprt=None,
         generate=None,
         experiment_name="match",
+        get_schedule_hash=lambda: "1234567890abcdef",
     )
 
     observed: dict[str, Path] = {}
@@ -73,11 +93,13 @@ def test_load_tournament_config_for_dashboard_reads_profile(monkeypatch: pytest.
         lambda *_args, **_kwargs: dummy_config,
     )
 
-    def _fake_latest_run_dir(config_file: Path, output_dir: Path) -> Path:
+    def _fake_latest_run_dir_for_key(output_dir: Path, name: str, schedule_hash: str) -> Path:
         observed["output_dir"] = output_dir
+        observed["name"] = Path(name)
+        observed["schedule_hash"] = Path(schedule_hash)
         return output_dir / "latest"
 
-    monkeypatch.setattr(dashboard_boundaries, "latest_run_dir", _fake_latest_run_dir)
+    monkeypatch.setattr(dashboard_boundaries, "latest_run_dir_for_key", _fake_latest_run_dir_for_key)
 
     run_dir, worker_count, profile = dashboard_boundaries.load_tournament_config_for_dashboard(config_path)
 
@@ -85,6 +107,8 @@ def test_load_tournament_config_for_dashboard_reads_profile(monkeypatch: pytest.
     assert profile == "match"
     assert run_dir == tmp_path / "out" / "tournament" / "latest"
     assert observed["output_dir"] == tmp_path / "out" / "tournament"
+    assert observed["name"] == Path("tournament")
+    assert observed["schedule_hash"] == Path("1234567890abcdef")
 
 
 def test_load_tournament_config_for_dashboard_rejects_invalid_num_parallel(
@@ -99,6 +123,7 @@ def test_load_tournament_config_for_dashboard_rejects_invalid_num_parallel(
         sprt=None,
         generate=None,
         experiment_name=None,
+        get_schedule_hash=lambda: "1234567890abcdef",
     )
     monkeypatch.setattr(dashboard_boundaries, "parse_tournament_config_file", lambda _path: {"ok": True})
     monkeypatch.setattr(dashboard_boundaries, "build_tournament_run_config", lambda *_args, **_kwargs: bad_config)

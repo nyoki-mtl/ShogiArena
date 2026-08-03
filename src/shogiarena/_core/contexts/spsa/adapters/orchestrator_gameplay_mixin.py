@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import uuid
@@ -101,6 +102,7 @@ class SpsaOrchestratorGameplayMixin:
     extra_options: JsonObject | None
     session_context: Any
     _ledger_runtime: SpsaLedgerRuntimePort
+    _game_slot_semaphore: asyncio.Semaphore
 
     _make_rng: Any
     _build_engine_option_map: Any
@@ -134,9 +136,14 @@ class SpsaOrchestratorGameplayMixin:
         black_reserved = reserved_ids[0] if reserved_ids else f"{pair_id}-black"
         white_reserved = reserved_ids[1] if reserved_ids else f"{pair_id}-white"
         retry_available = True
+        # Quarantine is a property of the pair's variant, not of one side. Both sides run
+        # concurrently, so without this the two of them record it twice; the ledger rejects the
+        # second write as conflicting evidence whenever the two failures classify differently,
+        # which would surface a real observation failure as a ledger integrity error.
+        is_quarantine_recorded = False
 
         async def run_side(*, is_tuned_as_black: bool, reserved_id: str) -> tuple[int, rsshogi.record.Record]:
-            nonlocal retry_available
+            nonlocal retry_available, is_quarantine_recorded
 
             async def execute(game_id: str) -> tuple[int, rsshogi.record.Record]:
                 return await self._run_game(
@@ -181,22 +188,95 @@ class SpsaOrchestratorGameplayMixin:
                         failure = retry_error
                 else:
                     failure = first_error
-                self._ledger_runtime.record_variant_quarantine(
-                    update_idx=update_idx,
-                    pair_id=pair_id,
-                    variant_id=variant_token(update_idx) + phase_symbol(phase),
-                    failure_classification=str(failure),
-                )
+                # The check-and-set has no await between the two statements, so the concurrent
+                # sides cannot both pass it.
+                if not is_quarantine_recorded:
+                    is_quarantine_recorded = True
+                    self._ledger_runtime.record_variant_quarantine(
+                        update_idx=update_idx,
+                        pair_id=pair_id,
+                        variant_id=variant_token(update_idx) + phase_symbol(phase),
+                        failure_classification=str(failure),
+                    )
                 if failure is first_error:
                     raise failure from None
                 raise failure from first_error
 
-        r_b, gi_b = await run_side(is_tuned_as_black=True, reserved_id=black_reserved)
-        r_w, gi_w = await run_side(is_tuned_as_black=False, reserved_id=white_reserved)
+        if self._stop_event.is_set():
+            # A stop is already pending, so run sequentially: the first incomplete observation
+            # short-circuits the pair instead of starting a second game that cannot finish.
+            r_b, gi_b = await run_side(is_tuned_as_black=True, reserved_id=black_reserved)
+            r_w, gi_w = await run_side(is_tuned_as_black=False, reserved_id=white_reserved)
+            return ((-1.0, +1.0, 0.0)[r_b] + (-1.0, +1.0, 0.0)[r_w]) / 2.0, gi_b, gi_w
+
+        # The pair score is the plain mean of the two colour-reversed games, and both use the
+        # same opening and the same perturbed parameters, so running them concurrently does not
+        # change the estimator. `_run_game` bounds the total number of in-flight games, so this
+        # only fills worker slots that would otherwise sit idle.
+        # `return_exceptions` keeps a failing side from leaving the other running detached: both
+        # settle before the first failure propagates.
+        settled = await asyncio.gather(
+            run_side(is_tuned_as_black=True, reserved_id=black_reserved),
+            run_side(is_tuned_as_black=False, reserved_id=white_reserved),
+            return_exceptions=True,
+        )
+        for outcome in settled:
+            if isinstance(outcome, BaseException):
+                raise outcome
+        black_outcome, white_outcome = settled
+        assert not isinstance(black_outcome, BaseException)
+        assert not isinstance(white_outcome, BaseException)
+        r_b, gi_b = black_outcome
+        r_w, gi_w = white_outcome
         score = ((-1.0, +1.0, 0.0)[r_b] + (-1.0, +1.0, 0.0)[r_w]) / 2.0
         return score, gi_b, gi_w
 
     async def _run_game(
+        self,
+        *,
+        start_sfen: str,
+        tuned_params: list[ParamEntry],
+        current_params: list[ParamEntry],
+        worker_idx: int,
+        is_tuned_as_black: bool,
+        update_idx: int,
+        phase: PhaseLiteral,
+        preassigned_game_id: str | None = None,
+        tuned_variant_token: str | None = None,
+        baseline_variant_token: str | None = None,
+        tuned_option_map: JsonObject | None = None,
+        baseline_option_map: JsonObject | None = None,
+        event_family: str = "spsa",
+        pair_id: str,
+        time_control_override: TimeControlLimits | None = None,
+    ) -> tuple[int, rsshogi.record.Record]:
+        """Run one SPSA game, bounded by the configured game-slot budget.
+
+        The engine pool is sized for ``num_workers`` concurrent games, so every game acquires a
+        slot before it starts. Without this bound, running a pair's two sides concurrently would
+        let a batch request more engines than the pool can serve.
+        """
+
+        async with self._game_slot_semaphore:
+            return await self._execute_game(
+                start_sfen=start_sfen,
+                tuned_params=tuned_params,
+                current_params=current_params,
+                worker_idx=worker_idx,
+                is_tuned_as_black=is_tuned_as_black,
+                update_idx=update_idx,
+                phase=phase,
+                preassigned_game_id=preassigned_game_id,
+                tuned_variant_token=tuned_variant_token,
+                baseline_variant_token=baseline_variant_token,
+                tuned_option_map=tuned_option_map,
+                baseline_option_map=baseline_option_map,
+                event_family=event_family,
+                pair_id=pair_id,
+                time_control_override=time_control_override,
+            )
+
+    async def _execute_game(
         self,
         *,
         start_sfen: str,

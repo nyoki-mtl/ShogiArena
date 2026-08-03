@@ -99,7 +99,7 @@ async def run_tournament_like(
         )
     except ContractParseError as exc:
         raise CliError(f"Invalid tournament config: {exc}") from exc
-    except (TypeError, ValueError) as exc:
+    except (OSError, TypeError, ValueError) as exc:
         raise CliError(f"Invalid tournament config: {exc}") from exc
 
     if should_require_sprt and cfg.sprt is None:

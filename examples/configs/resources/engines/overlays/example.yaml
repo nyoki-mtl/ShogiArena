@@ -7,6 +7,6 @@
 options:
   # EvalDir: "./data/evals/SharedEval"      # 任意 (既定: 指定なし)。共有の評価関数（相対パスまたは絶対パス）
   # BookDir: "./data/books/latest"          # 任意 (既定: 指定なし)。共通定石ディレクトリ（相対パスまたは絶対パス）
-  Threads: 4                                # 任意 (既定: 指定なし)。個別エンジン options で上書き可能
+  Threads: 2                                # 任意 (既定: 指定なし)。個別エンジン options で上書き可能
   NetworkDelay: 0                           # 任意 (既定: 指定なし)。YaneuraOu 固有オプション
   NetworkDelay2: 0

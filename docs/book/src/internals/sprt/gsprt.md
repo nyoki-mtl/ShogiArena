@@ -55,10 +55,10 @@ GSPRT では、仮説中の未知パラメータを**制約付き最尤推定量
 対数を取ると、次の形になります。
 
 \\[
-\text{LLR}_n = \ln \Lambda_n = \ell(\hat{\theta}_1) - \ell(\hat{\theta}_0)
+\text{LLR}\_n = \ln \Lambda_n = \ell(\hat{\theta}\_1) - \ell(\hat{\theta}\_0)
 \\]
 
-ここで \\(\hat{\theta}_0, \hat{\theta}_1\\) はそれぞれ \\(\Theta_0, \Theta_1\\) 上の制約付き MLE、\\(\ell\\) は対数尤度関数です。
+ここで \\(\hat{\theta}\_0, \hat{\theta}\_1\\) はそれぞれ \\(\Theta_0, \Theta_1\\) 上の制約付き MLE、\\(\ell\\) は対数尤度関数です。
 
 ### エンジンテストでの適用
 
@@ -72,7 +72,7 @@ GSPRT では、仮説中の未知パラメータを**制約付き最尤推定量
 
 ### 定式化
 
-観測された経験分布を \\(\hat{p} = (\hat{p}_0, \hat{p}_1, \ldots, \hat{p}_{N-1})\\) とします（\\(N\\) はカテゴリ数）。
+観測された経験分布を \\(\hat{p} = (\hat{p}\_0, \hat{p}\_1, \ldots, \hat{p}\_{N-1})\\) とします（\\(N\\) はカテゴリ数）。
 各カテゴリの値を \\(a_i = i / (N-1)\\)（三項：\\(i \in \{0, 1, 2\}\\)、五項：\\(i \in \{0, 1, 2, 3, 4\}\\)）とします。
 
 「期待値が \\(s\\) である多項分布のうち、経験分布に対する尤度を最大化する分布」を求めます。
@@ -82,13 +82,13 @@ GSPRT では、仮説中の未知パラメータを**制約付き最尤推定量
 制約付き MLE は、次の**世俗方程式**を解くことで得られます。[^mle-multinomial]
 
 \\[
-\sum_{i} \frac{\hat{p}_i \cdot (a_i - s)}{1 + x \cdot (a_i - s)} = 0
+\sum_{i} \frac{\hat{p}\_i \cdot (a_i - s)}{1 + x \cdot (a_i - s)} = 0
 \\]
 
 この方程式を \\(x\\) について解き、MLE 分布を構成します。
 
 \\[
-p_i^{\text{MLE}} = \frac{\hat{p}_i}{1 + x \cdot (a_i - s)}
+p_i^{\text{MLE}} = \frac{\hat{p}\_i}{1 + x \cdot (a_i - s)}
 \\]
 
 ```python
@@ -126,7 +126,7 @@ def secular(pdf):
 H0（スコア = \\(s_0\\)）と H1（スコア = \\(s_1\\)）に対する GSPRT-LLR は次のように書けます。
 
 \\[
-\text{LLR} = N \sum_{i} \hat{p}_i \cdot \ln\frac{p_{1,i}^{\text{MLE}}}{p_{0,i}^{\text{MLE}}}
+\text{LLR} = N \sum_{i} \hat{p}\_i \cdot \ln\frac{p_{1,i}^{\text{MLE}}}{p_{0,i}^{\text{MLE}}}
 \\]
 
 ここで \\(p_{0,i}^{\text{MLE}}\\), \\(p_{1,i}^{\text{MLE}}\\) はそれぞれ H0, H1 のもとでの制約付き MLE です。
@@ -171,7 +171,7 @@ def LLR_alt2(pdf, s0, s1):
 \text{LLR} \approx \frac{N}{2} \ln\frac{r_0}{r_1}
 \\]
 
-ここで \\(r_j = \sum_i \hat{p}_i (a_i - s_j)^2\\) は仮説 \\(s_j\\) のもとでの残差 2 乗和です。
+ここで \\(r_j = \sum_i \hat{p}\_i (a_i - s_j)^2\\) は仮説 \\(s_j\\) のもとでの残差 2 乗和です。
 
 ```python
 def LLR_alt(pdf, s0, s1):
@@ -188,7 +188,7 @@ def LLR_alt(pdf, s0, s1):
 GSPRT の LLR 過程は、十分なサンプル数のもとでは**ドリフト付きブラウン運動**で近似できます。[^brownian-approx]
 
 \\[
-\text{LLR}_n \approx \mu \cdot n + \sigma_{\text{LLR}} \cdot W_n
+\text{LLR}\_n \approx \mu \cdot n + \sigma_{\text{LLR}} \cdot W_n
 \\]
 
 ここで \\(W_n\\) は標準ウィーナー過程、\\(\mu\\) と \\(\sigma_{\text{LLR}}^2\\) はそれぞれ LLR ジャンプのドリフトと分散です。
@@ -234,7 +234,7 @@ Fishtest は、Siegmund (1985) の理論に基づく**動的オーバーシュ�
 LLR が境界付近にあるとき、オーバーシュートの期待値を推定し、実効的な境界を内側へ調整します。
 
 \\[
-\text{lower}_{\text{eff}} = \text{lower} + o_0, \quad \text{upper}_{\text{eff}} = \text{upper} - o_1
+\text{lower}\_{\text{eff}} = \text{lower} + o_0, \quad \text{upper}\_{\text{eff}} = \text{upper} - o_1
 \\]
 
 オーバーシュートは、これまでのジャンプ幅から次のように推定します。
@@ -320,10 +320,10 @@ def MLE_t_value(pdfhat, ref, s):
 ### nElo での LLR 近似
 
 \\[
-\text{LLR} \approx \frac{N}{2} \ln\frac{1 + (\text{nt} - \text{nt}_0)^2}{1 + (\text{nt} - \text{nt}_1)^2}
+\text{LLR} \approx \frac{N}{2} \ln\frac{1 + (\text{nt} - \text{nt}\_0)^2}{1 + (\text{nt} - \text{nt}\_1)^2}
 \\]
 
-ここで \\(\text{nt}\\) は観測された正規化 t 値、\\(\text{nt}_0, \text{nt}_1\\) は閾値の正規化 t 値です。
+ここで \\(\text{nt}\\) は観測された正規化 t 値、\\(\text{nt}\_0, \text{nt}\_1\\) は閾値の正規化 t 値です。
 
 ## 三項分布と五項分布の自動選択
 

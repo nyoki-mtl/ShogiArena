@@ -16,7 +16,7 @@
 パラメータ \\(i\\) の勾配推定は次式で与えられます。
 
 \\[
-\hat{g}_i = \frac{L(\boldsymbol{\theta} + c_k \boldsymbol{\varepsilon}) - L(\boldsymbol{\theta} - c_k \boldsymbol{\varepsilon})}{2 c_k \varepsilon_i}
+\hat{g}\_i = \frac{L(\boldsymbol{\theta} + c_k \boldsymbol{\varepsilon}) - L(\boldsymbol{\theta} - c_k \boldsymbol{\varepsilon})}{2 c_k \varepsilon_i}
 \\]
 
 ShogiArena の実装では、摂動の向きは Rademacher（\\(\pm 1\\)）の `flip`、大きさはパラメータ単位の
@@ -35,7 +35,7 @@ tuned_minus = [p.value - flip * c_i for p, flip, c_i in ...]
 \\(\text{step} = \sum s^+ - \sum s^-\\) を差分として使います。
 
 \\[
-\hat{g}_i = \frac{\text{step}}{2 \cdot c_i \cdot \text{flip}_i}
+\hat{g}\_i = \frac{\text{step}}{2 \cdot c_i \cdot \text{flip}\_i}
 \\]
 
 ### パラメータ更新式
@@ -45,7 +45,7 @@ tuned_minus = [p.value - flip * c_i for p, flip, c_i in ...]
 これを使うと、1 更新ぶんの変化量は次のように書けます。
 
 \\[
-\Delta\theta_i = r_i \cdot c_i \cdot \text{step} \cdot \text{flip}_i
+\Delta\theta_i = r_i \cdot c_i \cdot \text{step} \cdot \text{flip}\_i
 \\]
 
 ```python
@@ -163,7 +163,7 @@ step = 0.1, v = 1.537
 1 回の更新で複数組のペアゲームを実行し、スコアを平均すると、推定の分散を削減できます。
 
 \\[
-s^+_{\text{avg}} = \frac{1}{B} \sum_{b=1}^{B} s^+_b \qquad s^-_{\text{avg}} = \frac{1}{B} \sum_{b=1}^{B} s^-_b
+s^+\_{\text{avg}} = \frac{1}{B} \sum_{b=1}^{B} s^+\_b \qquad s^-\_{\text{avg}} = \frac{1}{B} \sum_{b=1}^{B} s^-\_b
 \\]
 
 ```python
@@ -199,7 +199,7 @@ Rademacher 摂動の対称性により、同時摂動勾配推定の期待値は
 ただし一致するのは主要項までで、テイラー展開の 3 次以降に由来する \\(O(c_k^2)\\) のバイアスが残ります。
 
 \\[
-E[\hat{g}_i] = \frac{\partial L}{\partial \theta_i} + O(c_k^2)
+E[\hat{g}\_i] = \frac{\partial L}{\partial \theta_i} + O(c_k^2)
 \\]
 
 \\(c_k \to 0\\) のとき、このバイアスは消失します。
@@ -209,7 +209,7 @@ E[\hat{g}_i] = \frac{\partial L}{\partial \theta_i} + O(c_k^2)
 一方、分散は \\(c_k\\) の 2 乗に反比例して増大します。
 
 \\[
-\text{Var}[\hat{g}_i] \propto \frac{1}{c_k^2}
+\text{Var}[\hat{g}\_i] \propto \frac{1}{c_k^2}
 \\]
 
 対局スコアの揺らぎは \\(c_k\\) の大きさに関係なく一定なので、\\(c_k\\) を小さくすると、割り算によってその揺らぎが増幅されるためです。

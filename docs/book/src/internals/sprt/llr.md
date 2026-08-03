@@ -46,13 +46,13 @@ p_0 = \frac{1}{1 + 10^{0}} = 0.5000 \qquad p_1 = \frac{1}{1 + 10^{-5/400}} = 0.5
 ### 勝ちの場合
 
 \\[
-\text{LR}_{\text{win}} = \frac{p_1}{p_0}
+\text{LR}\_{\text{win}} = \frac{p_1}{p_0}
 \\]
 
 ### 負けの場合
 
 \\[
-\text{LR}_{\text{loss}} = \frac{1 - p_1}{1 - p_0}
+\text{LR}\_{\text{loss}} = \frac{1 - p_1}{1 - p_0}
 \\]
 
 ### 引き分けの場合
@@ -60,7 +60,7 @@ p_0 = \frac{1}{1 + 10^{0}} = 0.5000 \qquad p_1 = \frac{1}{1 + 10^{-5/400}} = 0.5
 ShogiArena の現在の実装では、引き分けの尤度比を 1.0（= 中立的証拠）として扱っています。
 
 \\[
-\text{LR}_{\text{draw}} = 1.0
+\text{LR}\_{\text{draw}} = 1.0
 \\]
 
 > **注**：より精密な実装では、引き分け率をモデルに組み込む BayesElo アプローチや
@@ -71,7 +71,7 @@ ShogiArena の現在の実装では、引き分けの尤度比を 1.0（= 中立
 LLR は各対局の尤度比の対数を累積します。
 
 \\[
-\text{LLR}_n = \sum_{i=1}^{n} \ln(\text{LR}_i) = \text{LLR}_{n-1} + \ln(\text{LR}_n)
+\text{LLR}\_n = \sum_{i=1}^{n} \ln(\text{LR}\_i) = \text{LLR}\_{n-1} + \ln(\text{LR}\_n)
 \\]
 
 対数の性質（積 → 和への変換）により、LLR は加法的に更新でき、
@@ -156,7 +156,7 @@ def LLR_approx(elo0: float, elo1: float, results: list[int]) -> float:
 詳細は [GSPRT](./gsprt.md) ページを参照してください。
 
 \\[
-\text{LLR} = N \sum_{i} \hat{p}_i \cdot \ln\frac{p_{1,i}^{\text{MLE}}}{p_{0,i}^{\text{MLE}}}
+\text{LLR} = N \sum_{i} \hat{p}\_i \cdot \ln\frac{p_{1,i}^{\text{MLE}}}{p_{0,i}^{\text{MLE}}}
 \\]
 
 ### Elo 推定と信頼区間
@@ -168,7 +168,7 @@ SPRT テストの途中でも完了後でも、その時点のデータから El
 \\]
 
 \\[
-\text{Elo}_{95} = \frac{\text{Elo}(\hat{s} + 1.96 \cdot \hat{\sigma}/\sqrt{N}) - \text{Elo}(\hat{s} - 1.96 \cdot \hat{\sigma}/\sqrt{N})}{2}
+\text{Elo}\_{95} = \frac{\text{Elo}(\hat{s} + 1.96 \cdot \hat{\sigma}/\sqrt{N}) - \text{Elo}(\hat{s} - 1.96 \cdot \hat{\sigma}/\sqrt{N})}{2}
 \\]
 
 ```python
@@ -189,7 +189,7 @@ def get_elo(results: list[int]) -> tuple[float, float, float]:
 ### 加法性
 
 \\[
-\text{LLR}_{a+b} = \text{LLR}_a + \text{LLR}_b
+\text{LLR}\_{a+b} = \text{LLR}\_a + \text{LLR}\_b
 \\]
 
 対局を分割して計算しても結果は変わらないため、検定の中断と再開が容易であり、並列計算とも相性がよいです。

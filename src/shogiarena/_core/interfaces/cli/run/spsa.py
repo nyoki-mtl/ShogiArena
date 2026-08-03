@@ -19,7 +19,10 @@ from shogiarena._core.contexts.spsa.application.entrypoints import (
     run_spsa_session,
     spsa_engine_trace_logger_names,
 )
-from shogiarena._core.contexts.spsa.application.space_spec import load_spsa_space_spec
+from shogiarena._core.contexts.spsa.application.space_spec import (
+    inspect_spsa_manifest_request,
+    load_spsa_space_spec,
+)
 from shogiarena._core.contexts.spsa.ports.ledger_ports import SPSA_LEDGER_RELATIVE_PATH
 from shogiarena._core.interfaces.cli.config_file_loaders import parse_spsa_config_file
 from shogiarena._core.interfaces.cli.main import CliError
@@ -142,6 +145,7 @@ async def run_spsa_command(
         logger.debug("Start SFENs: %s", cfg.start_sfens_path)
         return
 
+    cmd.announce_run_directory(run_dir)
     storage = create_spsa_run_storage(run_dir, runtime=root.spsa_runtime)
     try:
         with remote_provisioning_scope(provisioning_policy):
@@ -159,7 +163,9 @@ async def run_spsa_command(
 
 def _validate_spsa_input_files(config: object) -> None:
     space_path = Path(str(getattr(config, "space_path", "")))
-    load_spsa_space_spec(space_path)
+    manifest_request = inspect_spsa_manifest_request(space_path)
+    if manifest_request.has_explicit_parameters or not manifest_request.has_selection:
+        load_spsa_space_spec(space_path)
 
     start_sfens_path = Path(str(getattr(config, "start_sfens_path", "")))
     if not start_sfens_path.is_file():

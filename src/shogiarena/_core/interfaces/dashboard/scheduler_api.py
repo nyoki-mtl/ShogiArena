@@ -60,14 +60,18 @@ class SchedulerAPI:
         boundary: DashboardScheduleBoundaryPort | None = None,
         *,
         games_snapshot_supplier: Callable[[], Mapping[str, object] | None] | None = None,
+        archived_schedule_supplier: Callable[[], Mapping[str, object] | None] | None = None,
     ) -> None:
         self._boundary = boundary
         self._games_snapshot_supplier = games_snapshot_supplier
+        self._archived_schedule_supplier = archived_schedule_supplier
 
     def register_routes(self, app: web.Application) -> None:
-        if self._boundary is None:
+        if self._boundary is None and self._archived_schedule_supplier is None:
             return
         app.router.add_get("/api/schedule", self.get_schedule)
+        if self._boundary is None:
+            return
         app.router.add_post("/api/schedule/reschedule", self.post_reschedule)
         app.router.add_post("/api/schedule/cancel", self.post_cancel)
         # Game-level adjustments for the dashboard controls
@@ -76,16 +80,21 @@ class SchedulerAPI:
         app.router.add_post("/api/schedule/{game_id}/assign", self.post_assign_instance)
 
     async def get_schedule(self, _request: web.Request) -> web.Response:
-        boundary = self._boundary
-        if boundary is None:
-            return json_error_response("scheduler not available", status=503, code="scheduler_unavailable")
-
         if self._games_snapshot_supplier is not None:
             games_snapshot = self._games_snapshot_supplier()
             if isinstance(games_snapshot, Mapping):
                 normalized_snapshot = build_schedule_snapshot_from_games_snapshot(games_snapshot)
                 if normalized_snapshot is not None:
                     return web.json_response(normalized_snapshot)
+
+        if self._archived_schedule_supplier is not None:
+            archived_snapshot = self._archived_schedule_supplier()
+            if isinstance(archived_snapshot, Mapping):
+                return web.json_response(archived_snapshot)
+
+        boundary = self._boundary
+        if boundary is None:
+            return json_error_response("scheduler not available", status=503, code="scheduler_unavailable")
         snapshot = await boundary.get_schedule_snapshot()
         return web.json_response(snapshot)
 

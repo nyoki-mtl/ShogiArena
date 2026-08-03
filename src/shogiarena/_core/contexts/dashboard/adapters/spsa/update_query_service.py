@@ -11,6 +11,7 @@ from shogiarena._core.contexts.dashboard.application.spsa.ltc_regression_detail_
 from shogiarena._core.contexts.dashboard.application.spsa.variant_resolution import format_variant_label
 from shogiarena._core.contexts.dashboard.ports.spsa_payloads import (
     ProgressSnapshot,
+    SpsaRevisionState,
     UpdateDetailResponse,
     UpdateEntry,
 )
@@ -49,7 +50,7 @@ LedgerGameSnapshotLoader = Callable[[str], JsonObject | None]
 LedgerGameSnapshotsLoader = Callable[[Sequence[str]], dict[str, JsonObject]]
 LedgerGameEntriesLoader = Callable[[], list[tuple[str, int]]]
 LedgerLtcResultsLoader = Callable[[], list[JsonObject]]
-LedgerRevisionLoader = Callable[[], tuple[str, int, bool]]
+LedgerRevisionLoader = Callable[[], SpsaRevisionState]
 GameBatchLoader = Callable[[list[str]], dict[str, JsonObject]]
 
 
@@ -217,8 +218,8 @@ class SpsaUpdateQueryService:
             return self._ledger_ltc_results_loader()
         return [to_json_object(result) for result in self._store.load_ltc_results()]
 
-    def load_revision_state(self) -> tuple[str, int, bool] | None:
-        """Return durable revision state when this run has a ledger projector."""
+    def load_revision_state(self) -> SpsaRevisionState | None:
+        """Return the revision feed state when this run has a ledger projector."""
 
         if self._ledger_revision_loader is None:
             return None

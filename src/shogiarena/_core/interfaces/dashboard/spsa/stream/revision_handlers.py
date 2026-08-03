@@ -50,6 +50,7 @@ async def sse_revisions(handler, request: web.Request) -> web.StreamResponse:
     poll_interval = max(0.2, min(parsed_query.poll_interval, 10.0))
     last_event_id = extract_last_event_id(request)
     last_sent_revision: int | None = None
+    last_sent_generation: int | None = None
     previous_revision = last_event_id
     should_send_initial = parsed_query.should_send_initial
     next_state = initial_state
@@ -57,41 +58,47 @@ async def sse_revisions(handler, request: web.Request) -> web.StreamResponse:
 
     try:
         while True:
-            run_id, revision, terminal = next_state
-            if should_send_initial or revision != last_sent_revision:
+            state = next_state
+            # `event_revisions` only grows on quarantine, LTC decisions, and terminal, so a
+            # feed keyed on the durable revision alone never fires for ordinary update commits
+            # or game results. Notify on the projected data version as well.
+            has_changed = state.revision != last_sent_revision or state.data_generation != last_sent_generation
+            if should_send_initial or has_changed:
                 gap_detected = previous_revision is not None and (
-                    revision < previous_revision or revision > previous_revision + 1
+                    state.revision < previous_revision or state.revision > previous_revision + 1
                 )
                 await runtime.push_event(
                     {
                         "type": "revision",
                         "timestamp": int(time.time() * 1000),
                         "data": {
-                            "run_id": run_id,
-                            "revision": revision,
+                            "run_id": state.run_id,
+                            "revision": state.revision,
+                            "data_generation": state.data_generation,
                             "gap_detected": gap_detected,
                             "snapshot_required": True,
                             "snapshot_url": _SNAPSHOT_URL,
                             "replay_supported": False,
-                            "terminal": terminal,
+                            "terminal": state.is_terminal,
                         },
                     }
                 )
                 should_send_initial = False
-                last_sent_revision = revision
-                previous_revision = revision
+                last_sent_revision = state.revision
+                last_sent_generation = state.data_generation
+                previous_revision = state.revision
                 last_heartbeat = time.monotonic()
-                if terminal:
+                if state.is_terminal:
                     break
             elif time.monotonic() - last_heartbeat >= 15.0:
                 await runtime.push_comment()
                 last_heartbeat = time.monotonic()
 
             await asyncio.sleep(poll_interval)
-            state = await asyncio.to_thread(handler._update_query_service.load_revision_state)
-            if state is None:
+            polled_state = await asyncio.to_thread(handler._update_query_service.load_revision_state)
+            if polled_state is None:
                 raise RuntimeError("durable SPSA revision feed became unavailable")
-            next_state = state
+            next_state = polled_state
     except asyncio.CancelledError:
         raise
     except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):

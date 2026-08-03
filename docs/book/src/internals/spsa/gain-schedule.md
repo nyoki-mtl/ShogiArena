@@ -34,51 +34,51 @@ A_{\text{value}} & (\text{mode} = \text{absolute})
 
 ## 2 つのゲイン系列（パラメータ単位）
 
-各パラメータ \\(i\\) は、空間定義（space spec）からの摂動基準 \\(\text{step}_i\\) と学習率係数
+各パラメータ \\(i\\) は、空間定義（space spec）からの摂動基準 \\(\text{step}\_i\\) と学習率係数
 \\(\delta_i\\) を持ちます。
 
 ### 摂動スケール \\(c_i\\)
 
 \\[
-c_i = \text{step}_i \cdot \left(\frac{k_{\text{total}}}{k_{\text{pair}}}\right)^{\gamma}
+c_i = \text{step}\_i \cdot \left(\frac{k_{\text{total}}}{k_{\text{pair}}}\right)^{\gamma}
 \\]
 
 \\(c_i\\) は勾配推定のために \\(\theta_i\\) を動かす幅です。
 \\(k_{\text{pair}}\\) が進む（後半になる）ほど減衰し、最終更新（\\(k_{\text{pair}} = k_{\text{total}}\\)）で
-\\(c_i = \text{step}_i\\) に落ち着きます。
+\\(c_i = \text{step}\_i\\) に落ち着きます。
 整数パラメータは量子化で摂動が消えないよう、`int_ck_floor` で下限クランプされます。
 
 ### 更新ゲイン \\(r_i\\)
 
 \\[
-r_i = \frac{\delta_i \cdot \text{step}_i^{2} \cdot (A_{\text{abs}} + k_{\text{total}})^{\alpha}}
+r_i = \frac{\delta_i \cdot \text{step}\_i^{2} \cdot (A_{\text{abs}} + k_{\text{total}})^{\alpha}}
 {(A_{\text{abs}} + k_{\text{pair}})^{\alpha} \cdot c_i^{2}}
 \\]
 
 パラメータ更新は次式です（\\(\text{step} = \sum s^{+} - \sum s^{-}\\) はバッチのスコア集計、
-\\(\text{flip}_i \in \{+1, -1\}\\) は摂動の向き）。
+\\(\text{flip}\_i \in \{+1, -1\}\\) は摂動の向き）。
 
 \\[
-\Delta\theta_i = r_i \cdot c_i \cdot \text{step} \cdot \text{flip}_i
+\Delta\theta_i = r_i \cdot c_i \cdot \text{step} \cdot \text{flip}\_i
 \\]
 
-勾配推定 \\(\hat{g}_i = \text{step} / (2 c_i \text{flip}_i)\\) を代入すると、更新は
-\\(\Delta\theta_i = 2\, r_i\, c_i^{2}\, \hat{g}_i\\) と書け、\\(i\\) の **実効ステップゲイン** は
+勾配推定 \\(\hat{g}\_i = \text{step} / (2 c_i \text{flip}\_i)\\) を代入すると、更新は
+\\(\Delta\theta_i = 2\, r_i\, c_i^{2}\, \hat{g}\_i\\) と書け、\\(i\\) の **実効ステップゲイン** は
 
 \\[
 a_{k,i} = 2\, r_i\, c_i^{2}
-= \frac{2\, \delta_i \cdot \text{step}_i^{2} \cdot (A_{\text{abs}} + k_{\text{total}})^{\alpha}}
+= \frac{2\, \delta_i \cdot \text{step}\_i^{2} \cdot (A_{\text{abs}} + k_{\text{total}})^{\alpha}}
 {(A_{\text{abs}} + k_{\text{pair}})^{\alpha}}
 \\]
 
 すなわち \\(a_{k,i} = a_i / (A_{\text{abs}} + k_{\text{pair}})^{\alpha}\\) という古典 SPSA の形であり、
-グローバルな \\(a_0\\) ではなくパラメータ単位の \\(\delta_i\\) / \\(\text{step}_i\\) が定数項を決めます。
+グローバルな \\(a_0\\) ではなくパラメータ単位の \\(\delta_i\\) / \\(\text{step}\_i\\) が定数項を決めます。
 
 ### パラメータの意味
 
 | パラメータ | 意味 | 既定値 | Spall 推奨 |
 |:---:|:---|:---:|:---:|
-| \\(\text{step}_i\\) | パラメータ \\(i\\) の摂動基準（space spec） | パラメータ依存 | 問題依存 |
+| \\(\text{step}\_i\\) | パラメータ \\(i\\) の摂動基準（space spec） | パラメータ依存 | 問題依存 |
 | \\(\delta_i\\) | パラメータ \\(i\\) の学習率係数（space spec） | パラメータ依存 | 問題依存 |
 | \\(A\\) | ウォームアップ定数（`absolute` 値または `ratio`） | `absolute` 0.0 | \\(\approx 0.1\,k_{\text{total}}\\) |
 | \\(\alpha\\) | ステップゲイン減衰指数 | 0.602 | 0.602 |
@@ -183,7 +183,7 @@ Spall が導出したものです。
 | ファイル | 設定キー / 関数 | 役割 |
 |---------|---------|------|
 | `_core/contexts/spsa/application/classic_schedule.py` | `compute_classic_schedule_point` | パラメータ単位の \\(c_i\\) / \\(r_i\\) 算出 |
-| `_core/contexts/spsa/adapters/orchestrator_update_flow.py` | 更新ステップ | \\(\Delta\theta_i = r_i c_i \cdot \text{step} \cdot \text{flip}_i\\) |
+| `_core/contexts/spsa/adapters/orchestrator_update_flow.py` | 更新ステップ | \\(\Delta\theta_i = r_i c_i \cdot \text{step} \cdot \text{flip}\_i\\) |
 | `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `algorithm.alpha` | ステップゲイン減衰指数（既定 0.602） |
 | `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `algorithm.gamma` | 摂動スケール減衰指数（既定 0.101） |
 | `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `algorithm.A` | ウォームアップ定数（`mode` / `value`） |

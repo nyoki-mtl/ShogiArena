@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import textwrap
@@ -315,6 +316,7 @@ async def test_game_pair_retries_only_failed_side_once() -> None:
             self.calls: list[str] = []
             self.reservations: list[str] = []
             self._ledger_runtime = Mock()
+            self._stop_event = asyncio.Event()
 
         async def _run_game(self, **kwargs: Any) -> tuple[int, rsshogi.record.Record]:
             game_id = str(kwargs["preassigned_game_id"])

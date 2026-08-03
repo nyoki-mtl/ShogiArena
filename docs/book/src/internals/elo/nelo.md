@@ -61,7 +61,7 @@ Elo 差が対局条件ごとに動くと、次の不都合が生じます。
 \\]
 
 ここで \\(\sigma_{\text{pg}}\\) は**ペアゲームスコア**の標準偏差です。
-三項分布の場合は \\(\sigma_{\text{pg}} = \sigma\\)（1 局のスコアの標準偏差）、五項分布の場合は \\(\sigma_{\text{pg}} = \sqrt{2 \cdot \text{Var}_{\text{pair}}}\\) です。
+三項分布の場合は \\(\sigma_{\text{pg}} = \sigma\\)（1 局のスコアの標準偏差）、五項分布の場合は \\(\sigma_{\text{pg}} = \sqrt{2 \cdot \text{Var}\_{\text{pair}}}\\) です。
 
 正規化 Elo は、この t 値にスケーリング定数を掛けたものです。
 
@@ -191,10 +191,10 @@ nElo を使って LLR を計算する場合、検定統計量には期待値で�
 ### 近似公式
 
 \\[
-\text{LLR} \approx \frac{N}{2} \ln\left(\frac{1 + (\text{nt} - \text{nt}_0)^2}{1 + (\text{nt} - \text{nt}_1)^2}\right)
+\text{LLR} \approx \frac{N}{2} \ln\left(\frac{1 + (\text{nt} - \text{nt}\_0)^2}{1 + (\text{nt} - \text{nt}\_1)^2}\right)
 \\]
 
-ここで \\(\text{nt}_0, \text{nt}_1\\) は閾値を正規化 t 値に変換したもの、\\(\text{nt}\\) は観測された正規化 t 値です。
+ここで \\(\text{nt}\_0, \text{nt}\_1\\) は閾値を正規化 t 値に変換したもの、\\(\text{nt}\\) は観測された正規化 t 値です。
 
 ### 正確な計算
 

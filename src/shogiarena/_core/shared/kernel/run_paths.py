@@ -99,9 +99,24 @@ def latest_run_dir(config_path: Path, output_dir: Path) -> Path | None:
     return max(candidates, key=lambda p: p.name)
 
 
+def latest_run_dir_for_key(output_dir: Path, name: str, schedule_hash: str) -> Path | None:
+    """Return the most recent run directory for an exact logical schedule key."""
+
+    group = run_group_dir_for_key(output_dir, name, schedule_hash)
+    if not group.is_dir():
+        return None
+    candidates = [
+        entry for entry in group.iterdir() if entry.is_dir() and entry.name.isdigit() and len(entry.name) == 14
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.name)
+
+
 __all__ = [
     "default_run_dir",
     "latest_run_dir",
+    "latest_run_dir_for_key",
     "run_dir_for_name",
     "run_dir_for_key",
     "run_group_dir",

@@ -21,7 +21,7 @@ environment:                                       # 任意。既定: {}
 # secret_environment:                              # 任意。child env key: per-job secret reference
 #   ENGINE_LICENSE: "SHOGIARENA_SECRET_ENGINE_LICENSE" # 値そのものはconfig/spec/manifestへ書かない
 options:                                           # 任意。既定: {}
-  Threads: 4
+  Threads: 2
   USI_Hash: 2048
   # EvalDir: "./data/evals/Suisho10"  # パスオプションの例（相対パスまたは絶対パス）
   # BookDir: "./data/books/no_book"   # パスオプションの例（相対パスまたは絶対パス）

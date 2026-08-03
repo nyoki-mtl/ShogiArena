@@ -37,6 +37,7 @@ from shogiarena._core.contexts.game_session.ports.session_context import Session
 from shogiarena._core.contexts.game_session.ports.worker_deployment import WorkerBundleBuildResult
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
+from shogiarena._core.contexts.spsa.adapters.derived_json_scheduler import SpsaDerivedJsonScheduler
 from shogiarena._core.contexts.spsa.adapters.fixed_option_preflight import (
     load_fixed_option_preflight_status,
     run_yaneuraou_fixed_option_preflight,
@@ -643,6 +644,7 @@ def create_spsa_orchestrator(
     summary_updater: SummaryUpdateCallback | None,
     api_server: DashboardServerPort | None,
     ledger_runtime: SpsaLedgerRuntimePort,
+    derived_json_scheduler: SpsaDerivedJsonScheduler | None = None,
     remote_worker_bundle: WorkerBundleBuildResult | None = None,
 ) -> SpsaOrchestrator:
     return SpsaOrchestrator(
@@ -654,6 +656,7 @@ def create_spsa_orchestrator(
         summary_updater=summary_updater,
         api_server=api_server,
         ledger_runtime=ledger_runtime,
+        derived_json_scheduler=derived_json_scheduler,
         remote_worker_bundle=remote_worker_bundle,
     )
 

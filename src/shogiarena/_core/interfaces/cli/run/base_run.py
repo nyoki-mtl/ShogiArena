@@ -101,6 +101,11 @@ class BaseRunCommand:
                 raise CliArgumentError(str(exc)) from exc
         return default_run_dir(config_file, output_dir)
 
+    def announce_run_directory(self, run_dir: Path) -> None:
+        """実行成果物の保存先を利用者へ表示する。"""
+
+        self.logger.info("Run directory: %s", run_dir.resolve())
+
     def prompt_resume(
         self,
         config_file: Path,

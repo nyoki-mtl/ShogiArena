@@ -4,7 +4,7 @@
     }
 
     .book-tab-title {
-        @apply text-lg font-semibold text-white;
+        @apply text-lg font-semibold text-dashboard-heading;
     }
 
     .book-note {
@@ -12,7 +12,12 @@
     }
 
     .book-subview-tabs {
-        @apply flex flex-wrap gap-2 border-b border-white/10;
+        @apply flex flex-wrap gap-2 border-b border-dashboard-border/60;
+    }
+
+    .book-oob-toggle[hidden],
+    .book-subview-tabs[hidden] {
+        display: none;
     }
 
     .book-subview-tab {
@@ -20,11 +25,11 @@
     }
 
     .book-subview-tab:hover {
-        @apply text-white;
+        @apply text-dashboard-foreground;
     }
 
     .book-subview-tab.active {
-        @apply border-dashboard-accent text-white;
+        @apply border-dashboard-accent text-dashboard-accent;
     }
 
     .book-view-panel[hidden] {
@@ -37,7 +42,7 @@
     }
 
     .book-card {
-        @apply space-y-3 rounded-2xl border border-white/10 bg-white/5 p-4 shadow-lg shadow-black/10;
+        @apply space-y-3 rounded-2xl border border-dashboard-border/60 bg-dashboard-surface/80 p-4 shadow-sm;
     }
 
     .book-card-head {
@@ -45,7 +50,7 @@
     }
 
     .book-card-title {
-        @apply break-all text-sm font-semibold text-white;
+        @apply break-all text-sm font-semibold text-dashboard-heading;
     }
 
     .book-card-validation {
@@ -69,7 +74,7 @@
     }
 
     .book-stat-value {
-        @apply text-sm text-white;
+        @apply text-sm text-dashboard-foreground;
     }
 
     .book-card-section {
@@ -101,9 +106,16 @@
         @apply shrink-0 text-dashboard-neutral;
     }
 
-    .book-oob-empty,
-    .book-empty {
+    .book-oob-empty {
         @apply text-xs text-dashboard-neutral;
+    }
+
+    .book-empty {
+        @apply max-w-2xl space-y-2 rounded-2xl border border-dashboard-border/60 bg-dashboard-surface/80 p-5 text-sm leading-relaxed text-dashboard-neutral shadow-sm;
+    }
+
+    .book-empty-title {
+        @apply text-base font-semibold text-dashboard-heading;
     }
 
     .book-engines {
@@ -120,11 +132,11 @@
     }
 
     .book-pair-summary > div {
-        @apply flex flex-col rounded-lg border border-white/10 bg-white/5 px-3 py-2;
+        @apply flex flex-col rounded-lg border border-dashboard-border/60 bg-dashboard-surface/80 px-3 py-2;
     }
 
     .book-pair-table-wrap {
-        @apply overflow-x-auto rounded-lg border border-white/10;
+        @apply overflow-x-auto rounded-lg border border-dashboard-border/60;
     }
 
     .book-pair-table {
@@ -132,11 +144,11 @@
     }
 
     .book-pair-table th {
-        @apply border-b border-white/10 bg-white/5 px-3 py-2 font-normal text-dashboard-neutral;
+        @apply border-b border-dashboard-border/60 bg-dashboard-surfaceMuted/80 px-3 py-2 font-normal text-dashboard-neutral;
     }
 
     .book-pair-table td {
-        @apply border-b border-white/5 px-3 py-2 align-top text-dashboard-foreground;
+        @apply border-b border-dashboard-border/40 px-3 py-2 align-top text-dashboard-foreground;
     }
 
     .book-pair-table tbody tr:last-child td {
@@ -144,7 +156,7 @@
     }
 
     .book-pair-key {
-        @apply break-all font-medium text-white;
+        @apply break-all font-medium text-dashboard-heading;
     }
 
     .book-pair-muted {
@@ -156,7 +168,7 @@
     }
 
     .book-pair-side-title {
-        @apply break-all font-medium text-white;
+        @apply break-all font-medium text-dashboard-heading;
     }
 
     .book-pair-side-empty {
@@ -164,27 +176,27 @@
     }
 
     .book-status {
-        @apply inline-flex rounded border border-white/10 bg-white/5 px-2 py-0.5 font-mono text-[11px] text-dashboard-foreground;
+        @apply inline-flex rounded border border-dashboard-border/60 bg-dashboard-surfaceMuted/70 px-2 py-0.5 font-mono text-[11px] text-dashboard-foreground;
     }
 
     .book-status[data-status="measured"] {
-        @apply border-emerald-400/30 bg-emerald-400/10 text-emerald-200;
+        @apply border-dashboard-success/40 bg-dashboard-success/15 text-dashboard-success;
     }
 
     .book-status[data-status="partial"] {
-        @apply border-sky-400/30 bg-sky-400/10 text-sky-200;
+        @apply border-dashboard-accent/40 bg-dashboard-accent/15 text-dashboard-accent;
     }
 
     .book-status[data-status="unmeasured"] {
-        @apply border-zinc-400/30 bg-zinc-400/10 text-zinc-200;
+        @apply border-dashboard-border bg-dashboard-surfaceMuted text-dashboard-neutral;
     }
 
     .book-status[data-status="invalid_pair"],
     .book-status[data-status="ambiguous"] {
-        @apply border-amber-400/30 bg-amber-400/10 text-amber-200;
+        @apply border-dashboard-warning/40 bg-dashboard-warning/15 text-dashboard-warning;
     }
 
     .book-status[data-status="unpaired"] {
-        @apply border-rose-400/30 bg-rose-400/10 text-rose-200;
+        @apply border-dashboard-danger/40 bg-dashboard-danger/15 text-dashboard-danger;
     }
 }

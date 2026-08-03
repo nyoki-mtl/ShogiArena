@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
 from shogiarena._core.interfaces.dashboard.scheduler_api import SchedulerAPI
@@ -85,3 +86,24 @@ async def test_get_schedule_falls_back_to_runner_snapshot_when_supplier_invalid(
 
     assert payload["revision"] == 1
     assert payload["schedule"] == [{"game_id": "runner"}]
+
+
+@pytest.mark.asyncio
+async def test_archived_schedule_is_available_without_live_runner() -> None:
+    api = SchedulerAPI(
+        archived_schedule_supplier=lambda: {
+            "revision": 0,
+            "schedule": [{"game_id": "archived", "status": "completed"}],
+            "total_games": 1,
+            "completed_games": 1,
+        }
+    )
+    app = web.Application()
+    api.register_routes(app)
+
+    response = await api.get_schedule(make_mocked_request("GET", "/api/schedule"))
+    assert response.text is not None
+    payload = json.loads(response.text)
+
+    assert payload["schedule"] == [{"game_id": "archived", "status": "completed"}]
+    assert {route.method for route in app.router.routes()} == {"GET", "HEAD"}

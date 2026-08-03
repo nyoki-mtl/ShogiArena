@@ -130,11 +130,23 @@ function renderBookCard(entry: BookEntry): string {
         </section>`;
 }
 
+function setBookControlsVisible(container: HTMLElement, visible: boolean): void {
+    const document = container.ownerDocument;
+    document.getElementById('bookOutOfBookControl')?.toggleAttribute('hidden', !visible);
+    document.getElementById('bookSubviewTabs')?.toggleAttribute('hidden', !visible);
+}
+
 export function renderBookSummary(payload: BookSummaryPayload, container: HTMLElement): void {
     if (!payload.books.length) {
-        container.innerHTML = '<div class="book-empty">No engine opening book usage recorded for this run.</div>';
+        setBookControlsVisible(container, false);
+        container.innerHTML = `
+            <section class="book-empty" aria-labelledby="bookEmptyTitle">
+                <h3 id="bookEmptyTitle" class="book-empty-title">No engine opening books were used.</h3>
+                <p>See the Openings tab for starting-position usage.</p>
+            </section>`;
         return;
     }
+    setBookControlsVisible(container, true);
     const note = payload.note ? `<p class="book-note">${escapeHtml(payload.note)}</p>` : '';
     const cards = payload.books.map(renderBookCard).join('');
     container.innerHTML = `${note}<div class="book-cards">${cards}</div>`;
@@ -279,6 +291,29 @@ export function installBookModule(owner: BookWindow = defaultWindow): DashboardB
         view: DEFAULT_BOOK_VIEW,
     };
 
+    function stopRefreshing(): void {
+        state.active = false;
+        if (state.timerId != null) {
+            owner.clearInterval(state.timerId);
+            state.timerId = null;
+        }
+    }
+
+    function reportRefreshFailure(title: string, error: unknown): void {
+        const isTransportFailure =
+            error instanceof TypeError && /failed to fetch|networkerror|load failed/i.test(error.message);
+        if (isTransportFailure) {
+            stopRefreshing();
+            return;
+        }
+        if (owner.ARENA_DASHBOARD_STOPPED === true || owner.DashboardCore?.state.offlineNotified === true) {
+            return;
+        }
+        owner.DashboardCore?.showApiError(title, error instanceof Error ? error.message : error);
+    }
+
+    owner.DashboardCore?.events.on('dashboard:offline', stopRefreshing);
+
     function wireToggle(): void {
         if (state.toggleWired) {
             return;
@@ -357,20 +392,19 @@ export function installBookModule(owner: BookWindow = defaultWindow): DashboardB
                         }, BOOK_REFRESH_INTERVAL_MS),
                     );
                 }
-            } else if (state.timerId != null) {
-                owner.clearInterval(state.timerId);
-                state.timerId = null;
+            } else {
+                stopRefreshing();
             }
         },
         refresh() {
             if (state.view === 'pairs') {
                 fetchPairs(owner).catch((error) => {
-                    owner.DashboardCore?.showApiError('Book pairs failed', error);
+                    reportRefreshFailure('Book pairs failed', error);
                 });
                 return;
             }
             fetchSummary(owner).catch((error) => {
-                owner.DashboardCore?.showApiError('Book summary failed', error);
+                reportRefreshFailure('Book summary failed', error);
             });
         },
         getState() {

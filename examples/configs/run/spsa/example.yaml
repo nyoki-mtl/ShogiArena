@@ -6,13 +6,19 @@ engines:
   # 実行前に、使用するSPSA対応engineのrepo名とcommit SHAへ置き換えてください。
   - artifact: "your-spsa-engine/0000000000000000000000000000000000000000"
     options:
-      Threads: 1
+      Threads: 2
       USI_Hash: 256
     # Single descriptor is enough; SPSA creates plus/minus variants from it.
 
 dashboard:
   enabled: true
   api_port: 8080
+
+# 同時対局数の上限はここで決まります。1 対局は engine プロセスを 2 つ使うため、
+# `max_engines: 8` で同時 4 対局です。省略すると `slots: 4` の既定 (= 同時 2 対局) になり、
+# 下の `num_parallel` を上げても増えません。
+instances:
+  - "../../resources/instances/local_example.yaml"
 
 # Rules and initial positions
 rules:
@@ -47,3 +53,8 @@ spsa:
     apply:
       clear_hash: true
       after_setoption: isready
+  # `ltc_regression` (チューニング中の LTC 回帰テスト) はここでは設定していません。
+  # 実行中に挟める標本サイズでは、検出できるのが破綻に近い劣化だけになるためです。
+  # Stockfish/fishtest も SPSA の実行中には LTC 検証を挟みません。
+  # チューニング結果の検証には、終了後に `run sprt` の独立ランを回してください。
+  # 根拠と、それでも有効化する場合の条件は docs の「LTC 回帰テスト」にあります。

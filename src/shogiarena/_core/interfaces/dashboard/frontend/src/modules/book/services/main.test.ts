@@ -179,10 +179,32 @@ describe('renderBookSummary', () => {
     });
 
     it('renders an empty state when there are no books', () => {
-        const container = document.createElement('div');
+        document.body.innerHTML =
+            '<label id="bookOutOfBookControl"></label>' +
+            '<div id="bookSubviewTabs"></div>' +
+            '<div id="bookSummaryContainer"></div>';
+        const container = document.getElementById('bookSummaryContainer') as HTMLElement;
         renderBookSummary(makePayload({ book_count: 0, books: [] }), container);
         expect(container.querySelector('.book-empty')).not.toBeNull();
         expect(container.querySelectorAll('.book-card')).toHaveLength(0);
+        expect(container.textContent).toContain('No engine opening books were used.');
+        expect(container.textContent).toContain('See the Openings tab for starting-position usage.');
+        expect(container.textContent).not.toContain('BookFile=no_book');
+        expect(document.getElementById('bookOutOfBookControl')?.hasAttribute('hidden')).toBe(true);
+        expect(document.getElementById('bookSubviewTabs')?.hasAttribute('hidden')).toBe(true);
+    });
+
+    it('shows book controls when book data is available after an empty response', () => {
+        document.body.innerHTML =
+            '<label id="bookOutOfBookControl" hidden></label>' +
+            '<div id="bookSubviewTabs" hidden></div>' +
+            '<div id="bookSummaryContainer"></div>';
+        const container = document.getElementById('bookSummaryContainer') as HTMLElement;
+
+        renderBookSummary(makePayload(), container);
+
+        expect(document.getElementById('bookOutOfBookControl')?.hasAttribute('hidden')).toBe(false);
+        expect(document.getElementById('bookSubviewTabs')?.hasAttribute('hidden')).toBe(false);
     });
 });
 
@@ -217,6 +239,7 @@ describe('installBookModule out-of-book forwarding', () => {
         const owner = window as BookWindow;
         owner.DashboardBook = undefined;
         owner.DashboardCore = undefined;
+        owner.ARENA_DASHBOARD_STOPPED = undefined;
         document.body.innerHTML = '';
         requestJsonMock.mockClear();
     });
@@ -242,6 +265,49 @@ describe('installBookModule out-of-book forwarding', () => {
         api.refresh();
         await vi.waitFor(() => expect(requestJsonMock).toHaveBeenCalledTimes(2));
         expect(requestJsonMock.mock.calls[1][0]).toContain('out_of_book=1');
+    });
+
+    it('does not report a refresh failure after the dashboard server stops', async () => {
+        const owner = setup();
+        const showApiError = vi.fn();
+        owner.DashboardCore = { ...owner.DashboardCore!, showApiError };
+        owner.ARENA_DASHBOARD_STOPPED = true;
+        requestJsonMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        const api = installBookModule(owner);
+
+        api.refresh();
+        await vi.waitFor(() => expect(requestJsonMock).toHaveBeenCalledTimes(1));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(showApiError).not.toHaveBeenCalled();
+    });
+
+    it('stops refreshing when the Book request detects the server shutdown first', async () => {
+        const owner = setup();
+        const showApiError = vi.fn();
+        owner.DashboardCore = { ...owner.DashboardCore!, showApiError };
+        requestJsonMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        const api = installBookModule(owner);
+
+        api.setActive(true);
+        await vi.waitFor(() => expect(requestJsonMock).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(api.getState?.().active).toBe(false));
+
+        expect(api.getState?.().timerId).toBeNull();
+        expect(showApiError).not.toHaveBeenCalled();
+    });
+
+    it('still reports non-network TypeErrors', async () => {
+        const owner = setup();
+        const showApiError = vi.fn();
+        owner.DashboardCore = { ...owner.DashboardCore!, showApiError };
+        requestJsonMock.mockRejectedValueOnce(new TypeError('Invalid Book payload'));
+        const api = installBookModule(owner);
+
+        api.refresh();
+        await vi.waitFor(() =>
+            expect(showApiError).toHaveBeenCalledWith('Book summary failed', 'Invalid Book payload'),
+        );
     });
 
     it('switches to the pairs subview and forwards the out-of-book query there too', async () => {

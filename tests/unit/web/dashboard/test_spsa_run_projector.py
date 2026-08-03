@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -197,6 +199,13 @@ def test_projector_batch_hydrates_games_with_one_query(tmp_path: Path, monkeypat
 
     class _Repository:
         session = _Session()
+        operation_boundaries = 0
+
+        @contextmanager
+        def operation(self, *, commit: bool = False) -> Iterator[_Session]:
+            del commit
+            type(self).operation_boundaries += 1
+            yield self.session
 
         def close_db(self) -> None:
             return
@@ -205,6 +214,9 @@ def test_projector_batch_hydrates_games_with_one_query(tmp_path: Path, monkeypat
     projector = SpsaRunProjector(run_dir=tmp_path, db_path=tmp_path / "game.db", immutable_db=True)
 
     records = projector.load_game_records(["g1", "g2"])
+    # Each call must open and close a session boundary so later reads are not served
+    # from a stale read transaction held open by the reused engine.
+    assert _Repository.operation_boundaries == 1
 
     assert execute_calls == 1
     assert set(records) == {"g1", "g2"}
@@ -356,14 +368,27 @@ def test_projector_exposes_latest_remote_participation(
 
     class _Repository:
         session = _Session()
+        open_calls = 0
+
+        @contextmanager
+        def operation(self, *, commit: bool = False) -> Iterator[_Session]:
+            del commit
+            yield self.session
 
         def close_db(self) -> None:
             return
 
-    monkeypatch.setattr(run_projector, "open_dashboard_repository", lambda *_args, **_kwargs: _Repository())
+    def _open_repository(*_args: object, **_kwargs: object) -> _Repository:
+        _Repository.open_calls += 1
+        return _Repository()
+
+    monkeypatch.setattr(run_projector, "open_dashboard_repository", _open_repository)
     projector = SpsaRunProjector(run_dir=tmp_path, db_path=tmp_path / "game.db", immutable_db=True)
 
     status = projector.operational_status()
+    projector.operational_status()
+    # Rebuilding the SQLAlchemy engine dominates this call, so the repository is opened once.
+    assert _Repository.open_calls == 1
 
     assert status["remote_execution"] == {
         "status": "observed",

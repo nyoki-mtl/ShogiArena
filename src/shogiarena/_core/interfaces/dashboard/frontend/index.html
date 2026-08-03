@@ -734,16 +734,13 @@
 
                 <section class="tab-content space-y-4" id="bookTab" data-tab-content="book" aria-label="Opening Book">
                     <div class="book-tab-header">
-                        <h2 class="book-tab-title">Opening Book (内蔵定跡)</h2>
-                        <p class="book-tab-subtitle text-xs text-dashboard-neutral">
-                            Win rates and out-of-book ply per engine opening book used in this run.
-                        </p>
-                        <label class="book-oob-toggle text-xs text-dashboard-neutral">
+                        <h2 class="book-tab-title">Opening Books</h2>
+                        <label id="bookOutOfBookControl" class="book-oob-toggle text-xs text-dashboard-neutral">
                             <input type="checkbox" id="bookOutOfBookToggle" />
-                            Compute out-of-book ply (slower; opens book files)
+                            Analyze out-of-book ply (slower; reads configured book files)
                         </label>
                     </div>
-                    <div class="book-subview-tabs" role="tablist" aria-label="Book report views">
+                    <div id="bookSubviewTabs" class="book-subview-tabs" role="tablist" aria-label="Book report views">
                         <button
                             type="button"
                             class="book-subview-tab active"

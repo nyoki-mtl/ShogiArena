@@ -48,7 +48,7 @@ export function createSpsaStreams(cacheState: SpsaStreamCacheState, deps: SpsaSt
         createEventSource: (url) => new EventSource(url),
         setConnection: (source, status) => setEventSource(source as EventSource | null, status),
         refreshSnapshot: async () => {
-            await deps.refreshAll({ force: true });
+            await deps.refreshAll({ force: true, skipParams: true });
         },
         markAnalysisDataStale: deps.markAnalysisDataStale,
         clearDisconnectNotice: deps.clearSseDisconnectNotice,

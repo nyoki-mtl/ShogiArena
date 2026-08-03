@@ -45,6 +45,7 @@ from shogiarena._core.contexts.game_session.ports.session_context import Session
 from shogiarena._core.contexts.game_session.ports.worker_deployment import WorkerBundleBuildResult
 from shogiarena._core.contexts.instances.application.instance_models import Instance
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
+from shogiarena._core.contexts.spsa.adapters.derived_json_scheduler import SpsaDerivedJsonScheduler
 from shogiarena._core.contexts.spsa.adapters.orchestrator_gameplay_mixin import SpsaOrchestratorGameplayMixin
 from shogiarena._core.contexts.spsa.adapters.orchestrator_lifecycle_mixin import SpsaOrchestratorLifecycleMixin
 from shogiarena._core.contexts.spsa.adapters.orchestrator_remote_game_mixin import SpsaOrchestratorRemoteGameMixin
@@ -73,6 +74,7 @@ class SpsaOrchestrator(
         summary_updater: SummaryUpdateCallback | None = None,
         api_server: DashboardServerPort | None = None,
         ledger_runtime: SpsaLedgerRuntimePort,
+        derived_json_scheduler: SpsaDerivedJsonScheduler | None = None,
         remote_worker_bundle: WorkerBundleBuildResult | None = None,
     ) -> None:
         super().__init__(
@@ -97,6 +99,7 @@ class SpsaOrchestrator(
         session_uuid = str(metadata.get("session_uuid") or "").strip()
         self._session_uuid: str = session_uuid or session.run_id
         self._ledger_runtime = ledger_runtime
+        self._derived_json_scheduler = derived_json_scheduler
 
         # Unique game id sequencer
         self._gid_seq: int = 0
@@ -106,6 +109,10 @@ class SpsaOrchestrator(
         self._sfens: list[str] = []
         # Lock for parameter updates/events across concurrent updates
         self._params_lock: asyncio.Lock = asyncio.Lock()
+        # A pair's two colour-reversed games run concurrently, so in-flight games are bounded
+        # here rather than by the pair count. The engine pool is built for `num_workers`
+        # concurrent games (`compute_pool_capacity`), which is the budget used.
+        self._game_slot_semaphore: asyncio.Semaphore = asyncio.Semaphore(max(1, self.num_workers))
 
         self._ltc_config: LtcRegressionConfig | None
         if config.ltc_regression is not None and config.ltc_regression.is_enabled:

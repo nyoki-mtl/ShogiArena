@@ -13,3 +13,18 @@
     mermaid.initialize({ startOnLoad: true, theme: theme === 'ayu' || theme === 'coal' || theme === 'navy' ? 'dark' : 'default' });
   });
 </script>
+<script>
+  // internals/ の統計系ページは \\( \\) と \\[ \\] で数式を書く。
+  // mdbook 0.5 で mathjax-support オプションが廃止されたため、ここで MathJax を読み込む。
+  window.MathJax = {
+    tex: {
+      inlineMath: [['\\(', '\\)']],
+      displayMath: [['\\[', '\\]']]
+    },
+    options: {
+      // コード片に現れる \\[ を数式として解釈させない。
+      skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    }
+  };
+</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>

@@ -385,6 +385,16 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
 
 
 def _try_project_derived_json(orchestrator: Any) -> None:
+    """Refresh the derived JSON views without blocking the event loop.
+
+    投影は run 全体から再生成されるためコストが run 長に比例する。scheduler がある場合は
+    worker thread で束ねて実行し、無い場合のみ従来どおり同期で書き出す。
+    """
+
+    scheduler = getattr(orchestrator, "_derived_json_scheduler", None)
+    if scheduler is not None:
+        scheduler.request()
+        return
     try:
         orchestrator._ledger_runtime.project_derived_json(run_dir=orchestrator.run_dir)
     except (OSError, ValueError) as exc:

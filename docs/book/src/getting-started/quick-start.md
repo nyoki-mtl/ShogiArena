@@ -3,6 +3,29 @@
 ローカルにある USI エンジン 2 つで、最小構成のトーナメントを動かします。
 インストールがまだなら[インストール](installation.md)を先に済ませてください。
 
+## 公式YaneuraOuで試す
+
+ソースリポジトリには、公式YaneuraOu V9.00と公開評価関数の水匠5を取得するbootstrapがあります。
+Windows x86_64とmacOS（Intel／Apple Silicon）では公式prebuiltを使い、Linux x86_64とarm64では固定tagからbuildします。
+Linuxで実行する場合は、`git`、`make`、`clang++`または`g++`を先に用意してください。
+
+```bash
+uv run --with py7zr python examples/bootstrap_yaneuraou.py
+uv run shogiarena run tournament examples/.runtime/yaneuraou-suisho5/tournament.yaml --dry-run
+uv run shogiarena run tournament examples/.runtime/yaneuraou-suisho5/tournament.yaml
+```
+
+実行中は`http://localhost:8080/index.html`でダッシュボードを確認できます。
+完了後は同じ設定ファイルから最新runを開き直せます。
+
+```bash
+uv run shogiarena dashboard serve --config examples/.runtime/yaneuraou-suisho5/tournament.yaml
+```
+
+このbootstrapはGitHubから取得したarchiveのSHA-256を検証し、生成物を`examples/.runtime/`へ保存します。
+PyPIの配布物には`examples/`を含めていないため、この手順はリポジトリをcloneした環境向けです。
+取得元は[YaneuraOu V9.00](https://github.com/yaneurao/YaneuraOu/releases/tag/V9.00)と[水匠5評価関数](https://github.com/yaneurao/YaneuraOu/releases/tag/suisho5)です。
+
 ## 1. エンジン設定を作る
 
 `engine_a.yaml`:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -22,10 +23,15 @@ from shogiarena._core.contexts.spsa.adapters.fixed_option_preflight import (
     run_yaneuraou_fixed_option_preflight,
 )
 from shogiarena._core.contexts.spsa.adapters.runner import SpsaRunner
-from shogiarena._core.contexts.spsa.application.space_spec import load_spsa_space_spec
+from shogiarena._core.contexts.spsa.application.space_spec import (
+    inspect_spsa_manifest_request,
+    load_spsa_space_spec,
+)
 from shogiarena._core.contexts.spsa.ports.dashboard_factory import DashboardSpsaServicesFactory
 from shogiarena._core.contexts.spsa.ports.spsa_runtime_port import SpsaRunConfigBuildRequest
 from shogiarena._core.platform.settings import project_dirs
+
+LOGGER = logging.getLogger("shogiarena.spsa.runtime_adapter")
 
 
 class SpsaRuntimeAdapter:
@@ -85,6 +91,12 @@ class SpsaRuntimeAdapter:
     ) -> None:
         """Scan resolved local fixed options in an isolated directory."""
 
+        manifest_request = inspect_spsa_manifest_request(config.space_path)
+        if manifest_request.has_selection and not manifest_request.has_explicit_parameters:
+            # Selection-only spaces are normalized against the live engine manifest
+            # during the authoritative run preflight.
+            LOGGER.info("SPSA dry-run: tunable manifest selection is deferred to execution preflight")
+            return
         params = load_spsa_space_spec(config.space_path).to_param_entries()
         if not params:
             raise ValueError("SPSA space spec has no parameters")

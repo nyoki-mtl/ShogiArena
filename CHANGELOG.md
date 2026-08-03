@@ -8,6 +8,63 @@ except for the explicitly documented 1.2.0 breaking-change exception.
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-08-03
+
+### Added
+
+- YaneuraOuをその場で動かせるexample `examples/bootstrap_yaneuraou.py` を追加した。
+  engineの取得と配置から、tournament / SPSA / instancesの設定生成までを行う。
+  ダウンロードしたartifactはSHA256で検証し、不一致なら削除して中断する。
+- Dashboard Bookタブに空状態を追加した。定跡を使わなかったrunでは分析操作を隠し、
+  ShogiArenaの`initial_positions`との違いを説明する。
+- 保存済みrunのdashboardで、`schedule.json` / `state.json` / `game.db` から
+  対局一覧と進捗を読み取り専用で復元するようにした。
+- 実行開始時にrun directoryの絶対パスをCLIへ出力するようにした。
+
+### Changed
+
+- SPSAのペア内2局（tuned先手 / tuned後手）を並列実行するようにした。
+  従来は逐次だったため、同時対局数が`pairs_per_update`で頭打ちになっていた。
+  ペアのスコアは2局の単純平均で順序に依存しないため、推定量は変わらない。
+  同時実行数はgame単位のsemaphore（容量`num_workers`）でengine poolの容量内に収める。
+  停止要求が既にある場合は逐次実行へ戻し、最初のincomplete observationで
+  ペアを打ち切る従来の挙動を保つ。
+- SPSAの派生JSON投影（`current.json` / `index.json` / `events.jsonl`）をevent loopから
+  worker threadへ移し、対局完了ごとの全体再構築を最大5分間隔へまとめるようにした。
+  実測でevent loopの停止が14件から1件、`compute_summary`が24.62msから1.44msになった。
+  投影はrun開始時と終了時には同期実行するため、終了状態の鮮度は変わらない。
+  ledgerが権威でありlive dashboardはledgerを直接読むため、派生JSONの間引きは表示に影響しない。
+- `dashboard serve --config`のrun directory解決を、現在の設定から計算したschedule hashの
+  groupだけを見るように変更した。従来は設定名のhash接尾辞が一致する全groupから最新runを
+  拾っていたため、別scheduleのrunを開くことがあった。
+  run実行後に設定を変更してから`--config`で開くと、対象runが見つからなくなる。
+  その場合は`--run-dir`で明示する。
+- SPSA実行中のLTC回帰テスト（`spsa.ltc_regression`）を推奨しない扱いとし、公開exampleから外した。
+  設定項目としては残しており、既定は従来どおり無効である。
+  実行中に挟める標本サイズでは、判定できるのが破綻に近い劣化に限られる。
+  `total_pairs: 100`（200局）でElo推定量の標準誤差は22 Elo前後で、
+  `max_elo_drop: 50.0`に対する検出率は-80 Eloで91%、-30 Eloでは18%にとどまる。
+  この機能を回す動機であるSTC過学習（10〜30 Elo）を検出するには2000局規模が要る。
+  チューニング結果の検証には、終了後に`run sprt`の独立ランを使う。
+
+### Fixed
+
+- LTCを使わないSPSA runで、DashboardのSPSA / Updatesが起動時のまま更新されない問題を修正した。
+  revisionは`variant_quarantined` / `ltc_decision` / terminalでしか増えないため、
+  LTCが無効なrunでは0のままSSEが発火しなかった。ledgerの`data_version`から導出した
+  `data_generation`を発火条件に加えた。SSE payloadへの追加のみで、既存clientは影響を受けない。
+- `space.select`だけを持つSPSA spaceの定義が、dry-runで「parametersが空」として失敗する問題を
+  修正した。manifestの解決は実行時のpreflightに委ねる。
+- Dashboardのsummaryとupdate detailを同時に取得したとき、稀に500を返す問題を修正した。
+  `ShogiRepository.operation()`の入れ子検出がrepository単位だったため、
+  worker threadごとに分かれたsessionを互いに入れ子と誤検出していた。
+- SPSAのペア両側が異なる理由で同時に失敗したとき、variant quarantineを二重記録して
+  ledger整合性エラーで中断する問題を修正した。quarantineはpair単位で1回記録する。
+- 設定から`dashboard serve`したときにschedule hashを無視してrun directoryを解決していた問題と、
+  workers directoryが存在しない場合のworker数のfallbackを修正した。
+- docsの数式が生のLaTeX文字列として表示される問題を修正した。
+  MathJaxの読み込みに加えて、Markdownの強調として解釈されていた下付き添字71箇所を修正した。
+
 ## [1.2.1] - 2026-08-02
 
 ### Fixed
@@ -353,7 +410,9 @@ dashboard 無効の長時間 run で event loop が秒単位で停止し、進�
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.1...v1.2.2
+[1.2.1]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.0.0...v1.0.2

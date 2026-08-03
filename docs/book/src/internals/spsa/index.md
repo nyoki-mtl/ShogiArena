@@ -108,7 +108,7 @@ Rademacher 分布では \\(1/\varepsilon_i^2\\) が常に 1 なので、条件 2
 同時摂動による勾配推定は次式で書けます。
 
 \\[
-\hat{g}_i = \frac{L(\boldsymbol{\theta} + c_k \boldsymbol{\varepsilon}) - L(\boldsymbol{\theta} - c_k \boldsymbol{\varepsilon})}{2 c_k \varepsilon_i}
+\hat{g}\_i = \frac{L(\boldsymbol{\theta} + c_k \boldsymbol{\varepsilon}) - L(\boldsymbol{\theta} - c_k \boldsymbol{\varepsilon})}{2 c_k \varepsilon_i}
 \\]
 
 これを、パラメータを 1 個ずつ動かす有限差分法と比べます。
@@ -250,7 +250,7 @@ if self.config.early_stop and delta_norm < threshold:
 - **[勾配推定と摂動](./gradient.md)**：勾配推定の数学的詳細と量子化の扱い
 - **[ゲインスケジュール](./gain-schedule.md)**：収束を制御する減衰系列の設計
 - **[ノイズと高次手法の限界](./noise-and-higher-order.md)**：二次手法が使えない理由と実践的な教訓
-- **[LTC 回帰テスト](./ltc-regression.md)**：チューニング結果の長時間検証
+- **[LTC 回帰テスト](./ltc-regression.md)**：実行中の LTC 検証と、それを既定で無効にしている理由
 
 ## 参考文献
 

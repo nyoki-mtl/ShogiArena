@@ -41,7 +41,7 @@ elo ─────────────────────────�
    - **[勾配推定と摂動](./spsa/gradient.md)**：Rademacher 摂動による効率的な勾配推定
    - **[ゲインスケジュール](./spsa/gain-schedule.md)**：収束を制御する減衰系列の設計
    - **[ノイズと高次手法の限界](./spsa/noise-and-higher-order.md)**：二次手法が使えない理由と実践知
-   - **[LTC 回帰テスト](./spsa/ltc-regression.md)**：チューニング結果の長時間検証
+   - **[LTC 回帰テスト](./spsa/ltc-regression.md)**：実行中の LTC 検証と、それを既定で無効にしている理由
 4. **[分散削減テクニック](./variance-reduction/index.md)**：少ない対局数で高精度な推定を得る手法
 5. **[用語集](./glossary.md)**：本ドキュメントで使う専門用語のリファレンス
 6. **[テストフレームワーク概説](./testing-frameworks.md)**：OpenBench、Fishtest、Cutechess の解説と ShogiArena の位置付け
@@ -67,7 +67,8 @@ variance-reduction ◄── (elo, sprt, spsa)
   CRN → バッチ処理 → 分散削減
 ```
 
-SPSA の LTC 回帰テストでは SPRT を内部的に使用するため、
+SPSA で得たパラメータの検証は、チューニング終了後の独立した SPRT ランで行います。
+LTC 回帰テストも判定に SPRT を使えます。
 SPRT を先に理解してから SPSA に進むことを推奨します。
 
 ## 推奨読了パス

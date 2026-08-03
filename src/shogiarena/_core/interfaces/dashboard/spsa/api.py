@@ -26,6 +26,7 @@ from shogiarena._core.contexts.dashboard.ports.interface_dependencies import (
     DashboardGameQueryPort,
     DashboardSpsaSupportPort,
 )
+from shogiarena._core.contexts.dashboard.ports.spsa_payloads import ProgressSnapshot, UpdateEntry
 from shogiarena._core.contexts.dashboard.ports.spsa_service_ports import (
     DashboardSpsaAnalysisPort,
     DashboardSpsaGameListingPort,
@@ -162,12 +163,8 @@ class SpsaAPI:
         except ValidationError as exc:
             return json_error_response(str(exc), status=400, code="invalid_limit")
         limit = parsed_query.limit
-        query_service = getattr(self, "_update_query_service", None)
-        event_entries = (
-            query_service.load_event_entries()
-            if query_service is not None
-            else [to_json_object(event) for event in self._store.load_event_entries()]
-        )
+        # The event projection is rebuilt from the whole run, so keep it off the event loop.
+        event_entries = await asyncio.to_thread(self._load_event_entries)
         if not event_entries:
             return web.json_response({"events": []})
 
@@ -184,11 +181,21 @@ class SpsaAPI:
 
         return web.json_response({"events": events})
 
+    def _load_event_entries(self) -> list[JsonObject]:
+        """Load canonical event entries from the projector, or the raw store as a fallback."""
+
+        query_service = getattr(self, "_update_query_service", None)
+        if query_service is not None:
+            return query_service.load_event_entries()
+        return [to_json_object(event) for event in self._store.load_event_entries()]
+
     # ------------------------------------------------------------------
     # GET /api/spsa/summary
     # ------------------------------------------------------------------
     async def get_summary(self, _request: web.Request) -> web.Response:
-        summary_payload = self._build_summary_payload()
+        # The summary reads meta.json, the ledger, and several run artifacts, so it must not
+        # run on the event loop that also serves the live game streams.
+        summary_payload = await asyncio.to_thread(self._build_summary_payload)
         return web.json_response(summary_payload)
 
     def _build_summary_payload(self) -> JsonObject:
@@ -213,7 +220,7 @@ class SpsaAPI:
         variant_id = parsed_query.variant_id
         overall_start = time.perf_counter()
         if variant_id:
-            entry = self._params_service.load_variant_entry(variant_id)
+            entry = await asyncio.to_thread(self._params_service.load_variant_entry, variant_id)
             total_elapsed = (time.perf_counter() - overall_start) * 1000.0
             if total_elapsed >= 50.0:
                 print(
@@ -225,7 +232,7 @@ class SpsaAPI:
             return json_error_response("variant not found", status=404, code="variant_not_found")
 
         payload_start = time.perf_counter()
-        payload = self._params_service.build_params_payload()
+        payload = await asyncio.to_thread(self._params_service.build_params_payload)
         payload_elapsed = (time.perf_counter() - payload_start) * 1000.0
         total_elapsed = (time.perf_counter() - overall_start) * 1000.0
         if payload_elapsed >= 50.0:
@@ -251,7 +258,7 @@ class SpsaAPI:
         except ValueError:
             return json_error_response("Unsupported detail view", status=400, code="invalid_detail_view")
         try:
-            payload = self._update_query_service.build_update_detail(idx)
+            payload = await asyncio.to_thread(self._update_query_service.build_update_detail, idx)
         except SpsaUpdateNotFoundError as exc:
             return json_error_response(str(exc), status=404, code="update_not_found")
         except ValueError as exc:
@@ -337,7 +344,7 @@ class SpsaAPI:
         return json_error_response("Game not found", status=404, code="game_not_found")
 
     async def get_ltc_summary(self, _request: web.Request) -> web.Response:
-        summary = self._ltc_service.compute_ltc_summary()
+        summary = await asyncio.to_thread(self._ltc_service.compute_ltc_summary)
         return web.json_response(summary)
 
     async def get_ltc_results(self, request: web.Request) -> web.Response:
@@ -345,7 +352,10 @@ class SpsaAPI:
             parsed_query = LtcResultsQuery.model_validate(dict(request.rel_url.query))
         except ValidationError as exc:
             return json_error_response(str(exc), status=400, code="invalid_limit")
-        payload = self._snapshot_service.compose_ltc_results_snapshot(limit=parsed_query.limit)
+        payload = await asyncio.to_thread(
+            self._snapshot_service.compose_ltc_results_snapshot,
+            limit=parsed_query.limit,
+        )
         return web.json_response(payload)
 
     # ------------------------------------------------------------------
@@ -360,10 +370,8 @@ class SpsaAPI:
         limit = parsed_query.limit
         offset = parsed_query.offset
 
-        updates = self._update_query_service.load_index_updates()
-        if not updates:
-            updates = self._update_query_service.collect_updates_from_events()
-        progress = self._update_query_service.compute_progress_snapshot(updates)
+        # Loading updates walks the whole ledger projection, so keep it off the event loop.
+        updates, progress = await asyncio.to_thread(self._load_updates_with_progress)
         if updates:
             updates.sort(key=lambda entry: entry.get("update_idx", 0), reverse=True)
             paginated = updates[offset : offset + limit]
@@ -381,26 +389,36 @@ class SpsaAPI:
             {"updates": [], "total": 0, "limit": limit, "offset": offset, "has_more": False, "progress": progress}
         )
 
+    def _load_updates_with_progress(self) -> tuple[list[UpdateEntry], ProgressSnapshot]:
+        """Load canonical updates and the derived progress snapshot in one worker hop."""
+
+        updates = self._update_query_service.load_index_updates()
+        if not updates:
+            updates = self._update_query_service.collect_updates_from_events()
+        return updates, self._update_query_service.compute_progress_snapshot(updates)
+
     async def get_convergence(self, request: web.Request) -> web.Response:
         """Serve the current convergence analysis snapshot."""
 
         analysis = await asyncio.to_thread(self._analysis_cache.get_convergence_snapshot)
-        snapshot = self._compose_convergence_snapshot(to_json_object(analysis), request)
+        # Composing the LTC section walks every decision, so it stays on the worker thread too.
+        # The query is parsed here so the request object never leaves the event loop.
+        ltc_limit = self._resolve_ltc_limit(request)
+        snapshot = await asyncio.to_thread(
+            self._snapshot_service.compose_convergence_with_ltc,
+            to_json_object(analysis),
+            ltc_limit=ltc_limit,
+        )
         return web.json_response(snapshot)
 
-    def _compose_convergence_snapshot(
-        self,
-        snapshot: Mapping[str, JsonValue],
-        request: web.Request | None = None,
-    ) -> JsonObject:
-        ltc_limit = 200
-        if request is not None:
-            try:
-                parsed_query = LtcLimitQuery.model_validate(dict(request.rel_url.query))
-                ltc_limit = parsed_query.ltc_limit
-            except ValidationError:
-                ltc_limit = 200
-        return self._snapshot_service.compose_convergence_with_ltc(snapshot, ltc_limit=ltc_limit)
+    @staticmethod
+    def _resolve_ltc_limit(request: web.Request | None) -> int:
+        if request is None:
+            return 200
+        try:
+            return LtcLimitQuery.model_validate(dict(request.rel_url.query)).ltc_limit
+        except ValidationError:
+            return 200
 
     # ------------------------------------------------------------------
     # GET /api/spsa/analysis/correlation

@@ -31,7 +31,7 @@ engines:
 #     options_overlays:
 #       - "{eval_config_dir}/example.yaml"
 #     options:
-#       Threads: 4
+#       Threads: 2
 #       BookFile: no_book   # 純粋な強さ比較では engine-owned book を無効化
 #   - artifact: "yaneuraou/9f89431a"
 #     build_options:

@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import json
-import time
 from datetime import datetime
 from pathlib import Path
-
-import rsshogi.record
 
 from shogiarena._core.contexts.game_session.adapters.engine.metadata_collector import (
     compute_engine_time_control_specs,
@@ -19,8 +16,7 @@ from shogiarena._core.contexts.game_session.application.progress.hub import Dash
 from shogiarena._core.contexts.spsa.adapters.fixed_option_preflight import (
     load_fixed_option_preflight_status,
 )
-from shogiarena._core.contexts.spsa.adapters.runtime.tokens import phase_symbol, variant_token
-from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry, SpsaGamePayload
+from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
 from shogiarena._core.shared.kernel.atomic_json import write_json_atomic
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
@@ -233,64 +229,7 @@ def seed_spsa_initial_summary(
     write_json_atomic(meta_path, meta)
 
 
-def append_spsa_event_record(
-    *,
-    run_dir: Path | None,
-    payload: SpsaGamePayload,
-    game_id: str,
-    game_info: rsshogi.record.Record,
-    session_uuid: str,
-) -> None:
-    if run_dir is None:
-        return
-
-    spsa_dir = run_dir / "spsa"
-    spsa_dir.mkdir(parents=True, exist_ok=True)
-    tuned_vid = variant_token(payload.update_idx)
-    current_vid = variant_token(0)
-    resolved_game_id = game_info.game_name or game_id
-    black_tc = game_info.black_time_control
-    white_tc = game_info.white_time_control
-    tc_black = black_tc.to_spec() if black_tc is not None else None
-    tc_white = white_tc.to_spec() if white_tc is not None else None
-    end_time = game_info.metadata.end_date
-    result = game_info.result
-    variant_base = variant_token(payload.update_idx)
-    variant_suffix = phase_symbol(payload.phase)
-    variant_label = variant_base + variant_suffix if variant_suffix else variant_base
-
-    event_record = {
-        "event": "game_result",
-        "projection_schema": "shogiarena.spsa.runtime-compat-export.v1",
-        "projection_source": "runtime-cache; ledger remains authoritative",
-        "update_idx": int(payload.update_idx),
-        "winner": int(payload.winner_code) if payload.winner_code is not None else None,
-        "tuned_as_black": bool(payload.is_tuned_as_black),
-        "phase": payload.phase,
-        "tuned_variant": tuned_vid,
-        "baseline_variant": current_vid,
-        "game_id": resolved_game_id or game_id,
-        "variant_token": variant_base,
-        "variant_label": variant_label,
-        "black_player": game_info.metadata.black_player,
-        "white_player": game_info.metadata.white_player,
-        "initial_sfen": game_info.init_position_sfen,
-        "num_moves": len(game_info.moves),
-        "time_control_black": tc_black,
-        "time_control_white": tc_white,
-        "end_time": end_time,
-        "game_result": result.name if result is not None else None,
-        "ts": int(time.time() * 1000),
-        "session_uuid": session_uuid,
-        "family": payload.event_family,
-        "is_ltc": payload.event_family == "ltc",
-    }
-    with open(spsa_dir / "events.jsonl", "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(event_record, ensure_ascii=False) + "\n")
-
-
 __all__ = [
-    "append_spsa_event_record",
     "seed_spsa_initial_summary",
     "spsa_engine_configs",
 ]

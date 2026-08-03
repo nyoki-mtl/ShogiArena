@@ -210,6 +210,17 @@ def test_spsa_runtime_adapter_dry_run_checks_fixed_options(
         dashboard_service_factory=cast(DashboardSpsaServicesFactory, _DashboardServiceFactoryStub()),
     )
     config = SimpleNamespace(space_path=tmp_path / "space.yaml", tuned=[SimpleNamespace(name="tuned")])
+    config.space_path.write_text(
+        "\n".join(
+            [
+                "schema_version: shogiarena.spsa.space.v1",
+                "target: {protocol: usi_options}",
+                "parameters: [{}]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     params = [SimpleNamespace(engine_option_name="ParamA", is_not_used=False)]
 
     monkeypatch.setattr(
@@ -235,6 +246,46 @@ def test_spsa_runtime_adapter_dry_run_checks_fixed_options(
     assert fixed_options["run_dir"] == tmp_path / "preflight"
     assert tuple(cast(object, fixed_options["target_option_names"])) == ("ParamA",)
     assert fixed_options["instance_pool"] is instance_pool
+
+
+def test_spsa_runtime_adapter_dry_run_defers_manifest_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = SpsaRuntimeAdapter(
+        engine_factory_service=cast(Any, SimpleNamespace()),
+        init_dashboard_html=lambda *_args, **_kwargs: None,
+        api_server_factory=lambda *_args, **_kwargs: None,
+        dashboard_service_factory=cast(DashboardSpsaServicesFactory, _DashboardServiceFactoryStub()),
+    )
+    space_path = tmp_path / "space.yaml"
+    space_path.write_text(
+        "\n".join(
+            [
+                "schema_version: shogiarena.spsa.space.v1",
+                "target:",
+                "  protocol: usi_options",
+                "  tunable_manifest:",
+                "    required: true",
+                "select: [aspiration_window_1]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config = SimpleNamespace(space_path=space_path, tuned=[SimpleNamespace(name="tuned")])
+
+    monkeypatch.setattr(
+        spsa_runtime_adapter_module,
+        "run_yaneuraou_fixed_option_preflight",
+        lambda **_kwargs: pytest.fail("selection must be resolved from the live manifest"),
+    )
+
+    adapter.preflight_dry_run(
+        cast(Any, config),
+        work_dir=tmp_path / "preflight",
+        instance_pool=_InstancePoolStub(),
+    )
 
 
 def test_tournament_runtime_adapter_build_run_config_uses_request_fields(monkeypatch: pytest.MonkeyPatch) -> None:

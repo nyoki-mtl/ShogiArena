@@ -225,6 +225,11 @@ export interface SpsaUpdateDetailResponse {
 
 export interface SpsaRefreshOptions {
     readonly force?: boolean;
+    /**
+     * パラメータ空間は run 中に変化しないため、revision 由来の高頻度な更新では
+     * 再取得を省く。省略時は `force` に従う。
+     */
+    readonly skipParams?: boolean;
 }
 
 export interface SpsaGameRecord {

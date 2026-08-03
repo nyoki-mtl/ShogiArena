@@ -182,11 +182,14 @@ def inspect_spsa_manifest_request(path: str | Path) -> SpsaManifestRequest:
     command = coerce_str(manifest_map.get("command")) or "usi_tunables"
     if "\n" in command or "\r" in command:
         raise ValueError("space.target.tunable_manifest.command must be one line")
+    has_selection = payload.get("select") is not None
+    if has_selection:
+        _selected_tunable_ids(payload.get("select"))
     return SpsaManifestRequest(
         required=bool(manifest_map.get("required", False)),
         command=command,
         has_explicit_parameters=isinstance(payload.get("parameters"), list),
-        has_selection=payload.get("select") is not None,
+        has_selection=has_selection,
     )
 
 
@@ -314,19 +317,10 @@ def _resolve_manifest_parameters(
         raise ValueError("space.select requires a tunable manifest")
     manifest_obj = parse_spsa_tunable_manifest(manifest) if isinstance(manifest, dict) else manifest
     descriptors = manifest_obj.by_id()
-    raw_select = payload.get("select")
-    if not isinstance(raw_select, list) or not raw_select:
-        raise ValueError("space.select must be a non-empty list")
     overrides = payload.get("overrides")
     override_map = _mapping(overrides, field="space.overrides") if overrides is not None else {}
     parameters: list[JsonObject] = []
-    for index, raw_item in enumerate(raw_select):
-        if isinstance(raw_item, str):
-            selected_id = raw_item
-        elif isinstance(raw_item, dict):
-            selected_id = _required_str(raw_item.get("id"), field=f"space.select[{index}].id")
-        else:
-            raise TypeError(f"space.select[{index}] must be a string or mapping")
+    for selected_id in _selected_tunable_ids(payload.get("select")):
         descriptor = descriptors.get(selected_id)
         if descriptor is None:
             raise ValueError(f"selected tunable is not in manifest: {selected_id}")
@@ -335,6 +329,20 @@ def _resolve_manifest_parameters(
             raise TypeError(f"space.overrides.{selected_id} must be a mapping")
         parameters.append(_descriptor_to_parameter(descriptor, override=dict(override or {})))
     return parameters
+
+
+def _selected_tunable_ids(raw_select: JsonValue | None) -> list[str]:
+    if not isinstance(raw_select, list) or not raw_select:
+        raise ValueError("space.select must be a non-empty list")
+    selected_ids: list[str] = []
+    for index, raw_item in enumerate(raw_select):
+        if isinstance(raw_item, str):
+            selected_ids.append(_required_str(raw_item, field=f"space.select[{index}]"))
+        elif isinstance(raw_item, dict):
+            selected_ids.append(_required_str(raw_item.get("id"), field=f"space.select[{index}].id"))
+        else:
+            raise TypeError(f"space.select[{index}] must be a string or mapping")
+    return selected_ids
 
 
 def _descriptor_to_parameter(descriptor: SpsaTunableDescriptor, *, override: JsonObject) -> JsonObject:

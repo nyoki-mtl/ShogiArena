@@ -98,6 +98,7 @@ async def test_revision_feed_multi_client_restart_and_gap_recovery(tmp_path: Pat
     assert first_payload["data"] == {
         "run_id": "run-feed",
         "revision": 7,
+        "data_generation": 1,
         "gap_detected": False,
         "snapshot_required": True,
         "snapshot_url": "/api/spsa/summary",
@@ -168,3 +169,40 @@ async def test_revision_feed_closes_after_terminal_revision(tmp_path: Path) -> N
     assert event_id == 2
     assert payload["data"]["terminal"] is True  # type: ignore[index]
     assert eof == b""
+
+
+@pytest.mark.asyncio
+async def test_revision_feed_emits_when_only_projected_data_changes(tmp_path: Path) -> None:
+    """LTC 無効の run では ``event_revisions`` が増えないまま対局と update が進む。
+
+    durable revision だけを配信条件にしていると、この間 dashboard は
+    Updates を取り直す契機を得られず、起動時のスナップショットのまま止まる。
+    """
+
+    db_path = _write_revision_archive(tmp_path, revision=1)
+
+    async with _build_client(tmp_path, db_path) as client:
+        response = await client.get("/api/spsa/revisions/stream?poll_interval=0.2")
+        first_id, first_payload = await _read_event(response)
+
+        # An update lands, but nothing is appended to `event_revisions`.
+        with open_spsa_ledger(tmp_path) as ledger:
+            ledger.connection.execute(
+                """
+                INSERT INTO updates (
+                    run_id, update_idx, state, theta_before_json, schedule_json,
+                    ltc_required, revision, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("run-feed", 1, "PLANNED", "{}", "{}", 0, 1, "t0", "2026-01-01T00:00:02+00:00"),
+            )
+            ledger.connection.commit()
+
+        second_id, second_payload = await _read_event(response)
+        response.close()
+
+    assert first_payload["data"]["revision"] == 1  # type: ignore[index]
+    # The durable revision is unchanged, so only the projected data version moved.
+    assert second_payload["data"]["revision"] == 1  # type: ignore[index]
+    assert second_payload["data"]["data_generation"] > first_payload["data"]["data_generation"]  # type: ignore[index]
+    assert second_id == first_id

@@ -14,12 +14,81 @@ examples/configs/
 ├── resources/
 │   ├── engines/                      # エンジン設定テンプレート
 │   ├── instances/                    # インスタンス設定（ローカル、SSH）
+│   ├── openings/                     # 小規模な開始局面／指し手列
 │   └── spsa/                         # SPSA space 定義
-├── arena_full_reference.yaml         # TournamentRunConfig の全項目リファレンス
-└── example.yaml                      # 簡易版サンプル
+└── example.yaml                      # TournamentRunConfig の包括的リファレンス
 ```
 
 ## 使い方
+
+### YaneuraOuと水匠5ですぐ試す
+
+リポジトリをcloneした環境では、公式YaneuraOu V9.00と公開評価関数の水匠5を取得し、4局の短いトーナメントを実行できます。
+エンジンは2 threadsで動作し、同梱の`examples/configs/resources/openings/pair_positions.sfen`（3局面）を先後反転ペアで使います。
+Windows x86_64とmacOS（Intel／Apple Silicon）では公式prebuiltを使います。
+Linuxでは固定tagからbuildするため、`git`、`make`、`clang++`または`g++`が必要です。
+
+```bash
+uv run --with py7zr python examples/bootstrap_yaneuraou.py
+uv run shogiarena run tournament examples/.runtime/yaneuraou-suisho5/tournament.yaml --dry-run
+uv run shogiarena run tournament examples/.runtime/yaneuraou-suisho5/tournament.yaml
+```
+
+実行中は`http://localhost:8080/index.html`を開きます。
+完了したrunは次のコマンドで開き直せます。
+
+```bash
+uv run shogiarena dashboard serve --config examples/.runtime/yaneuraou-suisho5/tournament.yaml
+```
+
+BootstrapはYaneuraOuと水匠5の公式GitHub Releaseから取得し、SHA-256を検証してから`examples/.runtime/`へ配置します。
+エンジンと評価関数はリポジトリへ取り込みません。
+取得元は[YaneuraOu V9.00](https://github.com/yaneurao/YaneuraOu/releases/tag/V9.00)と[水匠5評価関数](https://github.com/yaneurao/YaneuraOu/releases/tag/suisho5)です。
+
+同じbootstrapは、YaneuraOuの`FV_SCALE`を2 updateだけ調整するSPSAデモも生成します。
+YaneuraOu V9.00はShogiArena固有のtunable manifestを実装していませんが、`FV_SCALE`は通常のUSI `spin` optionなので調整できます。
+一方で`Clear Hash` optionは公開されないため、この例では`clear_hash: false`を明示しています。
+これは実行経路を確認するための小規模デモであり、得られた値を実戦向けの推奨値とはみなしません。
+
+```bash
+uv run shogiarena run spsa examples/.runtime/yaneuraou-suisho5/spsa.yaml --dry-run
+uv run shogiarena run spsa examples/.runtime/yaneuraou-suisho5/spsa.yaml
+```
+
+### YaneuraOuの探索parameterをSPSAする
+
+`FV_SCALE`ではなく探索parameterを調整する上級例には、V9.40から分岐した
+[ShogiArena SPSA fork](https://github.com/nyoki-mtl/YaneuraOu/tree/6b014a16ea0648ab04c62dd245a40a46306a0835)
+を使います。このforkはV9.40の公式SPSA定義に含まれる149個のparameter
+（探索・move ordering 148個と`FV_SCALE`）、`usi_tunables` manifest、`Clear Hash`を公開します。
+生成される`search-spsa-space.yaml`では、探索の主要領域をまたぐ32個を`select`します。
+対象を変える場合は、engineを再buildせずにこの`select`を編集します。
+通常buildには影響せず、`SHOGIARENA_SPSA`を定義したbuildでだけ有効になります。
+この上級例は2 threads／4並列、2 pairs per update、最大320手です。
+
+次はWindowsのMSYS2／MinGW clangで確認済みのbuild例です。
+
+```bash
+git clone https://github.com/nyoki-mtl/YaneuraOu.git ../YaneuraOu-shogiarena-spsa
+git -C ../YaneuraOu-shogiarena-spsa checkout 6b014a16ea0648ab04c62dd245a40a46306a0835
+cd ../YaneuraOu-shogiarena-spsa/source
+make clean
+make -j8 tournament COMPILER=clang++ TARGET_CPU=AVX2 \
+  YANEURAOU_EDITION=YANEURAOU_ENGINE_NNUE \
+  EXTRA_CPPFLAGS="-DSHOGIARENA_SPSA"
+cd ../../ShogiArena
+```
+
+通常のbootstrapで水匠5を用意し、buildしたbinaryを追加指定すると、検索parameter用の設定も生成されます。
+
+```bash
+uv run --with py7zr python examples/bootstrap_yaneuraou.py \
+  --spsa-search-engine ../YaneuraOu-shogiarena-spsa/source/YaneuraOu-by-gcc.exe
+uv run shogiarena run spsa examples/.runtime/yaneuraou-suisho5/search-spsa.yaml --dry-run
+uv run shogiarena run spsa examples/.runtime/yaneuraou-suisho5/search-spsa.yaml
+```
+
+この例は統合経路の確認用です。2 updateの結果を推奨値として採用せず、実際の調整では十分な対局数と独立した棋力検証を行ってください。
 
 ### 1. テンプレートをコピーして調整
 
@@ -53,7 +122,7 @@ shogiarena run tournament my_tournament.yaml
 
 `examples/configs/run/tournament/example.yaml` は、現行仕様に合わせたトーナメント実行テンプレートです。
 
-`examples/configs/example.yaml` は、総当たり戦やガントレット形式でエンジンをまとめて比較する例です。
+`examples/configs/example.yaml` は、TournamentRunConfigの代表的な項目をまとめた包括例です。
 主要オプションに詳細なコメントを付けています。
 
 主な設定項目：
@@ -97,6 +166,8 @@ shogiarena run tournament my_tournament.yaml
 - `rules.initial_positions`：開始局面ファイル（必須）
 - `rules.time_control.node_limit`：ノード数制限（推奨）
 
+YaneuraOuと水匠5ですぐ試す場合は、上記bootstrapが生成する`examples/.runtime/yaneuraou-suisho5/spsa.yaml`を使えます。
+
 ### Generate (棋譜生成)
 
 `examples/configs/run/generate/example.yaml` は、自己対局で棋譜と局面データを生成する例です。
@@ -110,9 +181,9 @@ shogiarena run tournament my_tournament.yaml
 
 ## リファレンス設定
 
-### arena_full_reference.yaml
+### example.yaml
 
-`TournamentRunConfig` の全項目を網羅したリファレンスです。
+`TournamentRunConfig` の主要項目をまとめたリファレンスです。
 自分の環境に合わせて必要な項目だけを書き換えて使います。
 
 ## 追加リソース

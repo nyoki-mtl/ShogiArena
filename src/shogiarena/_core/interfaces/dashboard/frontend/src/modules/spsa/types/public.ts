@@ -331,6 +331,7 @@ export interface SpsaConvergenceResponse {
 
 export interface SpsaRefreshOptions {
     readonly force?: boolean;
+    readonly skipParams?: boolean;
 }
 
 export interface SpsaUpdateDetailRequestOptions {

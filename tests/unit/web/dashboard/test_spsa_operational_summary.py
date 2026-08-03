@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from shogiarena._core.contexts.dashboard.adapters.spsa.summary_service import SpsaSummaryService
@@ -84,3 +85,49 @@ def test_summary_merges_ledger_and_sealed_artifact_status(tmp_path: Path) -> Non
         "fixed_option_preflight": "verified",
         "tunable_handshake": "mismatch",
     }
+
+
+def test_artifact_integrity_follows_same_size_rewrites(tmp_path: Path) -> None:
+    """artifact_health は integrity evidence なので、キャッシュが改竄を隠してはいけない。
+
+    mtime と size を鍵にすると、同じ tick に同じサイズで書き換えられた場合に
+    改竄を見逃す。ここでは mtime を意図的に据え置き、サイズも変えずに書き換える。
+    """
+
+    spsa_dir = tmp_path / "spsa"
+    spsa_dir.mkdir()
+    (spsa_dir / "meta.json").write_text(json.dumps({"session_uuid": "s"}), encoding="utf-8")
+    tunable = {"status": "passed", "runtime_scope": "remote_runtime", "engine_name": "engine-a"}
+    tunable_path = spsa_dir / "tunable_handshake.json"
+    tunable_path.write_text(json.dumps(tunable), encoding="utf-8")
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "status": "provenance_sealed",
+                "hashes": {"resume_hash": "r"},
+                "inputs": {"spsa_tunable_handshake": {"sha256": canonical_sha256(tunable)}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = SpsaSummaryService(
+        SpsaStore(run_dir=tmp_path),
+        ledger_summary_loader=lambda: {},
+        operational_status_loader=lambda: {"ledger": {"revision": 1}},
+    )
+
+    first = service.compute_summary()["operational_status"]
+    assert first["artifact_health"]["tunable_handshake"] == "verified"  # type: ignore[index]
+
+    original_stat = tunable_path.stat()
+    # "engine-a" と "tampered" は同じ長さなので size は変わらない。
+    tunable_path.write_text(
+        json.dumps({**tunable, "engine_name": "tampered"}),
+        encoding="utf-8",
+    )
+    assert tunable_path.stat().st_size == original_stat.st_size
+    os.utime(tunable_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+    tampered = service.compute_summary()["operational_status"]
+    assert tampered["artifact_health"]["tunable_handshake"] == "mismatch"  # type: ignore[index]

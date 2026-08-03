@@ -187,8 +187,12 @@ export function createSpsaApi({
 
         const refreshTasks: Array<Promise<void>> = [];
         refreshTasks.push(fetchers.requestSummary(Boolean(options.force), signal));
-        if (shouldRefreshParams(Boolean(options.force))) {
-            refreshTasks.push(fetchers.requestParams(Boolean(options.force), signal));
+        // The revision feed now fires whenever projected data moves, so a forced refresh can
+        // arrive every poll. The parameter space cannot change mid-run, so honour its own
+        // interval instead of refetching it on every one of those.
+        const shouldForceParams = Boolean(options.force) && !options.skipParams;
+        if (shouldRefreshParams(shouldForceParams)) {
+            refreshTasks.push(fetchers.requestParams(shouldForceParams, signal));
         }
 
         if (options.force || state.connection.eventSourceStatus !== 'open') {
