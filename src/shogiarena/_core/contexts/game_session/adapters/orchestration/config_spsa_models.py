@@ -154,6 +154,11 @@ class SpsaRunConfig(BaseModel):
     # Async orchestration
     inflight_factor: int = Field(default=4, ge=1)
     update_batch_size: int | None = None
+    # 派生 JSON(current.json / index.json / events.jsonl)の再投影を束ねる最小間隔[秒]。
+    # None は adapter 側の既定値を使う。ledger が権威であり派生 JSON は互換ビューなので、
+    # 要求される鮮度は「最終的に追いつくこと」だけである。0 は「連続で投影する」を意味し、
+    # 投影は常に直列なので同時実行はしないが、run が伸びると worker thread を長く占有する。
+    derived_json_min_interval_s: float | None = Field(default=None, ge=0.0, le=3600.0)
     is_snap_float_to_step: bool = Field(default=False, alias="snap_float_to_step")
     # OpenBench alignment options
     int_ck_floor: float = 0.5

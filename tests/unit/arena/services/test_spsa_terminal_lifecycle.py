@@ -59,6 +59,9 @@ class _Ledger:
     def __init__(self, calls: list[str]) -> None:
         self._calls = calls
 
+    def checkpoint(self) -> None:
+        self._calls.append("ledger-checkpoint")
+
     def close(self) -> None:
         self._calls.append("ledger-close")
 
@@ -182,9 +185,12 @@ async def test_terminal_commit_occurs_after_game_db_cleanup_and_before_ledger_cl
 
     await runner._stop_additional_services()
 
+    # checkpoint は terminal commit の直後。synchronous=NORMAL では commit 単体が
+    # durable ではないため、terminal.json / completed.flag を書く前に畳む必要がある。
     assert calls == [
         "game-db-close",
         "terminal:clean:completed:False",
+        "ledger-checkpoint",
         "project",
         "payload",
         "completion-payload",

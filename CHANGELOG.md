@@ -8,6 +8,34 @@ except for the explicitly documented 1.2.0 breaking-change exception.
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-08-04
+
+### Added
+
+- SPSA config に `spsa.derived_json_min_interval_s` を追加した。派生 JSON
+  （`spsa/current.json` / `index.json` / `events.jsonl`）を再生成する最小間隔を
+  run ごとに指定できる。未指定時の挙動は変わらない。
+
+### Changed
+
+- SPSA run の実行中、ledger の書き込み接続が `journal_mode=WAL` + `synchronous=NORMAL` を
+  使うようにした。event loop 上の writer と worker thread 上の read-only reader が
+  相互にブロックしなくなる。実測では event loop 上の ledger commit が
+  p50 2.3ms → 0.3ms、最大 17.4ms → 2.6ms になった。
+  ledger schema は変更しておらず、既存 run からの resume もそのまま通る。
+- run の終了時に WAL を畳んで rollback journal へ戻すようにした。実行していない ledger の
+  ファイル形式は従来どおりなので、アーカイブ・コピー・read-only 媒体での閲覧は変わらない。
+  ただし dashboard を有効にした run では teardown 時に接続が残るため、実際には
+  `spsa/ledger.sqlite3-wal` / `-shm` が残ることがある。`-wal` は checkpoint 済みで
+  長さ 0 であり、run dir のコピーや閲覧に影響しない（`game.db` も同様の sidecar を残す）。
+
+### Fixed
+
+- 1.2.2 のリリースノートと開発ドキュメントで、dashboard `summary` の p90 悪化の原因を
+  「game.db への読み書き競合」と記載していた。計測の結果これは誤りで、実際の要因は
+  `compute_summary` が毎回読む run artifact のダイジェスト計算とメタ読み込みだった。
+  ドキュメントを訂正した（コードの挙動は変わらない）。
+
 ## [1.2.2] - 2026-08-03
 
 ### Added
@@ -410,7 +438,8 @@ dashboard 無効の長時間 run で event loop が秒単位で停止し、進�
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.1.0...v1.2.0

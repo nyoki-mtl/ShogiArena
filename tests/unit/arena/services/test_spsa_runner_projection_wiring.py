@@ -58,6 +58,9 @@ class _Ledger:
     def __init__(self, calls: list[str]) -> None:
         self._calls = calls
 
+    def checkpoint(self) -> None:
+        self._calls.append("ledger-checkpoint")
+
     def close(self) -> None:
         self._calls.append("ledger-close")
 

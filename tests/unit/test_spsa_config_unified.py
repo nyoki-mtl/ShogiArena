@@ -387,6 +387,62 @@ def test_ltc_regression_rejects_removed_fail_action(tmp_path):
         load_spsa_run_config(cfg_yaml)
 
 
+def _write_spsa_config_with_interval(tmp_path: Path, interval_line: str) -> Path:
+    engine = write(tmp_path, "cfg/engine.yaml", 'engine_path: "/bin/echo"\n')
+    space = write_space(tmp_path)
+    write(tmp_path, "sfens.txt", "startpos\n")
+    return write(
+        tmp_path,
+        "cfg/spsa-derived-json.yaml",
+        f"""
+        engines:
+          - engine_path: {json.dumps(str(engine))}
+        rules:
+          initial_positions:
+            type: file
+            source: {tmp_path}/sfens.txt
+          time_control:
+            node_limit: 1
+        spsa:
+          space: {space}
+          num_updates: 1
+          {interval_line}
+        """,
+    )
+
+
+@pytest.mark.parametrize(
+    ("interval_line", "expected"),
+    [
+        ("", None),
+        ("derived_json_min_interval_s: 0", 0.0),
+        ("derived_json_min_interval_s: 30", 30.0),
+        ("derived_json_min_interval_s: 45.5", 45.5),
+    ],
+)
+def test_derived_json_min_interval_is_parsed_from_the_spsa_block(
+    tmp_path: Path,
+    interval_line: str,
+    expected: float | None,
+) -> None:
+    """``spsa.derived_json_min_interval_s`` が config から runner まで届くこと。
+
+    未指定は None のままにし、既定値の定義は adapter 側の
+    ``DEFAULT_MIN_INTERVAL_S`` 一箇所に保つ。
+    """
+
+    config_path = _write_spsa_config_with_interval(tmp_path, interval_line)
+
+    assert load_spsa_run_config(config_path).derived_json_min_interval_s == expected
+
+
+def test_derived_json_min_interval_rejects_out_of_range_values(tmp_path: Path) -> None:
+    config_path = _write_spsa_config_with_interval(tmp_path, "derived_json_min_interval_s: -1")
+
+    with pytest.raises(ValidationError, match="derived_json_min_interval_s"):
+        load_spsa_run_config(config_path)
+
+
 def test_alias_fields_accept_field_name_population() -> None:
     """alias 付きフィールドをフィールド名で構築しても値が捨てられないこと。
 

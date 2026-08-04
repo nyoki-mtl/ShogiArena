@@ -21,6 +21,8 @@ SPSA_LEDGER_RELATIVE_PATH = Path("spsa") / "ledger.sqlite3"
 class SpsaLedgerHandlePort(Protocol):
     """Closable run-scoped ledger connection handle。"""
 
+    def checkpoint(self) -> None: ...
+
     def close(self) -> None: ...
 
 

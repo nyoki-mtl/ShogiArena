@@ -67,8 +67,9 @@ def test_read_only_open_validates_without_mutating_ledger(tmp_path: Path) -> Non
 def test_connections_use_bounded_busy_timeout(tmp_path: Path) -> None:
     with open_spsa_ledger(tmp_path) as ledger:
         assert ledger.connection.execute("PRAGMA busy_timeout").fetchone() == (30_000,)
+    # dashboard と派生 JSON 投影は次のポーリングまで待てるので、reader 側は短く打ち切る。
     with open_spsa_ledger(tmp_path, read_only=True) as ledger:
-        assert ledger.connection.execute("PRAGMA busy_timeout").fetchone() == (30_000,)
+        assert ledger.connection.execute("PRAGMA busy_timeout").fetchone() == (2_000,)
 
 
 def test_recovery_does_not_mutate_a_healthy_current_ledger(tmp_path: Path) -> None:

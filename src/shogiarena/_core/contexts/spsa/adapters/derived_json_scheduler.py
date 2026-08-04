@@ -36,6 +36,11 @@ logger = logging.getLogger(__name__)
 # 投影を頻繁に走らせると worker thread を長く占有し、同じ worker pool を使う
 # REST ハンドラの応答遅延の裾を押し上げる。実測ではこの間隔を 30 秒にすると
 # summary の p90 が 74ms から 474ms へ悪化した。
+#
+# ただしこの 300 秒は ledger が delete journal だった条件下で校正した値である。
+# 当時の裾は投影そのものより ledger の reader/writer 相互ブロッキングで説明できる
+# 可能性が高い(task 0062)。WAL 化後に再計測して見直すこと。
+# 実行ごとに変えたい場合は SPSA config の ``spsa.derived_json_min_interval_s`` を使う。
 DEFAULT_MIN_INTERVAL_S = 300.0
 
 
@@ -48,6 +53,9 @@ class SpsaDerivedJsonScheduler:
     ``request()`` は event loop 上の同期コードから呼んでよい。実際の投影は worker
     thread で走り、``min_interval_s`` の間隔で束ねられる。run 開始と terminal では
     ``project_blocking()`` で確定的に書き出す。
+
+    ``min_interval_s`` が ``None`` のときは :data:`DEFAULT_MIN_INTERVAL_S` を使う。
+    0 は「間隔を空けずに投影する」であって「投影を並行させる」ではない。
     """
 
     def __init__(
@@ -55,11 +63,11 @@ class SpsaDerivedJsonScheduler:
         *,
         run_dir: Path,
         run_id: str,
-        min_interval_s: float = DEFAULT_MIN_INTERVAL_S,
+        min_interval_s: float | None = None,
     ) -> None:
         self._run_dir = run_dir
         self._run_id = run_id
-        self._min_interval_s = max(0.0, min_interval_s)
+        self._min_interval_s = DEFAULT_MIN_INTERVAL_S if min_interval_s is None else max(0.0, min_interval_s)
         self._ledger: SpsaLedger | None = None
         self._task: asyncio.Task[None] | None = None
         self._skip_debounce = asyncio.Event()

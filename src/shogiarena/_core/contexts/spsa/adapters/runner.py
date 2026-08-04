@@ -282,6 +282,10 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
                     reason=self._state.terminal_reason,
                     resumable=self._state.terminal_resumable,
                 )
+                if self._state.ledger is not None:
+                    # terminal.json / completed.flag はこの commit を信号にする外部契約なので、
+                    # それらを書く前に WAL を畳んで durable にする。
+                    self._state.ledger.checkpoint()
                 self._project_derived_json()
                 terminal_payload = self._state.ledger_runtime.terminal_payload()
                 if terminal_payload is not None:
@@ -642,7 +646,8 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
             raise RuntimeError("SPSA resume hash must be sealed before ledger initialization")
         if persisted_resume_hash is not None and resume_hash != persisted_resume_hash:
             raise ValueError("SPSA resolved provenance does not match sealed resume hash")
-        ledger = open_spsa_ledger(self.run_dir)
+        # run を所有する長命の writer。ここだけが WAL を宣言する。
+        ledger = open_spsa_ledger(self.run_dir, use_write_ahead_logging=True)
         ledger_runtime = SpsaLedgerRuntime(ledger.connection, run_id=run_id)
         ledger_runtime.initialize_run(
             resume_hash=resume_hash,
@@ -680,7 +685,11 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         self._state.ledger = ledger
         self._state.ledger_runtime = ledger_runtime
         self._state.observation_ledger = SpsaObservationLedger(ledger.connection)
-        self._derived_json_scheduler = SpsaDerivedJsonScheduler(run_dir=self.run_dir, run_id=run_id)
+        self._derived_json_scheduler = SpsaDerivedJsonScheduler(
+            run_dir=self.run_dir,
+            run_id=run_id,
+            min_interval_s=self.config.derived_json_min_interval_s,
+        )
         self._project_accepted_best()
 
     def _materialize_new_engine_configs(self) -> None:

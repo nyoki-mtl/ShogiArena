@@ -132,6 +132,7 @@ def _config(run_dir: Path, *, with_artifact: bool = False) -> _Config:
         is_snap_float_to_step=False,
         early_stop=None,
         inflight_factor=1,
+        derived_json_min_interval_s=None,
         ltc_regression=None,
         system=SimpleNamespace(engine_handshake_timeout=2.0),
         variants=SimpleNamespace(apply=SimpleNamespace(is_clear_hash_enabled=True)),

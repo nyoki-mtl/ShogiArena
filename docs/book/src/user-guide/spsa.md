@@ -159,6 +159,7 @@ dashboard:
 | `variants.integer_rounding` | 整数パラメータの丸め方式 |
 | `variants.apply.clear_hash` | variant適用後に置換表を初期化する。`true`ではtuned engineの`Clear Hash` buttonが必須 |
 | `num_parallel` | SPSA 用の並列数 |
+| `derived_json_min_interval_s` | 派生 JSON（`spsa/current.json` など）を再生成する最小間隔[秒]。既定 300 |
 
 `variants.apply.clear_hash`の既定値は`true`です。
 

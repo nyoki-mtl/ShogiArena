@@ -191,6 +191,39 @@ async def test_drain_stops_accepting_further_requests(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_unset_min_interval_falls_back_to_the_module_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``min_interval_s=None`` は既定値と同じ debounce になること。
+
+    config 側は既定値を持たず None を渡す。既定値の定義箇所を
+    ``DEFAULT_MIN_INTERVAL_S`` 一箇所に保つための回帰テスト。
+    """
+
+    _seed_ledger(tmp_path)
+    calls: list[str] = []
+
+    def _counting_projection(*, connection: object, run_id: str, run_dir: Path) -> None:
+        del connection, run_dir
+        calls.append(run_id)
+
+    monkeypatch.setattr(scheduler_module, "project_spsa_ledger", _counting_projection)
+    monkeypatch.setattr(scheduler_module, "DEFAULT_MIN_INTERVAL_S", 30.0)
+    scheduler = SpsaDerivedJsonScheduler(run_dir=tmp_path, run_id=RUN_ID, min_interval_s=None)
+    try:
+        scheduler.request()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        scheduler.request()
+        await asyncio.sleep(0.05)
+        assert len(calls) == 1, "the default debounce window must apply when min_interval_s is None"
+    finally:
+        await scheduler.drain()
+        scheduler.close()
+
+
+@pytest.mark.asyncio
 async def test_request_without_running_loop_is_a_no_op(tmp_path: Path) -> None:
     _seed_ledger(tmp_path)
     scheduler = SpsaDerivedJsonScheduler(run_dir=tmp_path, run_id=RUN_ID, min_interval_s=0.0)

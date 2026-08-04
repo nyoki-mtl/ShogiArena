@@ -96,6 +96,7 @@ def parse_spsa_config_mapping(
             "early_stop",
             "num_parallel",
             "ltc_regression",
+            "derived_json_min_interval_s",
         },
         label="spsa",
     )
@@ -229,6 +230,16 @@ def parse_spsa_config_mapping(
     if inflight_factor < 1:
         raise ValueError("spsa.inflight_factor must be a positive integer")
     int_ck_floor = _get_spsa_float(spsa_node_map, "int_ck_floor", 0.5)
+    raw_derived_json_interval = spsa_node_map.get("derived_json_min_interval_s")
+    derived_json_min_interval_s = (
+        None
+        if raw_derived_json_interval is None
+        else _parse_float_field(
+            raw_derived_json_interval,
+            field="spsa.derived_json_min_interval_s",
+            default=0.0,
+        )
+    )
     space_path = Path(
         resolve_path_like(
             str(raw_space_path),
@@ -254,6 +265,7 @@ def parse_spsa_config_mapping(
         run_seed=coerce_str(spsa_node_map.get("run_seed")),
         inflight_factor=inflight_factor,
         update_batch_size=pairs_per_update,
+        derived_json_min_interval_s=derived_json_min_interval_s,
         is_snap_float_to_step=coerce_bool(spsa_node_map.get("snap_float_to_step", False)),
         int_ck_floor=int_ck_floor,
         early_stop=early_stop,
