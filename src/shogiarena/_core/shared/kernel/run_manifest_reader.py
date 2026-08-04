@@ -13,6 +13,33 @@ from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_optional_t
 from shogiarena._core.shared.kernel.serialization import json_serialize
 
 
+def parse_run_manifest(
+    raw: bytes,
+    *,
+    source: Path | None = None,
+    logger: logging.Logger | None = None,
+) -> JsonObject | None:
+    """Parse manifest bytes, returning ``None`` for invalid content.
+
+    呼び出し元がすでに読んだバイト列から直接解析するための入口。
+    integrity evidence を扱う経路は、同じファイルを読み直すと
+    「判定に使ったバイト列」と「digest に使ったバイト列」が別時点のものになりうるため、
+    `read_run_manifest` ではなくこちらを使う。
+    """
+
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        if logger is not None:
+            logger.warning("Failed to read manifest.json: %s", exc)
+        return None
+    if not isinstance(parsed, Mapping):
+        if logger is not None:
+            logger.warning("manifest.json must contain an object: %s", source)
+        return None
+    return {str(key): json_serialize(value) for key, value in parsed.items()}
+
+
 def read_run_manifest(path: Path, *, logger: logging.Logger | None = None) -> JsonObject | None:
     """Read a manifest object, returning ``None`` for absent or invalid files."""
 
@@ -21,16 +48,12 @@ def read_run_manifest(path: Path, *, logger: logging.Logger | None = None) -> Js
             logger.info("Run manifest not found: %s", path)
         return None
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = path.read_bytes()
+    except OSError as exc:
         if logger is not None:
             logger.warning("Failed to read manifest.json: %s", exc)
         return None
-    if not isinstance(raw, Mapping):
-        if logger is not None:
-            logger.warning("manifest.json must contain an object: %s", path)
-        return None
-    return {str(key): json_serialize(value) for key, value in raw.items()}
+    return parse_run_manifest(raw, source=path, logger=logger)
 
 
 def manifest_status(manifest: Mapping[str, object] | None) -> str | None:
@@ -68,6 +91,7 @@ def is_resumable_manifest(manifest: Mapping[str, object] | None) -> bool:
 __all__ = [
     "is_resumable_manifest",
     "manifest_status",
+    "parse_run_manifest",
     "read_run_manifest",
     "read_sealed_manifest_resume_hash",
     "sealed_manifest_resume_hash",

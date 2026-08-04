@@ -10,6 +10,7 @@ from shogiarena._core.contexts.dashboard.adapters.spsa.analysis_service import S
 from shogiarena._core.contexts.dashboard.adapters.spsa.game_listing_service import SpsaGameListingService
 from shogiarena._core.contexts.dashboard.adapters.spsa.run_projector import SpsaRunProjector
 from shogiarena._core.contexts.dashboard.adapters.spsa.summary_service import SpsaSummaryService
+from shogiarena._core.contexts.dashboard.adapters.spsa.summary_snapshot_cache import SpsaSummarySnapshotCache
 from shogiarena._core.contexts.dashboard.adapters.spsa.update_query_service import SpsaUpdateQueryService
 from shogiarena._core.contexts.dashboard.application.spsa.data_store import SpsaStore
 from shogiarena._core.contexts.dashboard.ports.spsa_service_ports import (
@@ -73,12 +74,18 @@ class SpsaDashboardServicesFactory:
         )
 
         if summary_service is None:
+            # snapshot cache で包む。`/summary` のリクエストパスから I/O と SQLite を外し、
+            # GIL convoy で跨ぐ C 境界の数を落とすため（task 0065）。
+            # 内側の `SpsaSummaryService` は無変更で、「呼ぶたびに実バイトを読み直す」
+            # integrity evidence の保証はそちらに残る。
             summary_service = cast(
                 SpsaSummaryServicePort,
-                SpsaSummaryService(
-                    store=cast(DashboardSpsaStorePort, store),
-                    ledger_summary_loader=projector.summary_aggregates if projector is not None else None,
-                    operational_status_loader=projector.operational_status if projector is not None else None,
+                SpsaSummarySnapshotCache(
+                    SpsaSummaryService(
+                        store=cast(DashboardSpsaStorePort, store),
+                        ledger_summary_loader=projector.summary_aggregates if projector is not None else None,
+                        operational_status_loader=projector.operational_status if projector is not None else None,
+                    )
                 ),
             )
 

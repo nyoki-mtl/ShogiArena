@@ -469,9 +469,18 @@
                                         <thead>
                                             <tr>
                                                 <th scope="col">Update #</th>
-                                                <th scope="col">Plus W-D-L</th>
-                                                <th scope="col">Minus W-D-L</th>
-                                                <th scope="col">LTC W-D-L</th>
+                                                <th
+                                                    scope="col"
+                                                    title="Tuning games only, counted from the +δ side: wins-draws-losses against −δ. Both sides are perturbed, so this is not progress against a fixed baseline."
+                                                >
+                                                    +δ vs −δ (W-D-L)
+                                                </th>
+                                                <th
+                                                    scope="col"
+                                                    title="Long-time-control regression games: wins-draws-losses of the candidate against the accepted baseline."
+                                                >
+                                                    LTC W-D-L
+                                                </th>
                                                 <th scope="col">Start</th>
                                                 <th scope="col">Finish</th>
                                                 <th scope="col">Δnorm</th>
@@ -479,7 +488,7 @@
                                         </thead>
                                         <tbody id="updatesTableBody">
                                             <tr>
-                                                <td colspan="7" class="loading">Loading updates...</td>
+                                                <td colspan="6" class="loading">Loading updates...</td>
                                             </tr>
                                         </tbody>
                                     </table>

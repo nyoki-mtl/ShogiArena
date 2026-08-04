@@ -18,7 +18,6 @@ from shogiarena._core.contexts.game_session.application.progress.snapshot_payloa
     to_worker_snapshot_dto,
 )
 from shogiarena._core.contexts.game_session.ports.session_runner_ports import DashboardServerPort
-from shogiarena._core.shared.kernel.json_coercion import to_json_object
 from shogiarena._core.shared.kernel.live_stream_payloads import LiveStreamDiffPayload
 
 logger = logging.getLogger(__name__)
@@ -98,7 +97,10 @@ class ProgressHub:
         if not self._api_server:
             return
         dto = to_worker_snapshot_dto(snapshot)
-        cleaned_snapshot = serialize_public_snapshot(to_json_object(dto))
+        # `serialize_public_snapshot` は各値に `json_serialize` を掛けるので、
+        # その前に `to_json_object` を通すのは同じ木をもう一度歩くだけの冗長走査だった。
+        # このメソッドは progress イベントごとに event loop 上で走る。
+        cleaned_snapshot = serialize_public_snapshot(dto)
         try:
             self._api_server.set_worker_snapshot(worker_idx, cleaned_snapshot, should_broadcast=False)
             self._api_server.broadcast_worker_update(worker_idx, diff_payload)

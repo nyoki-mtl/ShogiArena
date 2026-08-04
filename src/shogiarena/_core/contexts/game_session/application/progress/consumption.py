@@ -362,8 +362,13 @@ async def consume_progress_loop(
         await flush_deferred_if_possible()
 
 
-def serialize_public_snapshot(dto: Mapping[str, JsonValue]) -> JsonObject:
-    """Serialize snapshot DTO for dashboard broadcast payloads."""
+def serialize_public_snapshot(dto: Mapping[str, object]) -> JsonObject:
+    """Serialize snapshot DTO for dashboard broadcast payloads.
+
+    値の型は `object` で受ける。`json_serialize` が任意のオブジェクトを受け取る以上、
+    呼び出し元に「先に JSON 化してから渡す」ことを要求する理由はない。
+    実際その要求のせいで、呼び出し元が同じ木を 2 回走査していた。
+    """
 
     return {str(key): json_serialize(value) for key, value in dto.items() if not str(key).startswith("_")}
 

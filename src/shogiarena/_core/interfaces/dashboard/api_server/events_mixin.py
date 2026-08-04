@@ -261,9 +261,14 @@ class ArenaApiServerEventsMixin:
     def _handle_worker_update(self, event: Event[DashboardEvent]) -> None:
         if event.payload.worker_idx is None:
             return
+        # `DashboardEvent.payload` は `JsonObject` であり、`DashboardEvent` はこの
+        # モジュールでしか構築されず、全ての構築点が `to_json_object` か JsonObject
+        # リテラルを渡している。したがってハンドラ側の再変換は恒等な deep copy であり、
+        # 同じ木をもう一度歩くだけだった。これらのハンドラは event loop 上で、
+        # 対局の progress イベントごとに走る。
         self._broadcast.worker_update(
             event.payload.worker_idx,
-            to_json_object(event.payload.payload),
+            event.payload.payload,
         )
 
     def _handle_engine_io(self, event: Event[DashboardEvent]) -> None:
@@ -292,11 +297,11 @@ class ArenaApiServerEventsMixin:
 
     def _handle_summary_update(self, event: Event[DashboardEvent]) -> None:
         source = event.payload.source or "tournament"
-        self._broadcast.summary_update(to_json_object(event.payload.payload), source=source)
+        self._broadcast.summary_update(event.payload.payload, source=source)
 
     def _handle_games_snapshot(self, event: Event[DashboardEvent]) -> None:
         self._broadcast.games_snapshot(
-            to_json_object(event.payload.payload),
+            event.payload.payload,
             event_type=event.payload.event_type_hint or "bulk",
         )
 
@@ -314,7 +319,7 @@ class ArenaApiServerEventsMixin:
             return
         self._broadcast.set_worker(
             event.payload.worker_idx,
-            to_json_object(event.payload.payload),
+            event.payload.payload,
             should_broadcast=event.payload.should_broadcast,
         )
 
@@ -323,7 +328,7 @@ class ArenaApiServerEventsMixin:
             return
         self._broadcast.assign_worker_snapshot(
             event.payload.worker_idx,
-            to_json_object(event.payload.payload),
+            event.payload.payload,
         )
 
     def _handle_update_engine_options(self, event: Event[DashboardEvent]) -> None:

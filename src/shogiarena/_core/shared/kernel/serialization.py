@@ -13,7 +13,31 @@ from shogiarena._core.shared.kernel.json_types import JsonValue
 
 
 def json_serialize(value: object) -> JsonValue:
-    """Recursively convert complex values into JSON-serializable primitives."""
+    """Recursively convert complex values into JSON-serializable primitives.
+
+    先頭の分岐は、既に JSON プリミティブである葉と中間ノードを
+    構造的 match に入る前に落とすためのものである。
+
+    **厳密な型一致**であることが要点で、`isinstance` ではない。したがって
+    `IntEnum` / `StrEnum` / `str` のサブクラス / dict を継承した dataclass などは
+    ここに一致せず、これまでどおり下の match へ落ちる。
+    「`type(x)` が `str` なら、x は BaseModel でも dataclass インスタンスでも Enum でも
+    Path でも Mapping でも set でもありえない」——つまり従来も scalar のアームに
+    落ちて自身を返していた値だけを先取りしており、**挙動は不変**である。
+
+    この不変性は性能以上に重要である。`json_serialize` は
+    `run_artifact_hashes._mapping_to_json_object` 経由で
+    `config_fingerprint` / `schedule_hash` / `provenance_hash` に届いており、
+    出力型が変われば resume hash の入力が変わる。
+    `tests/unit/test_json_serialize.py` が最適化前の実装を oracle として突き合わせる。
+    """
+
+    if type(value) is str or type(value) is int or type(value) is float or type(value) is bool:
+        return value
+    if type(value) is dict:
+        return {str(key): json_serialize(item) for key, item in value.items()}
+    if type(value) is list:
+        return [json_serialize(item) for item in value]
 
     match value:
         case None:

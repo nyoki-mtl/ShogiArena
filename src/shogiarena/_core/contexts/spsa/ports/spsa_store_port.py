@@ -31,6 +31,21 @@ class SpsaSummaryServicePort(Protocol):
 
 
 @runtime_checkable
+class SpsaSummaryRefreshPort(Protocol):
+    """Protocol for summary services that keep a snapshot for readers.
+
+    `/summary` は snapshot を読むだけにして I/O と SQLite をリクエストパスから外している
+    （task 0065）。その snapshot を実際に計算し直すのがこの入口で、run 実行中の
+    コアレス済み refresh 経路だけが呼ぶ。
+
+    snapshot を持たない summary サービス（テストの fake、直接構築した
+    `SpsaSummaryService`）はこれを実装しない。呼び出し側は `isinstance` で分岐する。
+    """
+
+    def refresh_summary(self) -> object: ...
+
+
+@runtime_checkable
 class SpsaUpdateQueryPort(Protocol):
     """Protocol for querying SPSA update data and event snapshots."""
 

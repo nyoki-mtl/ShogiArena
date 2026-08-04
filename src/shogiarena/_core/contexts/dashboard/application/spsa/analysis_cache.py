@@ -72,16 +72,20 @@ class AnalysisCacheService:
     スレッドセーフ: 内部ロックで保護。
 
     無効化戦略:
-      1. 外部から ``notify_updates_changed()`` が呼ばれると
-         correlation / convergence の dirty フラグがそれぞれ立つ
-      2. ``get_*_snapshot()`` は対応する dirty が立っていなければ
-         TTL 内キャッシュをそのまま返す
-      3. dirty or TTL 切れの場合、**実際に分析に使うデータ** をロードし
-         fingerprint を計算。前回と同一なら再計算せずキャッシュを返す。
+      1. ledger の ``data_generation`` を見る。前回と同じなら、データは変化して
+         いないと**断定できる**のでキャッシュをそのまま返す（ロードもしない）。
+      2. 変化している、または ``data_generation`` を読めない場合は
+         **実際に分析に使うデータ** をロードし fingerprint を計算する。
+      3. fingerprint が前回と同一なら再計算せずキャッシュを返す。
       4. fingerprint が変わった場合のみ再計算してキャッシュを更新する。
 
     これにより index が空でイベント側だけ進むケースでも正しく検知でき、
     かつ内容不変のポーリングでは再計算を避ける。
+
+    以前は 1 が「外部から ``notify_updates_changed()`` が呼ばれたか」だったが、
+    **production にその呼び出し元が存在しなかった**ため、初回計算の結果が
+    TTL の 5 分間そのまま返り続けていた（Parameter Analysis が更新されない不具合）。
+    テストだけがこの入口を叩いていたので、unit テストでは検出できなかった。
     """
 
     def __init__(
@@ -98,23 +102,41 @@ class AnalysisCacheService:
         self._correlation_snapshot: CorrelationAnalysisSnapshot | None = None
         self._correlation_fingerprint: str = ""
         self._correlation_cached_at: float = 0.0
+        self._correlation_generation: int | None = None
 
         self._convergence_snapshot: ConvergenceAnalysisSnapshot | None = None
         self._convergence_fingerprint: str = ""
         self._convergence_cached_at: float = 0.0
+        self._convergence_generation: int | None = None
 
     # ------------------------------------------------------------------
     # 外部通知
     # ------------------------------------------------------------------
     def notify_updates_changed(self) -> None:
-        """Update が変化した可能性がある旨を通知する。
+        """Update が変化した可能性がある旨を明示的に通知する。
 
-        次の ``get_*_snapshot()`` 呼び出しでデータを再読み込みし、
-        fingerprint が変化していれば再計算する。
+        通常はこの呼び出しは要らない。``get_*_snapshot()`` は ledger の
+        ``data_generation`` を見て自力で変化を検知する。
         """
         with self._lock:
             self._correlation_dirty = True
             self._convergence_dirty = True
+
+    def _current_data_generation(self) -> int | None:
+        """Return the projected data generation, or ``None`` when unavailable.
+
+        ledger の ``data_generation`` は update commit と対局結果の両方で増える
+        （1.2.2 で dashboard の更新契機として導入したもの）。読めない場合は
+        「変化していないと断定できない」ので ``None`` を返し、呼び出し側は
+        fingerprint での判定に落とす。
+        """
+
+        try:
+            state = self._update_query.load_revision_state()
+        except Exception:  # noqa: BLE001 — 変化検知の失敗で分析全体を落とさない
+            logger.debug("Failed to read SPSA revision state for analysis cache", exc_info=True)
+            return None
+        return state.data_generation if state is not None else None
 
     # ------------------------------------------------------------------
     # Correlation
@@ -126,12 +148,18 @@ class AnalysisCacheService:
             cached = self._correlation_snapshot
             cached_at = self._correlation_cached_at
             cached_fp = self._correlation_fingerprint
+            cached_generation = self._correlation_generation
 
-        now = time.monotonic()
-        ttl_valid = (now - cached_at) < _CACHE_TTL_S
+        generation = self._current_data_generation()
 
-        # Fast path: not dirty and within TTL
-        if not dirty and cached is not None and ttl_valid:
+        # ロードを省いてよいのは「変化していないと**断定できる**」ときだけ。
+        # 以前はここが「dirty でなく TTL 内」だったが、`notify_updates_changed()` を
+        # production から呼ぶ経路が無かったため、分析結果が最大 5 分固まっていた。
+        if not dirty and cached is not None and generation is not None and generation == cached_generation:
+            return cached
+        if not dirty and cached is not None and generation is None and (time.monotonic() - cached_at) < _CACHE_TTL_S:
+            # data_generation を読めない（アーカイブ閲覧など）。元データが動かない
+            # 前提なので、ロード頻度を抑えるために TTL で間引く。
             return cached
 
         try:
@@ -139,9 +167,10 @@ class AnalysisCacheService:
             fp = _compute_fingerprint(updates)
 
             # Data unchanged — reuse cached result
-            if cached is not None and fp == cached_fp and ttl_valid:
+            if cached is not None and fp == cached_fp:
                 with self._lock:
                     self._correlation_dirty = False
+                    self._correlation_generation = generation
                 return cached
 
             result = self._analysis.compute_correlation_analysis(updates)
@@ -150,6 +179,7 @@ class AnalysisCacheService:
                 self._correlation_snapshot = snapshot
                 self._correlation_fingerprint = fp
                 self._correlation_cached_at = time.monotonic()
+                self._correlation_generation = generation
                 self._correlation_dirty = False
             return snapshot
         except Exception:
@@ -166,12 +196,13 @@ class AnalysisCacheService:
             cached = self._convergence_snapshot
             cached_at = self._convergence_cached_at
             cached_fp = self._convergence_fingerprint
+            cached_generation = self._convergence_generation
 
-        now = time.monotonic()
-        ttl_valid = (now - cached_at) < _CACHE_TTL_S
+        generation = self._current_data_generation()
 
-        # Fast path: not dirty and within TTL
-        if not dirty and cached is not None and ttl_valid:
+        if not dirty and cached is not None and generation is not None and generation == cached_generation:
+            return cached
+        if not dirty and cached is not None and generation is None and (time.monotonic() - cached_at) < _CACHE_TTL_S:
             return cached
 
         try:
@@ -179,9 +210,10 @@ class AnalysisCacheService:
             fp = _compute_fingerprint(updates)
 
             # Data unchanged — reuse cached result
-            if cached is not None and fp == cached_fp and ttl_valid:
+            if cached is not None and fp == cached_fp:
                 with self._lock:
                     self._convergence_dirty = False
+                    self._convergence_generation = generation
                 return cached
 
             result = self._analysis.compute_convergence_analysis(updates)
@@ -190,6 +222,7 @@ class AnalysisCacheService:
                 self._convergence_snapshot = snapshot
                 self._convergence_fingerprint = fp
                 self._convergence_cached_at = time.monotonic()
+                self._convergence_generation = generation
                 self._convergence_dirty = False
             return snapshot
         except Exception:

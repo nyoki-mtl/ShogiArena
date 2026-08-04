@@ -4,7 +4,6 @@ import type {
     NormalizedSpsaUpdateEntry,
     NormalizedSpsaParams,
     NormalizedSpsaPerturbations,
-    SpsaPhaseWdlEntry,
     NormalizedSpsaParameter,
 } from '@/modules/spsa/types';
 import { INITIAL_UPDATE_IDX } from '@/modules/spsa/types';
@@ -22,7 +21,7 @@ import {
 } from '@/modules/spsa/state';
 
 const UPDATE_TABLE_BODY_ID = 'updatesTableBody';
-const UPDATE_COLUMNS = 7;
+const UPDATE_COLUMNS = 6;
 const PARAMETER_TABLE_BODY_ID = 'parameterDetailTableBody';
 const PARAMETER_STATUS_ID = 'parameterDetailStatus';
 const PARAMETER_COLUMNS = 5;
@@ -313,8 +312,7 @@ function renderRow(
     const deltaNorm = Number.isFinite(entry.deltaNorm) ? (entry.deltaNorm as number) : null;
     const label = formatUpdateLabel(entry.updateIdx, entry.isInitial);
     const heading = formatUpdateHeading(entry.updateIdx, entry.isInitial);
-    const plusWdl = formatPhaseWdlCell(entry.phaseWdl, 'plus');
-    const minusWdl = formatPhaseWdlCell(entry.phaseWdl, 'minus');
+    const wdl = formatUpdateWdlCell(entry);
     const ltcSummary = formatLtcRegressionCell(entry);
     const variantAttr = entryVariantId ? ` data-variant-id="${escapeHtml(entryVariantId)}"` : '';
     const rowTitleParts = [heading];
@@ -329,8 +327,7 @@ function renderRow(
                     <span class="update-label">${escapeHtml(label)}</span>
                 </button>
             </td>
-            <td class="update-phase-cell" data-phase="plus">${escapeHtml(plusWdl)}</td>
-            <td class="update-phase-cell" data-phase="minus">${escapeHtml(minusWdl)}</td>
+            <td class="update-wdl-cell">${escapeHtml(wdl)}</td>
             <td class="update-ltc-cell">${ltcSummary}</td>
             <td>${formatDateTimeCell(startedAt)}</td>
             <td>${formatDateTimeCell(endedAt)}</td>
@@ -346,32 +343,25 @@ function formatDateTimeCell(value: number | null): string {
     return '-';
 }
 
-function resolvePhaseStats(
-    phaseMap: Readonly<Record<string, SpsaPhaseWdlEntry>> | undefined,
-    key: string,
-): SpsaPhaseWdlEntry | null {
-    if (!phaseMap) return null;
-    const direct = phaseMap[key];
-    if (direct) return direct;
-    const lower = key.toLowerCase();
-    const normalized = phaseMap[lower];
-    if (normalized) return normalized;
-    for (const [phaseKey, stats] of Object.entries(phaseMap)) {
-        if (phaseKey.toLowerCase() === lower) {
-            return stats;
-        }
-    }
-    return null;
-}
-
-function formatPhaseWdlCell(phaseMap: Readonly<Record<string, SpsaPhaseWdlEntry>> | undefined, key: string): string {
-    const stats = resolvePhaseStats(phaseMap, key);
-    if (!stats) {
+/**
+ * 1 update の tuning 対局を、+δ 側から見た W-D-L として整形する。
+ *
+ * かつては Plus / Minus の 2 列に分けていたが、SPSA の対局は常に θ+ 対 θ− の
+ * ペアなので「1 局の phase」が存在せず、両列とも常に空だった。
+ *
+ * **両側とも摂動済みである点に注意。** これは固定 baseline に対する進捗ではなく、
+ * 「この update で +δ が −δ に勝ったか」を表す。LTC の勝敗は別の比較なので別列。
+ */
+function formatUpdateWdlCell(entry: NormalizedSpsaUpdateEntry): string {
+    const wins = Math.max(0, Number(entry.wins ?? 0));
+    const draws = Math.max(0, Number(entry.draws ?? 0));
+    const losses = Math.max(0, Number(entry.losses ?? 0));
+    // 「まだ結果が無い」判定は勝敗の合計で行う。`gamesCompleted` は一覧エントリには
+    // 載っておらず（バックエンドが `games_completed` を返さない）、そちらを条件にすると
+    // 勝敗が届いていても常に空欄になる。
+    if (wins + draws + losses <= 0) {
         return '—';
     }
-    const wins = Math.max(0, Number(stats.wins ?? 0));
-    const draws = Math.max(0, Number(stats.draws ?? 0));
-    const losses = Math.max(0, Number(stats.losses ?? 0));
     return `${wins}-${draws}-${losses}`;
 }
 

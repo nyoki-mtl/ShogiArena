@@ -340,3 +340,78 @@ class TestNotifyUpdatesChanged:
         # convergence must also refresh (no stale reuse)
         cache.get_convergence_snapshot()
         assert an.compute_convergence_analysis.call_count == 2
+
+
+class TestRunProgressInvalidatesWithoutExternalNotification:
+    """run が進んだら、外部から通知されなくても分析が追随することを表明する。
+
+    実際に起きた不具合: `notify_updates_changed()` を production から呼ぶ経路が
+    存在せず、初回計算の結果が TTL の 5 分間そのまま返り続けていた。
+    Parameter Analysis のグラフが #0 と #1 で止まったまま更新されなかった。
+
+    テスト側だけがその入口を叩いていたため、既存の unit テストは全て通っていた。
+    ここでは **notify を一切呼ばずに** データだけを進める。
+    """
+
+    @staticmethod
+    def _revision_state(generation: int) -> MagicMock:
+        state = MagicMock()
+        state.data_generation = generation
+        return state
+
+    def test_correlation_follows_new_updates(self) -> None:
+        uq, an = _make_services()
+        uq.load_revision_state.return_value = self._revision_state(1)
+        cache = _make_cache(uq, an)
+
+        first = cache.get_correlation_snapshot()
+        assert first["num_updates"] == 3
+
+        # 対局が進み、ledger の data_generation が増える。通知は行わない。
+        uq.load_index_updates.return_value = [{"update_idx": idx, "delta_norm": 0.1 * idx} for idx in range(1, 11)]
+        uq.load_revision_state.return_value = self._revision_state(2)
+        an.compute_correlation_analysis.return_value = {
+            "correlations": {"param1": 0.4},
+            "parameter_names": ["param1"],
+            "num_updates": 10,
+        }
+
+        second = cache.get_correlation_snapshot()
+
+        assert an.compute_correlation_analysis.call_count == 2
+        assert second["num_updates"] == 10
+
+    def test_convergence_follows_new_updates(self) -> None:
+        uq, an = _make_services()
+        uq.load_revision_state.return_value = self._revision_state(1)
+        cache = _make_cache(uq, an)
+
+        cache.get_convergence_snapshot()
+
+        uq.load_index_updates.return_value = [{"update_idx": idx, "delta_norm": 0.1 * idx} for idx in range(1, 11)]
+        uq.load_revision_state.return_value = self._revision_state(2)
+        an.compute_convergence_analysis.return_value = {
+            "convergence_metrics": {"is_converging": False},
+            "delta_norm_history": [0.1] * 10,
+            "num_updates_analyzed": 10,
+        }
+
+        second = cache.get_convergence_snapshot()
+
+        assert an.compute_convergence_analysis.call_count == 2
+        assert second["num_updates_analyzed"] == 10
+
+    def test_unchanged_generation_still_avoids_reloading(self) -> None:
+        """変化していないポーリングでは、ロードも再計算もしない。"""
+
+        uq, an = _make_services()
+        uq.load_revision_state.return_value = self._revision_state(7)
+        cache = _make_cache(uq, an)
+
+        cache.get_correlation_snapshot()
+        load_calls_after_first = uq.load_index_updates.call_count
+        cache.get_correlation_snapshot()
+        cache.get_correlation_snapshot()
+
+        assert an.compute_correlation_analysis.call_count == 1
+        assert uq.load_index_updates.call_count == load_calls_after_first

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+from collections import Counter
 from pathlib import Path
+
+import pytest
 
 from shogiarena._core.contexts.dashboard.adapters.spsa.summary_service import SpsaSummaryService
 from shogiarena._core.contexts.dashboard.application.spsa.data_store import SpsaStore
@@ -131,3 +134,67 @@ def test_artifact_integrity_follows_same_size_rewrites(tmp_path: Path) -> None:
 
     tampered = service.compute_summary()["operational_status"]
     assert tampered["artifact_health"]["tunable_handshake"] == "mismatch"  # type: ignore[index]
+
+
+def test_each_artifact_is_read_once_per_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """status と canonical digest は同一のバイト列から計算されなければならない。
+
+    以前は `_load_object` と `_artifact_canonical_digest` が同じファイルを別々に読んでいた。
+    2 回の読み取りの間に書き換えが起きると、1 回目のバイト列から作った artifact の
+    canonical digest が 2 回目のバイト列の content key で digest キャッシュに入る。
+    以後そのファイルが 2 回目の内容で安定している限り、キャッシュが当たり続け、
+    **改竄後の内容が `verified` として報告され続ける**。
+
+    読み取り回数を artifact ごとに 1 回へ固定して、この窓を閉じたことを表明する。
+    """
+
+    spsa_dir = tmp_path / "spsa"
+    spsa_dir.mkdir()
+    (spsa_dir / "meta.json").write_text(json.dumps({"session_uuid": "s"}), encoding="utf-8")
+    fixed = {"status": "passed", "engines": []}
+    tunable = {"status": "passed", "runtime_scope": "remote_runtime", "engine_name": "engine-a"}
+    (spsa_dir / "fixed_option_preflight.json").write_text(json.dumps(fixed), encoding="utf-8")
+    (spsa_dir / "tunable_handshake.json").write_text(json.dumps(tunable), encoding="utf-8")
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "status": "provenance_sealed",
+                "hashes": {"resume_hash": "r"},
+                "inputs": {
+                    "spsa_tunable_handshake": {"sha256": canonical_sha256(tunable)},
+                    "spsa_fixed_option_preflight": {"sha256": canonical_sha256(fixed)},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "completion_status.json").write_text(json.dumps({"status": "running"}), encoding="utf-8")
+    service = SpsaSummaryService(
+        SpsaStore(run_dir=tmp_path),
+        ledger_summary_loader=lambda: {},
+        operational_status_loader=lambda: {"ledger": {"revision": 1}},
+    )
+
+    reads: Counter[str] = Counter()
+    original_read_bytes = Path.read_bytes
+
+    def counting_read_bytes(self: Path) -> bytes:
+        reads[self.name] += 1
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", counting_read_bytes)
+
+    # 1 回目はどのキャッシュも空なので、最も読み取りが多くなる経路を通る。
+    health = service.compute_summary()["operational_status"]["artifact_health"]  # type: ignore[index]
+    assert health["tunable_handshake"] == "verified"  # type: ignore[index]
+    assert health["fixed_option_preflight"] == "verified"  # type: ignore[index]
+
+    assert reads == Counter(
+        {
+            "manifest.json": 1,
+            "fixed_option_preflight.json": 1,
+            "tunable_handshake.json": 1,
+            "completion_status.json": 1,
+        }
+    )

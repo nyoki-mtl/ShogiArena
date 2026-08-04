@@ -14,7 +14,15 @@ export function resolveSummary(data: NormalizedSpsaSummary): void {
     // Push to unified store for cross-module consistency
     // NOTE: We do NOT call setActiveSource here - that should only be called
     // when the tab becomes active, not on every data update.
+    //
+    // raw を必ず展開してから正規化済みの値を重ねる。`applySpsaSummary` は
+    // ストアの SPSA データを**丸ごと置換**するので、ここで渡さなかったキーは失われる。
+    // エンジンメタは backend が `engines_meta`（配列）で返しており、
+    // 正規化済みの `engineMeta` からは復元できない。raw を落とすと、起動時に
+    // 入っていたエンジン詳細が最初のリフレッシュで消える。
+    // `modules/engines/services/store.ts` は元から raw を展開している。
     summaryStore.applySpsaSummary({
+        ...(data.raw as JsonObject),
         engines: data.engines,
         engine_meta: data.engineMeta as unknown as JsonObject,
         engine_time_controls: data.engineTimeControls,

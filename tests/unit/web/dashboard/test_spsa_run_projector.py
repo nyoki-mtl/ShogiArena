@@ -421,10 +421,115 @@ def test_projector_rejects_corrupt_authoritative_update_json(
     assignment: str,
     message: str,
 ) -> None:
-    _write_ledger(tmp_path, updates=1)
+    _write_ledger(tmp_path, updates=2)
     with open_spsa_ledger(tmp_path) as ledger:
         ledger.connection.execute(f"UPDATE updates SET {assignment} WHERE run_id = 'run-1' AND update_idx = 1")
         ledger.connection.commit()
 
     with pytest.raises(SpsaRunProjectionError, match=message):
         SpsaRunProjector(run_dir=tmp_path, db_path=tmp_path / "game.db", immutable_db=True)
+
+
+def test_update_entries_carry_the_time_span_the_dashboard_renders(tmp_path: Path) -> None:
+    """Updates テーブルの Start / Finish 列が空にならないことを表明する。
+
+    フロントは update エントリの `started_at` / `ended_at` を読む。ledger の
+    `updates` 行は commit 時刻しか持たないので、開始は pair 割り当ての
+    `created_at`、終了は対局観測の最終時刻から導く必要がある。
+    ここが欠けていると、実行は正常でも表の 2 列が恒久的に "-" になる。
+    """
+
+    _write_ledger(tmp_path, updates=2)
+    projector = SpsaRunProjector(run_dir=tmp_path, db_path=tmp_path / "game.db", immutable_db=True)
+    try:
+        entry = next(item for item in projector.load_updates() if item["update_idx"] == 1)
+    finally:
+        projector.close()
+
+    expected = int(datetime(2026, 1, 1, tzinfo=UTC).timestamp() * 1000)
+    assert entry["started_at"] == expected
+    assert entry["ended_at"] == expected
+
+
+def test_update_without_finished_games_reports_no_end_time(tmp_path: Path) -> None:
+    """まだ 1 局も終わっていない update では終了時刻を捏造しない。"""
+
+    _write_ledger(tmp_path, updates=2)
+    with open_spsa_ledger(tmp_path) as ledger:
+        ledger.connection.execute("DELETE FROM game_observations")
+        ledger.connection.commit()
+
+    projector = SpsaRunProjector(run_dir=tmp_path, db_path=tmp_path / "game.db", immutable_db=True)
+    try:
+        entry = next(item for item in projector.load_updates() if item["update_idx"] == 1)
+    finally:
+        projector.close()
+
+    assert entry["started_at"] == int(datetime(2026, 1, 1, tzinfo=UTC).timestamp() * 1000)
+    assert entry["ended_at"] is None
+
+
+def test_update_wdl_counts_tuning_games_only(tmp_path: Path) -> None:
+    """W-D-L は θ+ 対 θ− の tuning 対局だけを数える。
+
+    LTC 対局の "tuned" は候補 vs 承認済みベースラインという別の比較なので、
+    混ぜると 1 つの数字が 2 種類の比較を指すことになる。LTC は専用の列で出す。
+    """
+
+    _write_ledger(tmp_path, updates=2)
+    with open_spsa_ledger(tmp_path) as ledger:
+        ledger.connection.execute(
+            """
+            INSERT INTO pair_assignments (
+                run_id, update_idx, pair_id, assignment_kind, assignment_schema,
+                assignment_digest, opening_json, color_assignment_json, flip_json,
+                rounding_samples_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "run-1",
+                1,
+                "pair-ltc",
+                "LTC",
+                "v1",
+                "digest",
+                "{}",
+                '{"games":[{"game_id":"game-ltc","tuned_as":"black"}]}',
+                "{}",
+                "{}",
+                "2026-01-01T00:00:00+00:00",
+            ),
+        )
+        ledger.connection.execute(
+            """
+            INSERT INTO game_observations (
+                run_id, game_id, update_idx, pair_id, attempt_id, observation_kind,
+                result_kind, game_db_id, evidence_digest, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "run-1",
+                "game-ltc",
+                1,
+                "pair-ltc",
+                "attempt-ltc",
+                "LTC",
+                "BLACK_WIN",
+                2,
+                "digest",
+                "2026-01-02T00:00:00+00:00",
+            ),
+        )
+        ledger.connection.commit()
+
+    projector = SpsaRunProjector(run_dir=tmp_path, db_path=tmp_path / "game.db", immutable_db=True)
+    try:
+        entry = next(item for item in projector.load_updates() if item["update_idx"] == 1)
+    finally:
+        projector.close()
+
+    # tuning 対局は 1 局（DRAW）だけ。LTC の BLACK_WIN を混ぜてはいけない。
+    assert (entry["wins"], entry["draws"], entry["losses"]) == (0, 1, 0)
+    assert entry["ltc_game_ids"] == ["game-ltc"]
+    # Finish も tuning 対局の最終時刻であって、LTC の完了時刻ではない。
+    assert entry["ended_at"] == int(datetime(2026, 1, 1, tzinfo=UTC).timestamp() * 1000)

@@ -62,6 +62,7 @@ from shogiarena._core.contexts.spsa.ports.spsa_store_port import (
     SpsaAnalysisPort,
     SpsaGameListingPort,
     SpsaStorePort,
+    SpsaSummaryRefreshPort,
     SpsaSummaryServicePort,
     SpsaUpdateQueryPort,
 )
@@ -622,7 +623,15 @@ async def build_spsa_dashboard_summary_payload(
 ) -> JsonObject | None:
     if summary_service is None:
         return None
-    raw_summary_payload = await asyncio.to_thread(summary_service.compute_summary)
+    # ここは run 実行中のコアレス済み refresh 経路（対局の進捗ごと、worker thread 上）。
+    # snapshot を持つサービスなら、ここで計算し直して `/summary` が読む snapshot を更新する。
+    # そうでなければ従来どおり直接計算する。
+    compute = (
+        summary_service.refresh_summary
+        if isinstance(summary_service, SpsaSummaryRefreshPort)
+        else summary_service.compute_summary
+    )
+    raw_summary_payload = await asyncio.to_thread(compute)
     if not isinstance(raw_summary_payload, dict):
         return None
     summary_payload = {str(key): json_serialize(value) for key, value in raw_summary_payload.items()}

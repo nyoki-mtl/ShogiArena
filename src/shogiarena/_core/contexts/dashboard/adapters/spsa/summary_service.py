@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from typing import cast
@@ -23,13 +24,28 @@ from shogiarena._core.contexts.spsa.application.dashboard.summary_payload_builde
 from shogiarena._core.shared.kernel.json_coercion import coerce_json_object_or_none
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.run_artifact_hashes import canonical_sha256
-from shogiarena._core.shared.kernel.run_manifest_reader import read_run_manifest, sealed_manifest_resume_hash
+from shogiarena._core.shared.kernel.run_manifest_reader import parse_run_manifest, sealed_manifest_resume_hash
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_float, coerce_int
 
 _STORE_LOG_THRESHOLD_MS = 50.0
 logger = logging.getLogger(__name__)
 LedgerSummaryLoader = Callable[[], JsonObject]
 OperationalStatusLoader = Callable[[], JsonObject]
+
+
+@dataclass(frozen=True, slots=True)
+class _LoadedArtifact:
+    """1 回の読み取りで得たバイト列の content key と、その解析結果。
+
+    ``content_key`` はバイト列の sha256。読み取りに失敗した場合のみ ``None`` になる。
+    解析に失敗した場合は ``content_key`` が残り ``parsed`` だけが ``None`` になる。
+
+    status の判定と canonical digest の計算を**同一のバイト列**に対して行うために、
+    両者を 1 つの値として持ち回る。
+    """
+
+    content_key: str | None
+    parsed: JsonObject | None
 
 
 class SpsaSummaryService:
@@ -133,7 +149,8 @@ class SpsaSummaryService:
         }
 
         fixed_path = self._store.spsa_path("fixed_option_preflight.json")
-        fixed = self._load_object(fixed_path)
+        fixed_loaded = self._load_artifact(fixed_path)
+        fixed = fixed_loaded.parsed
         scopes: list[str] = []
         fixed_engines = fixed.get("engines") if fixed is not None else None
         if isinstance(fixed_engines, list):
@@ -149,7 +166,8 @@ class SpsaSummaryService:
         }
 
         tunable_path = self._store.spsa_path("tunable_handshake.json")
-        tunable = self._load_object(tunable_path)
+        tunable_loaded = self._load_artifact(tunable_path)
+        tunable = tunable_loaded.parsed
         manifest_inputs = manifest.get("inputs") if manifest is not None else None
         handshake_entry = manifest_inputs.get("spsa_tunable_handshake") if isinstance(manifest_inputs, dict) else None
         handshake_digest = handshake_entry.get("sha256") if isinstance(handshake_entry, dict) else None
@@ -185,8 +203,8 @@ class SpsaSummaryService:
 
         ledger = payload.get("ledger")
         ledger_revision = ledger.get("revision") if isinstance(ledger, dict) else None
-        fixed_integrity = self._artifact_digest_status(fixed_path, fixed, fixed_digest)
-        tunable_integrity = self._artifact_digest_status(tunable_path, tunable, handshake_digest)
+        fixed_integrity = self._artifact_digest_status(fixed_path, fixed_loaded, fixed_digest)
+        tunable_integrity = self._artifact_digest_status(tunable_path, tunable_loaded, handshake_digest)
         health_status = (
             "healthy"
             if manifest_status == "provenance_sealed"
@@ -205,8 +223,8 @@ class SpsaSummaryService:
             payload["node_multiplier"] = {"status": "unknown", "value": None}
         return payload
 
-    def _load_object(self, path: Path) -> JsonObject | None:
-        """Read a run artifact, reusing the parse while its bytes are unchanged.
+    def _load_artifact(self, path: Path) -> _LoadedArtifact:
+        """Read a run artifact once, reusing the parse while its bytes are unchanged.
 
         summary は高頻度で叩かれるが、preflight / handshake の JSON パースと
         canonical digest 計算は run 中ずっと同じ結果になる。
@@ -215,18 +233,21 @@ class SpsaSummaryService:
         改竄を見逃す。artifact_health は integrity evidence なので、鍵は**実バイト列の
         digest**にする。読み込みとハッシュは毎回行い、高価なパースと canonical
         serialization だけを省く。
+
+        content key を戻り値に含めるのは、同じ呼び出しの中で digest 側が
+        ファイルを読み直さないためである（`_artifact_canonical_digest` 参照）。
         """
 
         raw = self._read_bytes(path)
         if raw is None:
             with self._artifact_cache_lock:
                 self._artifact_cache.pop(path, None)
-            return None
+            return _LoadedArtifact(content_key=None, parsed=None)
         content_key = hashlib.sha256(raw).hexdigest()
         with self._artifact_cache_lock:
             cached = self._artifact_cache.get(path)
             if cached is not None and cached[0] == content_key:
-                return cached[1]
+                return _LoadedArtifact(content_key=content_key, parsed=cached[1])
 
         try:
             parsed = coerce_json_object_or_none(json.loads(raw.decode("utf-8")))
@@ -234,7 +255,12 @@ class SpsaSummaryService:
             parsed = None
         with self._artifact_cache_lock:
             self._artifact_cache[path] = (content_key, parsed)
-        return parsed
+        return _LoadedArtifact(content_key=content_key, parsed=parsed)
+
+    def _load_object(self, path: Path) -> JsonObject | None:
+        """Read a run artifact whose digest is not needed."""
+
+        return self._load_artifact(path).parsed
 
     @staticmethod
     def _read_bytes(path: Path) -> bytes | None:
@@ -257,18 +283,24 @@ class SpsaSummaryService:
             digests[engine["name"]] = digest if isinstance(digest, str) else None
         return digests
 
-    def _artifact_digest_status(self, path: Path, artifact: JsonObject | None, expected_digest: object) -> str:
+    def _artifact_digest_status(self, path: Path, loaded: _LoadedArtifact, expected_digest: object) -> str:
+        artifact = loaded.parsed
         if artifact is None or not isinstance(expected_digest, str) or not expected_digest:
             return "missing"
-        return "verified" if self._artifact_canonical_digest(path, artifact) == expected_digest else "mismatch"
+        digest = self._artifact_canonical_digest(path, artifact, loaded.content_key)
+        return "verified" if digest == expected_digest else "mismatch"
 
-    def _artifact_canonical_digest(self, path: Path, artifact: JsonObject) -> str:
-        """Return the canonical digest, reusing it while the artifact bytes are unchanged."""
+    def _artifact_canonical_digest(self, path: Path, artifact: JsonObject, content_key: str | None) -> str:
+        """Return the canonical digest of bytes that were already read in this call.
 
-        raw = self._read_bytes(path)
-        if raw is None:
+        以前はここでファイルをもう一度読んでいた。status は 1 回目のバイト列、
+        digest は 2 回目のバイト列から計算されるため、その間に書き換えが起きると
+        `artifact_health` が矛盾した組み合わせを報告しうる TOCTOU 窓があった。
+        呼び出し元が読んだ content key をそのまま使い、読み取りを 1 回に統一する。
+        """
+
+        if content_key is None:
             return canonical_sha256(artifact)
-        content_key = hashlib.sha256(raw).hexdigest()
         with self._artifact_cache_lock:
             cached = self._digest_cache.get(path)
             if cached is not None and cached[0] == content_key:
@@ -279,19 +311,21 @@ class SpsaSummaryService:
         return digest
 
     def _load_manifest(self) -> JsonObject | None:
-        """Read ``manifest.json`` through the content-keyed artifact cache."""
+        """Read ``manifest.json`` once, through the content-keyed artifact cache."""
 
         path = self._store.run_path("manifest.json")
         raw = self._read_bytes(path)
         if raw is None:
-            self._manifest_cache = None
-            return read_run_manifest(path, logger=logger)
+            with self._artifact_cache_lock:
+                self._manifest_cache = None
+            logger.info("Run manifest not found: %s", path)
+            return None
         content_key = hashlib.sha256(raw).hexdigest()
         with self._artifact_cache_lock:
             cached = self._manifest_cache
             if cached is not None and cached[0] == content_key:
                 return cached[1]
-        manifest = read_run_manifest(path, logger=logger)
+        manifest = parse_run_manifest(raw, source=path, logger=logger)
         with self._artifact_cache_lock:
             self._manifest_cache = (content_key, manifest)
         return manifest

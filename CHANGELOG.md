@@ -8,6 +8,52 @@ except for the explicitly documented 1.2.0 breaking-change exception.
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-08-04
+
+### Fixed
+
+- SPSA dashboard の **Parameter Analysis が run の進行に追随しない**問題を修正した。
+  分析結果のキャッシュは「更新があった旨を外部から通知されたら再計算する」設計だったが、
+  その通知を行う経路が実装されていなかった。結果として最初に計算した内容が
+  最大 5 分間そのまま返り続け、ダッシュボードを run の序盤に開くと
+  パラメータの推移グラフが最初の 1〜2 点で止まって見えていた。
+  ledger の更新世代を見て自動的に再計算するようにした。
+- SPSA タブの**エンジン詳細（実行パスや適用オプション）が、最初のサマリ更新で
+  消える**問題を修正した。起動時に読み込んだエンジンメタを、以降の更新が
+  引き継がずに空で上書きしていた。
+- update ごとの勝敗が **LTC 対局を混ぜて集計されていた**のを修正した。LTC 対局の
+  「tuned」は候補 vs 承認済みベースラインという別の比較なので、1 つの数字が
+  2 種類の比較を指していた。tuning 対局（+δ 対 −δ）だけを数えるようにした。
+  LTC の勝敗は従来どおり専用の列に出る。
+- SPSA dashboard の Updates テーブルで **Start / Finish 列が常に空**だった問題を修正した。
+  フロントは update ごとの開始・終了時刻を読んでいたが、バックエンドがその値を
+  返していなかった。ledger の pair 割り当て時刻と対局観測の最終時刻から導くようにした。
+  まだ 1 局も終わっていない update では終了時刻は空のままになる。
+- SPSA dashboard の `artifact_health` が、改竄された artifact を `verified` として
+  報告し続けうる欠陥を修正した。summary の生成中に同じファイルを 2 回読んでおり、
+  1 回目のバイト列から作った canonical digest が 2 回目のバイト列の鍵で
+  キャッシュされていた。読み取りを artifact ごとに 1 回へ統一した。
+
+### Changed
+
+- SPSA dashboard の Updates テーブルの **Plus W-D-L / Minus W-D-L 列を、単一の
+  `+δ vs −δ (W-D-L)` 列に置き換えた**。SPSA の対局は常に +δ 対 −δ のペアで、
+  1 局に「plus か minus か」という属性が存在しないため、この 2 列は原理的に埋まらず
+  常に空だった。何と何を比べた勝敗なのかが列名で分かるようにしている。
+  **両側とも摂動済み**なので、これは固定 baseline に対する進捗ではなく
+  「この update で +δ が −δ に勝ったか」を表す。
+  `LTC W-D-L` 列にも同様に、候補 vs 承認済みベースラインである旨の説明を付けた。
+- dashboard の `GET /api/spsa/summary` が、リクエストごとにファイルと SQLite を
+  読み直すのをやめ、スナップショットから応答するようになった。実測で
+  リクエストの約 9 割が I/O なしで返る。
+  payload に `summary_freshness`（`age_ms` / `max_age_ms`）が追加され、
+  返した値が何ミリ秒前のものかを観測できる。run 実行中は対局の進捗ごとに
+  スナップショットが更新されるため、実測ではおおむね 2〜3 秒以内の鮮度になる。
+- event loop 上の JSON 変換を軽くした。対局の進捗イベントごとに同じ worker snapshot を
+  何度も走査していたうち、冗長な 2 回分を削除し、1 走査あたりのコストも約 9 倍下げた。
+  event loop を占有する時間が減るので、dashboard の応答とエンジンの応答の
+  両方に効く。挙動は変えていない（最適化前の実装との同値性をテストで固定した）。
+
 ## [1.2.3] - 2026-08-04
 
 ### Added
@@ -439,6 +485,7 @@ dashboard 無効の長時間 run で event loop が秒単位で停止し、進�
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
 [Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.3...HEAD
+[1.2.4]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.0...v1.2.1

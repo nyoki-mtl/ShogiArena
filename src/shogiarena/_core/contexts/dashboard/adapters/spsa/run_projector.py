@@ -170,7 +170,7 @@ class SpsaRunProjector:
     def _load_pair_rows(self, *, minimum_rowid: int = 0) -> set[int]:
         rows = self._ledger.connection.execute(
             """
-            SELECT rowid, update_idx, pair_id, assignment_kind, color_assignment_json
+            SELECT rowid, update_idx, pair_id, assignment_kind, color_assignment_json, created_at
             FROM pair_assignments
             WHERE run_id = ? AND rowid > ?
             ORDER BY rowid
@@ -178,12 +178,15 @@ class SpsaRunProjector:
             (self._run_id, minimum_rowid),
         ).fetchall()
         affected: set[int] = set()
-        for rowid, update_idx_raw, pair_id_raw, kind_raw, assignment_raw in rows:
+        for rowid, update_idx_raw, pair_id_raw, kind_raw, assignment_raw, created_at in rows:
             update_idx = int(update_idx_raw)
             pair_id = str(pair_id_raw)
             pair: JsonObject = {
                 "pair_id": pair_id,
                 "assignment_kind": str(kind_raw),
+                # update の開始時刻はここでしか分からない。対局の観測時刻は「終わった時刻」
+                # なので、着手前に確定する pair の割り当て時刻を開始とみなす。
+                "created_at": self._epoch_ms(created_at, label=f"pair {pair_id}"),
                 "color_assignment": self._parse_object(
                     assignment_raw,
                     label=f"pair {pair_id} color assignment",
@@ -399,10 +402,14 @@ class SpsaRunProjector:
         schedule = self._parse_object(row[4], label=f"update {update_idx} schedule")
         games = self._games_by_update.get(update_idx, [])
         game_events = [self._game_event(game) for game in games]
-        played_events = [event for event in game_events if event["event"] == "game_result"]
+        # W-D-L は **θ+ 対 θ− の tuning 対局だけ**で数える。
+        # LTC 対局の "tuned" は候補 vs 承認済みベースラインという別の比較であり、
+        # 混ぜると 1 つの数字が 2 種類の比較を指すことになる。LTC は専用の列で出す。
+        played_events = [event for event in game_events if event["event"] == "game_result" and not event.get("is_ltc")]
         wins = sum(event.get("winner") == 1 for event in played_events)
         losses = sum(event.get("winner") == 0 for event in played_events)
         draws = sum(event.get("winner") == 2 for event in played_events)
+        started_at, ended_at = self._update_time_span(update_idx, played_events=played_events)
         update_event: JsonObject = {
             "event": "update" if state == "COMMITTED" else "update_pending",
             "update_idx": update_idx,
@@ -425,6 +432,8 @@ class SpsaRunProjector:
             "ltc_required": bool(row[5]),
             "revision": int(str(row[6])),
             "timestamp": update_event["timestamp"],
+            "started_at": started_at,
+            "ended_at": ended_at,
             "wins": wins,
             "losses": losses,
             "draws": draws,
@@ -433,6 +442,32 @@ class SpsaRunProjector:
             **schedule,
         }
         self._events_cache = None
+
+    def _update_time_span(
+        self,
+        update_idx: int,
+        *,
+        played_events: Sequence[JsonObject],
+    ) -> tuple[int | None, int | None]:
+        """Return when an update started and finished, in epoch milliseconds.
+
+        dashboard の Updates テーブルは `started_at` / `ended_at` を読むが、
+        ledger の `updates` 行は commit 時刻しか持っていない。開始は pair 割り当ての
+        `created_at`、終了は対局観測の最終時刻から導く。
+
+        まだ 1 局も終わっていない update では終了は `None` になる。
+        """
+
+        pair_times = [
+            value
+            for pair in self._pairs_by_update.get(update_idx, [])
+            if isinstance(value := pair.get("created_at"), int)
+        ]
+        game_times = [value for event in played_events if isinstance(value := event.get("ts"), int)]
+        started_candidates = pair_times or game_times
+        started_at = min(started_candidates) if started_candidates else None
+        ended_at = max(game_times) if game_times else None
+        return started_at, ended_at
 
     def _rebuild_summary(self) -> None:
         self._summary = SummaryAccumulator()

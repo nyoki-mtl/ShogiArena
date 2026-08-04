@@ -330,6 +330,21 @@ class ConvergenceAnalysis(TypedDict, total=False):
     ltc_results: dict[str, JsonValue]
 
 
+class SpsaSummaryFreshness(TypedDict):
+    """サマリを snapshot から配るときの鮮度上限。
+
+    `/summary` はリクエストパスから I/O と SQLite を外すために snapshot を返す
+    （task 0065）。その結果「as of this request」が「as of ≤ max_age 前」に変わる。
+    黙って渡さず、payload に載せて観測可能にする。
+
+    `age_ms` は**配る瞬間の**経過時間。絶対時刻ではなく経過時間なのは、
+    受け手が知りたいのが「この数字はいま何 ms 古いか」だからである。
+    """
+
+    age_ms: int
+    max_age_ms: int
+
+
 class SpsaSummaryPayload(TypedDict, total=False):
     """``compute_summary`` が返す SPSA サマリペイロード。"""
 
@@ -370,6 +385,7 @@ class SpsaSummaryPayload(TypedDict, total=False):
     resume_boundaries: list[JsonObject]
     operational_status: JsonObject
     live_view: LiveViewSnapshot
+    summary_freshness: SpsaSummaryFreshness
 
 
 # ---------------------------------------------------------------------------
