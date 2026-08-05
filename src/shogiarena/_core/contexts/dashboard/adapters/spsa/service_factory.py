@@ -40,6 +40,7 @@ class SpsaDashboardServicesFactory:
         *,
         run_dir: Path | None,
         db_path: Path,
+        ledger_run_dir: Path | None = None,
         read_only: bool = False,
         store: SpsaStorePort | None = None,
         summary_service: SpsaSummaryServicePort | None = None,
@@ -47,29 +48,32 @@ class SpsaDashboardServicesFactory:
         game_listing_service: SpsaGameListingPort | None = None,
         analysis_service: SpsaAnalysisPort | None = None,
     ) -> DashboardSpsaServices:
-        resolved_run_dir = run_dir if run_dir is not None else db_path.parent
-        is_spsa_archive = (resolved_run_dir / "spsa" / "meta.json").is_file() or (
-            resolved_run_dir / SPSA_LEDGER_RELATIVE_PATH
-        ).exists()
+        # artifact(spsa/*.json, events.jsonl)は常に原本の run ディレクトリから読む。
+        # ledger だけは archive snapshot resolver が解決した一時領域を指すことがある
+        # (task 0066)。1 変数で兼ねると、どちらかが必ず間違った側を読む。
+        artifact_run_dir = run_dir if run_dir is not None else db_path.parent
+        resolved_ledger_run_dir = ledger_run_dir if ledger_run_dir is not None else artifact_run_dir
+        ledger_path = resolved_ledger_run_dir / SPSA_LEDGER_RELATIVE_PATH
+        is_spsa_archive = (artifact_run_dir / "spsa" / "meta.json").is_file() or ledger_path.exists()
         if read_only and is_spsa_archive:
-            with open_spsa_ledger(resolved_run_dir, read_only=True):
+            with open_spsa_ledger(resolved_ledger_run_dir, read_only=True, immutable=True):
                 pass
 
         if store is None:
             store = cast(
                 SpsaStorePort,
                 SpsaStore(
-                    run_dir=resolved_run_dir,
+                    run_dir=artifact_run_dir,
                 ),
             )
 
         projector = (
             SpsaRunProjector(
-                run_dir=resolved_run_dir,
+                run_dir=resolved_ledger_run_dir,
                 db_path=db_path,
                 immutable_db=read_only,
             )
-            if update_query_service is None and (resolved_run_dir / SPSA_LEDGER_RELATIVE_PATH).is_file()
+            if update_query_service is None and ledger_path.is_file()
             else None
         )
 

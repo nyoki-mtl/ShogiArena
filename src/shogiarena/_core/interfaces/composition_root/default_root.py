@@ -14,6 +14,7 @@ from typing import Protocol
 
 import rsshogi.record
 
+from shogiarena._core.contexts.dashboard.adapters.archive_snapshot import resolve_archive_databases
 from shogiarena._core.contexts.dashboard.adapters.game_repository import (
     build_games_list_raw_payload,
     build_match_history_raw_payload,
@@ -28,6 +29,7 @@ from shogiarena._core.contexts.dashboard.adapters.interface_dependency_services 
     DashboardInstancesAdapter,
     DashboardRuntimeSupportAdapter,
     DashboardSpsaSupportAdapter,
+    ReadOnlyArchiveGameQuery,
 )
 from shogiarena._core.contexts.dashboard.adapters.result_summary_reader import SQLiteResultSummaryReader
 from shogiarena._core.contexts.dashboard.adapters.run_state_loader import load_run_state_mapping
@@ -41,6 +43,7 @@ from shogiarena._core.contexts.dashboard.application.game.cache import GameSnaps
 from shogiarena._core.contexts.dashboard.application.game.state import GameStateUpdater
 from shogiarena._core.contexts.dashboard.application.live.snapshot_builder import build_live_view_snapshot
 from shogiarena._core.contexts.dashboard.application.state_container import DashboardState
+from shogiarena._core.contexts.dashboard.ports.archive_snapshot_ports import ArchiveDatabaseResolverFn
 from shogiarena._core.contexts.dashboard.ports.interface_dependencies import (
     DashboardInterfaceDependencies,
     configure_dashboard_interface_dependencies,
@@ -97,6 +100,7 @@ class DefaultRoot:
     api_server_factory: DashboardApiServerFactory
     dashboard_service_factory: DashboardSpsaServicesFactory
     game_record_loader: GameRecordLoaderFn
+    archive_database_resolver: ArchiveDatabaseResolverFn
 
 
 class GameRecordLoaderFn(Protocol):
@@ -185,6 +189,7 @@ def _create_api_server(
     *,
     host: str = "127.0.0.1",
     read_only: bool = False,
+    ledger_run_dir: Path | None = None,
     dashboard_num_workers: int = 0,
     dashboard_profiles: tuple[DashboardProfile, ...] | None = None,
     schedule_boundary: DashboardScheduleBoundaryPort | None = None,
@@ -204,6 +209,12 @@ def _create_api_server(
     )
     snapshot_storage = interface_dependencies.runtime_support.create_snapshot_storage(state, resolved_run_dir)
     event_bus: EventBus[DashboardEvent] = EventBus()
+    # アーカイブ閲覧では全 DB 読み取りを immutable=1 へ倒す。`mode=ro` は archive tree に
+    # sidecar を作ってしまい、次回起動で archive snapshot resolver がその sidecar を
+    # 検出して不要な複製を発動する自己汚染ループになる(task 0066)。
+    game_query = (
+        ReadOnlyArchiveGameQuery(interface_dependencies.game_query) if read_only else interface_dependencies.game_query
+    )
     return ArenaAPIServer(
         db_path=db_path,
         host=host,
@@ -211,6 +222,7 @@ def _create_api_server(
         run_dir=resolved_run_dir,
         instance_pool=resolved_instance_pool,
         read_only=read_only,
+        ledger_run_dir=ledger_run_dir,
         dashboard_num_workers=dashboard_num_workers,
         dashboard_profiles=dashboard_profiles,
         schedule_boundary=schedule_boundary,
@@ -218,7 +230,7 @@ def _create_api_server(
         game_state=game_state,
         snapshot_storage=snapshot_storage,
         event_bus=event_bus,
-        game_query=interface_dependencies.game_query,
+        game_query=game_query,
     )
 
 
@@ -298,6 +310,7 @@ def build_default_root() -> DefaultRoot:
         api_server_factory=api_server_factory,
         dashboard_service_factory=spsa_dashboard_factory,
         game_record_loader=load_game_record,
+        archive_database_resolver=resolve_archive_databases,
     )
 
 

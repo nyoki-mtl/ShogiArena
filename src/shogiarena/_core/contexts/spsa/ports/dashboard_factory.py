@@ -35,6 +35,7 @@ class DashboardSpsaServicesFactory(Protocol):
         *,
         run_dir: Path | None,
         db_path: Path,
+        ledger_run_dir: Path | None = ...,
         read_only: bool = ...,
         store: SpsaStorePort | None = ...,
         summary_service: SpsaSummaryServicePort | None = ...,

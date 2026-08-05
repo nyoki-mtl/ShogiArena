@@ -109,7 +109,9 @@ def _write_ledger(run_dir: Path, *, updates: int) -> None:
 
 def test_projector_builds_indices_and_refreshes_only_changed_update(tmp_path: Path) -> None:
     _write_ledger(tmp_path, updates=200)
-    projector = SpsaRunProjector(run_dir=tmp_path, db_path=tmp_path / "game.db", immutable_db=True)
+    # 実行中の run を模す。``immutable_db=True`` はアーカイブ閲覧専用で、後続の
+    # commit を観測しない(task 0066)。
+    projector = SpsaRunProjector(run_dir=tmp_path, db_path=tmp_path / "game.db", immutable_db=False)
 
     assert projector.pair_ids(1) == ("pair-1",)
     assert projector.game_identity("game-1") == {
@@ -152,7 +154,7 @@ def test_projector_builds_indices_and_refreshes_only_changed_update(tmp_path: Pa
 
 def test_projector_invalidates_event_cache_for_terminal_revision(tmp_path: Path) -> None:
     _write_ledger(tmp_path, updates=1)
-    projector = SpsaRunProjector(run_dir=tmp_path, db_path=tmp_path / "game.db", immutable_db=True)
+    projector = SpsaRunProjector(run_dir=tmp_path, db_path=tmp_path / "game.db", immutable_db=False)
     assert all(event["event"] != "terminal" for event in projector.load_events())
 
     with open_spsa_ledger(tmp_path) as ledger:
@@ -176,6 +178,39 @@ def test_projector_invalidates_event_cache_for_terminal_revision(tmp_path: Path)
     assert any(event["event"] == "terminal" for event in events)
     assert projector.revision == 1
     assert projector.last_refreshed_updates == ()
+    projector.close()
+
+
+def test_archive_projector_does_not_observe_writes_made_after_it_opened(tmp_path: Path) -> None:
+    """``immutable_db=True`` はアーカイブ閲覧専用であることを明示する。
+
+    ``immutable=1`` は SQLite に「このファイルは変化しない」と宣言するので、変更検出も
+    WAL の回復も行わない。アーカイブツリーに sidecar を作らないための必須条件だが、
+    **進行中の run に使うと永久に凍って見える。** `dashboard serve` は実行中に見える run を
+    明示エラーで拒否する(archive snapshot resolver)ので、この制約は成立する。
+    """
+
+    _write_ledger(tmp_path, updates=1)
+    projector = SpsaRunProjector(run_dir=tmp_path, db_path=tmp_path / "game.db", immutable_db=True)
+    assert all(event["event"] != "terminal" for event in projector.load_events())
+
+    with open_spsa_ledger(tmp_path) as ledger:
+        ledger.connection.execute(
+            """
+            INSERT INTO event_revisions (run_id, revision, event_type, payload_json, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                "run-1",
+                1,
+                "terminal",
+                '{"status":"clean","reason":"completed","resumable":false}',
+                "2026-01-01T00:00:01+00:00",
+            ),
+        )
+        ledger.connection.commit()
+
+    assert all(event["event"] != "terminal" for event in projector.load_events())
     projector.close()
 
 
@@ -233,8 +268,8 @@ def test_projector_startup_is_batched_and_unchanged_refresh_is_constant_work(
     statements: list[str] = []
     real_open = run_projector.open_spsa_ledger
 
-    def _open_traced(run_dir: Path, *, read_only: bool = False) -> SpsaLedger:
-        ledger = real_open(run_dir, read_only=read_only)
+    def _open_traced(run_dir: Path, *, read_only: bool = False, immutable: bool = False) -> SpsaLedger:
+        ledger = real_open(run_dir, read_only=read_only, immutable=immutable)
         ledger.connection.set_trace_callback(statements.append)
         return ledger
 
@@ -270,8 +305,8 @@ def test_projector_batch_game_snapshots_use_one_ledger_poll(
     statements: list[str] = []
     real_open = run_projector.open_spsa_ledger
 
-    def _open_traced(run_dir: Path, *, read_only: bool = False) -> SpsaLedger:
-        ledger = real_open(run_dir, read_only=read_only)
+    def _open_traced(run_dir: Path, *, read_only: bool = False, immutable: bool = False) -> SpsaLedger:
+        ledger = real_open(run_dir, read_only=read_only, immutable=immutable)
         ledger.connection.set_trace_callback(statements.append)
         return ledger
 

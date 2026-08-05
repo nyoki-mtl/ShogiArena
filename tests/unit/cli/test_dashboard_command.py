@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from shogiarena._core.contexts.dashboard.adapters.archive_snapshot import resolve_archive_databases
 from shogiarena._core.interfaces.cli.dashboard import command as dashboard_command
 from shogiarena._core.interfaces.cli.main import CliError
 
@@ -27,10 +28,17 @@ async def test_dashboard_serve_does_not_materialize_assets(
         async def start(self) -> None:
             raise RuntimeError("stop before server startup")
 
+        async def stop(self) -> None:
+            # 起動に失敗しても snapshot の一時領域を解放できるよう、CLI は必ず stop() を通す。
+            return None
+
     monkeypatch.setattr(
         dashboard_command,
         "build_default_root",
-        lambda: SimpleNamespace(api_server_factory=lambda *_args, **_kwargs: _StopServer()),
+        lambda: SimpleNamespace(
+            archive_database_resolver=resolve_archive_databases,
+            api_server_factory=lambda *_args, **_kwargs: _StopServer(),
+        ),
     )
 
     with pytest.raises(RuntimeError, match="stop before server startup"):
@@ -67,7 +75,9 @@ async def test_dashboard_serve_requests_read_only_server(
     monkeypatch.setattr(
         dashboard_command,
         "build_default_root",
-        lambda: SimpleNamespace(api_server_factory=_fake_api_server_factory),
+        lambda: SimpleNamespace(
+            archive_database_resolver=resolve_archive_databases, api_server_factory=_fake_api_server_factory
+        ),
     )
 
     with pytest.raises(RuntimeError, match="stop after server construction"):
@@ -98,6 +108,9 @@ async def test_dashboard_serve_keeps_explicit_run_dir_when_config_supplies_worke
         async def start(self) -> None:
             raise RuntimeError("stop after server construction")
 
+        async def stop(self) -> None:
+            return
+
     monkeypatch.setattr(
         dashboard_command,
         "load_tournament_config_for_dashboard",
@@ -116,7 +129,9 @@ async def test_dashboard_serve_keeps_explicit_run_dir_when_config_supplies_worke
     monkeypatch.setattr(
         dashboard_command,
         "build_default_root",
-        lambda: SimpleNamespace(api_server_factory=_fake_api_server_factory),
+        lambda: SimpleNamespace(
+            archive_database_resolver=resolve_archive_databases, api_server_factory=_fake_api_server_factory
+        ),
     )
 
     with pytest.raises(RuntimeError, match="stop after server construction"):

@@ -124,7 +124,13 @@ class ShogiRepository:
             self._session_factory.remove()
 
     def close_db(self) -> None:
-        """現在の session と connection pool を閉じ、repository を終端状態にする。"""
+        """現在の session と connection pool を閉じ、repository を終端状態にする。
+
+        ここで明示 ``wal_checkpoint(TRUNCATE)`` は**呼ばない**。reader が read lock を
+        持っている状態では busy_timeout ぶん(5 秒)ブロックしたうえで失敗し、``-wal`` も
+        残ったままになることを実測した。reader が居なければ SQLite の close 時の自動
+        checkpoint が同じ仕事をする。詳細は task 0066 の benchmark.md を参照。
+        """
 
         if self._is_closed:
             return

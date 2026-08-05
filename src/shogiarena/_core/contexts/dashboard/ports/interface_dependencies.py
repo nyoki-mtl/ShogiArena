@@ -27,6 +27,7 @@ class DashboardGamesLoaderFn(Protocol):
         db_path: Path,
         *,
         game_type: str = ...,
+        immutable: bool = ...,
     ) -> list[GameRecordEnginesDict]: ...
 
 
@@ -52,6 +53,7 @@ class DashboardGamesRawPayloadBuilderFn(Protocol):
         limit: int,
         offset: int,
         search_query: str | None,
+        immutable: bool = ...,
     ) -> dict[str, object]: ...
 
 
@@ -64,6 +66,7 @@ class DashboardMatchHistoryRawPayloadBuilderFn(Protocol):
         *,
         limit: int,
         offset: int,
+        immutable: bool = ...,
     ) -> dict[str, object]: ...
 
 
@@ -124,6 +127,7 @@ class DashboardGameQueryPort(Protocol):
         db_path: Path,
         *,
         game_type: str = ...,
+        immutable: bool = ...,
     ) -> list[GameRecordEnginesDict]: ...
 
     def load_game_record(
@@ -141,6 +145,7 @@ class DashboardGameQueryPort(Protocol):
         limit: int,
         offset: int,
         search_query: str | None,
+        immutable: bool = ...,
     ) -> dict[str, object]: ...
 
     def build_match_history_raw_payload(
@@ -149,6 +154,7 @@ class DashboardGameQueryPort(Protocol):
         *,
         limit: int,
         offset: int,
+        immutable: bool = ...,
     ) -> dict[str, object]: ...
 
 

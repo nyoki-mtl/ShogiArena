@@ -22,10 +22,15 @@ from shogiarena._core.shared.kernel.json_types import JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_game_result
 
 
-def load_games_for_dashboard(db_path: Path, *, game_type: str = "arena") -> list[GameRecordEnginesDict]:
+def load_games_for_dashboard(
+    db_path: Path,
+    *,
+    game_type: str = "arena",
+    immutable: bool = False,
+) -> list[GameRecordEnginesDict]:
     """Load game rows in the same shape expected by dashboard endpoints."""
 
-    repository = open_dashboard_repository(db_path)
+    repository = open_dashboard_repository(db_path, immutable=immutable)
     if repository is None:
         return []
     try:
@@ -87,10 +92,11 @@ def build_games_list_raw_payload(
     limit: int,
     offset: int,
     search_query: str | None,
+    immutable: bool = False,
 ) -> dict[str, object]:
     """Build the raw tournament games payload from the dashboard DB."""
 
-    repository = open_dashboard_repository(db_path)
+    repository = open_dashboard_repository(db_path, immutable=immutable)
     if repository is None:
         return {"games": [], "total": 0, "offset": offset, "limit": limit}
     try:
@@ -188,12 +194,13 @@ def build_match_history_raw_payload(
     *,
     limit: int,
     offset: int,
+    immutable: bool = False,
 ) -> dict[str, object]:
     """Build the raw tournament match history payload from the dashboard DB."""
 
     games_payload: list[dict[str, object]] = []
     total_count = 0
-    repository = open_dashboard_repository(db_path)
+    repository = open_dashboard_repository(db_path, immutable=immutable)
 
     if repository is not None:
         try:

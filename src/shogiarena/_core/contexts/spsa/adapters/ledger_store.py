@@ -89,6 +89,7 @@ def open_spsa_ledger(
     run_dir: Path,
     *,
     read_only: bool = False,
+    immutable: bool = False,
     use_write_ahead_logging: bool = False,
 ) -> SpsaLedger:
     """Open/create and strictly validate ``spsa/ledger.sqlite3``。
@@ -97,13 +98,19 @@ def open_spsa_ledger(
     検証や recovery のための一時的な writable open は journal mode を変えない。
     棄却する ledger のバイト列に触れないためであり、read-only open が sidecar を
     作らないためでもある。
+
+    ``immutable`` はアーカイブ閲覧だけが指定する。``mode=ro`` は WAL journal mode の
+    ledger を開くだけで ``-shm`` を作る/書き換えるため、アーカイブツリーが変わる。
+    ``immutable=1`` はそれを止める代わりに **WAL の中身を読まない** ので、
+    hot な ``-wal`` を持つ ledger には archive snapshot resolver を通した path を
+    渡すこと(task 0066)。進行中の run に指定すると変更が永久に見えなくなる。
     """
 
     path = run_dir / SPSA_LEDGER_RELATIVE_PATH
     if read_only:
         if not path.is_file():
             raise SpsaLedgerSchemaError(f"SPSA ledger does not exist for read-only open: {path}")
-        connection = _connect_read_only(path)
+        connection = _connect_read_only(path, immutable=immutable)
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
         connection = _connect_writable(path)
@@ -225,8 +232,9 @@ def _restore_rollback_journal(connection: sqlite3.Connection, *, path: Path) -> 
         logger.debug("SPSA ledger %s kept WAL at rest while another connection is open", path)
 
 
-def _connect_read_only(path: Path) -> sqlite3.Connection:
-    uri = f"file:{quote(str(path.resolve()), safe='/:')}?mode=ro"
+def _connect_read_only(path: Path, *, immutable: bool = False) -> sqlite3.Connection:
+    immutable_query = "&immutable=1" if immutable else ""
+    uri = f"file:{quote(str(path.resolve()), safe='/:')}?mode=ro{immutable_query}"
     try:
         connection = sqlite3.connect(uri, uri=True, timeout=2.0, check_same_thread=False)
         # dashboard と派生 JSON 投影は「最終的に追いつくこと」しか要求しない。

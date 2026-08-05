@@ -79,6 +79,7 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
         instance_pool: object | None = None,
         *,
         read_only: bool = False,
+        ledger_run_dir: Path | None = None,
         dashboard_num_workers: int = 0,
         dashboard_profiles: tuple[DashboardProfile, ...] | None = None,
         schedule_boundary: DashboardScheduleBoundaryPort | None = None,
@@ -92,6 +93,9 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
         self.host = require_loopback_bind_host(host)
         self.port = port
         self.run_dir = run_dir or db_path.parent
+        # SPSA ledger を読む run ディレクトリ。アーカイブ閲覧では archive snapshot resolver が
+        # 解決した一時領域を指すことがある。棋譜や data/*.js は常に `run_dir` から読む。
+        self.ledger_run_dir = ledger_run_dir or self.run_dir
         self.instance_pool = instance_pool
         self._is_read_only = bool(read_only)
         self.app = web.Application(middlewares=[local_dashboard_security_middleware, self._json_error_middleware])
@@ -129,6 +133,7 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
         self.spsa_api = SpsaAPI(
             db_path=self.db_path,
             run_dir=self.run_dir,
+            ledger_run_dir=self.ledger_run_dir,
             read_only=self._is_read_only,
             game_query=self._game_query,
         )

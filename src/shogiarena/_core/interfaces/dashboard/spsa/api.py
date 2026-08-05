@@ -68,6 +68,7 @@ class SpsaAPI:
         *,
         db_path: Path,
         run_dir: Path,
+        ledger_run_dir: Path | None = None,
         read_only: bool = False,
         dashboard_service_factory: DashboardSpsaServicesFactory | None = None,
         store: DashboardSpsaStorePort | None = None,
@@ -84,6 +85,7 @@ class SpsaAPI:
         resolved_services = resolve_dashboard_spsa_services(
             db_path=db_path,
             run_dir=run_dir,
+            ledger_run_dir=ledger_run_dir or run_dir,
             read_only=read_only,
             dashboard_service_factory=dashboard_service_factory,
             store=store,

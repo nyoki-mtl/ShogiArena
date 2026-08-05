@@ -7,6 +7,10 @@ import asyncio
 import logging
 from pathlib import Path
 
+from shogiarena._core.contexts.dashboard.ports.archive_snapshot_ports import (
+    GAME_DB_RELATIVE_PATH,
+    ArchiveDatabaseSnapshotError,
+)
 from shogiarena._core.contexts.spsa.ports.ledger_ports import SPSA_LEDGER_RELATIVE_PATH
 from shogiarena._core.interfaces.boundaries.parsers.dashboard import (
     detect_worker_count,
@@ -115,25 +119,43 @@ async def _serve_dashboard(args: argparse.Namespace) -> None:
     if port != requested_port:
         logger.info("Port %s unavailable; using %s instead", requested_port, port)
 
-    server = build_default_root().api_server_factory(
-        db_path=db_path,
-        port=port,
-        run_dir=run_dir,
-        instance_pool=None,
-        read_only=True,
-        dashboard_num_workers=num_workers,
-        dashboard_profiles=profiles,
-    )
-    await server.start()
-
-    mode_label = config_mode or "dashboard"
-    index_target = f"http://localhost:{port}/index.html"
-    logger.info("%s dashboard available at %s", mode_label.capitalize(), index_target)
+    # checkpoint されていない WAL を持つアーカイブは、`immutable=1` で開くと commit 済みの
+    # 行が無音で欠ける。原本を変えずに読める形へ解決してから配る(task 0066)。
+    root = build_default_root()
+    try:
+        snapshot = root.archive_database_resolver(
+            run_dir,
+            relative_database_paths=[GAME_DB_RELATIVE_PATH, SPSA_LEDGER_RELATIVE_PATH],
+        )
+    except ArchiveDatabaseSnapshotError as exc:
+        raise CliError(str(exc)) from exc
 
     try:
-        while True:
-            await asyncio.sleep(3600)
-    except (asyncio.CancelledError, KeyboardInterrupt):
-        logger.info("Stopping dashboard server")
+        server = root.api_server_factory(
+            db_path=snapshot.database_path_for(GAME_DB_RELATIVE_PATH),
+            port=port,
+            run_dir=run_dir,
+            instance_pool=None,
+            read_only=True,
+            ledger_run_dir=snapshot.database_dir_for(SPSA_LEDGER_RELATIVE_PATH),
+            dashboard_num_workers=num_workers,
+            dashboard_profiles=profiles,
+        )
+        # server を作った時点で projector が ledger を掴む。`start()` が失敗しても
+        # `stop()` を必ず通さないと、snapshot の一時領域を掴んだままになる。
+        try:
+            await server.start()
+
+            mode_label = config_mode or "dashboard"
+            index_target = f"http://localhost:{port}/index.html"
+            logger.info("%s dashboard available at %s", mode_label.capitalize(), index_target)
+
+            try:
+                while True:
+                    await asyncio.sleep(3600)
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                logger.info("Stopping dashboard server")
+        finally:
+            await server.stop()
     finally:
-        await server.stop()
+        snapshot.close()

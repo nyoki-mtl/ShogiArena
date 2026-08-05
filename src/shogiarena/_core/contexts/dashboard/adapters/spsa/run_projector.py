@@ -29,7 +29,12 @@ class SpsaRunProjector:
     """Maintain ledger-derived update, pair, game, event, and summary views."""
 
     def __init__(self, *, run_dir: Path, db_path: Path, immutable_db: bool) -> None:
-        self._ledger: SpsaLedger = open_spsa_ledger(run_dir, read_only=True)
+        # ``run_dir`` は ledger を開くためだけに使う。artifact(spsa/*.json など)はここから
+        # 読まないこと。アーカイブ閲覧では archive snapshot resolver が解決した一時領域が
+        # 渡ることがあり、そこには DB しか置かれていない(task 0066)。
+        # ``immutable_db`` はアーカイブ閲覧かどうかを表すので、game.db と ledger の両方に
+        # 効かせる。ledger だけ ``mode=ro`` に残すと、そこがアーカイブに ``-shm`` を作る。
+        self._ledger: SpsaLedger = open_spsa_ledger(run_dir, read_only=True, immutable=immutable_db)
         self._db_path = db_path
         self._immutable_db = immutable_db
         self._lock = threading.RLock()

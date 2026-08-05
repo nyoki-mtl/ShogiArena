@@ -8,6 +8,36 @@ except for the explicitly documented 1.2.0 breaking-change exception.
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-08-05
+
+### Fixed
+
+- `shogiarena dashboard serve` が、**checkpoint されていない WAL を持つアーカイブで
+  commit 済みの対局を無音で落とす**問題を修正した。read-only で開くときに使っていた
+  SQLite の `immutable=1` は「このファイルは変化しない」と宣言するフラグで、
+  WAL の回復を行わない。クラッシュした run のアーカイブでは、対局結果の一部が
+  エラーも警告も出さずに消えて見えていた。
+
+  実際にクラッシュした 32 パラメータの SPSA run では、**ledger が 172 局を記録して
+  いるのに対局ビューが 135 局しか返さなかった**（21.5% の欠落）。crash が原因だと
+  分かる手掛かりが無く、「SPSA 固有の破損」という誤った方向に調査を誘導する。
+  checkpoint が一度も走る前に落ちた短命な run では、テーブルごと見えず 500 エラーに
+  なっていた。
+
+  回復すべき WAL や journal を持つ DB だけを一時領域へ複製し、**複製側で** WAL を
+  畳んでから読むようにした。アーカイブの原本は SQLite で開かないので 1 バイトも
+  変わらず、書き込み不可な媒体でも動く。WAL が無いアーカイブでは複製は発生しない。
+  run が実行中に見える場合は、部分的な結果を黙って返さず明示エラーにする。
+
+- アーカイブ閲覧時の DB 読み取りがアーカイブツリーに **`-wal` / `-shm` を作っていた**
+  のを修正した。tournament 系の読み取り経路は `mode=ro` で開いており、SQLite は
+  WAL journal mode の DB を開くだけで sidecar を新規作成する（sidecar が 1 つも
+  残っていないアーカイブでも作る）。書き込み不可な媒体では open 自体が失敗していた。
+  `dashboard serve` の DB 読み取りを 1 箇所で `immutable=1` に倒し、上記の複製と
+  組み合わせて「原本を触らず、かつ読み落とさない」を両立させた。
+  （`results summary` と `replay-position` には同じ `-shm` 書き換えが残っている。
+  データは正しく読めるので閲覧結果には影響しない。別途対応する。）
+
 ## [1.2.4] - 2026-08-04
 
 ### Fixed
@@ -484,7 +514,8 @@ dashboard 無効の長時間 run で event loop が秒単位で停止し、進�
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.3...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.5...HEAD
+[1.2.5]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.4...v1.2.5
 [1.2.4]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.1...v1.2.2
