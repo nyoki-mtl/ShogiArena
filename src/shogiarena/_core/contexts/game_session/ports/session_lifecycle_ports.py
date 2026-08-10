@@ -11,9 +11,9 @@ from shogiarena._core.shared.kernel.json_types import JsonValue
 from shogiarena._core.shared.kernel.session_hooks import GameLifecycleHooks, SessionStopController
 
 ProgressPayload: TypeAlias = Mapping[str, JsonValue]
-DashboardProfile: TypeAlias = Literal["tournament", "spsa", "match", "sprt", "generate"]
+DashboardProfile: TypeAlias = Literal["tournament", "spsa", "match", "sprt", "generate", "csa"]
 EngineLifecyclePolicy: TypeAlias = Literal["reuse", "per_game"]
-PROFILE_KEYS: tuple[DashboardProfile, ...] = ("tournament", "spsa", "match", "sprt", "generate")
+PROFILE_KEYS: tuple[DashboardProfile, ...] = ("tournament", "spsa", "match", "sprt", "generate", "csa")
 
 
 class ProgressReporterPort(Protocol):

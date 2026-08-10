@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ja" translate="no" class="notranslate">
+<html lang="en" translate="no" class="notranslate">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -32,7 +32,7 @@
                             class="theme-toggle"
                             type="button"
                             aria-pressed="false"
-                            aria-label="テーマを切り替え（右クリックでシステム設定に戻す）"
+                            aria-label="Toggle theme (right-click to use the system setting)"
                         >
                             <span class="theme-toggle__icon" aria-hidden="true">☀️</span>
                         </button>
@@ -110,6 +110,12 @@
                     <button class="dashboard-tab" data-dashboard-tab="book" id="tabBook" aria-selected="false">
                         Book
                     </button>
+                    <!-- Ships hidden. Only the csa profile reveals it, through
+                         applyTabConfiguration. Shipping it visible would flash
+                         this tab on every other dashboard before JS runs. -->
+                    <button class="dashboard-tab" data-dashboard-tab="csa" id="tabCsa" aria-selected="false" hidden>
+                        Monitor
+                    </button>
                 </div>
                 <div
                     id="progressBar"
@@ -158,15 +164,15 @@
                                 Close All Cards
                             </button>
                             <div class="sync-tempo-control">
-                                <label class="sync-tempo-label" for="syncTempoSelect">更新テンポ:</label>
+                                <label class="sync-tempo-label" for="syncTempoSelect">Update rate:</label>
                                 <select
                                     id="syncTempoSelect"
                                     class="sync-tempo-select"
-                                    aria-label="更新テンポ設定"
-                                    title="更新テンポ: OFF=停止, 自動=適応, 2/4/8=fps制限, ∞=最大速度"
+                                    aria-label="Update rate"
+                                    title="Update rate: OFF=paused, Auto=adaptive, 2/4/8=FPS limit, ∞=unlimited"
                                 >
                                     <option value="off">OFF</option>
-                                    <option value="auto" selected>自動</option>
+                                    <option value="auto" selected>Auto</option>
                                     <option value="2">2</option>
                                     <option value="4">4</option>
                                     <option value="8">8</option>
@@ -176,6 +182,16 @@
                         </div>
                         <div class="workers-grid gap-4" id="workersGrid" aria-label="Game workers"></div>
                     </div>
+                </section>
+
+                <!-- CSA-only. Everything specific to watching a CSA bridge lives
+                     here so that Live View stays nothing but game cards.
+                     No `hidden` attribute: sections are switched by toggling the
+                     `active` class, and a hard `hidden` would outlive that and
+                     keep the section dark forever. The gate is the tab button,
+                     which is the thing `applyTabConfiguration` actually hides. -->
+                <section class="tab-content" id="csaTab" data-tab-content="csa" aria-label="CSA Monitor">
+                    <div id="csaStatusPanel" class="csa-status-panel"></div>
                 </section>
 
                 <section
@@ -816,7 +832,7 @@
                                 <table class="games-table">
                                     <thead>
                                         <tr>
-                                            <th scope="col" aria-sort="none">
+                                            <th scope="col" class="games-order-col" aria-sort="none">
                                                 <button type="button" class="games-sort" data-sort="order">
                                                     #
                                                     <span class="games-sort-indicator" aria-hidden="true"></span>

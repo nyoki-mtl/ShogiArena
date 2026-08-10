@@ -152,6 +152,7 @@ export function createScheduleController({ context }: ScheduleControllerDependen
     const SEARCH_FIELD_PREDICATES: Record<string, (row: NormalizedGameRow, needle: string) => boolean> = {
         game: (row, needle) =>
             containsText(row.game_id, needle) ||
+            containsText(row.server_game_id, needle) ||
             containsText(row.display_order, needle) ||
             containsText(row.order_index, needle) ||
             containsText(row.round_index, needle),
@@ -802,6 +803,7 @@ export function createScheduleController({ context }: ScheduleControllerDependen
     function buildDefaultPredicate(needle: string): FilterPredicate {
         return (row: NormalizedGameRow) =>
             containsText(row.game_id, needle) ||
+            containsText(row.server_game_id, needle) ||
             containsText(row.display_order, needle) ||
             containsText(row.order_index, needle) ||
             containsText(row.round_index, needle) ||
@@ -893,7 +895,11 @@ export function createScheduleController({ context }: ScheduleControllerDependen
     function openGameInLiveView(gameId: string, options: LiveViewOptions | string = {}): void {
         if (!gameId) return;
         const baseOptions: LiveViewOptions = typeof options === 'string' ? { source: options } : (options ?? {});
-        const resolvedOptions: LiveViewOptions = baseOptions.source ? baseOptions : { ...baseOptions, source: 'games' };
+        let resolvedOptions: LiveViewOptions = baseOptions.source ? baseOptions : { ...baseOptions, source: 'games' };
+        const status = resolvedOptions.status?.toLowerCase();
+        if (owner.document?.body?.dataset.dashboardProfile === 'csa' && status && status !== 'running') {
+            resolvedOptions = { ...resolvedOptions, preferArchived: true };
+        }
         const payload: JsonObject = { ...resolvedOptions };
         const navigationApi = requireNavigation(owner);
         void navigationApi.openGame(gameId, payload);
@@ -962,6 +968,7 @@ export function createScheduleController({ context }: ScheduleControllerDependen
         const displayOrder = orderIndex !== null ? orderIndex + 1 : null;
 
         const gameId = typeof raw.game_id === 'string' && raw.game_id ? raw.game_id : null;
+        const serverGameId = typeof raw.server_game_id === 'string' && raw.server_game_id ? raw.server_game_id : null;
         const statusRaw = typeof raw.status === 'string' ? raw.status.trim() : '';
         if (!statusRaw) {
             // Skip a malformed row instead of throwing: the caller iterates rows in an
@@ -1048,6 +1055,7 @@ export function createScheduleController({ context }: ScheduleControllerDependen
         const resultDetailRaw = typeof raw.result_detail === 'string' ? raw.result_detail : '';
         const normalized: NormalizedGameRow = {
             game_id: gameId,
+            server_game_id: serverGameId,
             status,
             round_index: roundIndex,
             order_index: orderIndex,

@@ -1061,7 +1061,7 @@
 
     /* Timeout warning: shown when syncing takes longer than expected */
     .worker-card--sync-delayed::after {
-        content: "更新が遅延しています...";
+        content: "Updates are delayed...";
         color: rgb(var(--color-status-warn, 234 179 8));
     }
 

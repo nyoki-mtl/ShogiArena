@@ -18,4 +18,17 @@ describe('live card clock helpers', () => {
         const remain = computeByoyomiRemainMs(10_000, 4_000, 3_000);
         expect(remain).toBe(9_000);
     });
+
+    // CSA games carry a ledger value reconstructed from the server's `,T` echoes.
+    // When the machine that wrote the log runs ahead of the viewer, the elapsed term
+    // goes negative and an unclamped estimate grows without bound; a real display of
+    // 2368:07 was produced this way. A running clock can never hold more time than
+    // the authoritative value it started from.
+    it('never displays more time than the authoritative remaining value', () => {
+        const ledgerMs = 63_000;
+        const elapsedFromAFutureTimestamp = -8_500_000_000;
+        const clock = computeRunningClockDisplay(ledgerMs, 0, elapsedFromAFutureTimestamp);
+        expect(clock.mainRemainMs).toBe(ledgerMs);
+        expect(clock.mainRemainMs).toBeLessThanOrEqual(ledgerMs);
+    });
 });

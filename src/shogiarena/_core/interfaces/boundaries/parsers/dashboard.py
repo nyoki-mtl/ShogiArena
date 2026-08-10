@@ -18,7 +18,7 @@ from shogiarena._core.platform.settings import project_dirs
 from shogiarena._core.shared.kernel.run_paths import latest_run_dir, latest_run_dir_for_key
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int, coerce_optional_text
 
-_VALID_DASHBOARD_PROFILES: set[str] = {"tournament", "spsa", "match", "sprt", "generate"}
+_VALID_DASHBOARD_PROFILES: set[str] = {"tournament", "spsa", "match", "sprt", "generate", "csa"}
 logger = logging.getLogger(__name__)
 
 
@@ -146,6 +146,8 @@ def _normalize_profile(profile: str | None) -> DashboardProfile:
         return "sprt"
     if profile == "generate":
         return "generate"
+    if profile == "csa":
+        return "csa"
     return "tournament"
 
 

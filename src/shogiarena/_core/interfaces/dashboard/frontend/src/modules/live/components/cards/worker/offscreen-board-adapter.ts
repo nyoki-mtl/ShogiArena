@@ -169,6 +169,12 @@ class OffscreenBoardAdapter implements LiveBoardAdapter {
 
     setPositionFromSFEN?(sfen: string): void {
         this.lastSfen = sfen;
+        // A position reset also clears the move list inside the board worker.
+        // Invalidate the adapter-side cache so the same history revision is sent
+        // again before the next goTo call.
+        this.lastMoves = null;
+        this.lastMovesKey = null;
+        this.lastMovesRev = null;
         if (this.worker && this.offscreenActive) {
             this.worker.postMessage({ type: 'position', sfen });
         } else {

@@ -282,8 +282,8 @@
         padding: 0.5rem 0.75rem;
     }
 
-    #spsaTab .variant-games-table .games-result-cell,
-    #spsaTab .variant-games-table .games-moves-cell {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-cell,
+    :is(#spsaTab, #csaTab) .variant-games-table .games-moves-cell {
         background: transparent;
         color: inherit;
         padding: 0.5rem 0.75rem;
@@ -297,7 +297,7 @@
         padding: 0.5rem 0.75rem;
     }
 
-    #spsaTab .variant-games-table .games-result-cell {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-cell {
         text-align: center;
         font-variant-numeric: tabular-nums;
         vertical-align: middle;
@@ -316,7 +316,7 @@
         margin: 0 auto;
     }
 
-    #spsaTab .variant-games-table .games-result-cell .games-result-badge {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-cell .games-result-badge {
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -330,7 +330,7 @@
         line-height: 1;
     }
 
-    #spsaTab .variant-games-table .games-result-cell .games-result-badge .games-result-badge-label {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-cell .games-result-badge .games-result-badge-label {
         display: block;
         line-height: 1;
     }
@@ -346,7 +346,7 @@
         box-shadow: inset 0 0 0 1px rgb(var(--color-dashboard-border) / 0.2);
     }
 
-    #spsaTab
+    :is(#spsaTab, #csaTab)
         .variant-games-table
         .games-result-cell
         .games-result-badge:not(.games-result-badge-disc):not(.games-result-badge-triangle) {
@@ -385,7 +385,7 @@
         z-index: 0;
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc {
         --games-result-disc-size: 1.55rem;
         --games-result-disc-edge-size: 0.75px;
         --games-result-disc-ring-thickness: 0.22rem;
@@ -420,8 +420,8 @@
         pointer-events: none;
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc::before,
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc::after {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc::before,
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc::after {
         content: "";
         position: absolute;
         inset: 0;
@@ -435,7 +435,7 @@
         z-index: -2;
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc::before {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc::before {
         border: var(--games-result-disc-edge-size) solid var(--games-result-disc-edge-outer);
         background-color: var(--games-result-disc-ring-fill);
         z-index: -2;
@@ -448,7 +448,7 @@
         z-index: -1;
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc::after {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc::after {
         inset: calc(var(--games-result-disc-edge-size) + var(--games-result-disc-ring-thickness));
         border: var(--games-result-disc-edge-size) solid var(--games-result-disc-edge-inner);
         background-color: var(--games-result-disc-bg);
@@ -459,7 +459,7 @@
         font-size: 0;
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc[data-symbol-empty="true"] {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc[data-symbol-empty="true"] {
         font-size: 0;
     }
 
@@ -468,7 +468,7 @@
         --games-result-disc-text: rgb(var(--color-dashboard-inverse));
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc[data-outcome="black-win"] {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc[data-outcome="black-win"] {
         --games-result-disc-ring-fill: rgb(var(--color-dashboard-foreground));
         --games-result-disc-text: rgb(var(--color-dashboard-inverse));
     }
@@ -478,7 +478,7 @@
         --games-result-disc-text: rgb(var(--color-dashboard-heading));
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc[data-outcome="white-win"] {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc[data-outcome="white-win"] {
         --games-result-disc-ring-fill: rgb(var(--color-dashboard-inverse));
         --games-result-disc-text: rgb(var(--color-dashboard-heading));
     }
@@ -488,7 +488,7 @@
         --games-result-disc-text: rgb(var(--color-dashboard-heading));
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc[data-outcome="draw"] {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc[data-outcome="draw"] {
         --games-result-disc-ring-fill: rgb(var(--color-dashboard-neutral));
         --games-result-disc-text: rgb(var(--color-dashboard-heading));
     }
@@ -500,7 +500,7 @@
         --games-result-disc-text: rgb(var(--color-dashboard-heading));
     }
 
-    :root[data-theme="dark"] #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc {
+    :root[data-theme="dark"] :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc {
         --games-result-disc-edge-outer: rgb(var(--color-dashboard-heading));
         --games-result-disc-edge-inner: rgb(var(--color-dashboard-heading));
         --games-result-disc-bg: rgb(var(--color-dashboard-base));
@@ -513,7 +513,7 @@
     }
 
     :root[data-theme="dark"]
-        #spsaTab
+        :is(#spsaTab, #csaTab)
         .variant-games-table
         .games-result-badge.games-result-badge-disc[data-outcome="black-win"] {
         --games-result-disc-ring-fill: #000;
@@ -526,7 +526,7 @@
     }
 
     :root[data-theme="dark"]
-        #spsaTab
+        :is(#spsaTab, #csaTab)
         .variant-games-table
         .games-result-badge.games-result-badge-disc[data-outcome="white-win"] {
         --games-result-disc-ring-fill: rgb(var(--color-dashboard-heading));
@@ -539,7 +539,7 @@
     }
 
     :root[data-theme="dark"]
-        #spsaTab
+        :is(#spsaTab, #csaTab)
         .variant-games-table
         .games-result-badge.games-result-badge-disc[data-outcome="draw"] {
         --games-result-disc-ring-fill: rgb(var(--color-dashboard-neutral));

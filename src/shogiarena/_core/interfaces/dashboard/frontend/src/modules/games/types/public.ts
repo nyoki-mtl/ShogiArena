@@ -25,6 +25,7 @@ export type AssignmentMode = 'auto' | 'shared' | 'per_color';
 
 export interface NormalizedGameRow {
     readonly game_id: string | null;
+    readonly server_game_id?: string | null;
     readonly status: string;
     readonly round_index: number | null;
     readonly order_index: number | null;
@@ -56,6 +57,7 @@ export interface NormalizedGameRow {
 
 export interface GamesScheduleEntry {
     readonly game_id?: string | null;
+    readonly server_game_id?: string | null;
     readonly status?: string | null;
     readonly order?: number | null;
     readonly round?: number | null;
@@ -116,6 +118,7 @@ export interface DashboardGamesRender {
 export interface LiveViewOptions {
     readonly source?: string;
     readonly status?: string;
+    readonly preferArchived?: boolean;
 }
 
 export interface DashboardGamesApi {

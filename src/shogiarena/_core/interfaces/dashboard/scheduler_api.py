@@ -67,7 +67,11 @@ class SchedulerAPI:
         self._archived_schedule_supplier = archived_schedule_supplier
 
     def register_routes(self, app: web.Application) -> None:
-        if self._boundary is None and self._archived_schedule_supplier is None:
+        if (
+            self._boundary is None
+            and self._games_snapshot_supplier is None
+            and self._archived_schedule_supplier is None
+        ):
             return
         app.router.add_get("/api/schedule", self.get_schedule)
         if self._boundary is None:

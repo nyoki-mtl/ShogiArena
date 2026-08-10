@@ -30,14 +30,18 @@ def _coerce_str_list(raw: JsonValue | None) -> list[str]:
     return values
 
 
-def coerce_int_list(raw: JsonValue | None) -> list[int]:
+def coerce_int_list(raw: JsonValue | None) -> list[int | None]:
+    """Coerce a per-ply series, keeping holes as holes.
+
+    These arrays are indexed by ``ply - 1`` on both sides of the wire, so dropping
+    a missing entry would shift every later value onto the wrong move. A ply with
+    no measurement is a null, not an absence.
+    """
     if not isinstance(raw, list):
         return []
-    values: list[int] = []
+    values: list[int | None] = []
     for item in raw:
-        value = coerce_int(item)
-        if value is not None:
-            values.append(value)
+        values.append(None if item is None else coerce_int(item))
     return values
 
 

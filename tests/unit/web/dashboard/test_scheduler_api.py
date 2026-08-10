@@ -107,3 +107,24 @@ async def test_archived_schedule_is_available_without_live_runner() -> None:
 
     assert payload["schedule"] == [{"game_id": "archived", "status": "completed"}]
     assert {route.method for route in app.router.routes()} == {"GET", "HEAD"}
+
+
+@pytest.mark.asyncio
+async def test_games_snapshot_schedule_is_available_without_live_runner() -> None:
+    api = SchedulerAPI(
+        games_snapshot_supplier=lambda: {
+            "kind": "bulk",
+            "revision": 4,
+            "base_revision": 3,
+            "rows": [{"game_id": "csa-game", "status": "completed"}],
+            "snapshot_meta": {"total_games": 1, "completed_games": 1},
+        }
+    )
+    app = web.Application()
+    api.register_routes(app)
+
+    response = await api.get_schedule(make_mocked_request("GET", "/api/schedule"))
+    payload = json.loads(response.text)
+
+    assert payload["schedule"] == [{"game_id": "csa-game", "status": "completed"}]
+    assert {route.method for route in app.router.routes()} == {"GET", "HEAD"}

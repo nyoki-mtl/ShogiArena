@@ -1,15 +1,16 @@
 import type { LiveBoardAdapter, LiveCardState } from '@/modules/live/types';
+import { hasTerminalResult } from '@/modules/live/utils';
 import type { EngineStatusSnapshot } from '@/modules/live/utils/engine-status';
 import { asEngineStatusSnapshot, isEngineStateReady } from '@/modules/live/utils/engine-status';
-import { hasTerminalResult } from '@/modules/live/utils';
 import type { DashboardCoreState } from '@/types/dashboard';
 import { createBoardSync } from './board-sync';
 import { updateCardDisplay } from './card-display';
 import { detectNewGame, initializeViewPlyIfNeeded } from './card-state';
 import { createClockSync } from './clock-sync';
 import { resolveSnapshotForDbGameCard, resolveSnapshotForWorkerCard } from './snapshot-resolvers';
-import { getWorkerStateEntry } from './state';
+import { createEmptySnapshot, getWorkerStateEntry } from './state';
 import type { WorkerSnapshotRecord } from './types';
+import { clearCsaWaitingCardSync } from './worker-snapshots';
 
 export interface UpdateCardDataOptions {
     forceBootstrap?: boolean;
@@ -275,6 +276,9 @@ export function createUpdateCardData(deps: CardDataDeps) {
             );
             if (!data) {
                 return;
+            }
+            if (clearCsaWaitingCardSync(state, workerIdx, cardState)) {
+                data = createEmptySnapshot();
             }
             stableGameKey = data ? getStableGameKey(data) : null;
 

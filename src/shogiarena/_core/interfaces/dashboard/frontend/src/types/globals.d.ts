@@ -23,7 +23,8 @@ export type DashboardTabId =
     | 'engines'
     | 'instances'
     | 'games'
-    | 'book';
+    | 'book'
+    | 'csa';
 
 export interface DashboardTabsApi {
     setActive: (tabId: DashboardTabId) => void;
@@ -34,6 +35,7 @@ export interface DashboardTabsApi {
 
 export interface LiveGameNavigationOptions extends JsonObject {
     forceNewArchived?: boolean;
+    preferArchived?: boolean;
     source?: string;
 }
 
@@ -76,6 +78,11 @@ export interface DashboardGenerateApi {
     setActive?: (active: boolean) => void;
 }
 
+export interface DashboardCsaApi {
+    refresh: () => void;
+    stop: () => void;
+}
+
 export type ArenaDashboardWindow = Window &
     typeof globalThis & {
         DashboardShared?: DashboardShared;
@@ -94,6 +101,7 @@ export type ArenaDashboardWindow = Window &
         DashboardTabs?: DashboardTabsApi;
         DashboardNavigation?: DashboardNavigationApi;
         DashboardGenerate?: DashboardGenerateApi;
+        DashboardCsa?: DashboardCsaApi;
         ShogiBoardAdapter?: new () => ShogiBoardAdapter;
         DashboardShowNotice?: (message: string, variant?: string, options?: JsonObject) => void;
         notifyDashboardServerStopped?: () => void;
@@ -124,6 +132,7 @@ declare global {
         DashboardTabs?: DashboardTabsApi;
         DashboardNavigation?: DashboardNavigationApi;
         DashboardGenerate?: DashboardGenerateApi;
+        DashboardCsa?: DashboardCsaApi;
         ShogiBoardAdapter?: new () => ShogiBoardAdapter;
         DashboardShowNotice?: (message: string, variant?: string, options?: JsonObject) => void;
         notifyDashboardServerStopped?: () => void;

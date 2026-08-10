@@ -171,6 +171,41 @@ describe('applyGamesDelta raw schedule maintenance', () => {
     });
 });
 
+describe('CSA game navigation', () => {
+    it('prefers the persisted board for a completed game', () => {
+        document.body.dataset.dashboardProfile = 'csa';
+        const calls: Array<{ gameId: string; options: Record<string, unknown> }> = [];
+        const owner = {
+            document,
+            DashboardNavigation: {
+                openGame: (gameId: string, options: Record<string, unknown>) => {
+                    calls.push({ gameId, options });
+                    return Promise.resolve();
+                },
+            },
+        } as GamesServiceContext['owner'];
+        const context: GamesServiceContext = {
+            owner,
+            state: createState(),
+            utils: {} as GamesServiceContext['utils'],
+            render: {} as GamesServiceContext['render'],
+        };
+
+        createScheduleController({ context }).openGameInLiveView('finished-game', {
+            source: 'games',
+            status: 'completed',
+        });
+
+        expect(calls).toEqual([
+            {
+                gameId: 'finished-game',
+                options: { source: 'games', status: 'completed', preferArchived: true },
+            },
+        ]);
+        delete document.body.dataset.dashboardProfile;
+    });
+});
+
 function setupDom(): HTMLElement {
     document.body.innerHTML = `
         <div id="gamesTable">

@@ -10,6 +10,7 @@
 @import "@styles/components/book.css";
 @import "@styles/components/generate.css";
 @import "@styles/components/rules.css";
+@import "@styles/components/csa.css";
 
 @tailwind base;
 @tailwind components;

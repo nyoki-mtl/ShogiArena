@@ -22,7 +22,8 @@ shogiarena [global-options] <command> ...
 | `config` | `settings.yaml` と artifact リポジトリ設定 |
 | `run` | tournament / sprt / spsa / generate / mate / analyze |
 | `results` | run 結果の集計と provenance 検証 |
-| `dashboard` | 保存済み run のダッシュボード表示 |
+| `dashboard` | 保存済み run の表示と追記中CSAログの監視 |
+| `csa` | CSAログの状態確認と棋譜export |
 | `replay-position` | 保存済み局面の再検索 |
 | `worker-bundle` | Remote worker bundleとpreplaced mappingの生成 |
 
@@ -165,6 +166,28 @@ shogiarena dashboard serve --run-dir /path/to/run
 shogiarena dashboard serve --config tournament.yaml
 shogiarena dashboard serve --run-dir /path/to/run --port 9090
 ```
+
+`serve` は書き込みの終わったアーカイブを開きます。
+追記中の CSA イベントログを追うには `watch` を使います。
+
+```bash
+shogiarena dashboard watch --csa-log-dir /path/to/csa/logs
+shogiarena dashboard watch --csa-log-dir /path/to/csa/logs --port 9090 --out-run-dir ./csa-session
+```
+
+## `csa`
+
+CSA プロトコルサーバーでの対局を観戦・書き出しします。詳細は
+[CSA 対局の観戦](../user-guide/csa-watch.md) を参照してください。
+
+```bash
+shogiarena csa status --csa-log-dir /path/to/csa/logs
+shogiarena csa status --csa-log-dir /path/to/csa/logs --follow
+shogiarena csa export --csa-log-dir /path/to/csa/logs --out ./csa-records
+```
+
+`csa export` は全手を盤面に再生してから書きます。
+再生できなかった対局は書かずに報告し、exit code は非ゼロになります。
 
 ## `results`
 

@@ -1,15 +1,16 @@
+import { normalizeLiveGameRecord, normalizeLiveViewSnapshot } from '@/modules/live/services/updates/normalizers';
 import type { LiveCardId, LiveCardState, LiveGameRecord, LiveViewSnapshot } from '@/modules/live/types';
+import { recordLiveDiagnosticsMetric, startDiagnosticsStopwatch } from '@/modules/live/utils/liveNamespace';
+import { requestJson } from '@/modules/shared/services/api';
+import { getResumeCoordinator } from '@/modules/shared/services/resume-coordinator';
 import type { DashboardCore } from '@/types/dashboard';
 import type { JsonObject, RequestError } from '@/types/shared';
-import { requestJson } from '@/modules/shared/services/api';
-import { normalizeLiveGameRecord, normalizeLiveViewSnapshot } from '@/modules/live/services/updates/normalizers';
-import { recordLiveDiagnosticsMetric, startDiagnosticsStopwatch } from '@/modules/live/utils/liveNamespace';
-import { getResumeCoordinator } from '@/modules/shared/services/resume-coordinator';
 import type { GameMeta } from './metadata';
 import type { WorkerSnapshotRecord } from './types';
 
 type GamesListItem = {
     game_id?: string | number | null;
+    server_game_id?: string | null;
     black_player?: string | null;
     white_player?: string | null;
     variant_id?: string | null;
@@ -269,6 +270,8 @@ export function createSavedGamesController(deps: SavedGamesDeps) {
 
     function fullGameOptionLabel(game: GamesListItem, idx?: number): string {
         const gid = game.game_id == null ? '' : String(game.game_id);
+        const displayId =
+            typeof game.server_game_id === 'string' && game.server_game_id.trim() ? game.server_game_id : gid;
         const normalizeDisplayName = (value: unknown, fallback: string): string => {
             if (typeof value === 'string') {
                 const trimmed = value.trim();
@@ -284,12 +287,13 @@ export function createSavedGamesController(deps: SavedGamesDeps) {
             game.variant_id ?? meta?.variantId ?? null,
             game.phase ?? (record.phase as string | null | undefined) ?? meta?.phase ?? null,
         );
-        const baseLabel = gid || variantLabel || `game_${String(idx ?? 0).padStart(4, '0')}`;
+        const baseLabel = displayId || variantLabel || `game_${String(idx ?? 0).padStart(4, '0')}`;
         return `${baseLabel}: ${blackName} vs ${whiteName}`;
     }
 
     function savedGameOptionLabel(game: GamesListItem, idx: number): string {
         const gid = game.game_id == null ? '' : String(game.game_id);
+        if (typeof game.server_game_id === 'string' && game.server_game_id.trim()) return game.server_game_id.trim();
         if (gid) return gid;
         return `game_${String(idx).padStart(4, '0')}`;
     }
@@ -424,6 +428,40 @@ export function createSavedGamesController(deps: SavedGamesDeps) {
                 gamesGroup.appendChild(option);
             });
             select.appendChild(gamesGroup);
+        }
+
+        if (cardState.source.startsWith('db-game:')) {
+            const gameId = cardState.source.slice('db-game:'.length);
+            const hasCurrentSource = Array.from(select.options).some((option) => option.value === cardState.source);
+            if (!hasCurrentSource && gameId) {
+                const snapshot = await getGameData(gameId);
+                const csaMeta =
+                    snapshot?.meta && typeof snapshot.meta === 'object'
+                        ? (snapshot.meta as { csa?: unknown }).csa
+                        : null;
+                const serverGameIdRaw =
+                    csaMeta && typeof csaMeta === 'object'
+                        ? (csaMeta as { server_game_id?: unknown }).server_game_id
+                        : null;
+                const label =
+                    typeof serverGameIdRaw === 'string' && serverGameIdRaw.trim()
+                        ? serverGameIdRaw.trim()
+                        : typeof snapshot?.game_id === 'string' && snapshot.game_id.trim()
+                          ? snapshot.game_id.trim()
+                          : gameId;
+                let gamesGroup = select.querySelector<HTMLOptGroupElement>('optgroup[label="Saved Games"]');
+                if (!gamesGroup) {
+                    gamesGroup = document.createElement('optgroup');
+                    gamesGroup.label = 'Saved Games';
+                    select.appendChild(gamesGroup);
+                }
+                const option = document.createElement('option');
+                option.value = cardState.source;
+                option.textContent = label;
+                option.title = label;
+                option.selected = true;
+                gamesGroup.appendChild(option);
+            }
         }
 
         state.gamesSignatureByCard.set(cardKey, cardSignature);

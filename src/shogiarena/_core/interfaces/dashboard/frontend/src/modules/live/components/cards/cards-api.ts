@@ -883,6 +883,16 @@ export function createLiveCardsApi(owner: CardsWindow): LiveCardsApi {
         if (getCards().length > 0) {
             return;
         }
+        // Every other profile fixes its worker set before the page loads, so "no
+        // cards" means the reader closed them and offering an empty one is
+        // reasonable. The CSA profile retires a board when its run ends, so "no
+        // cards" is the ordinary state between pairings — and conjuring one turns
+        // that into a 420px grey box that reads as a broken page rather than as
+        // "nothing is running". Guarded on the profile attribute, so no other
+        // dashboard changes.
+        if (owner.document?.body?.dataset?.dashboardProfile === 'csa') {
+            return;
+        }
         const workerCount = Number.isFinite(state.numWorkers) ? Number(state.numWorkers) : 0;
         if (workerCount > 0) {
             const created = createCardForSource('worker-latest:0', { autoSync: true });

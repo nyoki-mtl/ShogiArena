@@ -120,3 +120,28 @@ def test_terminal_summary_bypasses_publish_coalescing(tmp_path: Path) -> None:
     assert terminal["games"] == {"completed": 8, "total": 8, "cancelled": 0}
     assert terminal["tournament_ended"] is True
     assert state.get_summary_snapshot("tournament") == terminal
+
+
+def test_csa_lifecycle_summaries_are_not_dropped_by_coalescing(tmp_path: Path) -> None:
+    mediator, published, state = _build_mediator(tmp_path)
+
+    mediator.publish_summary_update(
+        {
+            "games": {"completed": 0, "total": 1, "cancelled": 0},
+            "csa_runs": [{"run_id": "run-1", "phase": "playing", "current_game_id": "game-1"}],
+        },
+        source="csa",
+    )
+    mediator.publish_summary_update(
+        {
+            "games": {"completed": 1, "total": 1, "cancelled": 0},
+            "csa_runs": [{"run_id": "run-1", "phase": "idle", "current_game_id": None}],
+        },
+        source="csa",
+    )
+
+    assert len(published) == 2
+    topic, idle = published[-1]
+    assert topic == "live.summary.snapshot.csa"
+    assert idle["csa_runs"] == [{"run_id": "run-1", "phase": "idle", "current_game_id": None}]
+    assert state.get_summary_snapshot("csa") == idle

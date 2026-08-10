@@ -1,3 +1,4 @@
+import type { DashboardRuntimeMode } from '@/modules/shared/services/runtime-mode-catalog';
 import type { LiveGameNavigationOptions } from '@/types/globals';
 import type { LiveCardId, LiveCardState, LiveClockState, WorkerSnapshotSummary } from './internal';
 import type { EngineStatusSnapshot } from '@/modules/live/utils/engine-status';
@@ -97,7 +98,11 @@ export interface WorkerUpdatePayload {
 
 export type WorkerSnapshotUpdate = Partial<WorkerSnapshot> & WorkerUpdatePayload;
 
-export type LiveViewMode = 'tournament' | 'spsa' | 'match' | 'sprt' | 'unknown';
+/**
+ * The modes a live view can be in: every dashboard mode except `generate`,
+ * which has no live view. Derived so a new mode has to be answered for here too.
+ */
+export type LiveViewMode = Exclude<DashboardRuntimeMode, 'generate'>;
 export type LiveViewProgressKind = 'games' | 'updates' | 'match' | 'sprt' | 'unknown';
 export type LiveViewProgressState = 'normal' | 'paused' | 'draining' | 'finished';
 
@@ -168,6 +173,8 @@ export interface LiveGameRecord {
     latency_deltas_ms?: readonly (number | null)[] | null;
     total_plies?: number | null;
     sfen?: string | null;
+    // The live stream also carries per-ply flags (`latency_alerts`) and free-form
+    // state under `meta`, so the index signature has to admit both.
     [key: string]:
         | string
         | number
@@ -176,8 +183,10 @@ export interface LiveGameRecord {
         | undefined
         | readonly string[]
         | readonly number[]
+        | readonly boolean[]
         | readonly (number | null)[]
-        | readonly (string | number | null)[];
+        | readonly (string | number | null)[]
+        | { readonly [key: string]: unknown };
 }
 
 export type LiveTimeMsInput = number | string | null | undefined;

@@ -14,6 +14,15 @@ from typing import Protocol
 
 import rsshogi.record
 
+from shogiarena._core.contexts.csa_watch.adapters.jsonl_log_source import JsonlLogSource
+from shogiarena._core.contexts.csa_watch.adapters.record_sinks import CsaRecordFileWriter, SqliteCsaRecordStore
+from shogiarena._core.contexts.csa_watch.adapters.rsshogi_replay import RsshogiBoardReplay
+from shogiarena._core.contexts.csa_watch.ports.log_source_ports import CsaLogSourceFactory
+from shogiarena._core.contexts.csa_watch.ports.record_sink_ports import (
+    CsaRecordFileWriterPort,
+    CsaRecordStoreFactory,
+)
+from shogiarena._core.contexts.csa_watch.ports.replay_ports import BoardReplayPort
 from shogiarena._core.contexts.dashboard.adapters.archive_snapshot import resolve_archive_databases
 from shogiarena._core.contexts.dashboard.adapters.game_repository import (
     build_games_list_raw_payload,
@@ -101,6 +110,10 @@ class DefaultRoot:
     dashboard_service_factory: DashboardSpsaServicesFactory
     game_record_loader: GameRecordLoaderFn
     archive_database_resolver: ArchiveDatabaseResolverFn
+    csa_log_source_factory: CsaLogSourceFactory
+    csa_board_replay: BoardReplayPort
+    csa_record_file_writer: CsaRecordFileWriterPort
+    csa_record_store_factory: CsaRecordStoreFactory
 
 
 class GameRecordLoaderFn(Protocol):
@@ -311,6 +324,10 @@ def build_default_root() -> DefaultRoot:
         dashboard_service_factory=spsa_dashboard_factory,
         game_record_loader=load_game_record,
         archive_database_resolver=resolve_archive_databases,
+        csa_log_source_factory=JsonlLogSource,
+        csa_board_replay=RsshogiBoardReplay(),
+        csa_record_file_writer=CsaRecordFileWriter(),
+        csa_record_store_factory=SqliteCsaRecordStore,
     )
 
 

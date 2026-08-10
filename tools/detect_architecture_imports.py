@@ -41,6 +41,9 @@ RUNTIME_BRIDGE_MODULE = f"{PACKAGE}.{INTERNAL_ROOT}.platform.runtime_bridge"
 RUNTIME_BRIDGE_EXPIRY_UTC = datetime(2026, 3, 31, 23, 59, 59, tzinfo=UTC)
 RUNTIME_BRIDGE_ALLOWED_IMPORTERS: tuple[str, ...] = ()
 COMPOSITION_ROOT_ALLOWED_IMPORTS: tuple[str, ...] = (
+    f"{PACKAGE}.{INTERNAL_ROOT}.contexts.csa_watch.adapters.jsonl_log_source",
+    f"{PACKAGE}.{INTERNAL_ROOT}.contexts.csa_watch.adapters.record_sinks",
+    f"{PACKAGE}.{INTERNAL_ROOT}.contexts.csa_watch.adapters.rsshogi_replay",
     f"{PACKAGE}.{INTERNAL_ROOT}.contexts.game_session.adapters.engine.artifact_resolver",
     f"{PACKAGE}.{INTERNAL_ROOT}.contexts.instances.adapters.engine_runtime_adapter",
     f"{PACKAGE}.{INTERNAL_ROOT}.contexts.spsa.adapters.runtime_adapter",

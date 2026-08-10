@@ -1,3 +1,4 @@
+import { hasGameCountedProgress } from '@/modules/live/services/updates/normalizers/live-view';
 import { crash } from '@/modules/shared/utils/errors';
 import { requestJson } from '@/modules/shared/services/api';
 import { normalizeGamesListResponse } from './normalizers';
@@ -328,10 +329,7 @@ function createLiveSummaryApi(owner: SummaryWindow): LiveSummaryApi {
             spsaFallbackRendered = true;
         }
         const liveView = state.liveViewSnapshot;
-        const liveProgress =
-            liveView?.progress && (liveView.mode === 'tournament' || liveView.progress.kind === 'games')
-                ? liveView.progress
-                : null;
+        const liveProgress = hasGameCountedProgress(liveView) ? (liveView?.progress ?? null) : null;
         const completed =
             typeof liveProgress?.completed === 'number' && Number.isFinite(liveProgress.completed)
                 ? liveProgress.completed

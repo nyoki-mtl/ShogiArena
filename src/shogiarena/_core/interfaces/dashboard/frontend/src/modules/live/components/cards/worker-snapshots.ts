@@ -1,13 +1,14 @@
-import type { RequestError } from '@/types/shared';
-import type { DashboardCoreState } from '@/types/dashboard';
-import { hasTerminalResult } from '@/modules/live/utils';
-import type { WorkerSnapshotRecord } from './types';
-import { peekWorkerState } from './state';
 import {
     getWorkerSnapshotRecord,
     peekWorkerSnapshotRecord,
     setWorkerSnapshotRecord,
 } from '@/modules/live/state/updates';
+import type { LiveCardState } from '@/modules/live/types';
+import { hasTerminalResult } from '@/modules/live/utils';
+import type { DashboardCoreState } from '@/types/dashboard';
+import type { RequestError } from '@/types/shared';
+import { peekWorkerState } from './state';
+import type { WorkerSnapshotRecord } from './types';
 
 interface WorkerSnapshotDeps {
     state: DashboardCoreState;
@@ -19,6 +20,31 @@ interface WorkerSnapshotDeps {
     notifyDashboardServerStopped: () => void;
     getApiBase: () => string;
     requestJson: <T>(url: string) => Promise<T>;
+}
+
+export function shouldShowCsaWaitingBoard(state: DashboardCoreState, workerIdx: number): boolean {
+    if (!Array.isArray(state.csaRuns)) return false;
+    const run = state.csaRuns.find(
+        (entry) =>
+            entry &&
+            typeof entry === 'object' &&
+            (entry as { worker_idx?: unknown }).worker_idx === workerIdx &&
+            (entry as { stopped?: unknown }).stopped !== true,
+    );
+    if (!run || typeof run !== 'object') return false;
+    const currentGameId = (run as { current_game_id?: unknown }).current_game_id;
+    return typeof currentGameId !== 'string' || !currentGameId.trim();
+}
+
+export function clearCsaWaitingCardSync(
+    state: DashboardCoreState,
+    workerIdx: number,
+    cardState: Pick<LiveCardState, 'isSyncing' | 'syncingStartedAt'>,
+): boolean {
+    if (!shouldShowCsaWaitingBoard(state, workerIdx)) return false;
+    cardState.isSyncing = false;
+    delete cardState.syncingStartedAt;
+    return true;
 }
 
 export function createWorkerSnapshotsController(deps: WorkerSnapshotDeps) {
@@ -92,6 +118,21 @@ export function createWorkerSnapshotsController(deps: WorkerSnapshotDeps) {
     function workerLatestLabel(workerIdx: number): string {
         const idx = Number(workerIdx);
         const labelIdx = Number.isNaN(idx) ? workerIdx : idx;
+        const csaRun = Array.isArray(state.csaRuns)
+            ? state.csaRuns.find(
+                  (run) => run && typeof run === 'object' && (run as { worker_idx?: unknown }).worker_idx === idx,
+              )
+            : null;
+        if (csaRun && typeof csaRun === 'object') {
+            if ((csaRun as { stopped?: unknown }).stopped === true) {
+                return `Worker #${labelIdx}: Finished`;
+            }
+            const currentGameId = (csaRun as { current_game_id?: unknown }).current_game_id;
+            if (typeof currentGameId === 'string' && currentGameId.trim()) {
+                return `Worker #${labelIdx}: ${currentGameId.trim()}`;
+            }
+            return `Worker #${labelIdx}: Waiting for pairing`;
+        }
         const gid = Number.isNaN(idx) ? null : currentWorkerGameId(idx);
         return gid ? `Worker #${labelIdx}: ${gid}` : `Worker #${labelIdx} (Latest)`;
     }

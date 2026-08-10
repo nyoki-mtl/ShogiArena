@@ -95,6 +95,7 @@ def _render_template(
 
 def _normalize_profiles(profiles: Iterable[DashboardProfile] | None) -> tuple[DashboardProfile, ...]:
     if profiles is None:
+        # `csa` is opt-in: it is served by `dashboard watch`, never inferred for a run dir.
         return ("tournament", "spsa", "match", "sprt", "generate")
     normalized: list[DashboardProfile] = []
     for profile in profiles:
@@ -136,12 +137,13 @@ def _write_html_variants(
         is_spsa = primary_profile == "spsa"
         is_match = primary_profile == "match"
         is_sprt = primary_profile == "sprt"
-        is_tournament = primary_profile == "tournament"
         is_generate = primary_profile == "generate"
+        # CSA games are watched through the live cards, so they claim the live tab.
+        is_live_primary = primary_profile in {"tournament", "csa"}
         replacements = {
             PROFILE_PLACEHOLDER: primary_profile,
-            "__LIVE_TAB_ACTIVE__": "active" if is_tournament else "",
-            "__LIVE_TAB_SELECTED__": "true" if is_tournament else "false",
+            "__LIVE_TAB_ACTIVE__": "active" if is_live_primary else "",
+            "__LIVE_TAB_SELECTED__": "true" if is_live_primary else "false",
             "__SPSA_TAB_ACTIVE__": "active" if is_spsa else "",
             "__SPSA_TAB_SELECTED__": "true" if is_spsa else "false",
             "__MATCH_TAB_ACTIVE__": "active" if is_match else "",
@@ -150,7 +152,7 @@ def _write_html_variants(
             "__SPRT_TAB_SELECTED__": "true" if is_sprt else "false",
             "__GENERATE_TAB_ACTIVE__": "active" if is_generate else "",
             "__GENERATE_TAB_SELECTED__": "true" if is_generate else "false",
-            "__LIVE_CONTENT_ACTIVE__": "active" if is_tournament else "",
+            "__LIVE_CONTENT_ACTIVE__": "active" if is_live_primary else "",
             "__SPSA_CONTENT_ACTIVE__": "active" if is_spsa else "",
             "__MATCH_CONTENT_ACTIVE__": "active" if is_match else "",
             "__GENERATE_CONTENT_ACTIVE__": "active" if is_generate else "",
@@ -177,10 +179,12 @@ def _write_profile_metadata(run_dir: Path, profiles: Sequence[DashboardProfile])
 
 def _apply_primary_profile(html_content: str, selected_profiles: tuple[DashboardProfile, ...]) -> str:
     primary_profile = selected_profiles[0]
+    # CSA games are watched through the live cards, so they claim the live tab.
+    is_live_primary = primary_profile in {"tournament", "csa"}
     replacements = {
         PROFILE_PLACEHOLDER: primary_profile,
-        "__LIVE_TAB_ACTIVE__": "active" if primary_profile == "tournament" else "",
-        "__LIVE_TAB_SELECTED__": "true" if primary_profile == "tournament" else "false",
+        "__LIVE_TAB_ACTIVE__": "active" if is_live_primary else "",
+        "__LIVE_TAB_SELECTED__": "true" if is_live_primary else "false",
         "__SPSA_TAB_ACTIVE__": "active" if primary_profile == "spsa" else "",
         "__SPSA_TAB_SELECTED__": "true" if primary_profile == "spsa" else "false",
         "__MATCH_TAB_ACTIVE__": "active" if primary_profile == "match" else "",
@@ -189,7 +193,7 @@ def _apply_primary_profile(html_content: str, selected_profiles: tuple[Dashboard
         "__SPRT_TAB_SELECTED__": "true" if primary_profile == "sprt" else "false",
         "__GENERATE_TAB_ACTIVE__": "active" if primary_profile == "generate" else "",
         "__GENERATE_TAB_SELECTED__": "true" if primary_profile == "generate" else "false",
-        "__LIVE_CONTENT_ACTIVE__": "active" if primary_profile == "tournament" else "",
+        "__LIVE_CONTENT_ACTIVE__": "active" if is_live_primary else "",
         "__SPSA_CONTENT_ACTIVE__": "active" if primary_profile == "spsa" else "",
         "__MATCH_CONTENT_ACTIVE__": "active" if primary_profile == "match" else "",
         "__GENERATE_CONTENT_ACTIVE__": "active" if primary_profile == "generate" else "",

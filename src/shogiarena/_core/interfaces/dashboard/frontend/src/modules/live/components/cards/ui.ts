@@ -51,12 +51,12 @@ export function createCardElement(
         <div class="worker-header">
             <div class="worker-header__title">
                 <label class="worker-source worker-source--primary" for="source-${cardState.id}">
-                    <span class="worker-source__label sr-only">カードソース</span>
+                    <span class="worker-source__label sr-only">Card source</span>
                     <select
                         class="source-select source-select--primary"
                         id="source-${cardState.id}"
                         data-ui-action="source-select"
-                        aria-label="カードソース"
+                        aria-label="Card source"
                         title="${escapedSourceDisplay}"
                     >
                         <option value="${escapedSourceValue}" title="${escapedSourceDisplay}">${escapedSourceDisplay}</option>
@@ -68,8 +68,8 @@ export function createCardElement(
                     type="button"
                     class="delete-card-btn"
                     data-ui-action="delete-card"
-                    aria-label="カードを削除"
-                    title="カードを削除"
+                    aria-label="Remove card"
+                    title="Remove card"
                 ><span aria-hidden="true">×</span></button>
             </div>
         </div>
@@ -82,8 +82,8 @@ export function createCardElement(
                     class="engine-log-btn"
                     data-ui-action="engine-log-open"
                     data-engine-role="white"
-                    aria-label="White エンジンログを開く"
-                    title="White エンジンログ"
+                    aria-label="Open White engine log"
+                    title="White engine log"
                 >I/O</button>
             </span>
             <span class="side-tc" id="white-tc-${cardState.id}"></span>
@@ -112,8 +112,8 @@ export function createCardElement(
                     class="engine-log-btn"
                     data-ui-action="engine-log-open"
                     data-engine-role="black"
-                    aria-label="Black エンジンログを開く"
-                    title="Black エンジンログ"
+                    aria-label="Open Black engine log"
+                    title="Black engine log"
                 >I/O</button>
             </span>
             <span class="side-tc" id="black-tc-${cardState.id}"></span>
@@ -124,7 +124,7 @@ export function createCardElement(
             <canvas class="eval-canvas" id="evalChart-${cardState.id}"></canvas>
         </div>
         <div class="move-summary" id="moveSummary-${cardState.id}"
-             data-ui-action="toggle-kifu">(開始局面)</div>
+             data-ui-action="toggle-kifu">(Initial position)</div>
         <div class="ki2-container" id="ki2-${cardState.id}"></div>
     `;
 

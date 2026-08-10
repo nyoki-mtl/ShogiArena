@@ -5,6 +5,16 @@ import { escapeHtml } from '@/modules/shared/utils/html';
 import type { DashboardCore, DashboardCoreState } from '@/types/dashboard';
 import type { KifuHandlers, WorkerSnapshotRecord } from './types';
 
+/**
+ * Characters that already name the side to move.
+ *
+ * The card prefixes a move with ☗/☖ only when the text carries no marker of its
+ * own. KI2 produced by `rsshogi` names the side with ▲/△ — a different pair of
+ * characters — so a guard that knows only ☗☖ lets it through and the two stack
+ * up as `☖△３二銀`.
+ */
+const SIDE_MARKER = /^[☗☖▲△]/;
+
 export interface KifuDeps {
     state: DashboardCoreState;
     owner: Window;
@@ -186,7 +196,7 @@ export function createKifuHandlers(deps: KifuDeps): KifuHandlers {
         const num = String(startNo + (idx1 - 1)).padStart(3, '0');
         const ki2 = Array.isArray(data.ki2_moves) ? data.ki2_moves[idx1 - 1] : null;
         const moveTextRaw = ki2 || (Array.isArray(data.moves) ? String(data.moves[idx1 - 1] || '-') : '-');
-        const hasPrefix = /^[☗☖]/.test(String(moveTextRaw));
+        const hasPrefix = SIDE_MARKER.test(String(moveTextRaw));
         const prefix = hasPrefix ? '' : getMovePrefixFromData(data, idx1);
         const moveText = prefix + moveTextRaw;
         return includeNumber ? `${num} ${moveText}` : moveText;
@@ -318,10 +328,10 @@ export function createKifuHandlers(deps: KifuDeps): KifuHandlers {
     type MoveControlTarget = 'first' | 'prev' | 'next' | 'last';
 
     const CONTROL_METADATA: Record<MoveControlTarget, { icon: string; aria: string }> = {
-        first: { icon: '⏮', aria: '最初の局面へ' },
-        prev: { icon: '◀', aria: '前の手へ' },
-        next: { icon: '▶', aria: '次の手へ' },
-        last: { icon: '⏭', aria: '最新局面へ' },
+        first: { icon: '⏮', aria: 'Go to initial position' },
+        prev: { icon: '◀', aria: 'Go to previous move' },
+        next: { icon: '▶', aria: 'Go to next move' },
+        last: { icon: '⏭', aria: 'Go to latest position' },
     };
 
     function renderControlButton(target: MoveControlTarget): string {
@@ -331,7 +341,7 @@ export function createKifuHandlers(deps: KifuDeps): KifuHandlers {
 
     function renderMoveContent(move: string): string {
         const raw = move != null ? String(move) : '';
-        const prefixChar = raw.startsWith('☗') || raw.startsWith('☖') ? raw[0] : '';
+        const prefixChar = SIDE_MARKER.test(raw) ? raw[0] : '';
         const bodyRaw = prefixChar ? raw.slice(prefixChar.length).trimStart() : raw;
         const prefixHtml = prefixChar ? escapeHtml(prefixChar) : '&nbsp;';
         const bodyText = bodyRaw || (prefixChar ? '-' : raw || '-');
@@ -1034,7 +1044,7 @@ export function createKifuHandlers(deps: KifuDeps): KifuHandlers {
         if (!ply) {
             el.innerHTML = renderSummaryRow({
                 label: '---',
-                move: '開始局面',
+                move: 'Initial position',
                 evalText: '---',
                 timeText: '----ms',
                 nodesText: '---n',
@@ -1047,7 +1057,7 @@ export function createKifuHandlers(deps: KifuDeps): KifuHandlers {
         const ki2 = Array.isArray(data.ki2_moves) ? data.ki2_moves[ply - 1] : null;
         const labelNum = String(startNo + (ply - 1)).padStart(3, '0');
         const moveText = ki2 || (Array.isArray(data.moves) ? String(data.moves[ply - 1] || '-') : '-');
-        const hasPrefix = /^[☗☖]/.test(String(moveText));
+        const hasPrefix = SIDE_MARKER.test(String(moveText));
         const prefix = hasPrefix ? '' : getMovePrefixFromData(data, ply);
         const formattedText = formatMoveSummaryWithStats(labelNum, prefix + moveText, data, ply);
         el.innerHTML = formattedText;

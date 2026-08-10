@@ -8,6 +8,156 @@ except for the explicitly documented 1.2.0 breaking-change exception.
 
 ## [Unreleased]
 
+## [1.2.6] - 2026-08-10
+
+### Added
+
+- **CSA プロトコル対局の観戦・書き出しに対応した。**
+  `rsshogi-csa-bridge` が floodgate / 世界コンピュータ将棋選手権 / 電竜戦で
+  対局しながら書く `{run_id}-events.jsonl` を読み、対局状態へ畳み込む。
+  同じ機能を持っていた Rust 実装（`rsshogi-csa-watch`）は退役し、
+  観戦手段は ShogiArena に一本化された。
+
+  - `shogiarena csa status --csa-log-dir <dir> [--run <id>] [--follow]`
+    phase と滞在時間、両者の台帳時計、着手期限、fallback 手、戦績、ponder 的中率、
+    alert、ログの健全性を数行で出す。ブラウザを開けない状況のための手段である。
+  - `shogiarena dashboard watch --csa-log-dir <dir> [--port] [--out-run-dir]`
+    追記中のログを追い、既存のライブカードに盤面・棋譜・時計・評価値を流す。
+    CSA 固有の稼働状態、現在局、戦績、最終更新と異常信号は
+    新しい `csa` profile の監視テーブルに出る。複数の bridge run を同時に追える。
+  - `shogiarena csa export --csa-log-dir <dir> [--out <dir>] [--run <id>]`
+    CSA V3.0 の棋譜を書き出す。**主目的は棋譜生成ではなく監査である。**
+    全手を盤面に再生し直し、合法な対局として再構成できた対局だけを書く。
+    再生に失敗した対局は書かずに報告し、exit code を非ゼロにする。
+  - `dashboard watch` は終局した対局を `--out-run-dir` の `game.db` に書く。
+    停止後は `shogiarena dashboard serve --run-dir <out>` でそのまま再閲覧できる。
+
+  watch の出力は `dashboard serve` から CSA profile のまま再表示できる。
+  詳細は `docs/book/src/user-guide/csa-watch.md`。
+
+### Fixed
+
+- **`dashboard watch` の起動後に現れた bridge run が、ライブ更新を一切受け取らなかった
+  問題を修正した。** floodgate の標準手順（watcher を起動 → bridge を起動 → ペアリング待ち）
+  では観戦したい対局が必ずこれに当たるため、最も普通の使い方でカードが凍結していた。
+  凍結したカードは推定時計を 0:00 まで減らし着手期限を超過表示にするので、
+  健全な対局の最中に異常を報せるという偽陽性を出していた。
+
+  原因は client 自身の worker filter だった。ページは起動時の run 数で焼き込まれた
+  `numWorkers` からカードを作り、そのカード集合から `workers=` filter を組み立てて
+  WS に送る。後から現れた run はその filter の外に落ち、worker つきメッセージが
+  サーバ側で捨てられる。**その worker の存在を知る唯一の手段である assignment 自身が
+  捨てられる**ため、ページは永久にその run を知り得ない。
+
+  - CSA profile では worker filter を送らないようにした
+    （`None` は「worker で絞らない」の意味。topic 購読が引き続き範囲を限る）。
+    他の profile は worker 集合が起動時に確定するので、従来どおり filter を送る
+  - assignment と CSA summary に既知より大きい worker index が来たら、
+    ページ側で roster を広げてカードを作るようにした。増える方向にしか動かさない
+    （一度割り当てた index を動かすと、見ている人の目の前で 2 局が入れ替わる）
+  - CSA ページが `live.summary.snapshot.tournament` を購読していたのも直した。
+    summary topic を runtime mode から解決していたが、その mode は summary 自体から
+    決まるため、購読の時点ではまだ `tournament` を指していた。profile から解決する
+  - 購読 topic の導出をカードから assignment に移した。
+    カードは `maxLiveBoards`（既定 6）で頭打ちになるため、
+    カード起点のままだと 7 個目以降の run が同じ症状で止まる。
+    状態パネルはカードに依存しないので、盤面上限を超えた run もライブに保てる
+
+- **監視タブを 1 run 1 行のテーブルに作り直した。**
+  run ごとにパネルを積む形は、run 11 個で 66 行と同じ説明文 11 回になり、
+  1 行の `engine_dead` がその中に埋もれていた。**見づらい以前に異常検知として
+  劣化していた**ため、正常な run は静かに、異常な run だけが騒ぐ形にした。
+  信号（alert・期限超過・fallback・再生不能・ログ異常・沈黙）は検出時のみ出て
+  状態・現在局・対局数・戦績・最終更新を固定列に置き、異常の詳細は展開行に畳む。
+  詳細は行のクリックで開く。稼働中の run が先頭に並ぶ。
+  推定時計は監視タブから外した（カードが同じ `,T` エコーから再構成しており、
+  1 つの真実を 2 箇所で見せる必要が無い）。説明文は列ヘッダの tooltip 1 箇所に集約した
+
+- **CSA watch のアーカイブ再表示とログ差し替え検知を修正した。** CSA は tournament の
+  `worker_*.js` を持たないため、watch の出力を `dashboard serve --run-dir` で開く際は
+  worker 数 0 を正規の CSA 契約として扱う。CSA bootstrap summary と、`game.db` から作る
+  read-only schedule を配り、`schedule.json` が無い watch 出力でも Games から盤面を開ける。
+  追記中の JSONL は縮小だけでなく、同一以上の
+  サイズへ置換された場合や既読領域が書き換わった場合も新しい stream generation として
+  先頭から読み直し、別セッションの状態を混ぜない。
+
+- **対局カードの持ち時間が常に `0:00` だった問題を修正した。**
+  時間設定の書式は `parseTimeControlSpec` が定める `t<ミリ秒>[+i<増秒ms>|+b<秒読みms>]` で、
+  **先頭の `t` が time モードを選ぶ鍵**である。CSA 側は `"300+10"`（秒・接頭辞なし）を
+  書いていたため、どの分岐にも当たらず初期値 0 のまま全カードが `0:00` を表示していた。
+  修正後はカードの時計がサーバの台帳値と一致する
+  （CSA の時計は `,T` エコーから再構成できるので、カード側の replay がそのまま確定値になる）。
+  この方言のずれは言語跨ぎ golden が検出した
+
+- **棋譜の手番符号が二重に付いていた問題を修正した**（`☖△３二銀`）。
+  カードは手番符号を持たない表記にだけ ☗/☖ を前置するが、その判定が
+  `/^[☗☖]/` しか見ておらず、`rsshogi` の KI2 が使う ▲/△ を素通りさせていた
+
+- **Live View を稼働中の対局だけにした。**
+  `--csa-log-dir` はそのディレクトリが見てきた run をすべて保持するので、
+  Live View が終局済みの対局で埋まり、盤面上限（既定 6 枚）に阻まれて
+  **進行中の対局が板を得られない**ことすらあった。
+  ページは worker board 0 枚で焼き、CSA summary から稼働中の run にだけ板を開く。
+  過去の run は roster・購読・監視タブには残るので、
+  カードソースの切り替えと対局一覧から従来どおり再閲覧できる。
+  なお bridge の死はログに痕跡を残さないため、`playing` のまま止まった run は
+  隠さずに残し、監視パネルへ「最終イベント N 前」を出す
+  （動いている対局を隠す誤りの方が、止まった対局を見せる誤りより重い）
+
+- **CSA で進捗バーを表示しないようにした。**
+  バーは有限の計画に対する進捗を主張する図形だが、CSA の run は無期限で、
+  分母は対局が終わるたびに増える。「6/9 局目を戦っている」と読めてしまうが実態は
+  「1 局進行中、6 局が記録」である。`live_view.progress` はページの guard が
+  要求する契約なので payload には残し、表示だけを落とした。
+  判定は `mode === 'csa'` の散布ではなく `MODE_CONFIG_MAP` の `showProgressBar` に置いた
+
+- **`csa` profile が tournament のタブ構成をそのまま表示していた問題を修正した。**
+  Tournament / Openings / Engines / Instances / Games / Book など、
+  CSA に無関係なタブが並んでいた。原因は 2 箇所で、どちらも `'csa'` を知らない分岐である。
+  `initializeDashboardMode` は CSA が SPSA 無効の分岐に入るのに許可リストへ `'csa'` が無く、
+  **明示的に `applyRuntimeMode('tournament')` へ落としていた**。
+  `applyRuntimeMode` の正規化リストにも `'csa'` が無く `'unknown'` に潰れていた。
+  `MODE_CONFIG_MAP.csa` は元から用意されていたが一度も適用されていなかった。
+
+- **CSA ダッシュボードの画面構成を整理した。**
+  `live` は対局カードだけになり、CSA 固有の情報は新設の「監視」タブへ移した。
+  タブの向こうに隠れても異常に気付けるよう、緊急度で二分している。
+  error alert と着手期限超過はタブに関係なく通知で割り込み、
+  警告状態のときは監視タブのボタン自体に印が付く。
+  割り込むのは「開いている間に起きたこと」だけで、過去の alert は
+  パネルに残るが通知しない。`rules` / `engines` は編集 UI なので復活させていない
+  （対局条件やエンジンの素性は表示ブロックとして監視タブに置く）。
+  他 profile のタブ構成は不変
+
+- **ペアリング待ちの bridge run がダッシュボードに何も出なかった問題を修正した。**
+  対局を 1 つも持たない run は worker snapshot を publish しないため、
+  状態パネルに読むものが無かった。floodgate では 1 時間の大半がこの状態なので、
+  bridge を起動した直後の利用者には「何も動いていない」ように見えていた。
+  `csa_runs` に `phase_since_ts` と `alert_entries` を追加専用で足し、
+  状態パネルが「worker snapshot ∪ 覆われていない run は summary から」の
+  合成で描くようにした。対局が始まると snapshot 側が引き継ぎ、パネルは 1 枚のまま。
+  盤の側と対戦相手は null のままにして「ペアリング待ち」と表示する
+  （存在しない手番を捏造しない）
+
+- **`csa` profile のダッシュボードが一度も起動できなかった問題を修正した。**
+  `/api/csa/summary` は 200 を返すが `live_view` を持たず、ページ側の
+  `normalizeSummaryEventPayload` がこれを必須として例外を投げるため、
+  初期化が `DashboardFatalError` で止まり画面が空のままだった。
+  `build_summary` が `games` と同じ数から `live_view.progress` を組み立てるようにした。
+  producer 側だけを検証していたので既存テストは通っていた。
+  ページの guard と同じ条件を確かめる回帰テストを 2 本足した。
+
+- ライブ配信の per-ply 系列（`eval_black` / `nodes_values` / `move_times_ms` など）
+  から、値の無い手が**詰められて**いた。これらの配列は送受信の両側で `ply - 1` で
+  索くため、穴を詰めると以降の値がすべて 1 手ずれる。自分で回す対局では毎手に値が
+  付くので表面化していなかったが、片側の評価値しか存在しない CSA 対局では即座に
+  破綻する。穴は `None` のまま運ぶようにした。
+
+### Changed
+
+- `rsshogi` の必要バージョンを 1.1.0 以上に引き上げた。
+  CSA V3.0 での書き出し（`Record.to_csa(version="3.0")`）に必要である。
+
 ## [1.2.5] - 2026-08-05
 
 ### Fixed
@@ -514,7 +664,8 @@ dashboard 無効の長時間 run で event loop が秒単位で停止し、進�
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.5...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.6...HEAD
+[1.2.6]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.5...v1.2.6
 [1.2.5]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.4...v1.2.5
 [1.2.4]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.2...v1.2.3

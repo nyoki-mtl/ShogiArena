@@ -1,0 +1,484 @@
+@layer components {
+    /*
+     * CSA monitoring table.
+     *
+     * The table itself is the app's table: `table-simple variant-games-table`,
+     * the same pair the spsa tab uses to host the games table in a second
+     * place. Fixed table layout and compact numeric cells follow that shared
+     * visual language while the columns remain specific to run monitoring.
+     *
+     * What is left here is only what is genuinely CSA-only: the disclosure
+     * control, the explicit run State, and the detail grid.
+     *
+     * A healthy run is visually silent. Colour is reserved for rows that need
+     * attention, so "is anything wrong" is answerable at a glance.
+     */
+    .csa-status-panel {
+        margin-bottom: 1rem;
+    }
+
+    .csa-empty {
+        padding: 1rem;
+        color: rgb(var(--color-dashboard-muted));
+        font-size: 0.85rem;
+    }
+
+    /*
+     * The table scrolls inside its own box. Without this the page itself scrolled
+     * sideways at narrow widths and the actions column became unreachable.
+     */
+    .csa-table-scroll {
+        width: 100%;
+        overflow-x: auto;
+    }
+
+    .csa-table {
+        width: 84.5rem;
+        min-width: 84.5rem;
+        table-layout: fixed;
+    }
+
+    .csa-col__session {
+        width: 15rem;
+    }
+
+    .csa-col__state {
+        width: 18rem;
+    }
+
+    .csa-col__current {
+        width: 24rem;
+    }
+
+    .csa-col__games {
+        width: 5rem;
+    }
+
+    .csa-col__record {
+        width: 7rem;
+    }
+
+    .csa-col__updated {
+        width: 11.5rem;
+    }
+
+    .csa-col__actions {
+        width: 4rem;
+    }
+
+    /*
+     * Long engine names truncate rather than widening their column; the full
+     * name is on the cell as a tooltip either way. Times are tabular so the
+     * digits line up down the column, as they do on the Games tab.
+     */
+    .csa-table .games-side-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        min-width: 0;
+    }
+
+    .csa-table .games-side .games-game-label {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .csa-table .games-started-cell,
+    .csa-table .games-ended-cell {
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+
+    .csa-cell__session,
+    .csa-cell__current {
+        overflow: hidden;
+    }
+
+    .csa-session-label,
+    .csa-cell__current .csa-game-link {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .csa-cell__state .csa-result-state {
+        justify-content: flex-start;
+    }
+
+    .csa-cell__games,
+    .csa-cell__record {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .csa-cell__updated {
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .csa-game-cell {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        min-width: 0;
+    }
+
+    .csa-game-link {
+        display: block;
+        flex: 1;
+        min-width: 0;
+        padding: 0;
+        overflow: hidden;
+        border: 0;
+        background: transparent;
+        color: rgb(var(--color-dashboard-accent));
+        font: inherit;
+        text-align: left;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        cursor: pointer;
+    }
+
+    .csa-game-link:hover {
+        text-decoration: underline;
+    }
+
+    .csa-ownership-pill {
+        flex: none;
+        padding: 0.05rem 0.35rem;
+        border: 1px solid rgb(var(--color-dashboard-border));
+        border-radius: 999px;
+        color: rgb(var(--color-dashboard-muted));
+        font-size: 0.7rem;
+        line-height: 1.35;
+    }
+
+    /*
+     * CSA Games is the shared Games table with profile-specific density. The
+     * schedule number and mutation column do not describe an external CSA log,
+     * so they are removed. Result, moves, and timestamps stay compact while
+     * the game column absorbs the remaining horizontal space.
+     */
+    body[data-dashboard-profile="csa"] #progressBar,
+    body[data-dashboard-profile="csa"] #gamesTab .games-order-col,
+    body[data-dashboard-profile="csa"] #gamesTab .games-order-cell,
+    body[data-dashboard-profile="csa"] #gamesTab .games-settings-col,
+    body[data-dashboard-profile="csa"] #gamesTab .games-settings-cell {
+        display: none;
+    }
+
+    body[data-dashboard-profile="csa"] #gamesTab .games-table {
+        width: 100%;
+        min-width: 76.5rem;
+        table-layout: fixed;
+    }
+
+    body[data-dashboard-profile="csa"] #gamesTab .games-game-col,
+    body[data-dashboard-profile="csa"] #gamesTab .games-game-cell {
+        width: auto;
+        overflow: hidden;
+    }
+
+    body[data-dashboard-profile="csa"] #gamesTab .games-side-header,
+    body[data-dashboard-profile="csa"] #gamesTab .games-side {
+        width: 15rem;
+        overflow: hidden;
+    }
+
+    body[data-dashboard-profile="csa"] #gamesTab .games-result-col,
+    body[data-dashboard-profile="csa"] #gamesTab .games-result-cell {
+        width: 4.5rem;
+    }
+
+    body[data-dashboard-profile="csa"] #gamesTab .games-moves-col,
+    body[data-dashboard-profile="csa"] #gamesTab .games-moves-cell {
+        width: 4rem;
+    }
+
+    body[data-dashboard-profile="csa"] #gamesTab .games-started-col,
+    body[data-dashboard-profile="csa"] #gamesTab .games-ended-col,
+    body[data-dashboard-profile="csa"] #gamesTab .games-started-cell,
+    body[data-dashboard-profile="csa"] #gamesTab .games-ended-cell {
+        width: 10rem;
+        white-space: nowrap;
+    }
+
+    body[data-dashboard-profile="csa"] #gamesTab .games-engine-label {
+        display: block;
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        color: inherit;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    body[data-dashboard-profile="csa"] #gamesTab .games-game-wrapper,
+    body[data-dashboard-profile="csa"] #gamesTab .games-side-wrapper {
+        display: flex;
+        width: 100%;
+        overflow: hidden;
+    }
+
+    body[data-dashboard-profile="csa"] #gamesTab .games-game-link,
+    body[data-dashboard-profile="csa"] #gamesTab .games-game-label {
+        display: block;
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    /*
+     * The row is not a control. It used to be `cursor: pointer` and clickable
+     * anywhere, which promised an affordance that no keyboard could reach and
+     * made every attempt to select text a toggle. Expansion is a real button.
+     */
+    .csa-row:hover td {
+        background: rgb(var(--color-dashboard-surface) / 0.6);
+    }
+
+    .csa-toggle {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.1rem;
+        height: 1.1rem;
+        padding: 0;
+        border: 0;
+        border-radius: 0.2rem;
+        background: transparent;
+        color: rgb(var(--color-dashboard-muted));
+        font-size: 0.7rem;
+        line-height: 1;
+        cursor: pointer;
+    }
+
+    .csa-toggle:hover {
+        color: rgb(var(--color-dashboard-foreground));
+        background: rgb(var(--color-dashboard-surface));
+    }
+
+    .csa-toggle:focus-visible,
+    .csa-game-link:focus-visible,
+    .csa-cell__actions .games-settings-trigger:focus-visible {
+        outline: 2px solid rgb(var(--color-dashboard-accent));
+        outline-offset: 1px;
+    }
+
+    /*
+     * The only row-level treatment is receding what has settled — the same thing
+     * the Games tab does with `games-row-final`, and nothing else.
+     *
+     * There is deliberately no severity wash. A tint is an *area* signal, so it
+     * scales with the number of rows rather than their importance: a directory
+     * holding four runs that died on Tuesday painted four red rows around the
+     * one run actually playing. Severity belongs to the dot and one chip, which
+     * are legible precisely because the table around them has no colour.
+     */
+    .csa-row--done td {
+        color: rgb(var(--color-dashboard-muted));
+    }
+
+    /*
+     * The status dot, in the Games tab's vocabulary (`data-status-indicator`)
+     * with two variants of its own. It carries whichever is worse — what the run
+     * is doing, or what is wrong with it — so a fault is never text-only.
+     */
+    .csa-result-state {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.45rem;
+        min-width: 0;
+        overflow: hidden;
+        white-space: nowrap;
+    }
+
+    .csa-indicator {
+        flex: none;
+        width: 0.55rem;
+        height: 0.55rem;
+        border-radius: 999px;
+        background-color: rgb(var(--color-dashboard-neutral));
+        opacity: 0.55;
+    }
+
+    .csa-indicator[data-status-indicator="running"] {
+        background-color: rgb(var(--color-dashboard-accent));
+        opacity: 0.95;
+    }
+
+    .csa-indicator[data-status-indicator="completed"] {
+        background-color: rgb(var(--color-dashboard-success));
+        opacity: 0.85;
+    }
+
+    .csa-indicator[data-status-indicator="cancelled"] {
+        background-color: rgb(var(--color-dashboard-muted));
+        opacity: 0.6;
+    }
+
+    .csa-indicator[data-status-indicator="warn"] {
+        background-color: rgb(var(--color-dashboard-warning));
+        opacity: 0.95;
+    }
+
+    .csa-indicator[data-status-indicator="error"] {
+        background-color: rgb(var(--color-dashboard-danger));
+        opacity: 1;
+    }
+
+    .csa-cell__muted {
+        color: rgb(var(--color-dashboard-muted));
+    }
+
+    .csa-cell__actions {
+        text-align: right;
+        white-space: nowrap;
+    }
+
+    .csa-cell__actions .games-settings-trigger {
+        opacity: 1;
+        width: auto;
+        min-width: 2.3rem;
+        padding-inline: 0.35rem;
+    }
+
+    .csa-row:hover .games-settings-trigger,
+    .csa-cell__actions .games-settings-trigger:focus-visible {
+        opacity: 1;
+    }
+
+    .csa-load-more {
+        display: block;
+        margin: 0.65rem auto 0;
+        padding: 0.35rem 0.75rem;
+        border: 1px solid rgb(var(--color-dashboard-border));
+        border-radius: 0.3rem;
+        background: rgb(var(--color-dashboard-surface));
+        color: rgb(var(--color-dashboard-foreground));
+        cursor: pointer;
+    }
+
+    .csa-chip {
+        display: inline-block;
+        margin-left: 0.35rem;
+        padding: 0.05rem 0.4rem;
+        border-radius: 0.25rem;
+        font-size: 0.75rem;
+    }
+
+    .csa-chip--warn {
+        background: rgb(var(--color-dashboard-warning) / 0.2);
+        color: rgb(var(--color-dashboard-warning));
+    }
+
+    .csa-chip--error {
+        background: rgb(var(--color-dashboard-danger) / 0.2);
+        color: rgb(var(--color-dashboard-danger));
+    }
+
+    /*
+     * The detail row. Label and value, never a sentence: if a line needs prose
+     * to explain its value, the value is wrong.
+     */
+    .csa-detail td {
+        background: rgb(var(--color-dashboard-surface) / 0.4);
+        white-space: normal;
+        padding: 0.5rem 0.6rem;
+    }
+
+    .csa-detail__group {
+        margin: 0 0 0.5rem;
+        font-size: 0.8rem;
+    }
+
+    .csa-detail__group:last-child {
+        margin-bottom: 0;
+    }
+
+    .csa-detail__row {
+        display: grid;
+        grid-template-columns: 9rem 1fr;
+        gap: 0.5rem;
+        padding: 0.1rem 0;
+    }
+
+    .csa-detail__row dt {
+        color: rgb(var(--color-dashboard-muted));
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .csa-detail__row dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+    }
+
+    .csa-detail__row--error dt {
+        color: rgb(var(--color-dashboard-danger));
+    }
+
+    .csa-detail__row--warn dt {
+        color: rgb(var(--color-dashboard-warning));
+    }
+
+    /*
+     * The Monitor tab flags itself when a run needs attention, so a fault is visible
+     * from the board without opening the tab.
+     */
+    .dashboard-tab--attention {
+        color: rgb(var(--color-dashboard-danger));
+        font-weight: 600;
+    }
+
+    .dashboard-tab--attention::after {
+        content: "●";
+        margin-left: 0.35rem;
+        font-size: 0.7em;
+        vertical-align: middle;
+    }
+
+    /*
+     * Two things the CSA profile borrows from the live card and has to adjust,
+     * both scoped to this profile's body attribute so no other dashboard moves.
+     */
+
+    /*
+     * The engine I/O panel is streamed per live game by the arena's own runner.
+     * A CSA game is played by a bridge outside this process, so nothing ever
+     * publishes that stream — the button looked available and did nothing.
+     */
+    body[data-dashboard-profile="csa"] .engine-log-btn {
+        display: none;
+    }
+
+    /*
+     * An empty Live View is the normal state between pairings, so it has to say
+     * so. Left alone it is a 420px dashed box containing one "＋", which reads as
+     * a broken page rather than as "nothing is running".
+     */
+    body[data-dashboard-profile="csa"] #workersGrid .add-card-tile:only-child {
+        min-height: 8rem;
+    }
+
+    body[data-dashboard-profile="csa"] #workersGrid .add-card-tile:only-child .add-card-plus {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.4rem;
+        color: rgb(var(--color-dashboard-muted));
+    }
+
+    body[data-dashboard-profile="csa"] #workersGrid .add-card-tile:only-child .add-card-plus::after {
+        content: "No active games";
+        font-size: 0.85rem;
+    }
+}

@@ -60,6 +60,7 @@ class _TournamentGameBaseModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     game_id: str
+    server_game_id: str | None = None
     black_player: str | None = None
     white_player: str | None = None
     game_result: str | None = None

@@ -113,26 +113,40 @@ def build_ws_snapshot_payload(
         if idx < len(ki2_moves) and ki2_moves[idx].strip():
             entry["ki2_move"] = ki2_moves[idx]
         analysis_final: JsonObject = {}
-        if idx < len(eval_black):
-            analysis_final["eval"] = float(eval_black[idx])
-        elif idx < len(eval_white):
-            analysis_final["eval"] = -float(eval_white[idx])
-        if idx < len(depth_values):
-            analysis_final["depth"] = depth_values[idx]
-        if idx < len(seldepth_values):
-            analysis_final["seldepth"] = seldepth_values[idx]
-        if idx < len(nodes_values):
-            analysis_final["nodes"] = nodes_values[idx]
-        if idx < len(move_times):
-            analysis_final["time_ms"] = move_times[idx]
+        # A per-ply hole (a move nobody measured) stays out of analysis rather than
+        # being reported as a value.
+        if idx < len(eval_black) and eval_black[idx] is not None:
+            analysis_final["eval"] = float(eval_black[idx] or 0)
+        elif idx < len(eval_white) and eval_white[idx] is not None:
+            analysis_final["eval"] = -float(eval_white[idx] or 0)
+        for key, series in (
+            ("depth", depth_values),
+            ("seldepth", seldepth_values),
+            ("nodes", nodes_values),
+            ("time_ms", move_times),
+        ):
+            if idx < len(series) and series[idx] is not None:
+                analysis_final[key] = series[idx]
         if analysis_final:
             entry["analysis_final"] = analysis_final
         moves.append(entry)
 
     state: JsonObject = {}
+    clock_dict: JsonObject = {}
     clock_raw = snapshot.get("clock")
     if is_str_object_mapping(clock_raw):
-        clock_dict = to_json_object(clock_raw)
+        clock_dict.update(to_json_object(clock_raw))
+    for source, target in (
+        ("clock_active", "active"),
+        ("black_remain_ms", "black_remain_ms"),
+        ("white_remain_ms", "white_remain_ms"),
+        ("clock_started_at_ms", "started_at_ms"),
+        ("clock_occurred_at_ms", "occurred_at_ms"),
+    ):
+        value = snapshot.get(source)
+        if value is not None:
+            clock_dict[target] = json_serialize(value)
+    if clock_dict:
         if "active" not in clock_dict:
             clock_dict["active"] = _derive_active_from_sfen(
                 snapshot,

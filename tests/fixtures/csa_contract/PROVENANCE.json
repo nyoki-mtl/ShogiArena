@@ -1,0 +1,9 @@
+{
+  "artifact": "csa-event-log-contract.jsonl",
+  "producer_repository": "rsshogi-csa",
+  "producer_path": "fixtures/csa-event-log-contract.jsonl",
+  "producer_release": "v0.1.1",
+  "producer_commit": "2cfa20b456986818f5fbcd6f2222082666142b90",
+  "sha256": "6488e7bdb582a4ac5679282666d678a10e1745ec9dc42f5cea979689c69f2c5a",
+  "regenerate": "cargo test -p rsshogi-csa-bridge --test contract_fixture -- --ignored"
+}

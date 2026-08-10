@@ -809,21 +809,21 @@
     }
 
     /* Variant Games table styling parity with Games tab */
-    #spsaTab .variant-games-table .games-result-cell,
-    #spsaTab .variant-games-table .games-moves-cell {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-cell,
+    :is(#spsaTab, #csaTab) .variant-games-table .games-moves-cell {
         background: transparent;
         color: inherit;
         padding: 0.5rem 0.75rem;
     }
 
-    #spsaTab .variant-games-table .games-result-cell {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-cell {
         text-align: center;
         font-variant-numeric: tabular-nums;
         vertical-align: middle;
         padding: 0.32rem 0.6rem 0.22rem;
     }
 
-    #spsaTab .variant-games-table .games-result-cell .games-result-badge {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-cell .games-result-badge {
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -832,12 +832,12 @@
         min-height: 1.55rem;
     }
 
-    #spsaTab .variant-games-table .games-result-cell .games-result-badge .games-result-badge-label {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-cell .games-result-badge .games-result-badge-label {
         display: block;
         line-height: 1;
     }
 
-    #spsaTab
+    :is(#spsaTab, #csaTab)
         .variant-games-table
         .games-result-cell
         .games-result-badge:not(.games-result-badge-disc):not(.games-result-badge-triangle) {
@@ -850,7 +850,7 @@
         box-shadow: inset 0 0 0 1px rgb(var(--color-dashboard-border) / 0.2);
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc {
         --games-result-disc-size: 1.55rem;
         --games-result-disc-edge-size: 0.75px;
         --games-result-disc-ring-thickness: 0.22rem;
@@ -876,8 +876,8 @@
         z-index: 0;
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc::before,
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc::after {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc::before,
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc::after {
         content: "";
         position: absolute;
         inset: 0;
@@ -885,39 +885,39 @@
         pointer-events: none;
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc::before {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc::before {
         border: var(--games-result-disc-edge-size) solid var(--games-result-disc-edge-outer);
         background-color: var(--games-result-disc-ring-fill);
         z-index: -2;
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc::after {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc::after {
         inset: calc(var(--games-result-disc-edge-size) + var(--games-result-disc-ring-thickness));
         border: var(--games-result-disc-edge-size) solid var(--games-result-disc-edge-inner);
         background-color: var(--games-result-disc-bg);
         z-index: -1;
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc[data-symbol-empty="true"] {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc[data-symbol-empty="true"] {
         font-size: 0;
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc[data-outcome="black-win"] {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc[data-outcome="black-win"] {
         --games-result-disc-ring-fill: rgb(var(--color-dashboard-foreground));
         --games-result-disc-text: rgb(var(--color-dashboard-inverse));
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc[data-outcome="white-win"] {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc[data-outcome="white-win"] {
         --games-result-disc-ring-fill: rgb(var(--color-dashboard-inverse));
         --games-result-disc-text: rgb(var(--color-dashboard-heading));
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc[data-outcome="draw"] {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc[data-outcome="draw"] {
         --games-result-disc-ring-fill: rgb(var(--color-dashboard-neutral));
         --games-result-disc-text: rgb(var(--color-dashboard-heading));
     }
 
-    :root[data-theme="dark"] #spsaTab .variant-games-table .games-result-badge.games-result-badge-disc {
+    :root[data-theme="dark"] :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-disc {
         --games-result-disc-edge-outer: rgb(var(--color-dashboard-heading));
         --games-result-disc-edge-inner: rgb(var(--color-dashboard-heading));
         --games-result-disc-bg: rgb(var(--color-dashboard-base));
@@ -925,7 +925,7 @@
     }
 
     :root[data-theme="dark"]
-        #spsaTab
+        :is(#spsaTab, #csaTab)
         .variant-games-table
         .games-result-badge.games-result-badge-disc[data-outcome="black-win"] {
         --games-result-disc-ring-fill: #000;
@@ -933,7 +933,7 @@
     }
 
     :root[data-theme="dark"]
-        #spsaTab
+        :is(#spsaTab, #csaTab)
         .variant-games-table
         .games-result-badge.games-result-badge-disc[data-outcome="white-win"] {
         --games-result-disc-ring-fill: rgb(var(--color-dashboard-heading));
@@ -941,14 +941,14 @@
     }
 
     :root[data-theme="dark"]
-        #spsaTab
+        :is(#spsaTab, #csaTab)
         .variant-games-table
         .games-result-badge.games-result-badge-disc[data-outcome="draw"] {
         --games-result-disc-ring-fill: rgb(var(--color-dashboard-neutral));
         --games-result-disc-text: rgb(var(--color-dashboard-foreground));
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-triangle {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-triangle {
         --games-result-triangle-height: 1.7rem;
         --games-result-triangle-width: 1.95rem;
         --games-result-triangle-border: 2.2px;
@@ -974,51 +974,57 @@
         z-index: 0;
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-triangle::before,
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-triangle::after {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-triangle::before,
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-triangle::after {
         content: "";
         position: absolute;
         clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
         pointer-events: none;
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-triangle::before {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-triangle::before {
         inset: calc(-1 * var(--games-result-triangle-border));
         background: var(--games-result-triangle-ring);
         z-index: -2;
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-triangle::after {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-triangle::after {
         inset: var(--games-result-triangle-inner-shift);
         transform: scale(var(--games-result-triangle-inner-scale));
         background: var(--games-result-triangle-fill);
         z-index: -1;
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-triangle .games-result-badge-label {
+    :is(#spsaTab, #csaTab)
+        .variant-games-table
+        .games-result-badge.games-result-badge-triangle
+        .games-result-badge-label {
         transform: translateY(var(--games-result-triangle-text-shift));
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-triangle[data-outcome="draw"] {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-triangle[data-outcome="draw"] {
         --games-result-triangle-ring: rgb(var(--color-dashboard-neutral));
         --games-result-triangle-fill: rgb(var(--color-dashboard-light));
         --games-result-triangle-text: rgb(var(--color-dashboard-heading));
     }
 
-    #spsaTab .variant-games-table .games-result-badge.games-result-badge-triangle[data-outcome="paused"] {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge.games-result-badge-triangle[data-outcome="paused"] {
         --games-result-triangle-ring: rgb(var(--color-dashboard-warning));
         --games-result-triangle-fill: rgb(var(--color-dashboard-warning) / 0.25);
         --games-result-triangle-text: rgb(var(--color-dashboard-warning));
     }
 
-    :root[data-theme="dark"] #spsaTab .variant-games-table .games-result-badge.games-result-badge-triangle {
+    :root[data-theme="dark"]
+        :is(#spsaTab, #csaTab)
+        .variant-games-table
+        .games-result-badge.games-result-badge-triangle {
         --games-result-triangle-ring: rgb(var(--color-dashboard-border));
         --games-result-triangle-fill: rgb(var(--color-dashboard-base));
         --games-result-triangle-text: rgb(var(--color-dashboard-heading));
     }
 
     :root[data-theme="dark"]
-        #spsaTab
+        :is(#spsaTab, #csaTab)
         .variant-games-table
         .games-result-badge.games-result-badge-triangle[data-outcome="paused"] {
         --games-result-triangle-ring: rgb(var(--color-dashboard-warning) / 0.65);
@@ -1026,7 +1032,9 @@
         --games-result-triangle-text: rgb(var(--color-dashboard-warning));
     }
 
-    #spsaTab .variant-games-table .games-result-badge[data-result-variant="running"]:not(.games-result-badge-disc) {
+    :is(#spsaTab, #csaTab)
+        .variant-games-table
+        .games-result-badge[data-result-variant="running"]:not(.games-result-badge-disc) {
         position: relative;
         padding: 0.18rem 0.65rem;
         background-color: rgb(var(--color-dashboard-accent));
@@ -1035,7 +1043,7 @@
         letter-spacing: 0.08em;
     }
 
-    #spsaTab
+    :is(#spsaTab, #csaTab)
         .variant-games-table
         .games-result-badge[data-result-variant="running"]:not(.games-result-badge-disc)::before {
         content: "";
@@ -1046,32 +1054,36 @@
         pointer-events: none;
     }
 
-    #spsaTab .variant-games-table .games-result-badge[data-result-variant="win"]:not(.games-result-badge-disc) {
+    :is(#spsaTab, #csaTab)
+        .variant-games-table
+        .games-result-badge[data-result-variant="win"]:not(.games-result-badge-disc) {
         background: rgb(var(--color-dashboard-success) / 0.18);
         color: rgb(var(--color-dashboard-success));
     }
 
-    #spsaTab .variant-games-table .games-result-badge[data-result-variant="draw"]:not(.games-result-badge-disc) {
+    :is(#spsaTab, #csaTab)
+        .variant-games-table
+        .games-result-badge[data-result-variant="draw"]:not(.games-result-badge-disc) {
         background: rgb(var(--color-dashboard-neutral) / 0.25);
         color: rgb(var(--color-dashboard-heading));
     }
 
-    #spsaTab .variant-games-table .games-result-badge[data-result-variant="paused"] {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge[data-result-variant="paused"] {
         background: rgb(var(--color-dashboard-warning) / 0.25);
         color: rgb(var(--color-dashboard-warning));
     }
 
-    #spsaTab .variant-games-table .games-result-badge[data-result-variant="pending"] {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge[data-result-variant="pending"] {
         background: rgb(var(--color-dashboard-border) / 0.25);
         color: rgb(var(--color-dashboard-muted));
     }
 
-    #spsaTab .variant-games-table .games-result-badge[data-result-variant="cancelled"] {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge[data-result-variant="cancelled"] {
         background: rgb(var(--color-dashboard-border) / 0.15);
         color: rgb(var(--color-dashboard-muted));
     }
 
-    #spsaTab .variant-games-table .games-result-badge[data-result-variant="error"] {
+    :is(#spsaTab, #csaTab) .variant-games-table .games-result-badge[data-result-variant="error"] {
         background: rgb(var(--color-dashboard-danger) / 0.18);
         color: rgb(var(--color-dashboard-danger));
     }

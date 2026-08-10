@@ -11,6 +11,7 @@ from rsshogi.initial_positions import InitialPosition
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 
+from shogiarena._core.contexts.dashboard.adapters.game_repository import build_games_list_raw_payload
 from shogiarena._core.contexts.dashboard.adapters.result_summary_reader import SQLiteResultSummaryReader
 from shogiarena._core.contexts.spsa.domain.participation_identity import (
     SpsaParticipationIdentity,
@@ -1157,3 +1158,61 @@ def test_update_on_a_database_without_the_attribution_table_does_not_touch_it(tm
     assert loaded is not None
     # 列へ投影できなくても、origin は metadata_attributes_json 側に保たれる。
     assert loaded.metadata.attributes.get("timeout_origin") == "orchestrator_stall"
+
+
+def test_replaying_an_offset_aware_record_compares_against_sqlite_timestamp(tmp_path: Path) -> None:
+    repo = SQLiteShogiDBFactory(tmp_path / "offset-aware.sqlite3").create()
+    repo.create_tables()
+    store = DBRecordStore(repo)
+
+    first = _make_record(game_name="offset-aware")
+    first.update_metadata({"updated_date": "2026-01-01T09:01:00+09:00"})
+    store.append([first], should_update=True)
+    store.append([first], should_update=True)
+
+    newer = _make_record(game_name="offset-aware", end_comment="updated")
+    newer.update_metadata({"updated_date": "2026-01-01T00:02:00+00:00"})
+    store.append([newer], should_update=True)
+
+    loaded = store.load(game_name="offset-aware")
+    assert loaded is not None
+    assert loaded.end_comment == "updated"
+
+
+def test_games_list_exposes_csa_server_game_id_without_changing_storage_identity(tmp_path: Path) -> None:
+    db_path = tmp_path / "csa-game-list.sqlite3"
+    repo = SQLiteShogiDBFactory(db_path).create()
+    repo.create_tables()
+    record = _make_record(game_name="csa_internal_key", game_type="csa")
+    record.set_metadata_attribute("csa_server_game_id", "wdoor+floodgate+black+white+20260809160003")
+    DBRecordStore(repo).append([record], should_update=True)
+    repo.close_db()
+
+    payload = build_games_list_raw_payload(db_path, limit=10, offset=0, search_query=None)
+
+    assert payload["games"][0]["game_id"] == "csa_internal_key"
+    assert payload["games"][0]["server_game_id"] == "wdoor+floodgate+black+white+20260809160003"
+    assert payload["games"][0]["start_time"] == "2026-01-01T00:00:00"
+    assert payload["games"][0]["end_time"] == "2026-01-01T00:01:00"
+
+
+def test_games_list_orders_by_start_time_then_storage_id(tmp_path: Path) -> None:
+    db_path = tmp_path / "csa-game-order.sqlite3"
+    repo = SQLiteShogiDBFactory(db_path).create()
+    repo.create_tables()
+    store = DBRecordStore(repo)
+    older = _make_record(game_name="csa_older", game_type="csa")
+    newer_low = _make_record(game_name="csa_newer_low", game_type="csa")
+    newer_high = _make_record(game_name="csa_newer_high", game_type="csa")
+    newer_low.update_metadata({"start_date": "2026-01-02T00:00:00", "end_date": "2026-01-03T00:00:00"})
+    newer_high.update_metadata({"start_date": "2026-01-02T00:00:00", "end_date": "2026-01-02T00:01:00"})
+    store.append([older, newer_low, newer_high], should_update=True)
+    repo.close_db()
+
+    payload = build_games_list_raw_payload(db_path, limit=10, offset=0, search_query=None)
+
+    assert [game["game_id"] for game in payload["games"]] == [
+        "csa_newer_high",
+        "csa_newer_low",
+        "csa_older",
+    ]

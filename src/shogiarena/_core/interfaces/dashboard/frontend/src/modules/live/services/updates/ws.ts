@@ -1,9 +1,3 @@
-import { peekWorkerSnapshotRecord } from '@/modules/live/state/updates';
-import type { LiveCardState } from '@/modules/live/types';
-import type { LiveUpdatesContext } from '@/modules/live/types/updates';
-import { recordLiveDiagnosticsMetric } from '@/modules/live/utils/liveNamespace/metrics';
-import { getResumeCoordinator, type ResumeToken } from '@/modules/shared/services/resume-coordinator';
-import { reportDashboardRecoverableFailure } from '@/modules/shared/utils/errors';
 import { parseLiveGamesEnvelope, parseLiveSummaryEnvelope } from '@/contracts/parsers/live-ws';
 import {
     buildRequestSnapshotMessage,
@@ -11,6 +5,14 @@ import {
     buildSubscribeMessage,
     type WsClientMessage,
 } from '@/contracts/ws-client-messages';
+import { type CsaLivenessFacts, deservesLiveBoard } from '@/modules/csa/types';
+import { peekWorkerSnapshotRecord } from '@/modules/live/state/updates';
+import type { LiveCardState } from '@/modules/live/types';
+import type { LiveUpdatesContext } from '@/modules/live/types/updates';
+import { recordLiveDiagnosticsMetric } from '@/modules/live/utils/liveNamespace/metrics';
+import { getResumeCoordinator, type ResumeToken } from '@/modules/shared/services/resume-coordinator';
+import { getDashboardMode } from '@/modules/shared/services/runtime-mode';
+import { reportDashboardRecoverableFailure } from '@/modules/shared/utils/errors';
 import { bootstrapWorkers } from './bootstrap';
 import type { LiveUpdateHandlers } from './handlers';
 import { normalizeSummaryPayload } from './normalizers';
@@ -42,12 +44,13 @@ function isEngineLogCardState(value: unknown): value is EngineLogCardState {
     return typeof value === 'object' && value !== null;
 }
 
-function resolveSummaryTopic(runtimeMode: string | null | undefined): string {
+export function resolveSummaryTopic(runtimeMode: string | null | undefined): string {
     const normalized = (runtimeMode ?? 'tournament').toLowerCase();
     if (normalized === 'spsa') return `${SUMMARY_TOPIC_PREFIX}spsa`;
     if (normalized === 'sprt') return `${SUMMARY_TOPIC_PREFIX}sprt`;
     if (normalized === 'match') return `${SUMMARY_TOPIC_PREFIX}match`;
     if (normalized === 'generate') return `${SUMMARY_TOPIC_PREFIX}generate`;
+    if (normalized === 'csa') return `${SUMMARY_TOPIC_PREFIX}csa`;
     return `${SUMMARY_TOPIC_PREFIX}tournament`;
 }
 
@@ -108,7 +111,51 @@ function hasWorkerSnapshotData(state: LiveUpdatesContext['state'], workerIdx: nu
     return false;
 }
 
-function buildWsUrl(context: LiveUpdatesContext, workers: Set<number>): string {
+/**
+ * Is this the CSA profile?
+ *
+ * Read the profile the page was generated with, not the runtime mode. The mode
+ * is resolved from the summary, and the summary cannot have arrived before we
+ * subscribe to it — at connect time `runtimeMode` still reads "tournament" on a
+ * CSA page. The body attribute is written into the HTML and is correct before
+ * any I/O. Only CSA is keyed off the profile here: for match/sprt the runtime
+ * mode is deliberately more specific than the profile, so preferring the
+ * profile would pick the wrong summary topic for them.
+ */
+export function isCsaProfile(context: LiveUpdatesContext): boolean {
+    const profile = context.owner?.document?.body?.dataset?.dashboardProfile ?? '';
+    return profile === 'csa' || getDashboardMode(context.core) === 'csa';
+}
+
+/**
+ * Does this profile discover workers while the page is open?
+ *
+ * Every other profile fixes its worker set before the page loads, so a filter
+ * built from the cards that exist now is a safe optimisation. The CSA profile
+ * discovers bridge runs as their log files appear, and a run that shows up
+ * later takes a worker index outside that filter. Since worker-scoped messages
+ * — including the game snapshot that would populate its card — are dropped
+ * server-side for filtered-out indices, such a run can never come alive.
+ *
+ * For these profiles we leave the filter unset. `None` on the server means "no
+ * worker gating"; topic subscriptions still bound what we receive.
+ */
+function usesDynamicWorkerRoster(context: LiveUpdatesContext): boolean {
+    return isCsaProfile(context);
+}
+
+function readLivenessFacts(record: Record<string, unknown>): CsaLivenessFacts {
+    return {
+        phase: typeof record.phase === 'string' ? record.phase : null,
+        phase_since_ts: typeof record.phase_since_ts === 'number' ? record.phase_since_ts : null,
+        stopped: record.stopped === true,
+        emits_liveness: record.emits_liveness === true,
+        last_event_ts: typeof record.last_event_ts === 'number' ? record.last_event_ts : null,
+        current_game_id: typeof record.current_game_id === 'string' ? record.current_game_id : null,
+    };
+}
+
+export function buildWsUrl(context: LiveUpdatesContext, workers: Set<number>): string {
     const apiBase = context.getApiBase?.() ?? '';
     const origin = context.owner?.location?.origin ?? window.location.origin;
     const baseUrl = new URL(apiBase || origin, origin);
@@ -122,7 +169,7 @@ function buildWsUrl(context: LiveUpdatesContext, workers: Set<number>): string {
         baseUrl.protocol = 'ws:';
     }
 
-    if (workers.size > 0) {
+    if (workers.size > 0 && !usesDynamicWorkerRoster(context)) {
         const workersList = Array.from(workers)
             .sort((a, b) => a - b)
             .join(',');
@@ -304,7 +351,13 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
     const TOPIC_TRACK_MAX = 5000;
     let lastTopicPruneAt = 0;
     let moveGapListenerAttached = false;
-    const summaryTopic = resolveSummaryTopic(context.state?.runtimeMode ?? 'tournament');
+    // A CSA page has not resolved its runtime mode yet at this point, so asking
+    // for it would subscribe to `live.summary.snapshot.tournament` — a topic the
+    // CSA server never publishes, leaving the run-level summary frozen at
+    // whatever the initial REST fetch returned.
+    const summaryTopic = resolveSummaryTopic(
+        isCsaProfile(context) ? 'csa' : (context.state?.runtimeMode ?? 'tournament'),
+    );
     const BASE_SUBSCRIPTIONS = new Set<string>([summaryTopic, 'live.games.delta', 'live.assignment.snapshot']);
 
     const contractGuard = createSseContractGuard({
@@ -401,9 +454,136 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
         }
     }
 
+    /**
+     * Widen the worker roster so a newly discovered worker is known to the page.
+     *
+     * `numWorkers` is baked into the page from the runs that existed when the
+     * server started, so a run discovered later falls outside it entirely.
+     *
+     * Growing the roster is the authoritative part; creating a card is
+     * best-effort. Card creation refuses once `maxLiveBoards` boards are open,
+     * and the roster must not become hostage to a display limit — subscriptions
+     * are derived from assignments rather than cards precisely so that a run
+     * beyond the board limit still streams into its status panel.
+     *
+     * Only ever grows. Never reorders or drops: an index, once assigned, keeps
+     * its place, otherwise two games swap under the viewer's eyes.
+     *
+     * Growing the roster is all this does. Whether a run also earns a board is a
+     * separate question — see `ensureCardForRun`.
+     */
+    function ensureWorkerRoster(workerIdx: number): boolean {
+        if (!usesDynamicWorkerRoster(context)) return false;
+        if (!Number.isInteger(workerIdx) || workerIdx < 0) return false;
+        const currentRaw = context.state?.numWorkers;
+        const current = Number.isFinite(currentRaw) ? Number(currentRaw) : 0;
+        if (workerIdx < current) return false;
+        context.state.numWorkers = workerIdx + 1;
+        return true;
+    }
+
+    /**
+     * Sources this module put on the board itself.
+     *
+     * Only these are ever taken away again. A card the reader added — including
+     * one they re-added after we retired it — is theirs, and outlives the run it
+     * shows. That is how a finished game stays watchable.
+     */
+    const autoCreatedSources = new Set<string>();
+
+    function findCardBySource(source: string): LiveCardState | null {
+        const cards = Array.isArray(context.state?.cards) ? context.state.cards : [];
+        for (const card of cards) {
+            if ((card as { source?: string } | null)?.source === source) return card as LiveCardState;
+        }
+        return null;
+    }
+
+    /**
+     * Give a run a board, unless it already has one.
+     *
+     * Best-effort by design: card creation refuses once `maxLiveBoards` boards
+     * are open, and the roster must not become hostage to a display limit —
+     * subscriptions come from assignments, so a run without a board still feeds
+     * its status panel.
+     */
+    function ensureCardForRun(workerIdx: number): void {
+        const source = `worker-latest:${workerIdx}`;
+        if (findCardBySource(source) !== null) return;
+        const created = context.cards?.createCardForSource?.(source, { autoSync: true });
+        if (created) autoCreatedSources.add(source);
+    }
+
+    /** Take back only an automatically created board whose run is no longer live. */
+    function retireCardForRun(workerIdx: number): void {
+        const source = `worker-latest:${workerIdx}`;
+        if (!autoCreatedSources.has(source)) return;
+        autoCreatedSources.delete(source);
+        const cardId = findCardBySource(source)?.id;
+        if (typeof cardId === 'number') context.cards?.deleteCard?.(cardId);
+    }
+
+    /** A card the reader closed stops being ours, so re-adding it is permanent. */
+    function forgetClosedAutoCards(): void {
+        for (const source of Array.from(autoCreatedSources)) {
+            if (findCardBySource(source) === null) autoCreatedSources.delete(source);
+        }
+    }
+
+    function ensureRosterFromCsaSummary(payload: unknown): boolean {
+        if (!usesDynamicWorkerRoster(context)) return false;
+        if (!payload || typeof payload !== 'object') return false;
+        const runs = (payload as { csa_runs?: unknown }).csa_runs;
+        if (!Array.isArray(runs)) return false;
+        // Keep the list for the status panel: a run with no game publishes no
+        // worker snapshot, so this is the only description of it that exists.
+        context.state.csaRuns = runs;
+        // Wall clock, not `getNow()`. `getNow` is `performance.now()`, which
+        // counts from page load; `last_event_ts` is epoch milliseconds from the
+        // producer. Comparing the two would read every run as decades silent.
+        const now = Date.now();
+        let grew = false;
+        for (const run of runs) {
+            if (!run || typeof run !== 'object') continue;
+            const record = run as Record<string, unknown>;
+            const workerIdx = record.worker_idx;
+            if (typeof workerIdx !== 'number') continue;
+            // Every run stays in the roster, the subscriptions and the monitoring
+            // tab. Only the ones observably alive get a board.
+            if (ensureWorkerRoster(workerIdx)) grew = true;
+            const facts = readLivenessFacts(record);
+            if (deservesLiveBoard(facts, now)) {
+                // Re-evaluated on every summary, so a run that comes back to life
+                // earns its board on the next record it writes.
+                ensureCardForRun(workerIdx);
+                const currentGameId = record.current_game_id;
+                if (typeof currentGameId !== 'string' || !currentGameId.trim()) {
+                    const card = findCardBySource(`worker-latest:${workerIdx}`);
+                    const refresh = card ? context.cards?.updateCardData?.(card) : null;
+                    if (refresh && typeof (refresh as Promise<unknown>).catch === 'function') {
+                        void (refresh as Promise<unknown>).catch((error) =>
+                            context.warnSoftFailure('Failed to show CSA waiting board', error),
+                        );
+                    }
+                }
+            } else {
+                retireCardForRun(workerIdx);
+            }
+        }
+        context.cards?.updateWorkerOptionLabels?.(null);
+        return grew;
+    }
+
     function buildSubscriptionTopics(activeWorkers: Set<number>): { topics: Set<string>; gids: Set<string> } {
         const topics = new Set(BASE_SUBSCRIPTIONS);
-        const gids = collectActiveGids(assignmentByWorker, activeWorkers);
+        // Cards cap out at `maxLiveBoards`, so deriving subscriptions from cards
+        // alone would silently stop streaming the 7th run onwards — the exact
+        // failure this profile was just fixed for, at a different threshold.
+        // Assignments are the roster's authority; subscribe from them.
+        const subscribableWorkers = usesDynamicWorkerRoster(context)
+            ? new Set<number>([...activeWorkers, ...assignmentByWorker.keys()])
+            : activeWorkers;
+        const gids = collectActiveGids(assignmentByWorker, subscribableWorkers);
         for (const topic of engineLogTopicCounts.keys()) {
             topics.add(topic);
         }
@@ -420,6 +600,13 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
     }
 
     function updateWorkerFilter(activeWorkers: Set<number>, reasonCode: number = SNAPSHOT_REASON_UNKNOWN): void {
+        if (usesDynamicWorkerRoster(context)) {
+            // Leave the connection unfiltered. Sending the current worker set is
+            // not merely redundant here, it is harmful: an empty list becomes an
+            // empty set server-side (not "no filter"), and any non-empty list
+            // would exclude workers discovered after this moment.
+            return;
+        }
         desiredWorkerFilterKey = buildWorkerFilterKey(activeWorkers);
         if (!socket || socket.readyState !== WebSocket.OPEN) {
             return;
@@ -854,6 +1041,7 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
                         const workerIdx = Number(workerIdxRaw);
                         if (!Number.isFinite(workerIdx)) continue;
                         const prev = assignmentByWorker.get(workerIdx) ?? null;
+                        ensureWorkerRoster(workerIdx);
                         if (prev === gid) continue;
                         assignmentByWorker.set(workerIdx, gid);
                     }
@@ -920,6 +1108,14 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
                     clearPendingTopic(pendingSnapshotTopics, topic);
                     if (payload.tournament_ended === true) {
                         terminalShutdownExpected = true;
+                    }
+                    // A bridge run that has not been paired yet owns no game, so
+                    // it produces no assignment to widen the roster with. The CSA
+                    // summary lists it regardless, and that waiting-for-pairing
+                    // stretch is most of a floodgate hour — so take the roster
+                    // from here too.
+                    if (ensureRosterFromCsaSummary(payload)) {
+                        updateSubscriptions(SNAPSHOT_REASON_WORKER);
                     }
                     onSummaryUpdate(payload);
                     const afterApply = getNow();
@@ -1292,6 +1488,7 @@ export function createWsSetup(context: LiveUpdatesContext, handlers: LiveUpdateH
             return;
         }
         const handler = () => {
+            forgetClosedAutoCards();
             const activeWorkers = collectActiveWorkers(context);
             updateWorkerFilter(activeWorkers, SNAPSHOT_REASON_CARD_SUBSCRIBE);
             updateSubscriptions(SNAPSHOT_REASON_CARD_SUBSCRIBE);

@@ -1,4 +1,5 @@
-import type { DashboardCore, DashboardRuntimeMode } from '@/types/dashboard';
+import { type DashboardRuntimeMode, isDashboardRuntimeMode } from '@/modules/shared/services/runtime-mode-catalog';
+import type { DashboardCore } from '@/types/dashboard';
 import type { DashboardTabId, DashboardTabsApi } from '@/types/globals';
 
 export const DASHBOARD_MODE_CHANGED_EVENT = 'runtime:mode-changed';
@@ -9,6 +10,16 @@ export interface DashboardModeConfig {
     readonly disableTournamentTabs: boolean;
     readonly disableGamesTab: boolean;
     readonly disableSpsaModule: boolean;
+    /**
+     * Does a progress bar mean anything in this mode?
+     *
+     * A bar asserts progress against a finite plan. A CSA session has none: it
+     * runs indefinitely and its denominator grows with every finished game, so
+     * the bar reads "6/9 games into a 9-game plan" when the truth is "one game
+     * running, six played". Kept as a config flag rather than a `mode === 'csa'`
+     * test at the call site, so the next mode is forced to answer it too.
+     */
+    readonly showProgressBar: boolean;
 }
 
 const MODE_CONFIG_MAP: Record<DashboardRuntimeMode, DashboardModeConfig> = {
@@ -18,6 +29,7 @@ const MODE_CONFIG_MAP: Record<DashboardRuntimeMode, DashboardModeConfig> = {
         disableTournamentTabs: false,
         disableGamesTab: false,
         disableSpsaModule: true,
+        showProgressBar: true,
     },
     match: {
         mode: 'match',
@@ -25,6 +37,7 @@ const MODE_CONFIG_MAP: Record<DashboardRuntimeMode, DashboardModeConfig> = {
         disableTournamentTabs: true,
         disableGamesTab: false,
         disableSpsaModule: true,
+        showProgressBar: true,
     },
     sprt: {
         mode: 'sprt',
@@ -32,6 +45,7 @@ const MODE_CONFIG_MAP: Record<DashboardRuntimeMode, DashboardModeConfig> = {
         disableTournamentTabs: true,
         disableGamesTab: false,
         disableSpsaModule: true,
+        showProgressBar: true,
     },
     spsa: {
         mode: 'spsa',
@@ -39,6 +53,7 @@ const MODE_CONFIG_MAP: Record<DashboardRuntimeMode, DashboardModeConfig> = {
         disableTournamentTabs: true,
         disableGamesTab: true,
         disableSpsaModule: false,
+        showProgressBar: true,
     },
     unknown: {
         mode: 'unknown',
@@ -46,6 +61,7 @@ const MODE_CONFIG_MAP: Record<DashboardRuntimeMode, DashboardModeConfig> = {
         disableTournamentTabs: false,
         disableGamesTab: false,
         disableSpsaModule: false,
+        showProgressBar: true,
     },
     generate: {
         mode: 'generate',
@@ -53,21 +69,31 @@ const MODE_CONFIG_MAP: Record<DashboardRuntimeMode, DashboardModeConfig> = {
         disableTournamentTabs: true,
         disableGamesTab: true,
         disableSpsaModule: true,
+        showProgressBar: true,
+    },
+    // CSA keeps the same game-history mental model as tournament modes while
+    // retaining a run-centric operational surface for bridge health.
+    csa: {
+        mode: 'csa',
+        visibleTabs: ['live', 'games', 'csa'],
+        disableTournamentTabs: true,
+        disableGamesTab: false,
+        disableSpsaModule: true,
+        showProgressBar: false,
     },
 };
 
-function normalizeRuntimeMode(value: unknown): DashboardRuntimeMode {
-    if (typeof value === 'string') {
-        const trimmed = value.trim().toLowerCase();
-        if (trimmed === 'spsa') return 'spsa';
-        if (trimmed === 'match') return 'match';
-        if (trimmed === 'sprt') return 'sprt';
-        if (trimmed === 'generate') return 'generate';
-        if (trimmed === 'tournament' || trimmed === 'gauntlet' || trimmed === 'roundrobin') {
-            return 'tournament';
-        }
-    }
-    return 'unknown';
+/** Tournament shapes the server may name instead of "tournament". */
+const TOURNAMENT_ALIASES = new Set(['gauntlet', 'roundrobin']);
+
+export function normalizeRuntimeMode(value: unknown): DashboardRuntimeMode {
+    if (typeof value !== 'string') return 'unknown';
+    const trimmed = value.trim().toLowerCase();
+    if (TOURNAMENT_ALIASES.has(trimmed)) return 'tournament';
+    // Every mode in the catalogue is accepted by construction, so a new one
+    // cannot be dropped here by omission. `unknown` now means only what it says:
+    // the input was not a mode we have.
+    return isDashboardRuntimeMode(trimmed) ? trimmed : 'unknown';
 }
 
 export function resolveRuntimeModeFromSummary(summary: unknown): DashboardRuntimeMode {
@@ -90,11 +116,9 @@ export function setDashboardMode(core: DashboardCore, mode: DashboardRuntimeMode
     }
     core.mutateState('runtimeMode', mode);
     core.events.emit<DashboardRuntimeMode>(DASHBOARD_MODE_CHANGED_EVENT, mode);
-    if (mode === 'spsa') {
-        core.mutateState('spsaMode', true);
-    } else if (mode === 'tournament' || mode === 'match' || mode === 'sprt') {
-        core.mutateState('spsaMode', false);
-    }
+    // SPSA mode is simply "is this SPSA". The allow-list this replaced left
+    // `spsaMode` at its previous value for any mode missing from it.
+    core.mutateState('spsaMode', mode === 'spsa');
 }
 
 export function getModeConfig(mode: DashboardRuntimeMode): DashboardModeConfig {
@@ -120,6 +144,10 @@ export function applyTabConfiguration(tabs: DashboardTabsApi | undefined, mode: 
         'instances',
         'games',
         'book',
+        // Every tab id must appear here. `setVisibility` is only called for the
+        // ids in this array, so one left out is never hidden by anybody — it
+        // would simply leak into whichever profile ships its markup.
+        'csa',
     ];
     for (const tabId of allTabs) {
         tabs.setVisibility(tabId, visible.has(tabId));

@@ -2,7 +2,8 @@ import type { LiveBoardAdapter, LiveCardId, LiveViewSnapshot, WorkerRuntimeState
 import type { NormalizedTournamentGame } from '@/modules/tournament/types';
 import type { RatingDeltaInfo } from './tournament';
 
-export type DashboardRuntimeMode = 'unknown' | 'tournament' | 'generate' | 'spsa' | 'match' | 'sprt';
+// Derived from the mode catalogue, not written twice. See that module for why.
+export type { DashboardRuntimeMode } from '@/modules/shared/services/runtime-mode-catalog';
 
 export type DashboardNoticeVariant = 'info' | 'success' | 'warn' | 'error';
 
@@ -40,6 +41,15 @@ export interface DashboardCoreState {
     boardAdapters: Map<LiveCardId, LiveBoardAdapter>;
     workerSnapshots: Map<number, WorkerSnapshot>;
     numWorkers: number;
+    /**
+     * Latest `csa_runs` from the CSA summary. CSA profile only.
+     *
+     * A bridge run that has not been paired yet owns no game, so it publishes no
+     * worker snapshot and the status panel would have nothing to read for the
+     * stretch that makes up most of a floodgate hour. The summary lists such a
+     * run regardless, so the panel falls back to this.
+     */
+    csaRuns?: unknown[];
     maxLiveBoards: number;
     nextCardId: number;
     gameDataCache: Map<string, unknown>;

@@ -61,7 +61,19 @@ class SummaryGamesMediator:
         now_ms = time.time() * 1000
         last_sent = self._last_summary_publish_at.get(source)
         is_terminal = payload.get("tournament_ended") is True
-        if not is_terminal and last_sent is not None and now_ms - last_sent < MIN_SUMMARY_PUBLISH_INTERVAL_MS:
+        # CSA summaries are emitted only when the event log changes. Dropping a
+        # sub-second transition here can strand the browser in the previous
+        # game until another record happens to arrive; notably, ``playing ->
+        # idle`` then leaves a finished board visible throughout the pairing
+        # wait. Tournament/SPSA summaries are periodic and retain their existing
+        # rate limit, while every observed CSA lifecycle boundary is delivered.
+        is_csa_lifecycle = source == "csa"
+        if (
+            not is_terminal
+            and not is_csa_lifecycle
+            and last_sent is not None
+            and now_ms - last_sent < MIN_SUMMARY_PUBLISH_INTERVAL_MS
+        ):
             return
         self._publish(f"live.summary.snapshot.{source}", to_json_object(sanitised))
         self._last_summary_publish_at[source] = now_ms

@@ -1,16 +1,9 @@
-import type { DashboardCore, DashboardCoreState } from '@/types/dashboard';
-import type { LiveCardState } from '@/modules/live/types';
-import { createClocksController } from './clocks';
-import { createCardEventHandlers } from './events';
-import type { WorkerSnapshotRecord } from './types';
-import { recordLiveDiagnosticsMetric } from '@/modules/live/utils/liveNamespace/metrics';
-import { getWorkerState, peekWorkerSnapshotRecord, setWorkerState } from '@/modules/live/state/updates';
-import type { WorkerViewModelMessage } from '@/modules/live/services/updates/worker-bridge';
 import { mergeWorkerSnapshotMutable } from '@/modules/live/services/updates/worker/snapshot-merge';
+import type { WorkerViewModelMessage } from '@/modules/live/services/updates/worker-bridge';
+import { getWorkerState, peekWorkerSnapshotRecord, setWorkerState } from '@/modules/live/state/updates';
+import type { LiveCardState, WorkerRuntimeState } from '@/modules/live/types';
 import type { WorkerSnapshotUpdate } from '@/modules/live/types/updates';
-import { debugCheckWorkerSnapshotLegality } from '@/modules/live/utils/debug/legal-move-check';
 import { createEmptyWorkerSnapshot } from '@/modules/live/utils';
-import { asEngineStatusSnapshot, shouldRunEngineClock } from '@/modules/live/utils/engine-status';
 import {
     maybeApplyImmediateClockStart,
     queueClockCorrections,
@@ -18,6 +11,14 @@ import {
     syncClockToTurnBoundary,
     updateTimeControlState,
 } from '@/modules/live/utils/clock-sync';
+import { debugCheckWorkerSnapshotLegality } from '@/modules/live/utils/debug/legal-move-check';
+import { asEngineStatusSnapshot, shouldRunEngineClock } from '@/modules/live/utils/engine-status';
+import { recordLiveDiagnosticsMetric } from '@/modules/live/utils/liveNamespace/metrics';
+import type { DashboardCore, DashboardCoreState } from '@/types/dashboard';
+import { createClocksController } from './clocks';
+import { createCardEventHandlers } from './events';
+import type { WorkerSnapshotRecord } from './types';
+import { clearCsaWaitingCardSync } from './worker-snapshots';
 
 // Unified sync design: clock-only and analysis-only delta detection removed.
 // All updates now follow the same refresh path for consistent sync timing.
@@ -141,7 +142,9 @@ function pickClockField(
     return undefined;
 }
 
-function extractClockPayloadFromSnapshot(snapshotRecord: Record<string, unknown>): Record<string, unknown> | null {
+export function extractClockPayloadFromSnapshot(
+    snapshotRecord: Record<string, unknown>,
+): Record<string, unknown> | null {
     const nestedClock = toClockPayload(snapshotRecord.clock);
     const payload: Record<string, unknown> = {};
 
@@ -150,10 +153,10 @@ function extractClockPayloadFromSnapshot(snapshotRecord: Record<string, unknown>
         if (value !== undefined) payload[target] = value;
     };
 
-    assign('active', ['active', '_clock_active']);
+    assign('active', ['active', 'clock_active', '_clock_active']);
     assign('black_remain_ms', ['black_remain_ms', '_black_remain_ms']);
     assign('white_remain_ms', ['white_remain_ms', '_white_remain_ms']);
-    assign('started_at_ms', ['started_at_ms', '_clock_started_at_ms']);
+    assign('started_at_ms', ['started_at_ms', 'clock_started_at_ms', '_clock_started_at_ms']);
     assign('occurred_at_ms', ['occurred_at_ms']);
     assign('byoyomi_ms_black', ['byoyomi_ms_black']);
     assign('byoyomi_ms_white', ['byoyomi_ms_white']);
@@ -161,6 +164,13 @@ function extractClockPayloadFromSnapshot(snapshotRecord: Record<string, unknown>
     assign('time_control_white', ['time_control_white']);
 
     return Object.keys(payload).length > 0 ? payload : null;
+}
+
+export function shouldTickWorkerClock(ws: WorkerRuntimeState, snapshot: WorkerSnapshotRecord): boolean {
+    if (snapshot.game_result) return false;
+    if (ws.engineStatus) return shouldRunEngineClock(ws.engineStatus);
+    const active = ws.clockActive;
+    return (active === 'black' || active === 'white') && Number(ws.startedAtMs ?? 0) > 0;
 }
 
 function toFiniteNumber(value: unknown): number | null {
@@ -384,7 +394,7 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
 
     const canRunWorkerClock = (workerIdx: number): boolean => {
         const ws = getWorkerState(state, workerIdx);
-        return Boolean(ws.engineStatus) && shouldRunEngineClock(ws.engineStatus);
+        return shouldTickWorkerClock(ws, getWorkerSnapshot(workerIdx).data);
     };
 
     const scheduleFrame = (): void => {
@@ -1157,6 +1167,10 @@ export function createLiveCardsEventsController(deps: LiveCardsEventsControllerD
         for (const cardState of getCards()) {
             if (cardState?.source?.startsWith('worker-latest:')) {
                 (cardState as unknown as { _deferBoardMovesUntil?: number })._deferBoardMovesUntil = deferBoardUntil;
+                const workerIdx = Number(cardState.source.slice('worker-latest:'.length));
+                if (Number.isFinite(workerIdx) && clearCsaWaitingCardSync(state, workerIdx, cardState)) {
+                    continue;
+                }
                 // Mark as syncing to show overlay; cleared when snapshot arrives.
                 cardState.isSyncing = true;
                 cardState.syncingStartedAt = Date.now();

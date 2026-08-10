@@ -57,6 +57,23 @@ describe('clockSync', () => {
         expect(ws.clockActive).toBe('black');
     });
 
+    it('uses started_at_ms as the anchor for an authoritative snapshot', () => {
+        const ws: WorkerRuntimeState = {};
+        const payload = {
+            active: 'white',
+            black_remain_ms: 111_000,
+            white_remain_ms: 222_000,
+            started_at_ms: 123_456,
+        };
+
+        queueClockCorrections(ws, payload, 'snapshot', 999_999);
+        maybeApplyImmediateClockStart(ws, payload, 999_999);
+
+        expect(ws.clockActive).toBe('white');
+        expect(ws.whiteRemainMs).toBe(222_000);
+        expect(ws.startedAtMs).toBe(123_456);
+    });
+
     it('ignores legacy camelCase clock fields (snake_case wire contract only)', () => {
         const ws: WorkerRuntimeState = {};
         queueClockCorrections(

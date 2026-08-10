@@ -1,4 +1,5 @@
 import { renderHeaderProgress } from '@/modules/shared/components/progress';
+import { getDashboardMode, getModeConfig } from '@/modules/shared/services/runtime-mode';
 import { getLiveViewSnapshotStore } from '@/modules/shared/stores/live-view-snapshot';
 import type { DashboardCore } from '@/types/dashboard';
 
@@ -20,6 +21,17 @@ export function installHeaderProgress(owner: HeaderProgressWindow = defaultWindo
     const store = getLiveViewSnapshotStore(core);
 
     const renderSnapshot = (snapshot: { progress?: { [key: string]: unknown } | null } | null): void => {
+        // A mode with no finite plan hides the bar rather than draw a
+        // denominator that grows every time a game ends. The payload still
+        // carries the numbers — the page's summary guard requires the block — so
+        // this is purely a display decision, taken once in the mode config.
+        if (!getModeConfig(getDashboardMode(core)).showProgressBar) {
+            for (const id of ['progressBar', 'progressText', 'progressFill']) {
+                const el = doc.getElementById(id);
+                if (el) el.hidden = true;
+            }
+            return;
+        }
         const progress = snapshot?.progress ?? null;
         if (!progress || typeof progress !== 'object') {
             renderHeaderProgress(doc, {

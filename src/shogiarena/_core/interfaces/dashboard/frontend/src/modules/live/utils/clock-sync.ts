@@ -1,7 +1,7 @@
-import { DEFAULT_INITIAL_SFEN } from '@/modules/live/utils';
-import type { WorkerRuntimeState } from '@/modules/live/types';
 import { parseTimeControlSpec } from '@/modules/live/services/time/parse';
+import type { WorkerRuntimeState } from '@/modules/live/types';
 import type { ParsedTimeControlSpec } from '@/modules/live/types/time';
+import { DEFAULT_INITIAL_SFEN } from '@/modules/live/utils';
 
 export type ClockSide = 'black' | 'white';
 
@@ -71,7 +71,7 @@ export function queueClockCorrections(
     const whiteTc = coerceString(readField(payload, 'time_control_white'));
     const startedAtMs = coerceNumber(readField(payload, 'started_at_ms'));
     const occurredAtMs = coerceNumber(readField(payload, 'occurred_at_ms'));
-    const clockAtMs = source === 'clock_start' ? startedAtMs : occurredAtMs;
+    const clockAtMs = source === 'clock_start' ? startedAtMs : (occurredAtMs ?? startedAtMs);
 
     if (blackRemain !== undefined || blackByoyomi !== undefined || blackTc !== undefined) {
         const existing = ws.pendingClockBySide.black;

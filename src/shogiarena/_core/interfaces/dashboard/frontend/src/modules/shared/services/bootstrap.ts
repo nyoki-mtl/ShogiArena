@@ -6,7 +6,7 @@ import type { JsonObject } from '@/types/shared';
 import type { DashboardFeatureOverrides, DashboardInitialData } from '@/bootstrap';
 import type { DashboardRuntimeMode } from '@/types/dashboard';
 
-type DashboardProfile = 'tournament' | 'spsa' | 'match' | 'sprt' | 'generate';
+type DashboardProfile = 'tournament' | 'spsa' | 'match' | 'sprt' | 'generate' | 'csa';
 
 const PROFILE_RUNTIME_MODE: Record<DashboardProfile, DashboardRuntimeMode> = {
     tournament: 'tournament',
@@ -14,6 +14,7 @@ const PROFILE_RUNTIME_MODE: Record<DashboardProfile, DashboardRuntimeMode> = {
     match: 'match',
     sprt: 'sprt',
     generate: 'generate',
+    csa: 'csa',
 };
 
 const PROFILE_FEATURE_OVERRIDES: Record<DashboardProfile, DashboardFeatureOverrides> = {
@@ -72,6 +73,25 @@ const PROFILE_FEATURE_OVERRIDES: Record<DashboardProfile, DashboardFeatureOverri
             bootstrap: false,
         },
     },
+    // CSA reuses the standard Games surface for the complete JSONL-backed history.
+    csa: {
+        spsa: false,
+        match: false,
+        sprt: false,
+        instances: false,
+        engines: false,
+        book: false,
+        generate: false,
+        games: true,
+        tournament: {
+            state: false,
+            data: false,
+            matchups: false,
+            openings: false,
+            standings: false,
+            bootstrap: false,
+        },
+    },
 };
 
 export interface DashboardProfileConfiguration {
@@ -87,6 +107,7 @@ function resolveDashboardProfile(documentRef: Document | null | undefined): Dash
     if (normalized === 'match') return 'match';
     if (normalized === 'sprt') return 'sprt';
     if (normalized === 'generate') return 'generate';
+    if (normalized === 'csa') return 'csa';
     return 'tournament';
 }
 
@@ -125,6 +146,7 @@ function resolveSummaryEndpoint(runtimeMode: string | null | undefined): string 
     if (normalized === 'sprt') return '/api/sprt/summary';
     if (normalized === 'match') return '/api/match/summary';
     if (normalized === 'generate') return '/api/summary?source=generate';
+    if (normalized === 'csa') return '/api/csa/summary';
     return '/api/summary';
 }
 

@@ -71,6 +71,9 @@ agent-docs/reports/
 
 # 参照用に置く第三者リポジトリ。公開スナップショットへ混入させない。
 _refs/
+
+# ローカル実行時の生成物
 shogiarena_output/
+csa-session/
 site/
 examples/.runtime/

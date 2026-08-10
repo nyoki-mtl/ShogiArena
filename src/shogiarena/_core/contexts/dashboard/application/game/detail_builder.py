@@ -76,7 +76,7 @@ def _compute_eval_arrays(
 def build_game_detail_payload(*, record: Any, game_id: str, logger: logging.Logger) -> JsonObject:
     """Build a normalized game detail payload from a shogidb record."""
     metadata = record.metadata
-    game_id_value = record.game_name or game_id
+    game_id_value = metadata.attributes.get("csa_server_game_id") or record.game_name or game_id
     black_player = metadata.black_player or ""
     white_player = metadata.white_player or ""
     black_tc = record.black_time_control

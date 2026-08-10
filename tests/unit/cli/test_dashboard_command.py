@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -79,7 +80,6 @@ async def test_dashboard_serve_requests_read_only_server(
             archive_database_resolver=resolve_archive_databases, api_server_factory=_fake_api_server_factory
         ),
     )
-
     with pytest.raises(RuntimeError, match="stop after server construction"):
         await dashboard_command._serve_dashboard(argparse.Namespace(run_dir=str(run_dir), config=None, port=8080))
 
@@ -87,6 +87,60 @@ async def test_dashboard_serve_requests_read_only_server(
     assert observed["read_only"] is True
     assert observed["dashboard_num_workers"] == 1
     assert observed["dashboard_profiles"] == ("tournament",)
+
+
+@pytest.mark.asyncio
+async def test_dashboard_serve_accepts_csa_archive_without_worker_snapshots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = tmp_path / "csa-run"
+    run_dir.mkdir()
+    (run_dir / "game.db").write_text("", encoding="utf-8")
+    dashboard_dir = run_dir / "dashboard"
+    dashboard_dir.mkdir()
+    (dashboard_dir / ".dashboard_profiles.json").write_text('{"profiles":["csa"]}', encoding="utf-8")
+    observed: dict[str, object] = {}
+
+    class _StopServer:
+        app = object()
+
+        async def start(self) -> None:
+            raise RuntimeError("stop after server construction")
+
+        async def stop(self) -> None:
+            return
+
+    def _fake_api_server_factory(*_args: object, **kwargs: object) -> _StopServer:
+        observed.update(kwargs)
+        return _StopServer()
+
+    class _FakeCsaAPI:
+        def __init__(self, *, views_supplier: Callable[[], tuple[object, ...]], run_dir: str) -> None:
+            observed["archive_views"] = views_supplier()
+            observed["csa_run_dir"] = run_dir
+
+        def register_routes(self, app: object) -> None:
+            observed["csa_app"] = app
+
+    monkeypatch.setattr(
+        dashboard_command,
+        "build_default_root",
+        lambda: SimpleNamespace(
+            archive_database_resolver=resolve_archive_databases, api_server_factory=_fake_api_server_factory
+        ),
+    )
+    monkeypatch.setattr(dashboard_command, "ArenaAPIServer", _StopServer)
+    monkeypatch.setattr(dashboard_command, "CsaAPI", _FakeCsaAPI)
+
+    with pytest.raises(RuntimeError, match="stop after server construction"):
+        await dashboard_command._serve_dashboard(argparse.Namespace(run_dir=str(run_dir), config=None, port=8080))
+
+    assert observed["dashboard_num_workers"] == 0
+    assert observed["dashboard_profiles"] == ("csa",)
+    assert observed["archive_views"] == ()
+    assert observed["csa_run_dir"] == str(run_dir.resolve())
+    assert observed["csa_app"] is _StopServer.app
 
 
 @pytest.mark.asyncio

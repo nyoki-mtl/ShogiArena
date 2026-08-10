@@ -17,6 +17,7 @@
 - [トーナメント](user-guide/tournaments.md)
 - [SPRT / SPSA](user-guide/spsa.md)
 - [ダッシュボード](user-guide/dashboard.md)
+- [CSA 対局の観戦](user-guide/csa-watch.md)
 - [エンジン設定](user-guide/engine-configuration.md)
 - [設定システム](user-guide/configuration.md)
 - [Python ライブラリ](user-guide/python-library.md)

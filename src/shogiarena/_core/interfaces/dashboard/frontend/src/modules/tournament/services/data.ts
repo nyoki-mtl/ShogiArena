@@ -1,3 +1,4 @@
+import { hasGameCountedProgress } from '@/modules/live/services/updates/normalizers/live-view';
 import { requestJson } from '@/modules/shared/services/api';
 import { crash, reportDashboardRecoverableFailure } from '@/modules/shared/utils/errors';
 import { getLiveViewSnapshotStore } from '@/modules/shared';
@@ -286,10 +287,7 @@ export function installTournamentData(owner: TournamentWindow = defaultWindow): 
     function updateSummaryStats(): void {
         const normalized = requireNormalizedSummary();
         const liveView = resolveLiveViewSnapshot();
-        const liveProgress =
-            liveView?.progress && (liveView.mode === 'tournament' || liveView.progress?.kind === 'games')
-                ? liveView.progress
-                : null;
+        const liveProgress = hasGameCountedProgress(liveView) ? (liveView?.progress ?? null) : null;
         const isFinal =
             typeof liveProgress?.is_final === 'boolean' ? liveProgress.is_final : normalized.tournamentFinished;
         const sprtConclusion = normalized.sprt?.decision ?? normalized.sprtConclusion ?? null;

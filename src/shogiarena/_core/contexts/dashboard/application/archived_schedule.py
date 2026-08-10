@@ -29,12 +29,15 @@ def build_archived_schedule_snapshot(
     *,
     db_path: Path,
     game_query: DashboardGameQueryPort,
+    allow_db_only: bool = False,
 ) -> JsonObject | None:
     """Build the read-only schedule view from sealed run artifacts and game DB rows."""
 
     schedule_payload = _load_object(run_dir / "schedule.json")
     raw_games = schedule_payload.get("games")
     if not isinstance(raw_games, list):
+        if allow_db_only:
+            return _build_db_only_schedule(db_path, game_query=game_query)
         return None
 
     state = _load_object(run_dir / "state.json")
@@ -111,6 +114,63 @@ def build_archived_schedule_snapshot(
         "cancelled_games": cancelled_count,
         "is_running": False,
         "session_state": "finished" if pending_count == 0 else "archived",
+        "schedule": rows,
+    }
+
+
+def _build_db_only_schedule(db_path: Path, *, game_query: DashboardGameQueryPort) -> JsonObject:
+    first_page = game_query.build_games_raw_payload(db_path, limit=1, offset=0, search_query=None)
+    total_raw = first_page.get("total")
+    total = total_raw if isinstance(total_raw, int) and total_raw >= 0 else 0
+    completed_payload = (
+        game_query.build_games_raw_payload(db_path, limit=total, offset=0, search_query=None)
+        if total > 1
+        else first_page
+    )
+    completed_rows = completed_payload.get("games")
+    rows: list[JsonObject] = []
+    if isinstance(completed_rows, list):
+        for completed_row in completed_rows:
+            if not is_str_object_mapping(completed_row):
+                continue
+            completed = to_json_object(completed_row)
+            game_id = completed.get("game_id")
+            if not isinstance(game_id, str) or not game_id:
+                continue
+            row: JsonObject = {"game_id": game_id, "status": "completed"}
+            for source, target in (
+                ("server_game_id", "server_game_id"),
+                ("black_player", "black"),
+                ("white_player", "white"),
+                ("game_result", "game_result"),
+                ("total_plies", "total_plies"),
+                ("start_time", "start_time"),
+                ("end_time", "end_time"),
+                ("initial_sfen", "initial_sfen"),
+            ):
+                value = completed.get(source)
+                if value is not None:
+                    row[target] = value
+            rows.append(row)
+
+    rows.sort(
+        key=lambda row: (str(row.get("start_time") or ""), str(row["game_id"])),
+        reverse=True,
+    )
+    for index, row in enumerate(rows):
+        row["order"] = index
+
+    completed_count = len(rows)
+    return {
+        "revision": 0,
+        "total_games": completed_count,
+        "original_total_games": completed_count,
+        "completed_games": completed_count,
+        "running_games": 0,
+        "pending_games": 0,
+        "cancelled_games": 0,
+        "is_running": False,
+        "session_state": "finished",
         "schedule": rows,
     }
 

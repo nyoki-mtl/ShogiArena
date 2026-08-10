@@ -1,11 +1,9 @@
-import type { LiveCardId, LiveCardState } from '@/modules/live/types';
-import type { LiveBoardAdapter } from '@/modules/live/types';
-import type { DashboardTabId, DashboardTabsApi } from '@/types/globals';
-import type { LiveGameNavigationOptions } from '@/types/globals';
-import type { LiveDashboardNamespace } from '@/types/live';
+import type { LiveBoardAdapter, LiveCardId, LiveCardState } from '@/modules/live/types';
 import { hasTerminalResult } from '@/modules/live/utils';
-import type { WorkerSnapshotRecord } from './types';
+import type { DashboardTabId, DashboardTabsApi, LiveGameNavigationOptions } from '@/types/globals';
+import type { LiveDashboardNamespace } from '@/types/live';
 import type { GameMeta } from './metadata';
+import type { WorkerSnapshotRecord } from './types';
 
 type FocusLiveTabOptions = LiveGameNavigationOptions;
 
@@ -142,8 +140,15 @@ export function createCardsNavigation(deps: CardsNavigationDeps): CardsNavigatio
             }
         }
 
+        const gameData = await getGameData(gid);
+        const csaMeta =
+            gameData.meta && typeof gameData.meta === 'object' ? (gameData.meta as { csa?: unknown }).csa : null;
+        const serverGameIdRaw =
+            csaMeta && typeof csaMeta === 'object' ? (csaMeta as { server_game_id?: unknown }).server_game_id : null;
+        const serverGameId = typeof serverGameIdRaw === 'string' ? serverGameIdRaw.trim() : '';
+        const detailGameId = typeof gameData.game_id === 'string' ? gameData.game_id.trim() : '';
         const select = document.getElementById(`source-${card.id}`) as HTMLSelectElement | null;
-        ensureSelectOption(select, source, gid || '-');
+        ensureSelectOption(select, source, serverGameId || detailGameId || gid || '-');
         if (select) select.value = source;
 
         if (card.source !== source) {
@@ -166,7 +171,7 @@ export function createCardsNavigation(deps: CardsNavigationDeps): CardsNavigatio
 
         const workerIdx = findWorkerIndexByGameId(gid);
         if (getCards().length === 0) {
-            if (workerIdx != null) {
+            if (workerIdx != null && options.preferArchived !== true) {
                 const workerSource = `worker-latest:${workerIdx}`;
                 const workerCard = createCardForSource(workerSource, { autoSync: true });
                 if (!workerCard) {
@@ -182,7 +187,9 @@ export function createCardsNavigation(deps: CardsNavigationDeps): CardsNavigatio
 
         let cardToFocus: LiveCardState | null = null;
 
-        if (workerIdx != null) {
+        if (options.preferArchived === true) {
+            cardToFocus = await ensureArchivedGameCard(gid, { forceNew: options.forceNewArchived === true });
+        } else if (workerIdx != null) {
             const workerSource = `worker-latest:${workerIdx}`;
             let workerCard = findCardBySource(workerSource) || null;
             if (!workerCard) {

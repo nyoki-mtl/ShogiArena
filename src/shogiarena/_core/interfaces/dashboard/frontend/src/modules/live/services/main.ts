@@ -1,3 +1,4 @@
+import { isDashboardRuntimeMode } from '@/modules/shared/services/runtime-mode-catalog';
 import { installLiveDiagnosticsPanel } from '@/modules/live/services/diagnostics-panel';
 import {
     ensureLiveNamespace,
@@ -126,12 +127,10 @@ export function initializeLiveMain(owner: LiveMainWindow = defaultWindow): void 
     }
 
     function applyRuntimeMode(mode: DashboardRuntimeMode): void {
-        const normalizedMode: DashboardRuntimeMode =
-            mode === 'spsa'
-                ? 'spsa'
-                : mode === 'tournament' || mode === 'match' || mode === 'sprt' || mode === 'generate'
-                  ? mode
-                  : 'unknown';
+        // Every mode in the catalogue keeps its own identity; only a value that
+        // is not a mode at all becomes `unknown`. Written as an allow-list, this
+        // line silently rebranded `csa` and cost an afternoon.
+        const normalizedMode: DashboardRuntimeMode = isDashboardRuntimeMode(mode) ? mode : 'unknown';
         owner.ARENA_RUNTIME_MODE = normalizedMode;
         state.spsaMode = normalizedMode === 'spsa';
         const config = getModeConfig(normalizedMode);
@@ -175,13 +174,12 @@ export function initializeLiveMain(owner: LiveMainWindow = defaultWindow): void 
 
     async function initializeDashboardMode(): Promise<void> {
         if (!spsaFeatureAvailable || owner.ARENA_DISABLE_SPSA) {
+            // With SPSA off, a mode keeps its own identity; only an unrecognised
+            // one falls back to tournament. Written as an allow-list of the
+            // modes that keep their identity, this rebranded the CSA page as a
+            // tournament and gave it another profile's tabs.
             const current = getCurrentRuntimeMode();
-            if (current === 'match' || current === 'sprt' || current === 'generate') {
-                applyRuntimeMode(current);
-                summaryApi.updateSummaryStats();
-                return;
-            }
-            applyRuntimeMode('tournament');
+            applyRuntimeMode(current === 'unknown' ? 'tournament' : current);
             summaryApi.updateSummaryStats();
             return;
         }
@@ -192,13 +190,12 @@ export function initializeLiveMain(owner: LiveMainWindow = defaultWindow): void 
             await enableSpsaUI();
             return;
         }
-        if (startingMode === 'match' || startingMode === 'sprt') {
+        // A mode that names itself is taken at its word. Only an unrecognised
+        // one is worth asking the SPSA endpoint about — listing the modes that
+        // are "already known" instead means the next mode added falls through
+        // into an SPSA probe that has nothing to do with it.
+        if (startingMode !== 'unknown') {
             applyRuntimeMode(startingMode);
-            summaryApi.updateSummaryStats();
-            return;
-        }
-        if (startingMode === 'tournament') {
-            applyRuntimeMode('tournament');
             summaryApi.updateSummaryStats();
             return;
         }

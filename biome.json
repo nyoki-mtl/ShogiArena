@@ -6,7 +6,11 @@
 		"useIgnoreFile": false
 	},
 	"files": {
-		"includes": ["**", "!!src/shogiarena/_core/interfaces/dashboard/static/dist/**"],
+		"includes": [
+			"**",
+			"!!src/shogiarena/_core/interfaces/dashboard/static/dist/**",
+			"!!src/shogiarena/_core/interfaces/dashboard/frontend/src/modules/csa/__tests__/fixtures/**"
+		],
 		"ignoreUnknown": false
 	},
 	"formatter": {

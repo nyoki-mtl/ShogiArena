@@ -1,0 +1,150 @@
+{
+  "is_summary_ready": true,
+  "summary_source": "csa",
+  "mode": "csa",
+  "tournament_type": "csa",
+  "flip_policy": null,
+  "num_engines": 0,
+  "run_dir": "/tmp/csa-run",
+  "leaderboard": [],
+  "rating_initial": null,
+  "engines": [],
+  "engines_meta": [],
+  "engine_time_controls": {},
+  "default_time_control": null,
+  "engine_instances": {},
+  "engine_stats": {},
+  "pair_results": {},
+  "timestamp": "2026-08-05T00:00:00+00:00",
+  "games": {
+    "completed": 2,
+    "total": 2,
+    "cancelled": 0
+  },
+  "csa_runs": [
+    {
+      "run_id": "1800000000",
+      "worker_idx": 0,
+      "stream_generation": 0,
+      "current_game_id": null,
+      "persistence": null,
+      "phase": "closing",
+      "wins": 1,
+      "losses": 1,
+      "draws": 0,
+      "games": 2,
+      "alerts": 3,
+      "bridge_version": "0.1.0",
+      "engine_name": "Fixture Engine",
+      "engine_author": "Fixture Author",
+      "engine_options": [
+        {
+          "name": "Threads",
+          "value": "4"
+        },
+        {
+          "name": "USI_Hash",
+          "value": "1024"
+        }
+      ],
+      "phase_since_ts": 1800000114200,
+      "stopped": true,
+      "emits_liveness": true,
+      "last_event_ts": 1800000114200,
+      "alert_entries": [
+        {
+          "seq": 15,
+          "level": "error",
+          "code": "suspect_resign",
+          "detail": "resign from a position the engine did not report as lost",
+          "ts": 1800000104000,
+          "game_id": "test+floodgate-300-10F+us+them+20260807120000"
+        },
+        {
+          "seq": 26,
+          "level": "warn",
+          "code": "unreadable_engine_line",
+          "detail": "still not usi",
+          "ts": 1800000111500,
+          "game_id": "test+floodgate-300-10F+them2+us+20260807123000"
+        },
+        {
+          "seq": 5,
+          "level": "warn",
+          "code": "unreadable_engine_line",
+          "detail": "not a usi command",
+          "ts": 1800000000025,
+          "game_id": null
+        }
+      ],
+      "game_entries": [
+        {
+          "game_id": "test+floodgate-300-10F+us+them+20260807120000",
+          "result": "lose",
+          "game_result": "WHITE_WIN",
+          "current_ply": 2,
+          "black_name": "us",
+          "white_name": "them",
+          "my_color": "black",
+          "terminal": [
+            "%TORYO",
+            "#RESIGN",
+            "#LOSE"
+          ],
+          "started_ts": 1800000100023,
+          "ended_ts": 1800000104300,
+          "persistence": {
+            "state": "pending",
+            "attempts": 0,
+            "detail": null
+          }
+        },
+        {
+          "game_id": "test+floodgate-300-10F+them2+us+20260807123000",
+          "result": "win",
+          "game_result": "WHITE_WIN",
+          "current_ply": 2,
+          "black_name": "them2",
+          "white_name": "us",
+          "my_color": "white",
+          "terminal": [
+            "%TORYO",
+            "#RESIGN",
+            "#WIN"
+          ],
+          "started_ts": 1800000110023,
+          "ended_ts": 1800000114200,
+          "persistence": {
+            "state": "pending",
+            "attempts": 0,
+            "detail": null
+          }
+        }
+      ],
+      "log_health": {
+        "missing_seq": 0,
+        "malformed": 0,
+        "invalid_lines": 0,
+        "orphan_records": 0,
+        "ply_gaps": 0,
+        "unknown_types": {},
+        "has_partial_line": false,
+        "restarts": 0
+      }
+    }
+  ],
+  "live_view": {
+    "version": 1,
+    "mode": "csa",
+    "progress": {
+      "kind": "games",
+      "unit_label": "games",
+      "completed": 2,
+      "total": 2,
+      "cancelled": 0,
+      "is_final": false,
+      "state": "normal",
+      "updated_at": "2026-08-05T00:00:00+00:00"
+    }
+  }
+}

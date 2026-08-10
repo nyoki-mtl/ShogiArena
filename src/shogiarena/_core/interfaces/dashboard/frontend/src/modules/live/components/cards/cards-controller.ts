@@ -84,7 +84,7 @@ export function createCardsController(deps: CardsControllerDeps): CardsControlle
             id: state.nextCardId++,
             source,
             autoSync: typeof options.autoSync === 'boolean' ? options.autoSync : autoSyncDefault,
-            viewPly: 0,
+            ...(source.startsWith('db-game:') ? {} : { viewPly: 0 }),
         };
         pushCard(state, cardState);
 

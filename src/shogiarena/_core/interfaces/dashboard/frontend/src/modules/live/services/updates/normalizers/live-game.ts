@@ -35,8 +35,10 @@ export function normalizeLiveGameRecord(raw: LiveGameRecord, context = 'game_rec
         normalizeNumberArray(payload.engine_wall_times_ms, `${context}.engine_wall_times_ms`) ?? [];
     const latencyDeltasMs = normalizeNumberArray(payload.latency_deltas_ms, `${context}.latency_deltas_ms`) ?? [];
 
-    const blackName = normalizeOptionalString(payload.black_name, `${context}.black_name`) ?? null;
-    const whiteName = normalizeOptionalString(payload.white_name, `${context}.white_name`) ?? null;
+    const blackName =
+        normalizeOptionalString(payload.black_name ?? payload.black_player, `${context}.black_name`) ?? null;
+    const whiteName =
+        normalizeOptionalString(payload.white_name ?? payload.white_player, `${context}.white_name`) ?? null;
 
     const timeControlBlack =
         normalizeOptionalString(payload.time_control_black, `${context}.time_control_black`) ?? null;

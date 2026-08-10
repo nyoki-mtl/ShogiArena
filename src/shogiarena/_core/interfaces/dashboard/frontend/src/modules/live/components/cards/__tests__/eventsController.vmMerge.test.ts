@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { __testMergeWorkerVmMessage } from '@/modules/live/components/cards/events-controller';
+import {
+    __testMergeWorkerVmMessage,
+    extractClockPayloadFromSnapshot,
+    shouldTickWorkerClock,
+} from '@/modules/live/components/cards/events-controller';
+import type { WorkerSnapshotRecord } from '@/modules/live/components/cards/types';
 import type { WorkerViewModelMessage } from '@/modules/live/services/updates/worker-bridge';
 
 function vm(overrides: Partial<WorkerViewModelMessage>): WorkerViewModelMessage {
@@ -17,6 +22,33 @@ function vm(overrides: Partial<WorkerViewModelMessage>): WorkerViewModelMessage 
 }
 
 describe('eventsController vm merge helper', () => {
+    it('reads the canonical clock fields from a worker snapshot', () => {
+        expect(
+            extractClockPayloadFromSnapshot({
+                clock: {
+                    active: 'white',
+                    started_at_ms: 123_456,
+                    black_remain_ms: 111_000,
+                    white_remain_ms: 222_000,
+                },
+            }),
+        ).toMatchObject({
+            active: 'white',
+            started_at_ms: 123_456,
+            black_remain_ms: 111_000,
+            white_remain_ms: 222_000,
+        });
+    });
+
+    it('ticks an authoritative clock without engine status and stops at a result', () => {
+        const state = { clockActive: 'black' as const, startedAtMs: 123_456 };
+        const live = { game_result: null } as unknown as WorkerSnapshotRecord;
+        const finished = { game_result: 'BLACK_WIN' } as unknown as WorkerSnapshotRecord;
+
+        expect(shouldTickWorkerClock(state, live)).toBe(true);
+        expect(shouldTickWorkerClock(state, finished)).toBe(false);
+    });
+
     it('clears old snapshot state when gid changes', () => {
         const prev = vm({
             gid: 'g1',

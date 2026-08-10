@@ -1,8 +1,8 @@
-import { canOpenLiveView } from '@/modules/games/utils';
 import type { DashboardGamesRender, GamesSortDirection, GamesSortKey, NormalizedGameRow } from '@/modules/games/types';
-import type { DashboardNavigationApi } from '@/types/globals';
+import { canOpenLiveView } from '@/modules/games/utils';
+import { buildGameRowViewModel, type GameRowViewModel, sortRows as sortViewRows } from '@/modules/games/viewmodel';
 import type { TournamentDashboardAPI } from '@/modules/tournament/types';
-import { buildGameRowViewModel, sortRows as sortViewRows, type GameRowViewModel } from '@/modules/games/viewmodel';
+import type { DashboardNavigationApi } from '@/types/globals';
 
 interface GamesRenderWindow extends Window {
     DashboardGamesRender?: DashboardGamesRender;
@@ -12,6 +12,10 @@ interface GamesRenderWindow extends Window {
 const defaultWindow = window as GamesRenderWindow;
 
 type SideKey = 'black' | 'white';
+
+function isCsaProfile(): boolean {
+    return document.body?.dataset.dashboardProfile === 'csa';
+}
 
 function formatOpeningLabel(spec: unknown): string {
     const sfen = typeof spec === 'string' && spec ? spec : 'startpos';
@@ -26,6 +30,13 @@ function createEngineLink(engineName: unknown): HTMLElement {
     const label = typeof engineName === 'string' ? engineName.trim() : '';
     if (!label) {
         throw new Error('createEngineLink: engineName is required and must be a non-empty string');
+    }
+    if (isCsaProfile()) {
+        const text = document.createElement('span');
+        text.className = 'games-engine-label';
+        text.textContent = label;
+        text.title = label;
+        return text;
     }
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -47,6 +58,12 @@ function createInstancePill(instanceName: unknown, kind: unknown, gameId: unknow
     const kindLabel = sanitizeInstanceLabel(kind);
     if (!nameLabel && !kindLabel) return null;
     const pill = document.createElement('span');
+    if (isCsaProfile() && (nameLabel === 'Ours' || kindLabel === 'csa-owned')) {
+        pill.className = 'csa-ownership-pill';
+        pill.textContent = 'Ours';
+        pill.title = 'Our engine';
+        return pill;
+    }
     pill.className = 'games-instance-pill';
     pill.setAttribute('role', 'button');
     pill.setAttribute('tabindex', '0');
@@ -93,7 +110,7 @@ function buildGameCell(normalized: NormalizedGameRow): HTMLTableCellElement {
     const openingSfen =
         typeof normalized.initial_sfen === 'string' && normalized.initial_sfen ? normalized.initial_sfen : 'startpos';
     const liveReady = canOpenLiveView(normalized.status);
-    const displayId = normalized.game_id ?? '-';
+    const displayId = normalized.server_game_id ?? normalized.game_id ?? '-';
     if (liveReady && normalized.game_id) {
         const gameButton = document.createElement('button');
         gameButton.type = 'button';
@@ -101,17 +118,21 @@ function buildGameCell(normalized: NormalizedGameRow): HTMLTableCellElement {
         gameButton.dataset.gameId = normalized.game_id;
         gameButton.dataset.status = normalized.status ?? '';
         gameButton.textContent = displayId;
+        gameButton.title = displayId;
         gameButton.setAttribute('aria-label', `Open Live View for game ${displayId}`);
         wrapper.appendChild(gameButton);
     } else {
         const label = document.createElement('span');
         label.className = 'games-game-label';
         label.textContent = displayId;
+        label.title = displayId;
         wrapper.appendChild(label);
     }
 
-    const badge = createOpeningBadge(openingSfen);
-    wrapper.appendChild(badge);
+    if (!isCsaProfile()) {
+        const badge = createOpeningBadge(openingSfen);
+        wrapper.appendChild(badge);
+    }
 
     return gameCell;
 }

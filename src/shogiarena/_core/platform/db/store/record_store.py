@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
 from json import JSONDecodeError
 
 import rsshogi
@@ -31,6 +32,23 @@ _DB_METADATA_ATTRIBUTE_KEYS = {"storage", "game_name", "game_type", "updated_dat
 # blob 側にも残すので、load の roundtrip は投影の有無に依存しない。
 _TIMEOUT_ORIGIN_ATTRIBUTE = "timeout_origin"
 _TIMEOUT_ORIGIN_MAX_LENGTH = 32
+
+
+def _database_datetime(value: datetime | None) -> datetime | None:
+    """Store and compare timestamps in the timezone-naive UTC form used by the DB schema."""
+    if value is None or value.tzinfo is None:
+        return value
+    return value.astimezone(UTC).replace(tzinfo=None)
+
+
+def _record_datetime(value: object) -> datetime | None:
+    parsed = coerce_iso_datetime(value)
+    if parsed is not None or not isinstance(value, str):
+        return parsed
+    try:
+        return datetime.strptime(value, "%Y/%m/%d %H:%M:%S")
+    except ValueError:
+        return None
 
 
 def _push_record_move(board: Board, move_obj: Move | Move32) -> Move:
@@ -168,11 +186,11 @@ class DBRecordStore:
                 raise ValueError("Record.game_type must be defined")
             if black_name is None or white_name is None:
                 raise ValueError("Record player names must be defined")
-            updated_date_new = coerce_iso_datetime(record.updated_date)
+            updated_date_new = _database_datetime(coerce_iso_datetime(record.updated_date))
             if updated_date_new is None:
                 raise ValueError("Record.updated_date must be ISO-8601 datetime")
-            start_date = coerce_iso_datetime(metadata.start_date)
-            end_date = coerce_iso_datetime(metadata.end_date)
+            start_date = _record_datetime(metadata.start_date)
+            end_date = _record_datetime(metadata.end_date)
             black_tc = record.black_time_control
             white_tc = record.white_time_control
             tc_black = black_tc.to_spec() if black_tc is not None else None
@@ -195,6 +213,7 @@ class DBRecordStore:
                 existing_updated_date = session.execute(
                     select(Game.updated_date).where(Game.id == existing_game_id)
                 ).scalar_one_or_none()
+                existing_updated_date = _database_datetime(existing_updated_date)
                 if existing_updated_date is None or updated_date_new is None:
                     if existing_updated_date is None and updated_date_new is None:
                         continue

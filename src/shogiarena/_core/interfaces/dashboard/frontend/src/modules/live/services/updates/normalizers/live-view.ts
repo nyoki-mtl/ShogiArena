@@ -1,4 +1,5 @@
 import type { LiveViewMode, LiveViewProgressSnapshot, LiveViewSnapshot } from '@/modules/live/types/public';
+import { normalizeRuntimeMode } from '@/modules/shared/services/runtime-mode';
 import {
     normalizeOptionalBoolean,
     normalizeOptionalNullableNumber,
@@ -25,24 +26,29 @@ export function normalizeLiveViewSnapshot(raw: unknown, context = 'liveView'): L
     return snapshot;
 }
 
+/**
+ * Does this snapshot's progress count games, so a caller may read completed/total
+ * as a game tally?
+ *
+ * The signal is the progress block's own `kind`. The `tournament` mode check is
+ * a fallback for older payloads that carry no kind — not a list of modes allowed
+ * to have game progress. Written the other way round, a mode whose progress is
+ * game-counted passes only by the accident of its kind, which is how the CSA
+ * summary got through before `'csa'` was a mode the page knew at all.
+ */
+export function hasGameCountedProgress(snapshot: LiveViewSnapshot | null | undefined): boolean {
+    if (!snapshot?.progress) return false;
+    return snapshot.progress.kind === 'games' || snapshot.mode === 'tournament';
+}
+
+/**
+ * The live view names the same modes the dashboard does, minus `generate`
+ * (which has no live view of its own). Deriving from the shared catalogue keeps
+ * a newly added mode from silently arriving here as `unknown`.
+ */
 function normalizeLiveViewMode(modeRaw: string | null | undefined): LiveViewMode {
-    if (!modeRaw) {
-        return 'unknown';
-    }
-    const lowered = modeRaw.trim().toLowerCase();
-    if (lowered === 'spsa') {
-        return 'spsa';
-    }
-    if (lowered === 'tournament') {
-        return 'tournament';
-    }
-    if (lowered === 'match') {
-        return 'match';
-    }
-    if (lowered === 'sprt') {
-        return 'sprt';
-    }
-    return 'unknown';
+    const normalized = normalizeRuntimeMode(modeRaw);
+    return normalized === 'generate' ? 'unknown' : normalized;
 }
 
 function normalizeLiveViewProgress(raw: unknown, context: string): LiveViewProgressSnapshot | null {

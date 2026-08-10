@@ -3,6 +3,7 @@ import type { DashboardEnginesApi } from '@/modules/engines/types';
 import { installGamesModule } from '@/modules/games';
 import { installGamesRender } from '@/modules/games/components/render';
 import { installGamesUtils } from '@/modules/games/utils';
+import { installCsaModule } from '@/modules/csa';
 import { installGenerateModule } from '@/modules/generate';
 import { installInstancesModule } from '@/modules/instances';
 import {
@@ -69,6 +70,7 @@ interface DashboardFeatureFlags {
     sprt: boolean;
     book: boolean;
     generate: boolean;
+    csa: boolean;
     tournament: TournamentFeatureFlags;
 }
 
@@ -86,6 +88,7 @@ export interface DashboardFeatureOverrides {
     sprt?: boolean;
     book?: boolean;
     generate?: boolean;
+    csa?: boolean;
     tournament?: TournamentFeatureOverrides;
 }
 
@@ -111,6 +114,7 @@ export interface DashboardInitializationResult {
     sprt?: ReturnType<typeof installSprtModule>;
     book?: ReturnType<typeof installBookModule>;
     generate?: ReturnType<typeof installGenerateModule>;
+    csa?: ReturnType<typeof installCsaModule>;
 }
 
 const DEFAULT_FEATURES: DashboardFeatureFlags = {
@@ -125,6 +129,7 @@ const DEFAULT_FEATURES: DashboardFeatureFlags = {
     sprt: true,
     book: true,
     generate: false,
+    csa: false,
     tournament: {
         state: true,
         data: true,
@@ -148,6 +153,7 @@ function resolveFeatures(overrides?: DashboardFeatureOverrides): DashboardFeatur
         sprt: DEFAULT_FEATURES.sprt,
         book: DEFAULT_FEATURES.book,
         generate: DEFAULT_FEATURES.generate,
+        csa: DEFAULT_FEATURES.csa,
         tournament: { ...DEFAULT_FEATURES.tournament },
     };
 
@@ -166,6 +172,7 @@ function resolveFeatures(overrides?: DashboardFeatureOverrides): DashboardFeatur
     if (typeof overrides.sprt === 'boolean') flags.sprt = overrides.sprt;
     if (typeof overrides.book === 'boolean') flags.book = overrides.book;
     if (typeof overrides.generate === 'boolean') flags.generate = overrides.generate;
+    if (typeof overrides.csa === 'boolean') flags.csa = overrides.csa;
     if (overrides.tournament) {
         const tournamentOverrides = overrides.tournament;
         if (typeof tournamentOverrides.state === 'boolean') flags.tournament.state = tournamentOverrides.state;
@@ -240,6 +247,11 @@ export function initializeDashboard(options: DashboardBootstrapOptions = {}): Da
         features.match = false;
         features.sprt = false;
         features.generate = true;
+    } else if (modeConfig.mode === 'csa') {
+        features.match = false;
+        features.sprt = false;
+        features.generate = false;
+        features.csa = true;
     }
 
     owner.ARENA_DISABLE_SPSA = !features.spsa;
@@ -356,6 +368,12 @@ export function initializeDashboard(options: DashboardBootstrapOptions = {}): Da
         generateApi = installGenerateModule(owner);
     }
 
+    let csaApi: ReturnType<typeof installCsaModule> | undefined;
+    if (features.csa) {
+        csaApi = installCsaModule(owner);
+        owner.DashboardCsa = csaApi;
+    }
+
     return {
         owner,
         features,
@@ -366,5 +384,6 @@ export function initializeDashboard(options: DashboardBootstrapOptions = {}): Da
         sprt: sprtApi,
         book: bookApi,
         generate: generateApi,
+        csa: csaApi,
     };
 }

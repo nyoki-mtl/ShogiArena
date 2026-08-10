@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,19 @@ from shogiarena._core.platform.db.store.record_store import DBRecordStore
 from shogiarena._core.shared.kernel.game_record_types import GameRecordEnginesDict
 from shogiarena._core.shared.kernel.json_types import JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_game_result
+
+
+def _server_game_id(raw_attributes: str | None) -> str | None:
+    if not raw_attributes:
+        return None
+    try:
+        attributes = json.loads(raw_attributes)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(attributes, dict):
+        return None
+    value = attributes.get("csa_server_game_id")
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def load_games_for_dashboard(
@@ -129,10 +143,12 @@ def build_games_list_raw_payload(
                 white_player.player_name.label("white_player"),
                 Game.game_result,
                 Game.num_moves,
+                Game.start_date,
                 Game.end_date,
                 Game.initial_position_sfen,
                 Game.time_control_black,
                 Game.time_control_white,
+                Game.metadata_attributes_json,
             )
             .join(black_player, Game.black_player)
             .join(white_player, Game.white_player)
@@ -146,7 +162,7 @@ def build_games_list_raw_payload(
                     Game.game_name.like(like),
                 )
             )
-        data_stmt = data_stmt.order_by(Game.end_date.desc()).limit(limit).offset(offset)
+        data_stmt = data_stmt.order_by(Game.start_date.desc(), Game.id.desc()).limit(limit).offset(offset)
 
         rows = session.execute(data_stmt).all()
         games: list[dict[str, object]] = []
@@ -156,10 +172,12 @@ def build_games_list_raw_payload(
             row_white_player,
             game_result,
             num_moves,
+            start_date,
             end_date,
             init_sfen,
             time_control_black,
             time_control_white,
+            metadata_attributes_json,
         ) in rows:
             game_id = str(game_name)
             black_name = str(row_black_player) if row_black_player is not None else ""
@@ -168,10 +186,12 @@ def build_games_list_raw_payload(
             games.append(
                 {
                     "game_id": game_id,
+                    "server_game_id": _server_game_id(metadata_attributes_json),
                     "black_player": black_name,
                     "white_player": white_name,
                     "game_result": str(game_result) if isinstance(game_result, str) else None,
                     "total_plies": total_plies,
+                    "start_time": start_date.isoformat() if start_date else None,
                     "end_time": end_date.isoformat() if end_date else None,
                     "initial_sfen": str(init_sfen) if isinstance(init_sfen, str) else None,
                     "time_control_black": str(time_control_black) if isinstance(time_control_black, str) else None,

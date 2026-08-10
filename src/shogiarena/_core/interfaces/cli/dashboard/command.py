@@ -19,8 +19,11 @@ from shogiarena._core.interfaces.boundaries.parsers.dashboard import (
     load_tournament_config_for_dashboard,
     pick_free_port,
 )
+from shogiarena._core.interfaces.cli.dashboard.watch_command import register_watch
 from shogiarena._core.interfaces.cli.main import CliError
 from shogiarena._core.interfaces.composition_root.default_root import build_default_root
+from shogiarena._core.interfaces.dashboard.api_server.server import ArenaAPIServer
+from shogiarena._core.interfaces.dashboard.csa.api import CsaAPI
 from shogiarena._core.shared.kernel.paths import resolve_path_like
 
 logger = logging.getLogger(__name__)
@@ -57,6 +60,8 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Preferred HTTP port for the dashboard API (default: 8080)",
     )
     serve_cmd.set_defaults(async_handler=_serve_dashboard)
+
+    register_watch(serve_parser)
 
 
 async def _serve_dashboard(args: argparse.Namespace) -> None:
@@ -107,9 +112,14 @@ async def _serve_dashboard(args: argparse.Namespace) -> None:
 
     if num_workers is None or num_workers <= 0:
         detected = detect_worker_count(run_dir)
-        if detected <= 0:
+        if detected > 0:
+            num_workers = detected
+        elif "csa" in profiles:
+            # CSA views are projected from game.db and do not materialize the
+            # tournament worker_*.js snapshots.
+            num_workers = 0
+        else:
             raise CliError("Could not determine worker count; require data/workers or a config file")
-        num_workers = detected
 
     requested_port = int(args.port or 8080)
     try:
@@ -144,6 +154,13 @@ async def _serve_dashboard(args: argparse.Namespace) -> None:
         # server を作った時点で projector が ledger を掴む。`start()` が失敗しても
         # `stop()` を必ず通さないと、snapshot の一時領域を掴んだままになる。
         try:
+            if "csa" in profiles:
+                if not isinstance(server, ArenaAPIServer):
+                    raise CliError("dashboard API server factory did not produce an ArenaAPIServer")
+                # Archived CSA runs have no live JSONL source. The profile still
+                # requires its bootstrap summary; saved games remain authoritative
+                # through the ordinary read-only game.db routes.
+                CsaAPI(views_supplier=lambda: (), run_dir=str(run_dir)).register_routes(server.app)
             await server.start()
 
             mode_label = config_mode or "dashboard"

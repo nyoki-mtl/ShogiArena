@@ -154,7 +154,12 @@ class ArenaAPIServer(ArenaApiServerEventsMixin, ArenaApiServerDiagnosticsMixin, 
         self.book_api = BookAPI(db_path=self.db_path, game_query=self._game_query)
 
         archived_schedule = (
-            build_archived_schedule_snapshot(self.run_dir, db_path=self.db_path, game_query=self._game_query)
+            build_archived_schedule_snapshot(
+                self.run_dir,
+                db_path=self.db_path,
+                game_query=self._game_query,
+                allow_db_only=dashboard_profiles is not None and "csa" in dashboard_profiles,
+            )
             if self._is_read_only
             else None
         )
