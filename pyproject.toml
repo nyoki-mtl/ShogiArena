@@ -88,7 +88,7 @@ include = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.31.0"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
