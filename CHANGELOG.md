@@ -8,6 +8,13 @@ except for the explicitly documented 1.2.0 breaking-change exception.
 
 ## [Unreleased]
 
+## [1.2.7] - 2026-08-11
+
+### Fixed
+
+- KIF の `**評価値=` を先手視点で書き出すため、rsshogi 1.1.1 以降を必須にした。
+  ShogiArena 内部、CSA、sbinpack では着手前の手番視点を維持する。
+
 ## [1.2.6] - 2026-08-10
 
 ### Added
@@ -664,7 +671,8 @@ dashboard 無効の長時間 run で event loop が秒単位で停止し、進�
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.6...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.7...HEAD
+[1.2.7]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.6...v1.2.7
 [1.2.6]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.5...v1.2.6
 [1.2.5]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.4...v1.2.5
 [1.2.4]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.3...v1.2.4

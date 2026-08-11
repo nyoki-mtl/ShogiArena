@@ -49,7 +49,7 @@ def _sample_record() -> rsshogi.record.Record:
             "init_position_sfen": _STARTPOS,
             "moves": [
                 {"move": int(move1), "engine_info": {"eval": 123}},
-                {"move": int(move2), "engine_info": {"eval": -35}},
+                {"move": int(move2), "engine_info": {"eval": 120}},
             ],
             "result": {"result": GameResult.BLACK_WIN.name, "ply_count": 2},
         }
@@ -69,6 +69,17 @@ def _sample_psv_record() -> rsshogi.record.Record:
             "result": {"result": GameResult.BLACK_WIN.name, "ply_count": 1},
         }
     )
+
+
+def _evals(record: rsshogi.record.Record) -> tuple[int | None, ...]:
+    moves = record.to_dict().get("moves", [])
+    assert isinstance(moves, list)
+    evals: list[int | None] = []
+    for move in moves:
+        engine_info = move.get("engine_info") if isinstance(move, dict) else None
+        value = engine_info.get("eval") if isinstance(engine_info, dict) else None
+        evals.append(value if isinstance(value, int) else None)
+    return tuple(evals)
 
 
 def test_record_output_config_supports_sbinpack_and_rejects_pack() -> None:
@@ -100,20 +111,11 @@ def test_sbinpack_roundtrip() -> None:
     assert payload[:4] == b"SBN2"
 
     decoded = reader.deserialize(payload)
-    decoded_dict = decoded.to_dict()
-    decoded_moves = decoded_dict.get("moves", [])
-    assert isinstance(decoded_moves, list)
-
     assert int(decoded.result) == int(record.result)
     assert len(decoded.moves) == len(record.moves)
-    decoded_evals = tuple(
-        move.get("engine_info", {}).get("eval") if isinstance(move, dict) else None for move in decoded_moves
-    )
-    record_moves = record.to_dict().get("moves", [])
-    assert isinstance(record_moves, list)
-    record_evals = tuple(
-        move.get("engine_info", {}).get("eval") if isinstance(move, dict) else None for move in record_moves
-    )
+    decoded_evals = _evals(decoded)
+    record_evals = _evals(record)
+    assert record_evals == (123, 120)
     assert decoded_evals == record_evals
 
 

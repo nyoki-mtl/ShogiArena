@@ -3,6 +3,7 @@ from __future__ import annotations
 import rsshogi
 from rsshogi.initial_positions import InitialPosition
 
+from shogiarena._core.platform.records.codecs import get_reader, get_serializer
 from shogiarena._core.shared.kernel.game_results import GameResult
 
 
@@ -11,7 +12,7 @@ def _make_record(
     white_tc: str | None,
     *,
     result_code: GameResult = GameResult.PAUSED,
-) -> object:
+) -> rsshogi.record.Record:
     return rsshogi.record.Record.from_dict(
         {
             "metadata": {
@@ -26,6 +27,26 @@ def _make_record(
             "result": {"result": result_code.name, "ply_count": 0},
         }
     )
+
+
+def _make_evaluated_record() -> rsshogi.record.Record:
+    return rsshogi.record.Record.from_usi_main_line(
+        InitialPosition.STANDARD.value,
+        ["7g7f", "3c3d"],
+        result=GameResult.PAUSED,
+        evals=[100, 120],
+    )
+
+
+def _evals(record: rsshogi.record.Record) -> tuple[int | None, ...]:
+    moves = record.to_dict().get("moves", [])
+    assert isinstance(moves, list)
+    evals: list[int | None] = []
+    for move in moves:
+        engine_info = move.get("engine_info") if isinstance(move, dict) else None
+        value = engine_info.get("eval") if isinstance(engine_info, dict) else None
+        evals.append(value if isinstance(value, int) else None)
+    return tuple(evals)
 
 
 def test_to_kif_uses_rsshogi_serializer() -> None:
@@ -47,6 +68,21 @@ def test_to_kif_side_time_controls() -> None:
     assert "後手持ち時間：900+0+10" in kif
 
 
+def test_kif_converts_side_to_move_evals_to_black_perspective_and_back() -> None:
+    serializer = get_serializer("kif")
+    reader = get_reader("kif")
+    assert serializer is not None
+    assert reader is not None
+
+    payload = serializer.serialize(_make_evaluated_record())
+    assert isinstance(payload, str)
+    assert "**評価値=100" in payload
+    assert "**評価値=-120" in payload
+
+    restored = reader.deserialize(payload)
+    assert _evals(restored) == (100, 120)
+
+
 def test_to_csa_uses_rsshogi_serializer() -> None:
     record = _make_record("1500+60+0", "1500+60+0")
     assert isinstance(record.to_csa(), str)
@@ -66,6 +102,21 @@ def test_to_csa_time_limit_v30() -> None:
     assert "$TIME+:900+0+5" in csa
     assert "$TIME-:900+0+5" in csa
     assert "$TIME_LIMIT:" not in csa
+
+
+def test_csa_preserves_side_to_move_eval_perspective() -> None:
+    serializer = get_serializer("csa")
+    reader = get_reader("csa")
+    assert serializer is not None
+    assert reader is not None
+
+    payload = serializer.serialize(_make_evaluated_record())
+    assert isinstance(payload, str)
+    assert "'** 100" in payload
+    assert "'** 120" in payload
+
+    restored = reader.deserialize(payload)
+    assert _evals(restored) == (100, 120)
 
 
 def test_to_csa_draw_markers_follow_game_result_codes() -> None:

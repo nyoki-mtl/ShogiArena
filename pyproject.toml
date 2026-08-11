@@ -1,6 +1,6 @@
 [project]
 name = "shogiarena"
-version = "1.2.6"
+version = "1.2.7"
 description = "Asynchronous tournament and SPSA tuning platform for USI shogi engines"
 authors = [
     { name = "Hiroki Taniai", email = "charmer.popopo@gmail.com" }
@@ -34,7 +34,7 @@ dependencies = [
     "pydantic>=2.13.4",
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0.3",
-    "rsshogi>=1.1.0,<2",
+    "rsshogi>=1.1.1,<2",
     "sqlalchemy>=2.0.51",
     "typing-extensions>=4.16.0",
 ]
