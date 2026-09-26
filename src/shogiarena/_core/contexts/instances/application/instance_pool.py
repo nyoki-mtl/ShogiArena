@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
+from collections import deque
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -44,6 +46,10 @@ class InstancePool:
         """Initialize empty instance pool."""
         self._instances: dict[str, Instance] = {}
         self._lock = threading.RLock()
+        self._resource_waiters: dict[str, deque[int]] = {}
+        self._resource_wait_requirements: dict[int, dict[str, ResourceRequest]] = {}
+        self._resource_wait_reserve_after: dict[int, float] = {}
+        self._next_resource_waiter = 0
 
     @classmethod
     def configure_default_local_instances_path(cls, output_dir: Path) -> None:
@@ -237,12 +243,42 @@ class InstancePool:
                 logger.debug("Removed instance from pool: %s", name)
             return instance
 
-    def try_acquire_resources(self, requirements: Mapping[str, ResourceRequest]) -> bool:
+    def register_resource_wait(
+        self, requirements: Mapping[str, ResourceRequest], *, allocation_timeout: float = 30.0
+    ) -> int:
+        """局が使う各 instance に到着順の待機位置を登録する。"""
+        with self._lock:
+            self._next_resource_waiter += 1
+            ticket = self._next_resource_waiter
+            self._resource_wait_requirements[ticket] = dict(requirements)
+            self._resource_wait_reserve_after[ticket] = time.monotonic() + allocation_timeout / 2
+            for instance_id in requirements:
+                self._resource_waiters.setdefault(instance_id, deque()).append(ticket)
+            return ticket
+
+    def unregister_resource_wait(self, requirements: Mapping[str, ResourceRequest], ticket: int) -> None:
+        """取得・停止・timeout 済みの待機位置を取り除く。"""
+        with self._lock:
+            self._resource_wait_requirements.pop(ticket, None)
+            self._resource_wait_reserve_after.pop(ticket, None)
+            for instance_id in requirements:
+                queue = self._resource_waiters.get(instance_id)
+                if queue is None:
+                    continue
+                try:
+                    queue.remove(ticket)
+                except ValueError:
+                    continue
+                if not queue:
+                    del self._resource_waiters[instance_id]
+
+    def try_acquire_resources(self, requirements: Mapping[str, ResourceRequest], *, ticket: int | None = None) -> bool:
         """
         Attempt to acquire resources on multiple instances atomically.
 
         Args:
             requirements: Mapping of instance_id -> ResourceRequest to reserve.
+            ticket: FIFO wait registration; an earlier waiter blocked on another instance may be bypassed.
 
         Returns:
             True when all requested resources are acquired, False otherwise.
@@ -251,9 +287,40 @@ class InstancePool:
             return True
 
         with self._lock:
+            if ticket is not None and self._has_blocking_earlier_waiter(requirements, ticket):
+                return False
             if not validate_resource_requirements(self._instances, requirements, log=logger):
                 return False
-            return acquire_resources_with_rollback(self._instances, requirements, log=logger)
+            acquired = acquire_resources_with_rollback(self._instances, requirements, log=logger)
+            if acquired and ticket is not None:
+                self.unregister_resource_wait(requirements, ticket)
+            return acquired
+
+    def _has_blocking_earlier_waiter(self, requirements: Mapping[str, ResourceRequest], ticket: int) -> bool:
+        """Preserve FIFO unless an earlier multi-instance game is blocked elsewhere."""
+        requested_ids = set(requirements)
+        for instance_id in requirements:
+            queue = self._resource_waiters.get(instance_id)
+            if queue is None or ticket not in queue:
+                return True
+            for earlier_ticket in queue:
+                if earlier_ticket == ticket:
+                    break
+                earlier_requirements = self._resource_wait_requirements[earlier_ticket]
+                outside = {name: req for name, req in earlier_requirements.items() if name not in requested_ids}
+                if not outside:
+                    return True
+                # Let disjoint work use idle capacity early, then reserve capacity
+                # for the older multi-instance game before its wait deadline.
+                if time.monotonic() >= self._resource_wait_reserve_after[earlier_ticket]:
+                    return True
+                try:
+                    if validate_resource_requirements(self._instances, outside, log=logger):
+                        return True
+                except KeyError:
+                    # A removed instance cannot become available for the earlier game.
+                    continue
+        return False
 
     def release_resources(self, allocations: Mapping[str, ResourceRequest]) -> None:
         """Release previously acquired resources for the given instances."""

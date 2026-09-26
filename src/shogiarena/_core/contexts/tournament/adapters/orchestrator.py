@@ -241,6 +241,10 @@ class TournamentOrchestrator(BaseOrchestrator):
         )
 
     def should_skip_pending_item(self, item: GameSpec) -> bool:
+        if self._stop_event.is_set():
+            # 停止後に残った局は開始しない（`not_played` に残る）。SPRT 終了時は数千局が
+            # 残るため、1局ずつ dispatch 準備へ進めず queue 上で捨てる。
+            return True
         cancelled_now = self._cancelled_provider() if self._cancelled_provider else set()
         return item.game_id in cancelled_now
 

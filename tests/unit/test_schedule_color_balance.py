@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from shogiarena._core.contexts.game_session.adapters.orchestration.config_core import InitialPositionConfig
 from shogiarena._core.contexts.tournament.adapters.runner_runtime_context_builders import (
     generate_schedule_for_state_store,
 )
@@ -105,6 +108,34 @@ def test_pair_both_games_carry_pair_and_opening_metadata() -> None:
     assert games[0].matchup_key == games[1].matchup_key == "e00|e01"
     assert games[0].opening_line_id == games[1].opening_line_id == "line-0"
     assert games[0].opening_line_moves_usi == games[1].opening_line_moves_usi == ("7g7f",)
+
+
+def test_pair_both_without_replacement_uses_each_opening_in_one_colour_pair(tmp_path: Path) -> None:
+    source = tmp_path / "openings.usi"
+    source.write_text("7g7f\n2g2f\n", encoding="utf-8")
+    positions = InitialPositionConfig(
+        type="file",
+        source=str(source),
+        source_format="usi_line",
+        selection_policy="without_replacement",
+        flip_policy="pair_both",
+        preserve_line_metadata=True,
+    )
+    scheduler = RoundRobinScheduler()
+
+    first = scheduler.generate_schedule(_engines(2), 4, "7", positions)
+    second = scheduler.generate_schedule(_engines(2), 4, "7", positions)
+
+    observed = [(game.opening_line_id, game.initial_sfen, game.black_engine, game.white_engine) for game in first]
+    assert observed == [
+        (game.opening_line_id, game.initial_sfen, game.black_engine, game.white_engine) for game in second
+    ]
+    assert {game.opening_line_id for game in first} == {"openings.usi:1", "openings.usi:2"}
+    for pair_start in (0, 2):
+        left, right = first[pair_start : pair_start + 2]
+        assert left.opening_line_id == right.opening_line_id
+        assert left.initial_sfen == right.initial_sfen
+        assert (left.black_engine, left.white_engine) == (right.white_engine, right.black_engine)
 
 
 def test_state_store_schedule_adapter_preserves_opening_entry_metadata() -> None:

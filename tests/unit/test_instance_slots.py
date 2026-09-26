@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -85,6 +86,146 @@ def test_try_acquire_and_release_resources() -> None:
     pool.release_resources(requirements)
     assert instance.metrics.in_use_slots == 0
     assert instance.metrics.in_use_engines == 0
+
+
+def test_multi_instance_wait_does_not_block_available_single_instance() -> None:
+    pool = InstancePool()
+    for name in ("a", "b"):
+        pool.add_instance(InstanceConfig(name=name, type=InstanceType.LOCAL, engine_dir="", slots=1))
+    a_request = {"a": ResourceRequest(slots=1, engines=1)}
+    b_request = {"b": ResourceRequest(slots=1, engines=1)}
+    both_request = {**a_request, **b_request}
+    assert pool.try_acquire_resources(a_request)
+
+    first = pool.register_resource_wait(both_request)
+    second = pool.register_resource_wait(b_request)
+    assert not pool.try_acquire_resources(both_request, ticket=first)
+    assert pool.try_acquire_resources(b_request, ticket=second)
+    pool.release_resources(b_request)
+    pool.release_resources(a_request)
+    assert pool.try_acquire_resources(both_request, ticket=first)
+    pool.release_resources(both_request)
+
+
+def test_multi_instance_wait_keeps_priority_when_first_is_runnable() -> None:
+    pool = InstancePool()
+    for name in ("a", "b"):
+        pool.add_instance(InstanceConfig(name=name, type=InstanceType.LOCAL, engine_dir="", slots=1))
+    both_request = {name: ResourceRequest(slots=1, engines=1) for name in ("a", "b")}
+    b_request = {"b": ResourceRequest(slots=1, engines=1)}
+    first = pool.register_resource_wait(both_request)
+    second = pool.register_resource_wait(b_request)
+    assert not pool.try_acquire_resources(b_request, ticket=second)
+    assert pool.try_acquire_resources(both_request, ticket=first)
+    pool.release_resources(both_request)
+    assert pool.try_acquire_resources(b_request, ticket=second)
+    pool.release_resources(b_request)
+
+
+@pytest.mark.asyncio
+async def test_multi_instance_wait_does_not_time_out_available_instance() -> None:
+    pool = InstancePool()
+    for name in ("a", "b"):
+        pool.add_instance(InstanceConfig(name=name, type=InstanceType.LOCAL, engine_dir="", slots=1))
+    a_request = {"a": ResourceRequest(slots=1, engines=1)}
+    b_request = {"b": ResourceRequest(slots=1, engines=1)}
+    assert pool.try_acquire_resources(a_request)
+    owner = SimpleNamespace(
+        _stop_event=asyncio.Event(),
+        _resource_poll_interval=0.001,
+        _resource_poll_max_interval=0.001,
+        _resource_allocation_timeout=0.1,
+    )
+    first = asyncio.create_task(await_instance_resources(owner, pool, {**a_request, **b_request}, "first"))
+    await asyncio.sleep(0)
+    try:
+        await asyncio.wait_for(await_instance_resources(owner, pool, b_request, "second"), timeout=0.05)
+        pool.release_resources(b_request)
+    finally:
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        pool.release_resources(a_request)
+
+
+@pytest.mark.asyncio
+async def test_multi_instance_bypass_stops_before_oldest_waiter_times_out() -> None:
+    pool = InstancePool()
+    for name in ("a", "b"):
+        pool.add_instance(InstanceConfig(name=name, type=InstanceType.LOCAL, engine_dir="", slots=1))
+    a_request = {"a": ResourceRequest(slots=1, engines=1)}
+    b_request = {"b": ResourceRequest(slots=1, engines=1)}
+    both_request = {**a_request, **b_request}
+    assert pool.try_acquire_resources(a_request)
+
+    first = pool.register_resource_wait(both_request, allocation_timeout=0.1)
+    second = pool.register_resource_wait(b_request)
+    assert pool.try_acquire_resources(b_request, ticket=second)
+    pool.release_resources(b_request)
+
+    await asyncio.sleep(0.06)
+    third = pool.register_resource_wait(b_request)
+    assert not pool.try_acquire_resources(b_request, ticket=third)
+    pool.release_resources(a_request)
+    assert pool.try_acquire_resources(both_request, ticket=first)
+    pool.release_resources(both_request)
+    assert pool.try_acquire_resources(b_request, ticket=third)
+    pool.release_resources(b_request)
+
+
+@pytest.mark.asyncio
+async def test_resource_waiters_acquire_in_arrival_order_despite_different_poll_rates() -> None:
+    pool = InstancePool()
+    pool.add_instance(InstanceConfig(name="local", type=InstanceType.LOCAL, engine_dir="", slots=2))
+    request = {"local": ResourceRequest(slots=2, engines=2)}
+    assert pool.try_acquire_resources(request)
+
+    def owner(poll: float) -> SimpleNamespace:
+        return SimpleNamespace(
+            _stop_event=asyncio.Event(),
+            _resource_poll_interval=poll,
+            _resource_poll_max_interval=poll,
+            _resource_allocation_timeout=1.0,
+        )
+
+    first = asyncio.create_task(await_instance_resources(owner(0.05), pool, request, "first"))
+    await asyncio.sleep(0)
+    second = asyncio.create_task(await_instance_resources(owner(0.001), pool, request, "second"))
+    await asyncio.sleep(0.005)
+    pool.release_resources(request)
+    await first
+    assert not second.done()
+    pool.release_resources(request)
+    await second
+    pool.release_resources(request)
+
+
+@pytest.mark.asyncio
+async def test_timed_out_resource_waiter_does_not_block_next_game() -> None:
+    pool = InstancePool()
+    pool.add_instance(InstanceConfig(name="local", type=InstanceType.LOCAL, engine_dir="", slots=2))
+    request = {"local": ResourceRequest(slots=2, engines=2)}
+    assert pool.try_acquire_resources(request)
+    first_owner = SimpleNamespace(
+        _stop_event=asyncio.Event(),
+        _resource_poll_interval=0.005,
+        _resource_poll_max_interval=0.005,
+        _resource_allocation_timeout=0.025,
+    )
+    second_owner = SimpleNamespace(
+        _stop_event=asyncio.Event(),
+        _resource_poll_interval=0.005,
+        _resource_poll_max_interval=0.005,
+        _resource_allocation_timeout=1.0,
+    )
+    first = asyncio.create_task(await_instance_resources(first_owner, pool, request, "first"))
+    await asyncio.sleep(0)
+    second = asyncio.create_task(await_instance_resources(second_owner, pool, request, "second"))
+    with pytest.raises(TimeoutError):
+        await first
+    pool.release_resources(request)
+    await second
+    pool.release_resources(request)
 
 
 def test_try_acquire_resources_rejects_unknown_instance() -> None:

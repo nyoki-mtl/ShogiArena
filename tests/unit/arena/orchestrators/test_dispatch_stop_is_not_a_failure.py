@@ -167,3 +167,45 @@ async def test_stop_wins_over_an_available_resource() -> None:
 
     # 予約してから打ち切ると slot が解放されずに残る。取得自体を試みないこと。
     assert pool.acquire_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_dispatch_stop_does_not_write_a_run_failure_record(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """停止で開始しなかった局を failure artifact へ記録しないこと。
+
+    SPRT 終了直後は未開始の局が数千件この経路を通る。1件ごとに ``run_failures.json`` を
+    読み直して fsync 付きで書き直すと O(N²) の同期 I/O が event loop を塞ぎ、
+    まだ対局中の局の指し手が数百 ms 遅れて時間切れを起こした。
+    """
+
+    from shogiarena._core.contexts.game_session.adapters.orchestration import game_execution
+
+    async def _stopped(owner: Any, game_spec: Any) -> Any:
+        del owner
+        raise GameDispatchStoppedError(f"Stop requested before acquiring instance resources (game {game_spec.game_id})")
+
+    monkeypatch.setattr(game_execution, "_prepare_resource_context", _stopped)
+    owner = SimpleNamespace(engine_pool=object(), instance_pool=None, run_dir=tmp_path, _active_game_runners=set())
+    spec = SimpleNamespace(
+        game_id="g0001",
+        black_item=SimpleNamespace(pool_key="black"),
+        white_item=SimpleNamespace(pool_key="white"),
+    )
+
+    with pytest.raises(GameDispatchStoppedError):
+        await game_execution.execute_game(owner, spec)
+
+    assert not (tmp_path / "failures").exists()
+
+
+def test_queued_games_are_skipped_once_a_stop_is_requested() -> None:
+    """停止後に queue へ残った局は dispatch 準備へ進めずに捨てること。"""
+
+    stop_event = asyncio.Event()
+    stub = SimpleNamespace(_stop_event=stop_event, _cancelled_provider=None)
+
+    assert TournamentOrchestrator.should_skip_pending_item(cast(Any, stub), _item()) is False
+    stop_event.set()
+    assert TournamentOrchestrator.should_skip_pending_item(cast(Any, stub), _item()) is True

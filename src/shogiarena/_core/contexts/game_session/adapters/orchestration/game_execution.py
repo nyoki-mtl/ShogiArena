@@ -71,6 +71,7 @@ from shogiarena._core.contexts.instances.application.instance_pool import Resour
 from shogiarena._core.contexts.match.application.engine_participant import EngineParticipant
 from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine
 from shogiarena._core.platform.engine_runtime.usi_engine_session_models import UsiEngineStartError
+from shogiarena._core.shared.kernel.dispatch_control import GameDispatchStoppedError
 from shogiarena._core.shared.kernel.game_results import game_result_name
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.run_artifact_hashes import canonical_sha256
@@ -274,10 +275,15 @@ async def execute_game(orchestrator: Any, spec: Any) -> rsshogi.record.Record:
         game_info.set_metadata_attribute("game_execution_result", result_envelope.model_dump_json())
         return game_info
     except asyncio.CancelledError as exc:
-        _record_run_failure(owner, game_spec, exc, fallback_phase="user_interruption")
+        await _record_run_failure(owner, game_spec, exc, fallback_phase="user_interruption")
+        raise
+    except GameDispatchStoppedError:
+        # 停止要求で開始しなかった局は失敗ではない。SPRT 終了直後は未開始の局が数千件
+        # ここを通るため、記録すると failure artifact の同期書き込みが event loop を塞ぎ、
+        # まだ対局中の局の指し手を遅らせる。
         raise
     except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
-        _record_run_failure(
+        await _record_run_failure(
             owner,
             game_spec,
             exc,
@@ -303,7 +309,7 @@ async def execute_game(orchestrator: Any, spec: Any) -> rsshogi.record.Record:
                 white_contract_digest=white_contract_digest,
             )
         except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
-            _record_run_failure(owner, game_spec, exc, fallback_phase="shutdown")
+            await _record_run_failure(owner, game_spec, exc, fallback_phase="shutdown")
             if pending_exc is None:
                 raise
             logger.warning(
@@ -353,7 +359,7 @@ def _effective_handshake_timeout(owner: Any, config: EngineConfig) -> float:
     )
 
 
-def _record_run_failure(owner: Any, game_spec: _GameSpecPort, exc: BaseException, *, fallback_phase: str) -> None:
+async def _record_run_failure(owner: Any, game_spec: _GameSpecPort, exc: BaseException, *, fallback_phase: str) -> None:
     run_dir = getattr(owner, "run_dir", None)
     if not isinstance(run_dir, Path):
         logger.debug(
@@ -371,8 +377,35 @@ def _record_run_failure(owner: Any, game_spec: _GameSpecPort, exc: BaseException
         log_artifact_path=str(run_dir / "failures" / "run_failures.json"),
     )
     try:
-        RunFailureRecordService().append_failure(run_dir=run_dir, record=record)
-    except (OSError, RuntimeError, ValueError) as record_exc:
+        service = RunFailureRecordService()
+        if isinstance(exc, asyncio.CancelledError):
+            # A cancelled to_thread future can keep appending after terminal snapshot creation.
+            service.append_failure(run_dir=run_dir, record=record)
+        else:
+            write_task = asyncio.create_task(asyncio.to_thread(service.append_failure, run_dir=run_dir, record=record))
+            cancellation: asyncio.CancelledError | None = None
+            while not write_task.done():
+                try:
+                    await asyncio.shield(write_task)
+                except asyncio.CancelledError as cancelled:
+                    # Keep the writer attached to this game until it finishes.
+                    cancellation = cancelled
+                except Exception:
+                    # The writer has failed. Preserve an earlier cancellation below.
+                    break
+            if cancellation is not None:
+                try:
+                    await write_task
+                except Exception as record_exc:
+                    logger.warning(
+                        "Failed to persist run failure record for game %s during cancellation: %s",
+                        game_spec.game_id,
+                        record_exc,
+                        exc_info=True,
+                    )
+                raise cancellation
+            await write_task
+    except Exception as record_exc:  # noqa: BLE001 - diagnostic write must not mask the game failure
         # Persisting the diagnostic must never mask the original failure that we
         # are in the middle of propagating.
         logger.warning(

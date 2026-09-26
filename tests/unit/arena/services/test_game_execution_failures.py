@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +11,10 @@ import pytest
 from shogiarena._core.contexts.game_session.adapters.orchestration import game_execution
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_engine import EngineConfig
 from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution import execute_game
+from shogiarena._core.contexts.game_session.application.session.run_failure_record_service import (
+    RunFailureRecordService,
+)
+from shogiarena._core.contexts.game_session.domain.failure_records import RunFailureRecord
 from shogiarena._core.contexts.instances.application.instance_models import InstanceConfig, InstanceType
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
@@ -82,6 +87,7 @@ async def test_execute_game_records_user_interruption(tmp_path: Path, monkeypatc
     with pytest.raises(asyncio.CancelledError):
         await execute_game(owner, _GameSpec())
 
+    RunFailureRecordService().materialize_snapshots(owner.run_dir)
     payload = json.loads((owner.run_dir / "failures" / "run_failures.json").read_text(encoding="utf-8"))
     assert payload["failures"][0]["failure_phase"] == "user_interruption"
     assert payload["failures"][0]["game_id"] == "g-cancelled"
@@ -89,6 +95,66 @@ async def test_execute_game_records_user_interruption(tmp_path: Path, monkeypatc
 
 async def _cancelled_resource_context() -> object:
     raise asyncio.CancelledError()
+
+
+@pytest.mark.asyncio
+async def test_failure_write_does_not_block_event_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = _Owner(tmp_path / "run")
+    entered = threading.Event()
+    release = threading.Event()
+
+    async def fail_prepare(*_args: object) -> object:
+        raise RuntimeError("prepare failed")
+
+    def slow_append(self: RunFailureRecordService, *, run_dir: Path, record: RunFailureRecord) -> None:
+        entered.set()
+        assert release.wait(timeout=2)
+
+    monkeypatch.setattr(game_execution, "_prepare_resource_context", fail_prepare)
+    monkeypatch.setattr(RunFailureRecordService, "append_failure", slow_append)
+    task = asyncio.create_task(execute_game(owner, _GameSpec()))
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        assert not task.done()
+    finally:
+        release.set()
+    with pytest.raises(RuntimeError, match="prepare failed"):
+        await task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("writer_fails", [False, True])
+async def test_cancellation_waits_for_failure_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer_fails: bool
+) -> None:
+    owner = _Owner(tmp_path / "run")
+    entered = threading.Event()
+    release = threading.Event()
+    original_append = RunFailureRecordService.append_failure
+
+    async def fail_prepare(*_args: object) -> object:
+        raise RuntimeError("prepare failed")
+
+    def slow_append(self: RunFailureRecordService, *, run_dir: Path, record: RunFailureRecord) -> None:
+        entered.set()
+        assert release.wait(timeout=2)
+        if writer_fails:
+            raise OSError("failure record write failed")
+        original_append(self, run_dir=run_dir, record=record)
+
+    monkeypatch.setattr(game_execution, "_prepare_resource_context", fail_prepare)
+    monkeypatch.setattr(RunFailureRecordService, "append_failure", slow_append)
+    task = asyncio.create_task(execute_game(owner, _GameSpec()))
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(RunFailureRecordService().load_failures(owner.run_dir)) == (0 if writer_fails else 1)
 
 
 @pytest.mark.asyncio

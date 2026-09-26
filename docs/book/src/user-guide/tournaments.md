@@ -144,6 +144,11 @@ rules:
 `file` の場合は SFEN または opening line のリストを `source` に指定します。
 `shogiarena run tournament` / `run sprt` で YAML ファイルから実行する場合、相対 `source` はその YAML ファイルの場所を基準に解決されます。
 
+`selection_policy` の既定値は `with_replacement` で、同じ行を複数回選ぶことがあります。
+`without_replacement` にすると schedule 内で各行を一度だけ選びます。
+先後入れ替えの 2 局に同じ行を使う `flip_policy: pair_both` では、その 2 局を 1 回の選択として数えます。
+必要な選択回数よりファイルの行数が少ない場合は、対局開始前にエラーになります。
+
 `source_format` は `auto`、`sfen`、`usi_line` を指定できます。
 
 | 値 | 意味 |
@@ -162,6 +167,7 @@ rules:
     type: file
     source: "openings/pair_lines.usi"
     source_format: usi_line
+    selection_policy: without_replacement
     flip_policy: pair_both
     sync_scope: pair
     preserve_line_metadata: true
@@ -292,6 +298,7 @@ SPRT は結論に達した時点で標本を締めます。
 
 締めた後に完了した局数は、ダッシュボードの SPRT 状態と API 応答の `late_games` で確認できます。
 `completed` と実際の対局数が食い違って見える場合は、この値を確認してください。
+停止時点で未開始だった局は `not_played` に残り、失敗記録には入りません。
 
 なお、`sprt.min_games` に達するまでは結論に到達していても停止しません。
 標本を締めるのも実際に停止を決めたときです。
@@ -303,6 +310,17 @@ SPRT は結論に達した時点で標本を締めます。
 `completion_status.json` が存在しない場合は、`manifest.json` の `shogiarena_version` を併せて確認してください。
 1.0.x の run はこの artifact を持ちません。
 1.1.0 以降の run で存在しない場合は、最終処理に到達する前に中断された可能性があります。
+
+### 失敗記録
+
+失敗した局の診断情報は `failures/run_failures.jsonl` に追記されます。
+実行中はこのファイルが正本です。
+終了時に従来形式の `failures/run_failures.json` を生成し、エンジン起動失敗があれば `failures/engine_startup_failure.json` も生成します。
+失敗記録がなければ `failures/` は作られません。
+
+互換 JSON の生成に失敗した場合は実行ログに警告が残ります。
+その警告だけで `completion_status.json` の結果は変わりません。
+JSONL の確定済み行が破損している場合も警告を確認し、診断情報を検査してください。
 
 ### 時間切れの由来
 

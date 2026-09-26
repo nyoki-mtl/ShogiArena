@@ -30,6 +30,9 @@ from shogiarena._core.contexts.game_session.application.remote_worker_bundle imp
     worker_bundle_provenance,
 )
 from shogiarena._core.contexts.game_session.application.session.base_session_runner import BaseSessionRunner
+from shogiarena._core.contexts.game_session.application.session.run_failure_record_service import (
+    RunFailureRecordService,
+)
 from shogiarena._core.contexts.game_session.application.session.run_metadata_persistence_service import (
     RunMetadataPersistenceService,
 )
@@ -264,6 +267,14 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         # projection cannot overwrite the terminal view.
         if self._derived_json_scheduler is not None:
             await self._derived_json_scheduler.drain()
+        try:
+            await RunFailureRecordService().materialize_snapshots_async(self.storage.run_dir)
+        except asyncio.CancelledError as exc:
+            cleanup_error = exc
+        except Exception as exc:  # noqa: BLE001 - compatibility snapshot failure must not change run health
+            logger.warning("Failed to materialize run failure snapshots: %s", exc, exc_info=True)
+        except BaseException as exc:  # noqa: BLE001 - preserve cleanup after nonstandard interruption
+            cleanup_error = exc
         if self._state.db_service is not None:
             try:
                 self._state.db_service.close()

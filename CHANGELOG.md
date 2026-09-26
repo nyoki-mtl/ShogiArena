@@ -8,6 +8,20 @@ except for the explicitly documented 1.2.0 breaking-change exception.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-26
+
+### Added
+
+- `rules.initial_positions.selection_policy: without_replacement` を追加した。opening file の各行を run の schedule 内で重複なく選べる。既定の `with_replacement` は従来どおり。
+
+### Fixed
+
+- SPRT の標本を締めた直後に、まだ対局中の局の指し手が数百 ms 遅れる問題を修正した。停止後に残った未開始の局を 1 局ずつ `GameDispatchStoppedError` として `failures/run_failures.json` へ追記しており、追記のたびにファイル全体を読み直して fsync 付きで書き直す同期 I/O が event loop を塞いでいた。停止後の未開始局は queue 上で捨て、失敗としては記録しない。
+- 本物の失敗が大量に出る場合も、記録ごとに `run_failures.json` 全体を書き直さないようにした。実行中は `run_failures.jsonl` に追記し、終了時に従来の JSON snapshot を生成する。
+- local instance の slot 待機を到着順にし、後から来た局が先に待つ局を繰り返し追い越して 30 秒の待機 timeout へ至る問題を修正した。
+- 失敗記録の互換 JSON snapshot の生成に失敗しても、tournament / SPSA の実行結果を失敗へ変更しないようにした。複数 instance の局が別の instance の空きを待つ間、利用可能な instance のみを使う後続局が不要な待機 timeout に至る問題も修正した。
+- 旧 `run_failures.json` から JSONL への初回移行を atomic にし、移行途中の中断で既存の失敗記録が欠けないようにした。失敗記録の追記中に取消と書き込みエラーが重なっても、取消を維持する。
+
 ## [1.2.7] - 2026-08-11
 
 ### Fixed
@@ -671,7 +685,8 @@ dashboard 無効の長時間 run で event loop が秒単位で停止し、進�
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.7...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.7...v1.3.0
 [1.2.7]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.6...v1.2.7
 [1.2.6]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.5...v1.2.6
 [1.2.5]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.4...v1.2.5

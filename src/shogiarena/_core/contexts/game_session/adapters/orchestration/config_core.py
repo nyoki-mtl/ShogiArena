@@ -49,6 +49,7 @@ class InitialPositionConfig(BaseModel):
     flip_policy: Literal["alternate", "random", "none", "pair_both"] = "pair_both"
     source: str | None = None
     source_format: Literal["auto", "sfen", "usi_line"] = "auto"
+    selection_policy: Literal["with_replacement", "without_replacement"] = "with_replacement"
     sync_scope: Literal["game", "pair"] = "game"
     preserve_line_metadata: bool = False
 
@@ -75,6 +76,13 @@ class InitialPositionConfig(BaseModel):
                 raise ValueError(f"initial position file is empty: {self.source}")
 
             rng = random.Random(seed)
+            if self.selection_policy == "without_replacement":
+                if num_positions > len(entries):
+                    raise ValueError(
+                        "without_replacement initial-position selection requires at least "
+                        f"{num_positions} entries, got {len(entries)}",
+                    )
+                return rng.sample(entries, k=num_positions)
             return [rng.choice(entries) for _ in range(num_positions)]
 
         logger.warning(

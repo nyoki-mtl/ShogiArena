@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
+import threading
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import BinaryIO
 
 from shogiarena._core.contexts.game_session.domain.failure_records import (
     FailurePhase,
@@ -23,6 +27,7 @@ _FAILURES_JSON = "run_failures.json"
 _FAILURES_JSONL = "run_failures.jsonl"
 _STARTUP_FAILURE_JSON = "engine_startup_failure.json"
 _FAILURES_DIR = "failures"
+_APPEND_LOCK = threading.Lock()
 
 
 class RunFailureRecordService:
@@ -32,21 +37,51 @@ class RunFailureRecordService:
         failure_dir = run_dir / _FAILURES_DIR
         failure_dir.mkdir(parents=True, exist_ok=True)
         payload = record.to_payload()
-        records = [*self.load_failures(run_dir), payload]
-        self._append_jsonl(failure_dir / _FAILURES_JSONL, payload)
+        self._append_jsonl(failure_dir / _FAILURES_JSONL, payload, snapshot_path=failure_dir / _FAILURES_JSON)
+
+    def materialize_snapshots(self, run_dir: Path) -> None:
+        """局の投入終了後、互換用の JSON snapshot を一度生成する。"""
+        failure_dir = run_dir / _FAILURES_DIR
+        jsonl_path = failure_dir / _FAILURES_JSONL
+        if not jsonl_path.exists():
+            return
+        records = self._load_jsonl(jsonl_path, strict=True)
         self._write_snapshot(failure_dir / _FAILURES_JSON, records)
-        if record.failure_phase in {"engine_start", "isready"}:
-            startup_records = [record for record in records if _is_startup_failure_payload(record)]
+        startup_records = [record for record in records if _is_startup_failure_payload(record)]
+        if startup_records:
             self._write_snapshot(failure_dir / _STARTUP_FAILURE_JSON, startup_records)
+
+    async def materialize_snapshots_async(self, run_dir: Path) -> None:
+        """取消中でも snapshot worker の完了を待ってから戻る。"""
+        task = asyncio.create_task(asyncio.to_thread(self.materialize_snapshots, run_dir))
+        cancellation: asyncio.CancelledError | None = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as exc:
+                cancellation = exc
+            except Exception:
+                # The worker has failed. Preserve an earlier caller cancellation below.
+                break
+        if cancellation is not None:
+            try:
+                await task
+            except Exception as exc:
+                logger.warning("Failure snapshot worker failed during cancellation: %s", exc, exc_info=True)
+            raise cancellation
+        await task
 
     def load_failures(self, run_dir: Path) -> list[JsonObject]:
         failure_dir = run_dir / _FAILURES_DIR
+        jsonl_path = failure_dir / _FAILURES_JSONL
+        if jsonl_path.exists():
+            return self._load_jsonl(jsonl_path)
         snapshot_path = failure_dir / _FAILURES_JSON
         if snapshot_path.exists():
             loaded = self._load_snapshot(snapshot_path)
             if loaded is not None:
                 return loaded
-        return self._load_jsonl(failure_dir / _FAILURES_JSONL)
+        return []
 
     @staticmethod
     def build_record_from_exception(
@@ -89,12 +124,65 @@ class RunFailureRecordService:
         return dict(sorted(counts.items()))
 
     @staticmethod
-    def _append_jsonl(path: Path, payload: JsonObject) -> None:
+    def _append_jsonl(path: Path, payload: JsonObject, *, snapshot_path: Path) -> None:
         try:
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+            line = (json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+            with _APPEND_LOCK:
+                if not path.exists() and snapshot_path.exists():
+                    loaded = RunFailureRecordService._load_snapshot(snapshot_path)
+                    if loaded is None:
+                        raise ValueError(f"Cannot migrate invalid run failure snapshot: {snapshot_path}")
+                    RunFailureRecordService._install_legacy_jsonl(path, loaded)
+                with path.open("a+b") as handle:
+                    RunFailureRecordService._truncate_torn_tail(handle, path)
+                    handle.write(line)
+                    handle.flush()
+                    os.fsync(handle.fileno())
         except OSError as exc:
             logger.exception("Failed to append run failure record to %s: %s", path, exc)
+
+    @staticmethod
+    def _install_legacy_jsonl(path: Path, records: list[JsonObject]) -> None:
+        """Install the legacy snapshot as a complete JSONL prefix before appending."""
+        temporary = path.with_name(f".{path.name}.migrate.tmp")
+        with temporary.open("wb") as handle:
+            for record in records:
+                handle.write((json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+        except OSError:
+            return  # Windows does not support opening directories for fsync.
+        try:
+            os.fsync(directory_fd)
+        except OSError as exc:
+            logger.debug("Directory fsync failed for %s: %s", path.parent, exc)
+        finally:
+            os.close(directory_fd)
+
+    @staticmethod
+    def _truncate_torn_tail(handle: BinaryIO, path: Path) -> None:
+        handle.seek(0, os.SEEK_END)
+        cursor = handle.tell()
+        if cursor == 0:
+            return
+        handle.seek(cursor - 1)
+        if handle.read(1) == b"\n":
+            return
+        while cursor:
+            start = max(0, cursor - 4096)
+            handle.seek(start)
+            chunk = handle.read(cursor - start)
+            newline = chunk.rfind(b"\n")
+            if newline >= 0:
+                handle.truncate(start + newline + 1)
+                break
+            cursor = start
+        else:
+            handle.truncate(0)
+        logger.warning("Truncated incomplete run failure JSONL tail: %s", path)
 
     @staticmethod
     def _write_snapshot(path: Path, records: list[JsonObject]) -> None:
@@ -102,10 +190,7 @@ class RunFailureRecordService:
             "schema_version": 1,
             "failures": records,
         }
-        try:
-            write_json_atomic(path, payload)
-        except (OSError, TypeError, ValueError) as exc:
-            logger.exception("Failed to write run failure snapshot to %s: %s", path, exc)
+        write_json_atomic(path, payload)
 
     @staticmethod
     def _load_snapshot(path: Path) -> list[JsonObject] | None:
@@ -126,21 +211,28 @@ class RunFailureRecordService:
         return records
 
     @staticmethod
-    def _load_jsonl(path: Path) -> list[JsonObject]:
+    def _load_jsonl(path: Path, *, strict: bool = False) -> list[JsonObject]:
         if not path.exists():
             return []
         records: list[JsonObject] = []
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            contents = path.read_bytes()
         except OSError as exc:
+            if strict:
+                raise
             logger.debug("Failed to load run failure jsonl from %s: %s", path, exc)
             return []
-        for line in lines:
+        # A crash can leave the last UTF-8 character incomplete. Only newline-terminated
+        # records are committed; decode each of those independently.
+        contents = contents[: contents.rfind(b"\n") + 1]
+        for line in contents.splitlines():
             if not line.strip():
                 continue
             try:
-                raw = json.loads(line)
-            except json.JSONDecodeError:
+                raw = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                if strict:
+                    raise ValueError(f"Invalid run failure jsonl line in {path}") from exc
                 logger.debug("Skipping invalid run failure jsonl line from %s", path)
                 continue
             if isinstance(raw, Mapping):

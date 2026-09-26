@@ -58,6 +58,9 @@ from shogiarena._core.contexts.game_session.application.session.base_session_run
 from shogiarena._core.contexts.game_session.application.session.execution_service import (
     TournamentSessionExecutionService,
 )
+from shogiarena._core.contexts.game_session.application.session.run_failure_record_service import (
+    RunFailureRecordService,
+)
 from shogiarena._core.contexts.game_session.application.session.run_loop_service import TournamentRunLoopService
 from shogiarena._core.contexts.game_session.application.session.run_metadata_persistence_service import (
     RunManifestSealError,
@@ -661,6 +664,14 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
     async def _stop_additional_services(self) -> None:
         cancellation: asyncio.CancelledError | None = None
         cleanup_error: Exception | None = None
+        run_dir = getattr(self, "run_dir", None)
+        if isinstance(run_dir, Path):
+            try:
+                await RunFailureRecordService().materialize_snapshots_async(run_dir)
+            except asyncio.CancelledError as exc:
+                cancellation = exc
+            except Exception as exc:  # noqa: BLE001 - compatibility snapshot failure must not change run health
+                logger.warning("Failed to materialize run failure snapshots: %s", exc, exc_info=True)
         try:
             await self._openbench.stop()
         except asyncio.CancelledError as exc:

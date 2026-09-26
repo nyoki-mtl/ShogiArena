@@ -347,24 +347,40 @@ async def await_instance_resources(
                 "Adjust the instance's max_engines or redistribute engines."
             )
 
-    delay = resolved_poll
-    while True:
-        # acquire より **先** に停止を確認する。順序が逆だと、待機中に停止が要求され
-        # 同時に resource が空いた場合に、その局だけが開始されてしまう。
-        _abort_if_stopped()
+    ticket = (
+        pool.register_resource_wait(requirements, allocation_timeout=allocation_timeout)
+        if isinstance(pool, InstancePool) and requirements
+        else None
+    )
+    try:
+        delay = resolved_poll
+        while True:
+            # acquire より **先** に停止を確認する。順序が逆だと、待機中に停止が要求され
+            # 同時に resource が空いた場合に、その局だけが開始されてしまう。
+            _abort_if_stopped()
 
-        acquired = pool.try_acquire_resources(requirements)
-        if acquired:
-            return
-        if asyncio.get_running_loop().time() >= deadline:
-            instance_ids = ", ".join(sorted(requirements))
-            raise TimeoutError(
-                f"Timed out after {allocation_timeout:.1f}s waiting for instance resources "
-                f"for game {game_id} on: {instance_ids}"
+            acquired = (
+                pool.try_acquire_resources(requirements, ticket=ticket)
+                if ticket is not None
+                else pool.try_acquire_resources(requirements)
             )
+            if acquired:
+                return
+            if asyncio.get_running_loop().time() >= deadline:
+                instance_ids = ", ".join(sorted(requirements))
+                raise TimeoutError(
+                    f"Timed out after {allocation_timeout:.1f}s waiting for instance resources "
+                    f"for game {game_id} on: {instance_ids}"
+                )
 
-        await asyncio.sleep(delay)
-        delay = min(delay * 1.5, resolved_max)
+            await asyncio.sleep(delay)
+            # FIFO の先頭が眠っている間は後続も取得できない。実 pool では
+            # poll を伸ばさず、解放後の遊休時間を初期 interval 以下に抑える。
+            if ticket is None:
+                delay = min(delay * 1.5, resolved_max)
+    finally:
+        if ticket is not None:
+            pool.unregister_resource_wait(requirements, ticket)
 
 
 __all__ = [

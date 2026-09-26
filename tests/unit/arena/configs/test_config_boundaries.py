@@ -273,6 +273,37 @@ def test_initial_position_config_preserves_usi_line_metadata_when_requested(tmp_
     assert entry.line_id == "lines.usi:1"
 
 
+def test_initial_position_config_can_select_without_replacement(tmp_path: Path) -> None:
+    source = tmp_path / "lines.usi"
+    lines = ["7g7f", "2g2f", "7g7f 3c3d"]
+    source.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    config = InitialPositionConfig(
+        type="file",
+        source=str(source),
+        source_format="usi_line",
+        selection_policy="without_replacement",
+        preserve_line_metadata=True,
+    )
+
+    entries = config.generate_entries(3, "seed")
+
+    assert {entry.source_line for entry in entries} == set(lines)
+
+
+def test_initial_position_config_refuses_oversized_selection_without_replacement(tmp_path: Path) -> None:
+    source = tmp_path / "lines.usi"
+    source.write_text("7g7f\n", encoding="utf-8")
+    config = InitialPositionConfig(
+        type="file",
+        source=str(source),
+        source_format="usi_line",
+        selection_policy="without_replacement",
+    )
+
+    with pytest.raises(ValueError, match="requires at least 2 entries, got 1"):
+        config.generate_entries(2, "seed")
+
+
 def test_parse_engine_config_file_extracts_engine_path(tmp_path: Path) -> None:
     engine_file = tmp_path / "engine.yaml"
     engine_file.write_text(

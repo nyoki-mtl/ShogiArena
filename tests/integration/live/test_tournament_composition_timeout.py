@@ -38,6 +38,8 @@ from typing import Any
 import pytest
 import yaml
 
+from shogiarena._core.contexts.instances.application.instance_models import InstanceConfig, InstanceType
+from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.match.application.runner_finalize_mixin import GameRunnerFinalizeMixin
 from shogiarena._core.contexts.match.application.runner_loop_mixin import GameRunnerLoopMixin
 from shogiarena.tournament import build_tournament_runner, create_run_storage, load_tournament_config
@@ -605,3 +607,34 @@ async def test_production_composition_writes_a_cancelled_terminal_status(tmp_pat
     # cleanup 前に確定させた watchdog 計測値を伴うこと。timeout 診断の主要な材料なので、
     # 中断した run こそ欠けてはいけない。
     assert isinstance(status.get("watchdog"), dict), f"a cancelled run must carry the watchdog summary: {status}"
+
+
+@pytest.mark.asyncio
+async def test_local_slot_throttling_completes_with_more_workers_than_slots(tmp_path: Path) -> None:
+    """preflight off の意図的な resource 待機が局を飢餓させないこと。"""
+    black, white = _write_engine_assets(tmp_path, delay_s=0.1)
+    config_path = _write_config(
+        tmp_path,
+        black=black,
+        white=white,
+        time_ms=5000,
+        margin_ms=500,
+        games_per_pair=12,
+        num_parallel=6,
+    )
+    pool = InstancePool()
+    pool.add_instance(InstanceConfig(name="local", type=InstanceType.LOCAL, engine_dir="", slots=4, max_engines=4))
+    run_dir = tmp_path / "run"
+    runner = build_tournament_runner(
+        load_tournament_config(config_path),
+        storage=create_run_storage(run_dir),
+        instance_pool=pool,
+        should_skip_resume=True,
+    )
+
+    await runner.run()
+
+    status = json.loads((run_dir / "completion_status.json").read_text(encoding="utf-8"))
+    assert status["status"] == "clean"
+    assert status["completed"] == 12
+    assert status["not_played"] == 0

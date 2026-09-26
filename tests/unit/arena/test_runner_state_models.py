@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import threading
 from datetime import UTC
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,9 +13,13 @@ import pytest
 import rsshogi.record
 
 from shogiarena._core.contexts.game_session.adapters.dashboard_lifecycle import DashboardLifecycleCoordinator
+from shogiarena._core.contexts.game_session.application.session.run_failure_record_service import (
+    RunFailureRecordService,
+)
 from shogiarena._core.contexts.game_session.application.session.run_metadata_persistence_service import (
     RunManifestSealError,
 )
+from shogiarena._core.contexts.game_session.domain.failure_records import RunFailureRecord
 from shogiarena._core.contexts.game_session.ports.session_lifecycle_ports import RunOptions
 from shogiarena._core.contexts.spsa.adapters.runner import SpsaRunner
 from shogiarena._core.contexts.spsa.application.runner_state import SpsaRunnerState
@@ -268,6 +274,160 @@ async def test_tournament_stop_services_closes_db_and_writer_when_openbench_stop
     assert runner._state.db_service is None
     assert runner._record_writer is None
     assert "Failed to stop OpenBench service" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_tournament_stop_services_materializes_failure_snapshots(tmp_path: Path) -> None:
+    class _OpenBenchStub:
+        async def stop(self) -> None:
+            return None
+
+    service = RunFailureRecordService()
+    service.append_failure(
+        run_dir=tmp_path,
+        record=RunFailureRecord(
+            game_id="g1",
+            scheduled_black_engine="a",
+            scheduled_white_engine="b",
+            failure_phase="engine_start",
+            exception_class="RuntimeError",
+            short_message="startup failed",
+        ),
+    )
+    runner = object.__new__(TournamentRunner)
+    runner.run_dir = tmp_path
+    runner._openbench = _OpenBenchStub()
+    runner._state = TournamentRunnerState()
+    runner._record_writer = None
+
+    await runner._stop_additional_services()
+
+    failure_dir = tmp_path / "failures"
+    assert (failure_dir / "run_failures.json").exists()
+    assert (failure_dir / "engine_startup_failure.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_spsa_stop_services_materializes_failure_snapshots(tmp_path: Path) -> None:
+    service = RunFailureRecordService()
+    service.append_failure(
+        run_dir=tmp_path,
+        record=RunFailureRecord(
+            game_id="spsa-g1",
+            scheduled_black_engine="a",
+            scheduled_white_engine="b",
+            failure_phase="engine_start",
+            exception_class="RuntimeError",
+            short_message="startup failed",
+        ),
+    )
+    runner = object.__new__(SpsaRunner)
+    runner._storage = SimpleNamespace(run_dir=tmp_path)
+    runner._derived_json_scheduler = None
+    runner._state = SpsaRunnerState()
+
+    await runner._stop_additional_services()
+
+    failure_dir = tmp_path / "failures"
+    assert (failure_dir / "run_failures.json").exists()
+    assert (failure_dir / "engine_startup_failure.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_failure_warns_and_still_closes_tournament_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    class _OpenBenchStub:
+        async def stop(self) -> None:
+            return None
+
+    class _DbStub:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    def fail_snapshot(_service: RunFailureRecordService, _run_dir: Path) -> None:
+        raise OSError("snapshot failed")
+
+    monkeypatch.setattr(RunFailureRecordService, "materialize_snapshots", fail_snapshot)
+    db = _DbStub()
+    runner = object.__new__(TournamentRunner)
+    runner.run_dir = tmp_path
+    runner._openbench = _OpenBenchStub()
+    runner._state = TournamentRunnerState(db_service=cast(Any, db))
+    runner._record_writer = None
+
+    with caplog.at_level(logging.WARNING):
+        await runner._stop_additional_services()
+    assert db.closed
+    assert "Failed to materialize run failure snapshots" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_snapshot_failure_does_not_change_spsa_terminal_state(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    failure_dir = tmp_path / "failures"
+    failure_dir.mkdir()
+    (failure_dir / "run_failures.jsonl").write_text('{"invalid":\n', encoding="utf-8")
+    runner = object.__new__(SpsaRunner)
+    runner._storage = SimpleNamespace(run_dir=tmp_path)
+    runner._derived_json_scheduler = None
+    runner._state = SpsaRunnerState(terminal_status="clean", terminal_reason="completed")
+
+    with caplog.at_level(logging.WARNING):
+        await runner._stop_additional_services()
+
+    assert runner._state.terminal_status == "clean"
+    assert runner._state.terminal_reason == "completed"
+    assert "Failed to materialize run failure snapshots" in caplog.text
+    assert "Invalid run failure jsonl line" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("worker_fails", [False, True])
+async def test_snapshot_cancellation_still_closes_tournament_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker_fails: bool
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    class _OpenBenchStub:
+        async def stop(self) -> None:
+            return None
+
+    class _DbStub:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    def slow_snapshot(_service: RunFailureRecordService, _run_dir: Path) -> None:
+        entered.set()
+        assert release.wait(timeout=2)
+        if worker_fails:
+            raise OSError("snapshot failed after cancellation")
+
+    monkeypatch.setattr(RunFailureRecordService, "materialize_snapshots", slow_snapshot)
+    db = _DbStub()
+    runner = object.__new__(TournamentRunner)
+    runner.run_dir = tmp_path
+    runner._openbench = _OpenBenchStub()
+    runner._state = TournamentRunnerState(db_service=cast(Any, db))
+    runner._record_writer = None
+
+    task = asyncio.create_task(runner._stop_additional_services())
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert db.closed
 
 
 @pytest.mark.asyncio
