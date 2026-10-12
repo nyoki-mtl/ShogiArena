@@ -2,12 +2,8 @@
 
 > **前提知識**：確率と統計の基礎（期待値、対数、ロジスティック関数）
 
-## このページの要点
-
-- Elo レーティングは**勝率をログスケールに変換**したもの。400 点差で勝率 10:1
-- 期待スコアはロジスティック関数で計算し、K ファクターで更新速度を制御する
-- 信頼区間を計算すると、レーティングの不確かさを定量的に示せる
-- Elo 単体では「差がある」ことしかわからない。「差が統計的に有意か」を判定するには [SPRT](../sprt/index.md) が必要
+Elo レーティングは、対戦相手への期待スコアをレーティング差で表します。
+対局結果から差を推定し、信頼区間でその不確かさを示します。
 
 ## Elo レーティングとは
 
@@ -134,9 +130,9 @@ white_score = 1.0 - black_score
 
 ## Elo だけでは足りないこと
 
-区間推定まで進めても、エンジンテストで必要な判断には届きません。
+信頼区間は差の大きさや不確かさを読む助けになりますが、対局を続けるか止めるかの手順までは定めません。
 
-1. **仮説検定ではない**：「差がある」とは言えても、「その差が統計的に有意か」は判定できない
+1. **途中で繰り返し判定する場合**：固定局数を前提とした信頼区間を、結果を見ながら打ち切る判断にそのまま使うことはできない
 2. **点推定値にサンプルサイズが現れない**：10 局の +100 Elo と 1000 局の +100 Elo が同じ数値として並ぶ
 3. **打ち切りの基準がない**：何局指せば十分かを事前に決められない
 
@@ -146,9 +142,9 @@ white_score = 1.0 - black_score
 
 | ファイル | クラス/関数 | 役割 |
 |---------|----------|------|
-| `_core/contexts/game_session/application/elo_rating_service.py` | `EloRatingService` | レーティング計算の本体 |
-| `_core/shared/kernel/statistics/btd_rating.py` | `BTDEstimator` | 複数エンジンの強さ推定 |
-| `_core/shared/kernel/statistics/pentanomial.py` | `compute_pentanomial()` | 対局ペアの集計 |
+| [elo_rating_service.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/application/elo_rating_service.py) | `EloRatingService` | レーティング計算の本体 |
+| [btd_rating.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/shared/kernel/statistics/btd_rating.py) | `BTDEstimator` | 複数エンジンの強さ推定 |
+| [pentanomial.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/shared/kernel/statistics/pentanomial.py) | `compute_pentanomial()` | 対局ペアの集計 |
 
 ## 参考文献
 

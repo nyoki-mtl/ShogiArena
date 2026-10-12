@@ -2,12 +2,8 @@
 
 > **前提知識**：[Elo レーティング](./index.md)（勝率とレーティング差の関係）
 
-## このページの要点
-
-- BayesElo は引き分け率を独立したパラメータ（drawelo）として扱う Elo の拡張
-- 標準的な Logistic Elo が期待スコアのみを扱うのに対し、BayesElo は勝ち、引き分け、負けの **3 つの確率**を個別に表す
-- 引き分け率の高い将棋やチェスのエンジンテストでは、BayesElo のほうが対局結果の構造をそのまま反映できる
-- ShogiArena と Fishtest はいずれも Logistic Elo を標準として使用しつつ、BayesElo との変換を内部的にサポートしている
+BayesElo は引き分け率を独立したパラメータとして持ち、勝ち、引き分け、負けの確率を個別に表します。
+期待スコアを扱う Logistic Elo との違いを、モデルの定義と変換式から見ていきます。
 
 ## Logistic Elo が捨てている情報
 
@@ -21,7 +17,7 @@ p = \frac{1}{1 + 10^{-\Delta R / 400}}
 引き分けは「半分の勝ち」に潰され、引き分け率そのものはモデルに残りません。
 
 この潰し方は、同じスコアでも 1 局あたりに得られる情報量が違うという事実を落とします。
-引き分けの多い条件（将棋の長時間対局、チェスの上位エンジン同士）では、多くの対局が勝敗の情報を運ばないため、同じスコアに対する推定の分散が大きくなります。
+引き分け率によって対局スコアの分散が変わるため、同じ平均スコアと局数でも推定精度は変わります。
 引き分け率は持ち時間やエンジンの特性に応じて動くので、この差は条件を変えるたびに現れます。
 
 ## BayesElo モデル
@@ -184,7 +180,7 @@ Fishtest は当初、BayesElo をベースにした SPRT を使用していま�
 
 | ファイル | クラス/関数 | 役割 |
 |---------|----------|------|
-| `_core/contexts/game_session/application/elo_rating_service.py` | `EloRatingService` | Logistic Elo の計算 |
+| [elo_rating_service.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/application/elo_rating_service.py) | `EloRatingService` | Logistic Elo の計算 |
 | Fishtest `stats/stat_util.py` | `bayeselo_to_proba()` | BayesElo → 三項確率 |
 | Fishtest `stats/stat_util.py` | `proba_to_bayeselo()` | 三項確率 → BayesElo |
 

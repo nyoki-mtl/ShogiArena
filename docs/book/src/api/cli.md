@@ -12,7 +12,7 @@ shogiarena [global-options] <command> ...
 | --- | --- |
 | `--version` | バージョンを表示する |
 | `--log-level {DEBUG,INFO,WARNING,ERROR}` | ログレベルを指定する |
-| `--debug-logger LOGGER` | 指定 logger を DEBUG にする |
+| `--debug-logger LOGGER` | 指定したロガーをDEBUGにする |
 | `--output-dir PATH` | この実行だけ標準出力先を上書きする |
 
 ## コマンド一覧
@@ -21,11 +21,11 @@ shogiarena [global-options] <command> ...
 | --- | --- |
 | `config` | `settings.yaml` と artifact リポジトリ設定 |
 | `run` | tournament / sprt / spsa / generate / mate / analyze |
-| `results` | run 結果の集計と provenance 検証 |
+| `results` | 対局結果の集計と使用したエンジンの検証 |
 | `dashboard` | 保存済み run の表示と追記中CSAログの監視 |
-| `csa` | CSAログの状態確認と棋譜export |
-| `replay-position` | 保存済み局面の再検索 |
-| `worker-bundle` | Remote worker bundleとpreplaced mappingの生成 |
+| `csa` | CSAログの状態確認と棋譜の書き出し |
+| `replay-position` | 保存済み局面の再探索 |
+| `worker-bundle` | リモート実行用のパッケージと配置済みファイルの一覧を生成 |
 
 ## `config`
 
@@ -49,7 +49,7 @@ shogiarena worker-bundle preplaced-map \
   --resource ENGINE_NAME LOCAL_FILE_OR_DIRECTORY /absolute/remote/resource
 ```
 
-`preplaced-map`はengine binaryとpath resourceをhashし、`--provision preplaced`で使う
+`preplaced-map`はエンジンや評価関数などのハッシュ値を計算し、`--provision preplaced`で使う
 `SHOGIARENA_REMOTE_PREPLACED_RESOURCES`の単一行JSONを標準出力へ返します。
 `--engine`と`--resource`は繰り返し指定できます。
 
@@ -77,10 +77,10 @@ shogiarena run tournament [config.yaml] [options]
 | `--experiment-name NAME` | 自動生成の run 名を上書きする |
 | `--run-dir PATH` | run ディレクトリを明示指定する |
 | `--no-resume` | 再開せず新規に実行する |
-| `--provision {cas,preplaced}` | SSH resourceをCAS配置またはpath/digest検証済み既配置として扱う |
-| `--git-worktree {strict,clean,allow-dirty}` | artifact build 前の Git worktree の扱いを指定する |
+| `--provision {cas,preplaced}` | リモートへファイルを転送するか、検証済みの配置済みファイルを使うかを指定する |
+| `--git-worktree {strict,clean,allow-dirty}` | エンジンのビルド前にGit作業ツリーをどう扱うか指定する |
 | `--path-preflight {off,warn,error}` | パス系 USI オプションを事前検査する |
-| `--engine KEY=VALUE ...` | engine 定義を CLI から追加する（repeatable） |
+| `--engine KEY=VALUE ...` | エンジン設定を追加する（繰り返し指定可） |
 | `--rules KEY=VALUE ...` | `rules.*` を上書きする |
 | `--tournament KEY=VALUE ...` | `tournament.*` を上書きする |
 | `--rating KEY=VALUE ...` | `rating.*` を上書きする |
@@ -198,9 +198,9 @@ shogiarena results summary /path/to/game.db --engine EngineA
 shogiarena results verify-provenance /path/to/run
 ```
 
-`summary --format json` の出力には timing metadata が含まれます。
-`engine_wall_time_ms` は engine の `think()` 呼び出しから `bestmove` 回収までの engine I/O 区間、`wall_time_ms` は持ち時間に課金された wall time です。
-wall NPS の既定 field は `engine_wall_time_ms` です。
+`summary --format json`の出力には、探索にかかった時間も含まれます。
+`engine_wall_time_ms`は`think()`の呼び出しから`bestmove`の受信までの実時間、`wall_time_ms`は持ち時間から差し引いた時間です。
+実時間あたりのNPSは、既定では`engine_wall_time_ms`を使って計算します。
 
 ## `replay-position`
 
@@ -214,4 +214,4 @@ shogiarena replay-position --run-dir /path/to/run \
   --nodes 100000
 ```
 
-USI transcript を保存した run では、履歴を再現した再検索にも使えます。
+USI通信ログを保存している場合は、その履歴を再現して探索することもできます。

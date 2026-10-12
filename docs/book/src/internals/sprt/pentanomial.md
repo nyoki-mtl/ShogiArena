@@ -2,12 +2,8 @@
 
 > **前提知識**：[SPRT](./index.md)、[対数尤度比（LLR）](./llr.md)
 
-## このページの要点
-
-- 五項分布（pentanomial）は、**ペアゲーム**（同じ局面で先後を入れ替えた 2 局）の結果を 5 カテゴリに分類するモデル
-- 先後の非対称性（先手有利）を統計的にキャンセルし、推定精度を向上させる
-- 5 カテゴリのスコアは 0.0, 0.5, 1.0, 1.5, 2.0 で、ペアの合計勝ち数に対応する
-- 標準的な三項分布（勝ち、引き分け、負け）と比較して、所要対局数を削減できる
+五項分布モデルは、同じ開始局面で先後を入れ替えた 2 局の合計スコアを、五つのカテゴリで集計します。
+ペア内の相関を分析に取り込み、レーティング差や LLR を計算します。
 
 ## ペアゲームとは
 
@@ -110,7 +106,7 @@ for i in range(min(len(g_e1_black), len(g_e1_white))):
 
 ## Fishtest での実例
 
-Fishtest（Stockfish のテストフレームワーク）のテスト結果を例に、五項分布の実践的な読み方を説明します。
+Fishtest の結果表示には、五項分布のカウントと LLR が並びます。
 
 ```text
 SPRT: elo0: -1.75 alpha: 0.05 elo1: 0.25 beta: 0.05 (normalized)
@@ -208,10 +204,11 @@ LLR: 2.94 [-2.94, 2.94] (accepted)
 五項頻度 \\([20, 65, 250, 120, 45]\\)（500 ペア = 1000 局）の場合は次のようになります。
 
 \\[
-\hat{s} = \frac{0 \cdot 20 + 0.5 \cdot 65 + 1.0 \cdot 250 + 1.5 \cdot 120 + 2.0 \cdot 45}{500} = 1.01
+\hat{s} = \frac{0 \cdot 20 + 0.5 \cdot 65 + 1.0 \cdot 250 + 1.5 \cdot 120 + 2.0 \cdot 45}{500} = 1.105
 \\]
 
-ペアスコアの期待値が 1.01（> 1.0 = 互角）であり、Engine A がわずかに優位であることを示唆します。
+平均ペアスコアは1.105で、互角の1.0を上回っています。
+1局あたりの平均スコアは0.5525です。
 
 ### 効率性の向上
 
@@ -251,7 +248,7 @@ Var_trinomial = Var_pentanomial + Var_bias
 
 | ファイル | 関数 | 役割 |
 |---------|------|------|
-| `_core/shared/kernel/statistics/pentanomial.py` | `compute_pentanomial()` | 五項分布の計算 |
+| [pentanomial.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/shared/kernel/statistics/pentanomial.py) | `compute_pentanomial()` | 五項分布の計算 |
 | Fishtest `stats/LLRcalc.py` | `LLR_logistic()` | 三項/五項の自動選択 LLR |
 | Fishtest `stats/LLRcalc.py` | `results_to_pdf()` | 頻度 → 確率分布の変換 |
 | [vdbergh/pentanomial](https://github.com/vdbergh/pentanomial) | `SPRT_pentanomial.py` | 五項 SPRT の参照実装 |

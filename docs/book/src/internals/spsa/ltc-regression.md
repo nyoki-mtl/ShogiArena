@@ -2,12 +2,9 @@
 
 > **前提知識**：[SPSA](./index.md)、[SPRT](../sprt/index.md)
 
-## このページの要点
-
-- 一定回数の SPSA 更新ごとに、長い持ち時間でチューニング済みパラメータとベースラインを対局させ、劣化していればパラメータをリバートする機能
-- ShogiArena は設定項目として実装しているが、既定では無効であり、`examples/` の設定にも含めていない
-- チューニングを止めずに挟める標本サイズでは、判定できるのが破綻に近い劣化に限られる。この機能を回す動機である 10〜30 Elo の劣化は、検査を通過してしまう
-- Stockfish/fishtest は SPSA の実行中に LTC 検証を挟まず、チューニング終了後に独立したランで検証する
+LTC 回帰テストは、SPSA の実行中に長い持ち時間でパラメータを検証し、劣化と判定されれば以前の値に戻す機能です。
+ShogiArena では既定で無効にしています。
+実行中に挟める対局数では、STC と LTC の違いによる 10〜30 Elo の劣化を十分に検出できないためです。
 
 ## 何をする機能か
 
@@ -200,11 +197,11 @@ SPRT が決着するには数千局規模の `total_pairs` が要るため、そ
 
 | ファイル | 関数/クラス | 役割 |
 |---------|----------|------|
-| `_core/contexts/spsa/adapters/runtime/ltc_regression.py` | `run_ltc_regression()` | LTC 回帰テストの本体 |
-| `_core/contexts/spsa/adapters/runtime/ltc_regression_events.py` | `determine_ltc_status()` | パス/フェイル/保留の判定 |
-| `_core/contexts/spsa/adapters/runtime/ltc_regression_events.py` | `fail_closed_ltc_status_at_budget()` | 予算枯渇時の fail-closed 変換 |
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `LtcRegressionConfig` | LTC 設定 |
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `LtcPassCriteria` | パス判定基準 |
+| [ltc_regression.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/adapters/runtime/ltc_regression.py) | `run_ltc_regression()` | LTC 回帰テストの本体 |
+| [ltc_regression_events.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/adapters/runtime/ltc_regression_events.py) | `determine_ltc_status()` | パス/フェイル/保留の判定 |
+| [ltc_regression_events.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/adapters/runtime/ltc_regression_events.py) | `fail_closed_ltc_status_at_budget()` | 予算枯渇時の fail-closed 変換 |
+| [config_spsa_models.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/adapters/orchestration/config_spsa_models.py) | `LtcRegressionConfig` | LTC 設定 |
+| [config_spsa_models.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/adapters/orchestration/config_spsa_models.py) | `LtcPassCriteria` | パス判定基準 |
 
 ## 次に読む
 

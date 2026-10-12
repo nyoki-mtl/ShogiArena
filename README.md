@@ -6,90 +6,66 @@
 [![Python](https://img.shields.io/pypi/pyversions/shogiarena)](https://pypi.org/project/shogiarena/)
 [![License](https://img.shields.io/github/license/nyoki-mtl/ShogiArena)](https://github.com/nyoki-mtl/ShogiArena/blob/main/LICENSE)
 
-USI将棋エンジンの対局、比較、チューニングを、一つの実行環境で管理します。
-
-ShogiArenaは、トーナメント、GSPRT、SPSA、自己対局による棋譜生成に対応しています。
-対局の実行だけでなく、設定の検証、棋譜と統計の保存、異常の診断、Webダッシュボードでの監視までを同じrunとして記録します。
+ShogiArenaは、USI対応の将棋エンジンを自動で対局させ、結果を比較するPython製のツールです。
+エンジンの強さの検定、パラメータの調整、自己対局による学習用棋譜の生成にも使えます。
 
 [ドキュメント](https://nyoki-mtl.github.io/ShogiArena/) |
 [クイックスタート](https://nyoki-mtl.github.io/ShogiArena/getting-started/quick-start.html) |
 [PyPI](https://pypi.org/project/shogiarena/) |
 [変更履歴](CHANGELOG.md)
 
+## できること
+
+| やりたいこと | ShogiArenaの機能 |
+|---|---|
+| エンジン同士を対局させる | 総当たり、基準エンジンとの対局（gauntlet）、並列実行 |
+| 変更前後の強さを比べる | 対局結果から統計的に検定するSPRT（GSPRT） |
+| パラメータを調整する | 対局結果を使ってUSIオプションを調整するSPSA |
+| 学習用の棋譜を作る | 自己対局、SFEN／KIF／CSA／バイナリ形式での出力 |
+| 複数のマシンで対局を回す | SSH接続によるリモート実行 |
+
+設定、棋譜、対局結果は実行ごとに保存されます。
+途中で止めたトーナメントの再開や、保存した結果の集計もできます。
+
 ## ダッシュボード
 
 https://github.com/user-attachments/assets/1cdebe23-b1a9-4d8e-91c0-f56ca970b569
 
-進行中の対局、順位表、棋譜、エンジン設定、SPRT、SPSAの更新状況をリアルタイムに確認できます。
-完了したrunも同じ画面で開き直せます。
-
-## 用途
-
-| やりたいこと | ShogiArenaの機能 |
-|---|---|
-| 複数エンジンを比較する | round-robin、gauntlet、並列対局 |
-| 変更の強さを検定する | trinomial／pentanomial GSPRT、早期停止 |
-| USIオプションを調整する | SPSA、共有乱数、LTC回帰テスト |
-| 学習用の棋譜を作る | 自己対局、SFEN／KIF／CSA／binary records |
-| 対局を監視して調べる | Webダッシュボード、USI transcript、結果集計 |
-| 複数ホストで実行する | ローカルinstance、SSH instance pool |
-
-各runには設定、エンジン情報、棋譜、SQLite DB、再開状態が保存されます。
-v1.1.0以降は`completion_status.json`も保存されるため、正常完了、SPRTの早期決着、利用者による停止、安全装置による停止を区別できます。
+ブラウザで進行中の対局や順位表を確認し、棋譜を再生できます。
+SPRTの判定やSPSAの更新状況も表示でき、終了後に保存した結果を開き直すこともできます。
 
 ## インストール
 
-Python 3.11以上と、実行するUSI将棋エンジンが必要です。
+Python 3.11以上が必要です。
+Windows x86_64、Linux x86_64／arm64、macOS Intel／Apple Siliconで動作します。
 
 ```bash
 pip install shogiarena
 shogiarena --version
 ```
 
-Windows x86_64、Linux x86_64／arm64、macOS Intel／Apple Silicon向けのwheelを提供しています。
-AVX2版の`rsshogi`へ差し替える場合は、[インストールガイド](https://nyoki-mtl.github.io/ShogiArena/getting-started/installation.html)を参照してください。
+対局に使うUSIエンジンの実行ファイルと、そのエンジンに必要な評価関数は別途用意してください。
+エンジンの入手から試したい場合は、[クイックスタート](https://nyoki-mtl.github.io/ShogiArena/getting-started/quick-start.html)にYaneuraOuと水匠5を取得する手順があります。
 
-実行platformの対応範囲は次のとおりです。
-
-| 用途 | 対応platform |
-|---|---|
-| Coordinator／ローカル対局 | Windows x86_64、Linux x86_64／arm64、macOS Intel／Apple Silicon |
-| SSH Remote worker | Linux x86_64 |
-
-Remote workerは`worker-bundle`でwheel、lock、manifestからimmutable bundleを生成します。
-別のuv projectの仮想環境へインストールした場合も、bundle sourceにはinstalled ShogiArena distributionを使います。
-既配置engineや評価ファイルを使う場合は、`preplaced-map`で実行時と同じlogical IDとSHA-256 mappingを生成できます。
-
-```bash
-shogiarena worker-bundle build --output worker-bundle.zip
-shogiarena worker-bundle preplaced-map \
-  --engine engine-a /local/engine-a /opt/engines/engine-a \
-  --resource engine-a /local/eval /opt/eval/engine-a
-```
-
-Remote設定と`cas`／`preplaced`運用は[リモート実行ガイド](https://nyoki-mtl.github.io/ShogiArena/user-guide/remote-execution.html)を参照してください。
-
-出力先とエンジン配置先を初期化する場合は、次のコマンドを実行します。
-
-```bash
-shogiarena config init
-shogiarena config show
-```
-
-`config init`は必須ではありません。
-`{output_dir}`と`{engine_dir}`のプレースホルダー、artifact repository、共有キャッシュを使う場合に設定してください。
+インストールの詳細は[インストールガイド](https://nyoki-mtl.github.io/ShogiArena/getting-started/installation.html)を参照してください。
+SSHでのリモート実行先はLinux x86_64のみ対応しています。
 
 ## 最初のトーナメント
 
-ローカルのUSIエンジンを二つ登録し、10局のround-robinを実行します。
+手元のUSIエンジンを二つ登録して、動作確認用に10局対局させます。
+同じエンジンの設定違いを比較することもできます。
 
-まず、エンジンごとに設定ファイルを作ります。
+まず、次の三つのファイルを同じディレクトリに作ります。
+`engine_path`は実行ファイルのパスに置き換えてください。
+`working_directory`には、エンジンの作業ディレクトリ（通常は実行ファイルのあるディレクトリ）を指定します。
+Windowsでは`C:/engines/engine_a.exe`のように、`/`で区切る書き方も使えます。
 
 `engine_a.yaml`:
 
 ```yaml
 name: "Engine A"
 engine_path: "/path/to/engine_a"
+working_directory: "/path/to"
 options:
   Threads: 2
   USI_Hash: 256
@@ -100,12 +76,16 @@ options:
 ```yaml
 name: "Engine B"
 engine_path: "/path/to/engine_b"
+working_directory: "/path/to"
 options:
   Threads: 2
   USI_Hash: 256
 ```
 
-次に、二つのエンジンを参照する`tournament.yaml`を作ります。
+`Threads`と`USI_Hash`は、それぞれスレッド数とハッシュメモリ量（MB）の指定例です。
+使えるオプションはエンジンによって異なるので、必要な評価関数のパスなども含めて、[エンジン設定](https://nyoki-mtl.github.io/ShogiArena/user-guide/engine-configuration.html)を参考に調整してください。
+
+`tournament.yaml`:
 
 ```yaml
 experiment_name: "first_tournament"
@@ -129,72 +109,42 @@ dashboard:
   api_port: 8080
 ```
 
-実行前に`--dry-run`で設定を検証します。
+この設定では2局を並列に進めます。
+各エンジンの持ち時間は10秒で、1手ごとに0.1秒加算します。
+
+ファイルを作ったディレクトリで、設定を確認してから実行します。
+`--dry-run`では設定と対局予定を確認できますが、エンジンは起動しません。
 
 ```bash
-shogiarena run tournament tournament.yaml --dry-run
-shogiarena run tournament tournament.yaml
+shogiarena run tournament tournament.yaml --dry-run --run-dir runs/first_tournament
+shogiarena run tournament tournament.yaml --run-dir runs/first_tournament
 ```
 
-実行中は`http://localhost:8080`でダッシュボードを開けます。
-設定項目の意味とrunディレクトリの構成は、[クイックスタート](https://nyoki-mtl.github.io/ShogiArena/getting-started/quick-start.html)にまとめています。
+実行中は[http://localhost:8080](http://localhost:8080)でダッシュボードを開けます。
+棋譜や対局結果は`runs/first_tournament`に保存されます。
 
-## 実行モード
+## 結果を見る
 
-| コマンド | 用途 |
-|---|---|
-| `shogiarena run tournament CONFIG` | round-robinまたはgauntletを実行する |
-| `shogiarena run sprt CONFIG` | 二つのエンジンをGSPRTで比較する |
-| `shogiarena run spsa CONFIG` | USIオプションや評価パラメータを調整する |
-| `shogiarena run generate CONFIG` | 自己対局で棋譜を生成する |
-| `shogiarena run analyze` | 一局面を通常探索する |
-| `shogiarena run mate` | 一局面を詰み探索する |
-
-設定テンプレートは[examples/configs](examples/configs)にあります。
-PyPIの配布物には含まれないため、必要な場合はGitHubから取得してください。
-
-## 保存したrunを調べる
-
-ダッシュボードは実行中だけでなく、保存済みのrunにも利用できます。
+終了後も、保存先を指定すればダッシュボードで結果や棋譜を確認できます。
 
 ```bash
-shogiarena dashboard serve --run-dir /path/to/run
+shogiarena dashboard serve --run-dir runs/first_tournament
 ```
 
-対局結果を端末、JSON、CSVへ集計できます。
+端末で勝敗を集計したり、JSONやCSVで出力したりすることもできます。
 
 ```bash
-shogiarena results summary /path/to/run
-shogiarena results summary /path/to/run --format json
-shogiarena results summary /path/to/run --format csv
+shogiarena results summary runs/first_tournament
+shogiarena results summary runs/first_tournament --format json
+shogiarena results summary runs/first_tournament --format csv
 ```
 
-v1.1.0以降の測定結果を採用する前に、`completion_status.json`の`status`と`termination_reason`を確認してください。
-ShogiArena自身の停滞が疑われる時間切れと、原因を断定できない時間切れは無効局として記録され、EloとSPRTの標本から除外されます。
+対局結果を強さの比較に使うときは、`completion_status.json`で終了状態も確認してください。
+正常完了と途中停止の違いや、集計から除外される対局の扱いは、[トーナメントガイド](https://nyoki-mtl.github.io/ShogiArena/user-guide/tournaments.html)で説明しています。
 
 ## Pythonから使う
 
-公開APIからUSIエンジンを起動し、局面を探索できます。
-
-```python
-import asyncio
-
-from shogiarena.engine import UsiThinkRequest, create_engine
-
-
-async def main() -> None:
-    async with await create_engine("engine_a.yaml") as engine:
-        result = await engine.think(
-            sfen="startpos",
-            request=UsiThinkRequest(movetime=5_000),
-        )
-        print(result.bestmove)
-
-
-asyncio.run(main())
-```
-
-保存先を指定してトーナメントを実行する場合は、`shogiarena.tournament`を使います。
+同じ設定ファイルを使って、Pythonスクリプトからトーナメントを実行できます。
 
 ```python
 import asyncio
@@ -213,34 +163,25 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-安定した公開面は、CLI、公開設定schema、`shogiarena.engine`、`shogiarena.tournament`の通常利用向けAPIです。
-`shogiarena.composition`の高度なrunner／storage組み立てAPIはprovisionalであり、1.xでも変更される場合があります。
-`shogiarena._core`は内部実装なので直接importしないでください。
+USIエンジンを直接操作して局面を解析するAPIもあります。
+使い方は[Pythonライブラリガイド](https://nyoki-mtl.github.io/ShogiArena/user-guide/python-library.html)、関数や型の一覧は[APIリファレンス](https://nyoki-mtl.github.io/ShogiArena/api/index.html)を参照してください。
 
-## ドキュメント
+## 詳しく使う
+
+用途別の設定テンプレートは[examples/configs](examples/configs)にあります。
+`pip install`でインストールした環境では、GitHubから取得してください。
 
 - [インストール](https://nyoki-mtl.github.io/ShogiArena/getting-started/installation.html)
 - [最初のトーナメント](https://nyoki-mtl.github.io/ShogiArena/getting-started/first-tournament.html)
 - [トーナメント](https://nyoki-mtl.github.io/ShogiArena/user-guide/tournaments.html)
 - [SPRT／SPSA](https://nyoki-mtl.github.io/ShogiArena/user-guide/spsa.html)
+- [リモート実行](https://nyoki-mtl.github.io/ShogiArena/user-guide/remote-execution.html)
 - [エンジン設定](https://nyoki-mtl.github.io/ShogiArena/user-guide/engine-configuration.html)
 - [ダッシュボード](https://nyoki-mtl.github.io/ShogiArena/user-guide/dashboard.html)
 - [Pythonライブラリ](https://nyoki-mtl.github.io/ShogiArena/user-guide/python-library.html)
 - [CLIリファレンス](https://nyoki-mtl.github.io/ShogiArena/api/cli.html)
-- [トラブルシューティング](https://nyoki-mtl.github.io/ShogiArena/troubleshooting.html)
 
-## 開発
-
-このリポジトリの開発環境は`uv`で管理します。
-
-```bash
-git clone https://github.com/nyoki-mtl/ShogiArena.git
-cd ShogiArena
-uv sync
-make check
-```
-
-変更を送る前に[コントリビュートガイド](https://nyoki-mtl.github.io/ShogiArena/development/contributing.html)を確認してください。
+開発環境の準備や変更の検証方法は、[コントリビュートガイド](https://nyoki-mtl.github.io/ShogiArena/development/contributing.html)にまとめています。
 
 ## ライセンス
 

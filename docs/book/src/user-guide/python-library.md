@@ -1,7 +1,7 @@
 # Python ライブラリ
 
 ShogiArena は CLI だけでなく Python からも利用できます。
-公開入口の中心は `shogiarena.engine` と `shogiarena.tournament` です。
+エンジン操作には`shogiarena.engine`、トーナメントの実行には`shogiarena.tournament`を使います。
 
 ## エンジンを起動する
 
@@ -23,7 +23,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-mapping から直接起動することもできます。
+YAMLファイルの代わりに、辞書で設定を渡すこともできます。
 
 ```python
 import asyncio
@@ -74,11 +74,11 @@ asyncio.run(main())
 ```
 
 `UsiEvalValue.kind` は `cp` または `mate` です。
-`value` は centipawn または詰み手数を符号付きで返すため、`score` 文字列を利用側で再 parse する必要はありません。
+`value`は符号付きのcentipawn値または詰み手数です。
 
 ## 固定局面をまとめて解析する
 
-単一 engine process を再利用して複数局面を解析する場合は `analyze_positions()` を使います。
+一つのエンジンプロセスで複数の局面を解析するには、`analyze_positions()`を使います。
 各局面の前に `usinewgame`、`Clear Hash`、`isready` を入れるかどうかは `UsiAnalyzeResetPolicy` で制御します。
 
 ```python
@@ -120,8 +120,8 @@ asyncio.run(main())
 
 ## 診断情報を集める
 
-engine process の PID や USI I/O を確認したい場合は lifecycle handler と I/O handler を登録します。
-handler を `async with` に入る前に登録すると、起動直後のイベントも拾えます。
+エンジンのPIDやUSI通信を確認するには、イベントハンドラーを登録します。
+`async with`に入る前に登録すると、起動直後のイベントも受け取れます。
 
 ```python
 import asyncio
@@ -160,14 +160,13 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`UsiIoEvent` は `direction`、`line`、`phase`、`timestamp_ms` などの typed field を持ちます。
-Mapping 風の `dir`、`ts`、`state` という key は公開契約ではないため、利用側で依存しないでください。
+`UsiIoEvent`の`direction`、`line`、`phase`、`timestamp_ms`から、通信の方向、内容、段階、時刻を確認できます。
 
-## USI option を適用する
+## USIオプションを変更する
 
-起動後に追加で option を送る場合は `apply_engine_options()` を使います。
-通常は strict validation が有効です。
-YaneuraOu 系の `BookFile` のように、combo option の候補一覧に任意ファイル名が出ない場合だけ、option 単位で検証を緩和できます。
+起動後にオプションを変更するには、`apply_engine_options()`を使います。
+指定した値は、エンジンが返すオプション定義に従って検証されます。
+YaneuraOuの`BookFile`のように、候補一覧にないファイル名を指定したい場合は、そのオプションだけ検証を緩められます。
 
 ```python
 await engine.apply_engine_options(
@@ -178,7 +177,7 @@ await engine.apply_engine_options(
 ```
 
 `get_usi_options()` は `Mapping[str, UsiOption]` を返します。
-JSON snapshot ではないため、保存する場合は必要な field を明示して変換してください。
+JSONで保存する場合は、必要な属性を取り出して変換してください。
 
 ## トーナメントを実行する
 
@@ -198,7 +197,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-mapping も受け取れます。
+辞書で設定を渡すこともできます。
 
 ```python
 import asyncio
@@ -224,9 +223,9 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-## Runner を組み立てる
+## 実行環境を組み立てる
 
-保存先や dashboard 有効化を細かく制御したい場合は、設定と storage を明示して runner を作れます。
+設定や保存先を個別に用意して、トーナメントの実行環境を組み立てることもできます。
 
 ```python
 import asyncio
@@ -251,10 +250,3 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
-
-## 内部実装と未公開の領域
-
-`shogiarena._core` 配下は内部実装です。
-開発者向けの説明で登場することはありますが、アプリケーションコードから直接 import しないでください。
-
-SPSA は現時点では CLI 中心で、Python からの公開 API は固定していません。

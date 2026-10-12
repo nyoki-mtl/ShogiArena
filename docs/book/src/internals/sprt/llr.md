@@ -2,13 +2,8 @@
 
 > **前提知識**：[SPRT（逐次確率比検定）](./index.md)（仮説、境界値、判定ルール）
 
-## このページの要点
-
-- LLR（Log-Likelihood Ratio）は、観測データに対する「H1 の尤度」と「H0 の尤度」の比の対数
-- 各対局結果に対して尤度比を計算し、その対数を累積していく
-- 勝ちと負けでは尤度比が異なり、ShogiArena の現在の実装では引き分けの尤度比を 1.0 とする
-- LLR は加法的であるため、逐次的に更新でき、SPRT の逐次判定を可能にする
-- 実用的には [GSPRT](./gsprt.md) による MLE ベースの計算が正確であり、その近似公式もこのページで扱う
+対数尤度比（LLR）は、観測データが H0 と H1 のどちらを支持するかを表す検定統計量です。
+まず対局ごとの尤度比を累積する計算を示し、続いて GSPRT による計算とその近似を扱います。
 
 ## 尤度比の考え方
 
@@ -75,7 +70,7 @@ LLR は各対局の尤度比の対数を累積します。
 \\]
 
 対数の性質（積 → 和への変換）により、LLR は加法的に更新でき、
-新しい対局が追加されるたびにインクリメンタルに計算できます。
+新しい対局が追加されるたびに差分を加算できます。
 
 ```python
 def _update_llr(self, result: GameResult) -> None:
@@ -194,7 +189,7 @@ def get_elo(results: list[int]) -> tuple[float, float, float]:
 
 対局を分割して計算しても結果は変わらないため、検定の中断と再開が容易であり、並列計算とも相性がよいです。
 
-### 単調性の非保証
+### LLR の上下
 
 LLR は単調に増加（または減少）するとは限りません。
 勝ちと負けで符号が異なるため、ランダムウォークのように上下しながら境界に到達します。
@@ -208,7 +203,7 @@ LLR は単調に増加（または減少）するとは限りません。
 ## スナップショットと永続化
 
 SPRT の状態は任意の時点で保存と復元ができます。
-そのため、長期にわたる検定をプロセスの再起動を跨いで継続できます。
+そのため、プロセスを再起動しても長期にわたる検定を継続できます。
 
 ```python
 @dataclass
@@ -229,9 +224,9 @@ class SprtResult:
 
 | ファイル | 関数 | 役割 |
 |---------|------|------|
-| `_core/contexts/game_session/application/sprt_service.py` | `_update_llr()` | 尤度比の計算と LLR の更新 |
-| `_core/contexts/game_session/application/sprt_service.py` | `to_snapshot()` | 状態の永続化 |
-| `_core/contexts/game_session/application/sprt_service.py` | `from_snapshot()` | 状態の復元 |
+| [sprt_service.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/application/sprt_service.py) | `_update_llr()` | 尤度比の計算と LLR の更新 |
+| [sprt_service.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/application/sprt_service.py) | `to_snapshot()` | 状態の永続化 |
+| [sprt_service.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/application/sprt_service.py) | `from_snapshot()` | 状態の復元 |
 | Fishtest `stats/LLRcalc.py` | `LLR()` | GSPRT ベースの正確な LLR |
 | Fishtest `stats/LLRcalc.py` | `LLR_alt2()` | 2 次近似 LLR |
 | Fishtest `stats/stat_util.py` | `get_elo()` | Elo 推定と信頼区間 |

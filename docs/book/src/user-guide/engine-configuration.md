@@ -5,6 +5,9 @@ ShogiArena は USI エンジンを YAML で定義します。
 
 ## ローカルエンジン
 
+実行ファイルと、評価関数や定跡の配置に合わせて設定します。
+Linux や macOS では、実行ファイルに実行権限を付けてください。
+
 ```yaml
 name: "Local Engine"
 engine_path: "/path/to/engine"
@@ -52,9 +55,9 @@ option_validation:
 `movetime`、`btime`、`wtime`、`byoyomi`、`infinite` などの時間制御は、対局中の持ち時間管理と競合するためエンジン設定では指定できません。
 時間制御は run 設定の `rules.time_control` で指定してください。
 
-## I/O 収集と option validation
+## 入出力の記録とオプションの検証
 
-Python API や dashboard diagnostics で raw USI I/O を扱う場合は `io` を明示します。
+USI コマンドやエンジンの出力を記録するには、`io` を指定します。
 
 ```yaml
 io:
@@ -75,9 +78,9 @@ option_validation:
     BookFile: allow_unlisted_combo_value
 ```
 
-### 高度な runtime field
+### 詰み探索と起動待機の設定
 
-必要な場合だけ、次の field も engine YAML に指定できます。
+必要に応じて、次の項目もエンジン YAML に指定できます。
 
 | フィールド | 用途 |
 | --- | --- |
@@ -93,7 +96,8 @@ option_validation:
 ## 内蔵定跡
 
 YaneuraOu 系エンジンの `BookDir` / `BookFile` は、エンジン内蔵定跡として扱います。
-ShogiArena は指し手を book から選ばず、USI option をエンジンへ渡したうえで、実体ファイルの検証と provenance 記録を行います。
+ShogiArena は定跡ファイルを検証して出所を記録し、USI オプションとしてエンジンへ渡します。
+定跡から指し手を選ぶのはエンジンです。
 
 ```yaml
 options:
@@ -106,23 +110,24 @@ options:
 `USI_OwnBook` が明示的に `false` でなく、`BookFile` が `no_book` でない場合、`BookDir + BookFile` の実体パスを起動前に検証します。
 大きな YANEURAOU-DB2016 形式の book では `BookOnTheFly: true` を使う運用を推奨します。
 
-YaneuraOu 系の互換挙動として、`BookFile: user_book1.db` の実体 `.db` が無く、同じ場所に `user_book1.ybb` がある場合は `.ybb` を実体 book として扱います。
-この場合も provenance には元の指定と fallback 先が記録され、remote 実行時の book 配布も `.ybb` を使います。
+`BookFile: user_book1.db` の `.db` がなく、同じ場所に `user_book1.ybb` がある場合は、`.ybb` を定跡ファイルとして使います。
+元の指定と実際に使ったパスを記録し、リモート実行でも `.ybb` を配布します。
 
 エンジンが `BookFile` を combo option として宣言していて、任意の book ファイル名を `var` に列挙しない場合は、上の `option_validation.overrides.BookFile` で `allow_unlisted_combo_value` を指定します。
 これは値の送信を許可するだけで、ShogiArena の path preflight と provenance 記録は引き続き実行されます。
 
-保存 DB の `game_move` には `move_source` と `book_hit` が nullable 列として記録されます。
+各指し手には、着手の由来を示す `move_source` と、定跡候補手に含まれるかを示す `book_hit` が記録されます。
 ShogiArena が通常の USI 出力から観測できる範囲では、book を示す info string があれば `book`、探索統計があれば `search`、断定できない手は `unknown` です。
 `search` は探索統計を観測したという意味であり、book 由来ではないことの断定ではありません。
-`mate` などの追加ラベルは外部 record extras や将来の engine-specific signal 用に保持できますが、現状の通常対局 runtime は自動生成しません。
 `book_hit` は book lookup などで明示的に判定された場合だけ入り、未測定は `null` のままです。
 
-実力比較や SPSA では、内蔵定跡をエンジンごとに変えると「エンジンではなく定跡」を比較することになります。
-既定のサンプル overlay は `BookFile: no_book` とし、共有開始局面集や pair-synchronized opening line は `rules.initial_positions` で指定します。
-`rules.initial_positions` の line は対局前に initial SFEN へ変換されるだけで、ShogiArena が engine book から指し手を選んだり、定跡手を棋譜へ挿入したりするものではありません。
-ただし engine-owned book を有効にしたままだと、その initial SFEN からさらにエンジン側の book が続く可能性があります。
-純粋な強さ比較では `BookFile: no_book` または `USI_OwnBook: false` を使ってください。
+実力比較や SPSA でエンジンごとに異なる内蔵定跡を使うと、定跡の違いも結果に影響します。
+定跡を使わずに比較するには、`BookFile: no_book` または `USI_OwnBook: false` を指定してください。
+サンプルのオプション上書き用 YAML では `BookFile: no_book` を使っています。
+
+共通の開始局面や、先後を入れ替えて同じ手順を使う設定は、`rules.initial_positions` で指定します。
+指し手列は対局前に初期局面の SFEN へ変換され、棋譜には挿入されません。
+内蔵定跡を有効にしている場合は、その初期局面からさらに定跡手が続くことがあります。
 
 ## artifact エンジン
 
@@ -162,7 +167,6 @@ engines:
 
 `options_overlays` を使うと、USI オプション上書き用 YAML を段階的にマージできます。
 overlay YAML は必ず `options:` ブロック配下に書きます。
-旧来の flat top-level form は受け付けません。
 
 ```yaml
 engines:
@@ -197,13 +201,6 @@ shogiarena run mate engine.yaml startpos --ply-limit 5
 ```bash
 shogiarena run tournament tournament.yaml --dry-run
 ```
-
-## よくある問題
-
-- 実行ファイルに権限がない: `chmod +x /path/to/engine`
-- USI オプション名が違う: エンジンを手動起動して `usi` の出力を確認する
-- 評価関数や定跡の相対パスがずれる: `working_directory` と `path-preflight` を確認する
-- artifact が解決できない: `shogiarena config repo ...` と `settings.yaml` のリポジトリ定義を確認する
 
 ## サンプル
 

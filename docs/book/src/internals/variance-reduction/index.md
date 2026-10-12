@@ -2,20 +2,15 @@
 
 > **前提知識**：[SPRT](../sprt/index.md)、[SPSA](../spsa/index.md)
 
-## このページの要点
-
-- エンジンテストの結果は確率的であり、推定の分散を削減することで少ない対局数で高精度な結論を得られる
-- **CRN（共通乱数法）**：同じ開始局面を使って比較の精度を向上させる
-- **ペアゲーム**：先後を入れ替えた 2 局をセットにし、先手有利バイアスを除去する
-- **バッチ処理**：複数局の結果を平均して勾配推定の分散を削減する
-- これらの手法は直交しており、組み合わせて使用可能
+対局スコアのばらつきを抑えると、Elo 推定の信頼区間を狭め、SPRT の判定や SPSA の勾配推定に必要な対局を減らせます。
+共通乱数法（CRN）、先後を入れ替えるペアゲーム、複数の結果をまとめるバッチ処理を扱います。
 
 ## 分散が問題になる理由
 
 エンジン対局の結果は本質的に確率的です。
 同じエンジンペアでも、対局ごとに勝ち、引き分け、負けのいずれにもなります。
 
-この揺らぎは、本書で扱う三つの推定すべてに跳ね返ります。
+このばらつきは、次の推定や判定に影響します。
 
 - **SPRT**：判定に到達するまでの対局数が増加する
 - **SPSA**：勾配推定がノイズに埋もれ、最適化が不安定になる
@@ -149,7 +144,7 @@ s_minus = total_s_minus / batch_size
 - **総対局数**：\\(N \cdot 2B\\)（更新回数 \\(N\\) が同じ場合）
 
 総対局数を固定するなら、バッチサイズを上げたぶんだけ更新回数 \\(N\\) は減ります。
-1 回の更新がノイズに振り回されにくくなる代わりに、パラメータ空間を動き回る回数そのものは減るという交換です。
+1 回の更新は安定しますが、パラメータを更新できる回数は減ります。
 
 ## 手法の組み合わせ
 
@@ -197,10 +192,10 @@ spsa:
 
 | ファイル | 設定キー/関数 | 役割 |
 |---------|-------------|------|
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `variants.crn`（`is_crn_enabled`） | CRN の有効と無効 |
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `pairs_per_update` | 1 回の更新に使うペア数 |
-| `_core/contexts/spsa/adapters/orchestrator.py` | `SpsaOrchestrator` | ペアゲーム実行を含む orchestration |
-| `_core/shared/kernel/statistics/pentanomial.py` | `compute_pentanomial()` | 五項分布の計算 |
+| [config_spsa_models.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/adapters/orchestration/config_spsa_models.py) | `variants.crn`（`is_crn_enabled`） | CRN の有効と無効 |
+| [config_spsa_models.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/adapters/orchestration/config_spsa_models.py) | `pairs_per_update` | 1 回の更新に使うペア数 |
+| [orchestrator.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/adapters/orchestrator.py) | `SpsaOrchestrator` | ペアゲームの実行制御 |
+| [pentanomial.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/shared/kernel/statistics/pentanomial.py) | `compute_pentanomial()` | 五項分布の計算 |
 
 ## 参考文献
 
@@ -209,7 +204,7 @@ spsa:
 
 ## 次に読む
 
-技術解説章はここまでです。続きの読み方は次の三つがあります。
+設定や実行手順は、次のページを参照してください。
 
 - [SPRT の設定と解釈](../sprt/index.md)：設定パラメータの選び方
 - [SPSA のゲインスケジュール](../spsa/gain-schedule.md)：最適化の微調整

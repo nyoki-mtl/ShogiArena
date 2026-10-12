@@ -2,12 +2,8 @@
 
 > **前提知識**：[Elo レーティング](../elo/index.md)（勝率と Elo 差の関係）
 
-## このページの要点
-
-- SPRT は「対局を 1 局ずつ追加しながら判定する」逐次検定。固定サンプルサイズの検定より効率的
-- 2 つの仮説（H0: Elo 差 ≤ elo0、H1: Elo 差 ≥ elo1）を対数尤度比（LLR）で比較する
-- LLR が上限に達すれば H1 を採択（改善あり）、下限に達すれば H0 を採択（改善なし）
-- α（偽陽性率）と β（偽陰性率）で検定の厳しさを制御する。デフォルトはどちらも 0.05
+SPRT は、対局結果が増えるたびに二つの仮説を比較し、十分な証拠が集まった時点で対局を打ち切る検定です。
+仮説の Elo 差と誤り率を設定し、対数尤度比（LLR）で判定します。
 
 ## なぜ SPRT が必要か
 
@@ -47,7 +43,8 @@ H_1: \Delta\text{Elo} \geq \text{elo1} \quad \text{（十分な改善あり）}
 
 ### elo0 と elo1 の選び方
 
-`elo0` と `elo1` の間隔は「無関心領域（indifference zone）」と呼ばれ、この領域内の Elo 差については判定を保留します。
+`elo0`と`elo1`の間は「無関心領域（indifference zone）」です。
+真のElo差がこの範囲にある場合も検定は終了しえますが、どちらの判定になるかについて、設定した誤り率の保証はありません。
 
 ```text
 ← H0 採択 →  ← 無関心領域 →  ← H1 採択 →
@@ -56,7 +53,7 @@ H_1: \Delta\text{Elo} \geq \text{elo1} \quad \text{（十分な改善あり）}
 ```
 
 - **elo0 = 0, elo1 = 5**：「5 Elo 以上の改善があるか」を検定（一般的な設定）
-- **elo0 = -5, elo1 = 5**：改善も劣化もないことを双方向に検定
+- **elo0 = -5, elo1 = 5**：-5 Elo以下と+5 Elo以上の仮説を比較
 - **elo0 = 0, elo1 = 3**：より小さな改善を検出（ただし必要対局数が増加）
 
 間隔を狭くするほど検出感度は上がりますが、判定に必要な対局数が急増します。
@@ -195,10 +192,10 @@ sprt:
 
 | ファイル | クラス/関数 | 役割 |
 |---------|----------|------|
-| `_core/contexts/game_session/application/sprt_service.py` | `Sprt` | SPRT 実装本体 |
-| `_core/contexts/game_session/application/sprt_service.py` | `SprtDecision` | 判定結果の列挙型 |
-| `_core/contexts/game_session/application/sprt_service.py` | `SprtResult` | 結果データクラス |
-| `_core/contexts/game_session/adapters/orchestration/config_core.py` | `SprtConfig` | 設定スキーマ |
+| [sprt_service.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/application/sprt_service.py) | `Sprt` | SPRT 実装本体 |
+| [sprt_service.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/application/sprt_service.py) | `SprtDecision` | 判定結果の列挙型 |
+| [sprt_service.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/application/sprt_service.py) | `SprtResult` | 結果データクラス |
+| [config_core.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/adapters/orchestration/config_core.py) | `SprtConfig` | 設定スキーマ |
 
 ## SPRT と GSPRT
 

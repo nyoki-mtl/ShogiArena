@@ -63,8 +63,8 @@ shogiarena results summary /path/to/run --format json
 shogiarena results summary /path/to/game.db --format csv
 ```
 
-JSON 出力では `timing_metrics` に wall time field の意味が入ります。
-engine throughput や wall NPS を比較するときは `engine_wall_time_ms` を、持ち時間に課金された時間を見たいときは `wall_time_ms` を使います。
+JSON 出力の `timing_metrics` には、記録された時間の意味も含まれます。
+エンジンの処理速度や wall NPS を比較するときは `engine_wall_time_ms` を、持ち時間から差し引かれた時間を見るときは `wall_time_ms` を使います。
 
 マニフェストの provenance 検証:
 

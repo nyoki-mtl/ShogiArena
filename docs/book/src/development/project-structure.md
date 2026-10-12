@@ -1,21 +1,12 @@
-# Project Structure
+# プロジェクト構成
 
-ShogiArena のディレクトリ構成と、各層の責務境界をまとめます。
+Pythonパッケージは`src/shogiarena/`にあります。
+エンジン操作やトーナメントの入口となるモジュールと、機能ごとの実装に分かれています。
 
-## 2 層構成
-
-ShogiArena のパッケージは次の 2 層で整理しています。
-
-- `src/shogiarena/_core/**`：実装正本
-- `src/shogiarena/*.py`：利用者向け facade
-
-アーキテクチャ上の区分である `contexts`、`platform`、`interfaces`、`shared` はそのまま残し、まとめて `_core` の下に置いています。
-
-## Directory Layout
+## Pythonパッケージ
 
 ```text
 src/shogiarena/
-├── __init__.py
 ├── cli.py
 ├── composition.py
 ├── engine.py
@@ -27,70 +18,28 @@ src/shogiarena/
     └── shared/kernel/
 ```
 
-## 利用者に公開する import パス
+| モジュール | 役割 |
+| --- | --- |
+| [engine.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/engine.py) | USIエンジンの起動、探索、解析 |
+| [tournament.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/tournament.py) | トーナメントの設定と実行 |
+| [cli.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/cli.py) | コマンドラインの入口 |
+| [composition.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/composition.py) | 実行に必要なサービスの組み立て |
 
-ドキュメントで説明し、互換性を保つ対象とするのは次の 4 モジュールです。
+## 機能ごとの実装
 
-- `shogiarena.engine`
-- `shogiarena.tournament`
-- `shogiarena.cli`
-- `shogiarena.composition`
+| ディレクトリ | 内容 |
+| --- | --- |
+| [contexts](https://github.com/nyoki-mtl/ShogiArena/tree/main/src/shogiarena/_core/contexts) | 対局、トーナメント、SPSAなどの処理 |
+| [platform](https://github.com/nyoki-mtl/ShogiArena/tree/main/src/shogiarena/_core/platform) | DB、ファイル、エンジンプロセス、ネットワークの操作 |
+| [interfaces](https://github.com/nyoki-mtl/ShogiArena/tree/main/src/shogiarena/_core/interfaces) | CLI、ダッシュボード、設定の読み込み |
+| [shared/kernel](https://github.com/nyoki-mtl/ShogiArena/tree/main/src/shogiarena/_core/shared/kernel) | 統計計算や持ち時間などの共通処理 |
 
-`shogiarena._core.*` は内部 import です。
-テストや実装からは使ってかまいませんが、外部利用者には勧めません。
+`contexts`では、計算やルールを`domain`、処理の流れを`application`、外部への接続口を`ports`、その実装を`adapters`に置いています。
+サービスを組み合わせる処理は[composition root](https://github.com/nyoki-mtl/ShogiArena/tree/main/src/shogiarena/_core/interfaces/composition_root)にあります。
 
-## context 内部の責務分離
+## その他のディレクトリ
 
-各 context は下記の構成を採用します。
-
-```text
-_core/contexts/<name>/
-├── domain/                  # 純粋ドメインロジック
-├── application/             # use-case / orchestration
-├── ports/                   # 外部依存の抽象契約
-└── adapters/                # ports の実装
-```
-
-## レイヤ責務
-
-- `_core.contexts`：業務ルールとユースケース
-- `_core.platform`：DB、ファイルシステム、プロセス、ネットワークなどの共通 I/O
-- `_core.interfaces`：CLI、dashboard、境界パーサ
-- `_core.shared.kernel`：最小共通核
-
-## facade の役割
-
-公開モジュールは薄い再 export と helper に限定します。
-これによって次を満たします。
-
-- 実装の置き場所を隠す
-- 利用者に推奨 import パスを与える
-- `_core` を public API に見せない
-
-facade には重い wiring を持ち込みません。
-依存グラフの正本は composition root に置きます。
-
-## composition root
-
-標準配線の正本は次の 2 つです。
-
-- `shogiarena.composition.build_default_root`
-- `shogiarena._core.interfaces.composition_root.default_root`
-
-CLI や facade helper はここから runtime を取得します。
-
-## 依存方向
-
-- `_core.interfaces -> _core.contexts.application / ports`
-- `_core.contexts.application -> _core.contexts.domain / ports`
-- `_core.contexts.adapters -> _core.contexts.ports | _core.platform | _core.shared.kernel`
-- `_core.platform -> _core.contexts.ports`
-- `shogiarena/*.py -> _core only`
-
-## Verification Commands
-
-```bash
-uv run python tools/detect_architecture_imports.py --root src/shogiarena --legacy-profile final --fail-on-violations
-uv run python tools/detect_dynamic_import_cheats.py --root src --fail-on-violations
-make check
-```
+- [examples/configs](https://github.com/nyoki-mtl/ShogiArena/tree/main/examples/configs)：用途別の設定例
+- [tests](https://github.com/nyoki-mtl/ShogiArena/tree/main/tests)：Pythonのテスト
+- [ダッシュボードのフロントエンド](https://github.com/nyoki-mtl/ShogiArena/tree/main/src/shogiarena/_core/interfaces/dashboard/frontend)：画面とフロントエンドのテスト
+- [docs/book](https://github.com/nyoki-mtl/ShogiArena/tree/main/docs/book)：ドキュメントの原稿とテーマ

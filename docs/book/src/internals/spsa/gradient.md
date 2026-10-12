@@ -2,12 +2,8 @@
 
 > **前提知識**：[SPSA](./index.md)（アルゴリズムの概要、Rademacher 摂動）
 
-## このページの要点
-
-- 同時摂動勾配推定は、すべてのパラメータを同時に摂動して **2 回の評価**で \\(p\\) 次元の勾配を推定する
-- 推定勾配はノイズが大きいが、反復平均で真の勾配に収束する
-- 整数パラメータは小数部を「積立」することで、小さな更新を蓄積させる
-- `quantize_value()` がクランプ、丸め、ステップ整合を一括して処理する
+SPSA の勾配推定は、同時に摂動した二つの設定で得たスコアの差を使います。
+ShogiArena ではパラメータごとの摂動幅と更新ゲインを計算し、整数パラメータの小さな更新も内部値に蓄積します。
 
 ## 同時摂動勾配推定の詳細
 
@@ -61,7 +57,7 @@ for index, param in enumerate(params):
 ```
 
 > **注**：この更新式は標準的な SPSA の「2 点差分を使う一次更新」です。実装はグローバルな
-> 学習率スカラ（かつての `mobility` / `a0`）を持たず、各パラメータの `delta` / `step` と
+> 学習率スカラを持たず、各パラメータの `delta` / `step` と
 > 共通の `A` / `alpha` / `gamma` から \\(r_i\\) を導出してスケーリングを制御します。
 
 ## 対局結果からスコアへの変換
@@ -147,7 +143,7 @@ else:
 
 デフォルトの `int_ck_floor = 0.5` は、摂動が最低でも \\(\pm 0.5\\)（丸め後に ±1）になることを保証します。
 
-## Float パラメータのステップ整合
+## 浮動小数点パラメータのステップ整合
 
 `snap_float_to_step = true` の場合、float パラメータもステップの整数倍に整合されます。
 
@@ -220,9 +216,9 @@ E[\hat{g}\_i] = \frac{\partial L}{\partial \theta_i} + O(c_k^2)
 
 | ファイル | 関数 | 役割 |
 |---------|------|------|
-| `_core/contexts/spsa/adapters/orchestrator_update_mixin.py` | `_run_one_spsa_update()` | 勾配推定と更新の本体 |
-| `_core/contexts/spsa/application/param_io.py` | `quantize_value()` | 値の量子化 |
-| `_core/contexts/spsa/adapters/orchestrator_gameplay_mixin.py` | `_ltc_normalize_result_for_sprt()` | SPRT 用の結果正規化 |
+| [orchestrator_update_mixin.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/adapters/orchestrator_update_mixin.py) | `_run_one_spsa_update()` | 勾配推定と更新の本体 |
+| [param_io.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/application/param_io.py) | `quantize_value()` | 値の量子化 |
+| [orchestrator_gameplay_mixin.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/adapters/orchestrator_gameplay_mixin.py) | `_ltc_normalize_result_for_sprt()` | SPRT 用の結果正規化 |
 
 ## 次に読む
 

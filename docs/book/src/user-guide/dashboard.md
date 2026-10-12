@@ -18,12 +18,12 @@ shogiarena run tournament tournament.yaml
 
 ブラウザで `http://localhost:8080` を開きます。
 
-## ローカル限定のセキュリティ境界
+## 閲覧できる範囲
 
-v1 のダッシュボードは、認証を備えないローカルの single-user UI です。
+ダッシュボードは、ローカルで 1 人が使うための画面で、認証機能はありません。
 `dashboard.api_host` は `localhost`、`127.0.0.0/8`、`::1` のいずれかに限定され、`0.0.0.0` や LAN のアドレスでは起動しません。
 外部マシンからの閲覧、リバースプロキシ経由の公開、multi-user 運用には対応していません。
-そのような運用では、将来の認証対応を待ち、ポートフォワーディング等で公開しないでください。
+ポートフォワーディングなどで外部へ公開しないでください。
 
 ## 保存済み run を開く
 
@@ -31,8 +31,8 @@ v1 のダッシュボードは、認証を備えないローカルの single-use
 shogiarena dashboard serve --run-dir /path/to/run
 ```
 
-`dashboard serve` は保存済み成果物を閲覧する read-only mode で起動します。
-instance の作成・変更、schedule 操作、diagnostics snapshot の保存など、状態を変更する API は拒否されます。
+`dashboard serve` は保存済みの結果を読み取り専用で開きます。
+インスタンスの作成や変更、スケジュール操作、診断情報の保存はできません。
 
 設定ファイルから最新 run を解決したい場合:
 
@@ -62,16 +62,17 @@ shogiarena dashboard serve --run-dir /path/to/run --port 9090
 
 Bookタブは、`BookFile`などでエンジン自身に設定した定跡ファイルごとの成績を比較する画面です。
 ShogiArenaが`rules.initial_positions`で選ぶ開始局面は対象外であり、そちらはOpeningsタブに表示します。
-エンジン内蔵定跡を使わなかったrunでは、分析操作を表示せず、この違いを説明する空状態を表示します。
+エンジン内蔵定跡を使わなかった run では、Book タブに分析対象がないことを表示します。
 
 Bookタブのout-of-bookは、「実着手が指定book上の候補手集合に含まれたか」を後から観測する指標です。
 エンジンが実際に book 由来で指したことを断定するものではありません。
 
-Book タブ内の `Pairs` subview では、schedule 上のペアごとに book prefix の一致状況、first diff ply、prefix match rate、`measurement_status` を確認できます。
-ここで表示される prefix も、明示記録された `book_hit` または opt-in の book lookup membership に基づく diagnostic です。
+Book タブの `Pairs` では、スケジュール上のペアごとに、定跡手順の一致状況、最初に異なる手数（first diff ply）、一致率（prefix match rate）、`measurement_status` を確認できます。
+この手順は、記録された `book_hit` または明示的に有効にした定跡検索による候補手判定に基づきます。
+エンジンが実際に定跡を使ったことを保証するものではありません。
 
-`Live View` と対局詳細の timing では、持ち時間に課金された `wall_time_ms` と、engine の `think()` 呼び出しから `bestmove` 回収までを測った `engine_wall_time_ms` を分けて扱います。
-engine throughput や wall NPS を比較するときは `engine_wall_time_ms` を使ってください。
+`Live View` と対局詳細の時間情報では、持ち時間から差し引かれた `wall_time_ms` と、`think()` 呼び出しから `bestmove` 回収までの実測時間 `engine_wall_time_ms` を表示します。
+エンジンの処理速度や wall NPS を比較するときは `engine_wall_time_ms` を使ってください。
 
 ## run ディレクトリ
 
@@ -91,17 +92,3 @@ run/
 
 保存済み run を `shogiarena dashboard serve` で開く場合、現行 CLI は run ディレクトリ直下の `game.db` を必要とします。
 自己対局生成などで dashboard を使う場合も、`game.db` を含む run ディレクトリを指定してください。
-
-## うまく表示されないとき
-
-- `--run-dir` が実際の run ディレクトリを指しているか確認する
-- 実行中の dashboard と同じポートを別プロセスが使っていないか確認する
-- ブラウザをリロードする
-- run が古い場合は、現在の ShogiArena で再実行または再生成する
-
-関連する確認コマンド:
-
-```bash
-shogiarena results summary /path/to/run
-shogiarena results verify-provenance /path/to/run
-```

@@ -12,7 +12,7 @@ Windows はネイティブ環境で動作します（WSL2 上でも利用でき�
 
 ### CPU アーキテクチャ
 
-将棋ドメインロジックは拡張モジュール `rsshogi` に依存します。
+将棋の盤面処理には拡張モジュール `rsshogi` を使います。
 Windows x86_64、Linux x86_64、Linux arm64、macOS Intel、macOS Apple Silicon の
 いずれにもビルド済み wheel が提供されるため、通常はソースビルドを必要としません。
 
@@ -32,8 +32,7 @@ pip install rsshogi-avx2
   `pip install --upgrade shogiarena` などで portable 版が再インストールされるため、
   差し替えは更新のたびに適用し直してください。
 
-差し替えが必要かどうかは、エンジン側の探索ではなく ShogiArena 側の棋譜処理が律速に
-なっている場合にのみ検討してください。
+ShogiArena 側の棋譜処理が実行速度を制限している場合に、差し替えを検討してください。
 
 ## PyPI から使う
 
@@ -64,24 +63,15 @@ shogiarena config init --non-interactive \
   --engine-dir /path/to/engines
 ```
 
-## ソースから開発する
+## ソースから使う
 
-このリポジトリの開発では `uv` を使います。
+リポジトリのサンプルや取得スクリプトを使う場合は、ソースを取得して `uv` で実行します。
 
 ```bash
 git clone https://github.com/nyoki-mtl/ShogiArena.git
 cd ShogiArena
 uv sync
 uv run shogiarena --help
-```
-
-主な開発コマンド:
-
-```bash
-make help
-make check
-make test
-make docs-build
 ```
 
 ## 次のステップ

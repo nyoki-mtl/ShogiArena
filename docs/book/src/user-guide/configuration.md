@@ -70,8 +70,7 @@ openbench: (none)
 
 ## 設定の変更
 
-現在の CLI に `shogiarena config set ...` はありません。
-変更方法は次の 2 つです。
+設定を変更するには、次のどちらかを使います。
 
 - `shogiarena config init --force ...` で再生成する
 - `settings.yaml` を直接編集する
@@ -166,7 +165,7 @@ run 設定側に `openbench:` を書いた場合は、そちらが優先され�
 ## 複数の設定を使い分ける
 
 設定ファイルパスを切り替える専用のランタイムオプションは現在ありません。
-通常は 1 つの `settings.yaml` を使い、run ごとの差分は `--output-dir` や個別 YAML 側で吸収します。
+通常は 1 つの `settings.yaml` を使い、run ごとの差分は `--output-dir` や個別の YAML に指定します。
 
 ## 関連ドキュメント
 

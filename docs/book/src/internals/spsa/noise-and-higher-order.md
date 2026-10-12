@@ -2,12 +2,8 @@
 
 > **前提知識**：[SPSA](./index.md)、[勾配推定と摂動](./gradient.md)、[ゲインスケジュール](./gain-schedule.md)
 
-## このページの要点
-
-- エンジン対局の目的関数は**極端にノイジー**であり、一次の SPSA ですら「運が大きく関与する」レベル
-- **二次手法**（2SPSA、Newton 法、BFGS）は Hessian 推定にさらに多くのサンプルを要求するため、ノイジーな環境では事実上使えない
-- Fishtest は per-axis \\(c_i\\) パラメータを通じて**暗黙的な対角準 Newton ステップ**を実現し、明示的な Hessian 計算を回避している
-- 「真の収束」は現実のリソース制約では達成不可能であり、「最適解からの指定距離以内に指定確率で到達する」戦略が実用的
+対局結果のノイズは、SPSA の勾配推定だけでなく、二次手法で必要となる曲率の推定にも影響します。
+Fishtest での議論をもとに、高次手法の限界、パラメータごとのスケール設定、有限の対局予算での目標設定を扱います。
 
 ## ノイズの本質
 
@@ -32,7 +28,7 @@ SPSA では 2 局（\\(\theta^+\\) と \\(\theta^-\\)）の差分から \\(p\\) 
 ### Fishtest 開発者の見解
 
 Fishtest（Stockfish テスティングフレームワーク）の主要開発者である vdbergh は、
-2SPSA（二次 SPSA）の導入を提案した Issue #2126 に対して、以下のように明確に否定しています。[^fishtest-2126]
+2SPSA（二次 SPSA）の導入を提案した Issue #2126 に対して、ノイズの大きさを理由に導入を否定しています。[^fishtest-2126]
 
 > The Fishtest setting is extremely noisy. So noisy in fact that the regular 1SPSA algorithm barely works
 > (a lot of luck is involved to get anything out of it). The noise would completely trash any second order algorithm.
@@ -53,7 +49,7 @@ MJZ1977 は反復あたり最低 100 局を推奨し、それ未満では収束�
 勝率の差は約 0.7% です。
 
 \\[
-\Delta W = \frac{5}{400 \ln 10} \approx 0.007
+\Delta W \approx \frac{5 \ln 10}{1600} \approx 0.0072
 \\]
 
 一方、1 局の結果の標準偏差は約 0.5 です。
@@ -104,7 +100,7 @@ Hessian の推定には勾配推定よりもさらに高い精度が必要です
   → エンジンチューニングの σ² では壊滅的
 ```
 
-#### 2. ill-conditioned Hessian の問題
+#### 2. Hessian の条件数の問題
 
 2SPSA では Hessian の逆行列 \\(\hat{H}^{-1}\_k\\) を計算しますが、
 推定 Hessian がわずかに真の Hessian からずれただけで、
@@ -156,11 +152,11 @@ SPSA: 2 ゲーム（実質 1 サンプル）から p 次元の勾配を推定 �
 > — jdart, TalkChess
 
 つまり、Adam が成功しているのは SPSA の勾配推定と組み合わせた場合ではなく、
-**バックプロパゲーション的に正確な勾配が得られる場合のみ**です。
+**誤差逆伝播などで正確な勾配が得られる場合のみ**です。
 
 ## Fishtest の暗黙的な対角準 Newton
 
-### per-axis \\(c_i\\) による曲率の吸収
+### パラメータごとの \\(c_i\\) による曲率の吸収
 
 Fishtest は明示的な Hessian 計算の代わりに、パラメータごとの摂動スケール \\(c_i\\) を
 ユーザーが設定することで、**暗黙的に曲率情報を組み込む**設計を採用しています。
@@ -187,7 +183,7 @@ Fishtest の公式ドキュメントでは、この設計の理論的根拠を�
               ≈ r · (1/√H_ii) · ∂L/∂θ_i   ← 対角近似
 ```
 
-曲率を推定ではなく設定として与えるので、二次手法が破綻した三つの理由がそのまま裏返ります。
+曲率に応じたスケールをあらかじめ設定すると、次の利点があります。
 
 - **追加の対局が不要**：Hessian 推定用の対局を実行しない
 - **ノイズ耐性**：ユーザーの事前知識で曲率を「一度だけ」設定するため、ノイジーな推定に依存しない
@@ -358,7 +354,7 @@ Fishtest コミュニティでの経験則をまとめると、次の 5 点に�
 
 [^talkchess-hybrid]: [A hybrid of SPSA and local optimization](https://talkchess.com/viewtopic.php?t=77420) — SPSA と正確な勾配計算のハイブリッド手法に関する議論。Adam/Adagrad は SPSA の勾配推定問題を解決しないという知見。
 
-[^texel]: Texel Tuning は評価関数の重みを棋譜データベースから教師あり学習で最適化する手法。目的関数（MSE）が解析的に微分可能なため、Adam 等の勾配法が直接適用可能。ゲームプレイベースの SPSA とは異なるコンテキスト。
+[^texel]: Texel Tuning は評価関数の重みを棋譜データベースから教師あり学習で最適化する手法。目的関数（MSE）が解析的に微分可能なため、Adam 等の勾配法が直接適用可能。ゲームプレイベースの SPSA とは異なる学習設定。
 
 ## 次に読む
 

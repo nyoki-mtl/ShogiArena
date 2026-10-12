@@ -2,24 +2,20 @@
 
 > **前提知識**：[Elo レーティング](../elo/index.md)、[SPRT](../sprt/index.md)
 
-## このページの要点
-
-- SPSA は**すべてのパラメータを同時に摂動**して勾配を推定する確率的最適化アルゴリズム
-- パラメータが \\(p\\) 個あっても、1 回の更新にわずか **2 組のペアゲーム**で勾配を推定できる
-- Rademacher 摂動（±1）を使い、各パラメータを ±step で同時に変化させる
-- 将棋エンジンのパラメータチューニングに適しており、Stockfish の SPSA チューニングにも採用されている
+SPSA は、すべてのパラメータを同時に動かした二つの設定を評価し、その差から勾配を推定する最適化手法です。
+評価回数がパラメータ数に依存しないため、対局に時間のかかるエンジンのチューニングに使われます。
 
 ## SPSA を選ぶ理由
 
 将棋エンジンには、評価関数の重み、探索パラメータ、枝刈りの閾値など、数十から数百のパラメータがあります。
-これらを対局で最適化しようとすると、次の四つが同時に立ちはだかります。
+対局で最適化する場合には、次の制約があります。
 
 1. **目的関数が解析的でない**：勝率は閉形式で表現できず、実際に対局しないと評価できない
 2. **評価にコストがかかる**：1 回の評価（対局）に数秒から数分かかる
 3. **ノイズが大きい**：対局結果は確率的であり、同じパラメータでも結果がばらつく
 4. **パラメータ数が多い**：個別に 1 パラメータずつ最適化するのは非効率
 
-SPSA は、この四つすべてに同時に対応します。
+SPSA は、対局スコアの差から多数のパラメータをまとめて更新します。
 
 ### 他のアプローチとの比較
 
@@ -31,7 +27,7 @@ SPSA は、この四つすべてに同時に対応します。
 | ベイズ最適化 | 1 | 高い | サロゲートモデルの構築が可能な場合 |
 
 グリッドサーチと有限差分法の評価数はパラメータ数 \\(p\\) とともに増えますが、SPSA は 2 のまま変わりません。
-評価コストをパラメータ数から切り離せる点が、SPSA の最大の強みです。
+評価コストをパラメータ数から切り離せる点が、SPSA の特徴です。
 ベイズ最適化も評価数は少なく済みますが、目的関数を近似するサロゲートモデルを構築できることが前提になります。
 
 ## アルゴリズムの概要
@@ -196,7 +192,7 @@ async def _run_one_spsa_update(self, update_idx, params, sfens):
 ## 設定例
 
 実際の設定スキーマ（`spsa` ブロック、`algorithm` / `variants` ネスト、`space` spec への参照）については
-[SPSA Tuning](../../user-guide/spsa.md) を参照してください。以下は本章で説明した各概念が設定のどこに対応するかを示す抜粋です。
+[SPSA Tuning](../../user-guide/spsa.md) を参照してください。次の抜粋では、各概念に対応する設定を示します。
 
 ```yaml
 spsa:
@@ -220,7 +216,7 @@ spsa:
     threshold: 0.001
 ```
 
-## Early Stopping
+## 早期終了
 
 更新量が十分小さくなったら、最適化を早期終了できます。
 
@@ -238,12 +234,12 @@ if self.config.early_stop and delta_norm < threshold:
 
 | ファイル | クラス/関数 | 役割 |
 |---------|----------|------|
-| `_core/contexts/spsa/adapters/orchestrator.py` | `SpsaOrchestrator` | SPSA 実行の本体 |
-| `_core/contexts/spsa/domain/spsa_models.py` | `ParamEntry` | パラメータ定義 |
-| `_core/contexts/spsa/application/param_io.py` | `read_params()` / `write_params()` | パラメータの I/O |
-| `_core/contexts/spsa/application/param_io.py` | `quantize_value()` | 値の量子化とクランプ |
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `SpsaRunConfig` | SPSA 設定スキーマ |
-| `_core/contexts/spsa/adapters/runner.py` | `SpsaRunner` | SPSA ランナー |
+| [orchestrator.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/adapters/orchestrator.py) | `SpsaOrchestrator` | SPSA 実行の本体 |
+| [spsa_models.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/domain/spsa_models.py) | `ParamEntry` | パラメータ定義 |
+| [param_io.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/application/param_io.py) | `read_params()` / `write_params()` | パラメータの I/O |
+| [param_io.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/application/param_io.py) | `quantize_value()` | 値の量子化とクランプ |
+| [config_spsa_models.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/adapters/orchestration/config_spsa_models.py) | `SpsaRunConfig` | SPSA 設定スキーマ |
+| [runner.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/adapters/runner.py) | `SpsaRunner` | SPSA ランナー |
 
 ## 読了順序
 

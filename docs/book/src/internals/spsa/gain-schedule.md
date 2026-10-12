@@ -2,20 +2,13 @@
 
 > **前提知識**：[SPSA](./index.md)、[勾配推定と摂動](./gradient.md)
 
-## このページの要点
-
-- ゲインスケジュールは SPSA の収束速度と安定性を制御する **2 つの系列** \\(c_i\\)（摂動の大きさ）と
-  実効ステップゲイン \\(a_{k,i}\\) で構成される
-- ShogiArena の実装は **パラメータ単位** の系列を `compute_classic_schedule_point`
-  （`_core/contexts/spsa/application/classic_schedule.py`）で算出する。グローバルな学習率スカラ
-  （かつての `mobility` / `a0`）は存在しない
-- 系列は反復番号ではなく **ペア通し番号** \\(k_{\text{pair}}\\)（バッチ境界）で進む
-- 既定値は Spall の推奨減衰（\\(\alpha = 0.602,\ \gamma = 0.101\\)）。\\(A\\) は初期の不安定性を
-  緩和するウォームアップ項
+ゲインスケジュールは、摂動の大きさと更新幅を反復に応じて減衰させます。
+ShogiArena ではパラメータごとの系列を計算し、ペア通し番号に沿って進めます。
+既定の減衰指数は \\(\alpha = 0.602,\ \gamma = 0.101\\) です。
 
 ## 系列の進み方（ペア通し番号）
 
-更新は `pairs_per_update`（= \\(m\\)）ペアのバッチ単位で進みます。1-based の更新番号 \\(u\\) と
+更新は `pairs_per_update`（= \\(m\\)）ペアのバッチ単位で進みます。1 から始まる更新番号 \\(u\\) と
 総更新回数 \\(N\\) = `num_updates` に対して:
 
 \\[
@@ -86,8 +79,9 @@ a_{k,i} = 2\, r_i\, c_i^{2}
 
 ## 実装
 
+スケジュールの計算は[classic_schedule.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/application/classic_schedule.py)にあります。
+
 ```python
-# _core/contexts/spsa/application/classic_schedule.py
 k_pair  = update_idx * pairs_per_update
 k_total = num_updates * pairs_per_update
 A_abs   = a_value * k_total if a_mode == "ratio" else a_value
@@ -103,15 +97,16 @@ for param in params:                      # is_not_used は除外
     )
 ```
 
+更新処理は[orchestrator_update_flow.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/adapters/orchestrator_update_flow.py)で行います。
+
 ```python
-# _core/contexts/spsa/adapters/orchestrator_update_flow.py（更新ステップ）
 new_value = param.value + r_i * c_i * step * flip
 ```
 
 ## \\(A\\) パラメータの役割
 
 最適化の序盤は、まだパラメータが最適値から遠く、しかも勾配推定の精度も低い状態です。
-ここで満額のステップを踏むとパラメータが大きく振れてしまうため、\\(A\\) を分母に足して
+序盤に大きなステップで更新するとパラメータが大きく振れてしまうため、\\(A\\) を分母に足して
 \\(k_{\text{pair}}\\) が小さいうちの実効ステップゲインを抑えます。
 
 \\[
@@ -138,11 +133,11 @@ Spall の推奨は \\(A_{\text{abs}} \approx 0.1 \cdot k_{\text{total}}\\)（ペ
 |:---|:---:|:---:|:---:|:---|
 | 既定（理論的最適） | 0.602 | 0.101 | absolute 0 | Spall の漸近最適レート |
 | 安定（ウォームアップ強め） | 0.602 | 0.101 | ratio 0.1 | 序盤のゲインを抑制 |
-| 緩やかな減衰 | 0.51 | 0.01 | absolute 0 | 現行契約の範囲内で減衰を最小限にする |
+| 緩やかな減衰 | 0.51 | 0.01 | absolute 0 | 指定可能な範囲で減衰を最小限にする |
 
 ### `step` / `delta`（パラメータ固有スケール）の目安
 
-更新幅と摂動はパラメータ単位の `step` / `delta` で制御します（グローバルスカラはありません）。
+更新幅と摂動はパラメータ単位の `step` / `delta` で制御します。
 
 ```text
 高感度パラメータ（小さな変化で勝率に大きく影響）:
@@ -174,7 +169,7 @@ c_k \to 0 \qquad \sum_{k=1}^{\infty} \frac{a_k^2}{c_k^2} < \infty
 \\(\alpha = 0.602,\ \gamma = 0.101\\) は、これらを満たしたうえで漸近的な収束レートが最良になる値として
 Spall が導出したものです。
 
-現行の ShogiArena は収束条件を外れる固定ゲインを提供しません。
+ShogiArena では減衰するゲインを使います。
 `algorithm.alpha` は \\(0.5 < \alpha \le 1.0\\)、`algorithm.gamma` は
 \\(0 < \gamma \le 0.5\\) の範囲で指定します。
 
@@ -182,12 +177,12 @@ Spall が導出したものです。
 
 | ファイル | 設定キー / 関数 | 役割 |
 |---------|---------|------|
-| `_core/contexts/spsa/application/classic_schedule.py` | `compute_classic_schedule_point` | パラメータ単位の \\(c_i\\) / \\(r_i\\) 算出 |
-| `_core/contexts/spsa/adapters/orchestrator_update_flow.py` | 更新ステップ | \\(\Delta\theta_i = r_i c_i \cdot \text{step} \cdot \text{flip}\_i\\) |
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `algorithm.alpha` | ステップゲイン減衰指数（既定 0.602） |
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `algorithm.gamma` | 摂動スケール減衰指数（既定 0.101） |
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `algorithm.A` | ウォームアップ定数（`mode` / `value`） |
-| `_core/contexts/game_session/adapters/orchestration/config_spsa_models.py` | `int_ck_floor` | 整数パラメータの摂動下限（既定 0.5） |
+| [classic_schedule.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/application/classic_schedule.py) | `compute_classic_schedule_point` | パラメータ単位の \\(c_i\\) / \\(r_i\\) 算出 |
+| [orchestrator_update_flow.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/adapters/orchestrator_update_flow.py) | 更新ステップ | \\(\Delta\theta_i = r_i c_i \cdot \text{step} \cdot \text{flip}\_i\\) |
+| [config_spsa_models.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/adapters/orchestration/config_spsa_models.py) | `algorithm.alpha` | ステップゲイン減衰指数（既定 0.602） |
+| [config_spsa_models.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/adapters/orchestration/config_spsa_models.py) | `algorithm.gamma` | 摂動スケール減衰指数（既定 0.101） |
+| [config_spsa_models.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/adapters/orchestration/config_spsa_models.py) | `algorithm.A` | ウォームアップ定数（`mode` / `value`） |
+| [config_spsa_models.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/adapters/orchestration/config_spsa_models.py) | `int_ck_floor` | 整数パラメータの摂動下限（既定 0.5） |
 
 ## 次に読む
 

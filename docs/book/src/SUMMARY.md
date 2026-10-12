@@ -33,7 +33,7 @@
 
 ---
 
-# 内部技術
+# 仕組みと理論
 
 - [統計的検定とチューニング](internals/index.md)
   - [Elo レーティング](internals/elo/index.md)
@@ -58,9 +58,3 @@
 
 - [プロジェクト構成](development/project-structure.md)
 - [コントリビュート](development/contributing.md)
-
----
-
-# サポート
-
-- [トラブルシューティング](troubleshooting.md)

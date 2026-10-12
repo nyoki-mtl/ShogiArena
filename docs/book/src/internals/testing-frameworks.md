@@ -2,47 +2,15 @@
 
 > **前提知識**：[統計的検定とチューニング](./index.md) の全体像を把握していること
 
-## このページの要点
-
-- OpenBench、Fishtest、Cutechess は、チェスエンジン開発で確立された主要なテストフレームワークです
-- 各フレームワークは SPRT、SPSA、分散テスト、トーナメント管理の知見を蓄積しており、ShogiArena の設計もそれを踏まえています
-- ShogiArena は OpenBench 互換の API クライアントを実装しており、既存の OpenBench/ShogiBench サーバと連携できます
-- 将棋固有の適応（USI プロトコル、SFEN、秒読み、千日手と入玉の判定）により、チェス系フレームワークの知見を将棋エンジンの評価に応用しています
-
-## エンジンテストフレームワークの系譜
-
-チェスコミュニティでは、エンジン開発を統計的に裏付けるためのテストフレームワークが長年にわたって発展してきました。
-その知見は将棋を含む他のボードゲーム AI の開発にも応用されています。
-
-```text
-2000s                          2010s                          2020s
-  │                              │                              │
-  ▼                              ▼                              ▼
-Cutechess ──────────────────── 成熟 ────── fastchess（後継）
-  CLI+GUI トーナメント管理         │
-  SPRT 実装の参照                 │
-                                 │
-              Fishtest ─────────┼──────── 継続運用
-              Stockfish 公式テスト│         クラウド規模
-              STC→LTC ワークフロー│
-                                 │
-              OpenBench ─────────┼──────── ShogiArena
-              分散テスト FW        │         将棋対応・API 連携
-              SPRT + SPSA         │
-                                 │
-                                 └──── fishtest-spsa-lab
-                                        SPSA 最適化研究
-```
+OpenBench、Fishtest、Cutechess は、チェスエンジンの対局、統計的検定、チューニングを支えるツールです。
+それぞれの機能と、ShogiArena の OpenBench サーバ連携や将棋への対応を紹介します。
 
 ## OpenBench
 
 ### 分散テストと統計的検定の統合
 
 [OpenBench](https://github.com/AndyGrant/OpenBench) は、Andrew Grant が開発したオープンソースのエンジンテストフレームワークです。
-もともと Grant 自身のチェスエンジン「Ethereal」の開発用に作られましたが、
-現在では多くのチェスエンジン開発者に利用されています。
-
-特徴は、分散テストと統計的検定を一つの Web プラットフォームに統合した点にあります。
+分散テストと統計的検定を一つの Web プラットフォームで扱います。
 複数のマシン（ワーカー）でテストを並列実行し、中央サーバで結果を集約して判定します。
 
 ### アーキテクチャ
@@ -118,7 +86,7 @@ openbench:
 [Fishtest](https://tests.stockfishchess.org/) は、チェスエンジン「Stockfish」の開発チームが運営する公式テストインフラです。
 世界中のボランティアが提供する数百台のマシンで、提出されたパッチを 24 時間体制でテストしています。
 
-Fishtest が確立したのは、**開発パイプラインとしてのテストワークフロー**です。
+Fishtest では、STC と LTC の検定を開発手順に組み込んでいます。
 「パッチを投稿 → STC で高速検証 → LTC で最終確認 → マージ」というフローによって、
 Stockfish は統計的に裏付けられた改善を積み重ねています。
 
@@ -189,15 +157,6 @@ Fishtest が確立した**階層テスト戦略**は、エンジン開発の標�
 - **LTC で信頼性の確保**：STC を通過したパッチだけを長時間で再検証
 - **二段階のゲートキーピング**：偽陽性のリスクを低減
 
-### エンジンテスト方法論への貢献
-
-Fishtest は、以下の点でエンジンテストの方法論に貢献しました。
-
-1. **SPRT の実用的採用**：固定局数テストに代わる効率的な逐次検定を普及させた
-2. **五項分布モデルの標準化**：ペアゲーム分析の精度を高めるモデルを普及させた
-3. **STC→LTC ワークフローの確立**：パッチ検証の標準的な手順を定義した
-4. **大規模分散テストの実証**：ボランティアによる分散コンピューティングでエンジン開発を加速した
-
 ### fishtest-spsa-lab
 
 Fishtest コミュニティからは、SPSA アルゴリズムの最適化研究も生まれています。
@@ -216,8 +175,8 @@ ShogiArena の LTC 回帰テスト機能は、この研究から着想を得て�
 
 | 知見 | ShogiArena での実装 |
 |:---|:---|
-| SPRT の設計 | `_core/contexts/game_session/application/sprt_service.py` |
-| 五項分布モデル | `_core/shared/kernel/statistics/pentanomial.py` |
+| SPRT の設計 | [sprt_service.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/application/sprt_service.py) |
+| 五項分布モデル | [pentanomial.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/shared/kernel/statistics/pentanomial.py) |
 | STC→LTC ワークフロー | LTC 回帰テスト（`LtcRegressionConfig`） |
 | 統計的方法論 | SPRT パラメータのデフォルト値設計 |
 
@@ -229,9 +188,7 @@ ShogiArena の LTC 回帰テスト機能は、この研究から着想を得て�
 コマンドライン版（cutechess-cli）と GUI 版の両方を提供し、
 エンジン間の対局実行、トーナメント管理、棋譜出力をまとめて扱えます。
 
-C++ で実装されており、高いパフォーマンスと安定性が特徴です。
-長年にわたりチェスエンジン開発の事実上の標準ツールとして使われ、
-SPRT 実装や裁定ロジックの**参照実装**として多くのフレームワークに影響を与えています。
+SPRT や裁定ロジックの参照実装としても使われています。
 
 > **補足**：cutechess-cli の後継として、[fastchess](https://github.com/Disservin/fastchess) が開発されています。
 > より効率的な並列処理と改善された SPRT 実装を提供しています。
@@ -249,9 +206,9 @@ SPRT 実装や裁定ロジックの**参照実装**として多くのフレー�
 
 | 影響を受けた領域 | ShogiArena での実装 |
 |:---|:---|
-| SPRT 実装の設計 | `_core/contexts/game_session/application/sprt_service.py`（cutechess の `sprt.cpp` を参考） |
-| 裁定ロジック | `_core/contexts/match/domain/adjudication.py` |
-| 持ち時間管理 | `_core/shared/kernel/time_control.py` |
+| SPRT 実装の設計 | [sprt_service.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/application/sprt_service.py)（cutechess の `sprt.cpp` を参考） |
+| 裁定ロジック | [adjudication.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/match/domain/adjudication.py) |
+| 持ち時間管理 | [time_control.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/shared/kernel/time_control.py) |
 | トーナメント形式 | Round-robin、スイス式をサポート |
 
 ## ShogiArena の位置付け
@@ -272,7 +229,7 @@ SPRT 実装や裁定ロジックの**参照実装**として多くのフレー�
 
 ### 将棋固有の適応
 
-ShogiArena は、チェス系フレームワークの知見を将棋エンジンの評価に適応させるために、以下の対応を行っています。
+ShogiArena は、将棋のプロトコル、棋譜形式、ルール、持ち時間に対応しています。
 
 プロトコルとフォーマット
 
@@ -302,26 +259,18 @@ ShogiArena の OpenBench クライアントは、以下の API エンドポイ�
 | `clientHeartbeat` | ワーカーの接続確認 |
 | `scripts`（`action=CREATE_TEST`） | 新規テストの作成 |
 
-これにより、既存の OpenBench インフラを活用した分散テストを実行できます。
-
-### 主要な差別化要素
-
-1. **将棋専用設計**：チェスからの移植ではなく、将棋の要件に基づいて設計
-2. **統合的プラットフォーム**：トーナメント管理（cutechess 的）と分散テスト（OpenBench 的）を 1 つのツールに統合
-3. **非同期アーキテクチャ**：asyncio ベースの効率的なリソース利用
-4. **SPSA + LTC 回帰テスト**：Fishtest のワークフロー知見を統合した自動チューニングパイプライン
-5. **リアルタイムダッシュボード**：Web ベースの対局監視と統計表示
+これらの API を通じて、既存の OpenBench サーバと分散テストを実行できます。
 
 ## 実装リファレンス
 
 | ファイル | クラス/関数 | 役割 |
 |---------|----------|------|
-| `_core/contexts/game_session/adapters/openbench/` | `OpenBenchClient` ほか | OpenBench API 連携 |
-| `_core/contexts/game_session/application/sprt_service.py` | `Sprt` | SPRT 実装（cutechess ベース） |
-| `_core/contexts/match/domain/adjudication.py` | `AdjudicationConfig` | ゲーム裁定ロジック |
-| `_core/shared/kernel/time_control.py` | `TimeControlLimits`, `GameClock` | 持ち時間管理 |
-| `_core/platform/engine_runtime/usi_engine_session.py` | `AsyncUsiEngine` | USI プロトコル実装 |
-| `_core/contexts/tournament/application/schedule_generation.py` | `GameScheduler` ほか | 対局スケジューリング |
+| [openbench](https://github.com/nyoki-mtl/ShogiArena/tree/main/src/shogiarena/_core/contexts/game_session/adapters/openbench) | `OpenBenchClient` ほか | OpenBench API 連携 |
+| [sprt_service.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/application/sprt_service.py) | `Sprt` | SPRT 実装（cutechess ベース） |
+| [adjudication.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/match/domain/adjudication.py) | `AdjudicationConfig` | ゲーム裁定ロジック |
+| [time_control.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/shared/kernel/time_control.py) | `TimeControlLimits`, `GameClock` | 持ち時間管理 |
+| [usi_engine_session.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/platform/engine_runtime/usi_engine_session.py) | `AsyncUsiEngine` | USI プロトコル実装 |
+| [schedule_generation.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/tournament/application/schedule_generation.py) | `GameScheduler` ほか | 対局スケジューリング |
 
 ## 参考文献
 
