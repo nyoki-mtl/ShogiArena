@@ -56,7 +56,6 @@ class SpsaUpdateBatchExecutionRequest:
     batch_size: int
     num_workers: int
     inflight_factor: int
-    is_crn_enabled: bool
     sfens: Sequence[str]
     opening_indices: Sequence[int]
     event_family: str = "spsa"
@@ -79,7 +78,7 @@ AssignmentsReadyPort = Callable[[], None]
 
 
 class SpsaUpdateBatchExecutionService:
-    """Execute SPSA mini-batch game pairs with CRN/non-CRN scheduling."""
+    """Execute SPSA mini-batches with a shared opening in each color-reversed pair."""
 
     async def execute(
         self,

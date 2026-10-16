@@ -122,7 +122,8 @@ class SpsaVariantsConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     pairing: Literal["plus_minus"] = "plus_minus"
-    is_crn_enabled: bool = Field(default=True, alias="crn")
+    # Kept for existing 1.x YAML inputs. Pairing always shares openings.
+    is_crn_enabled: bool = Field(default=True, alias="crn", deprecated=True)
     integer_rounding: Literal["none", "stochastic"] = "stochastic"
     apply: SpsaVariantApplyConfig = Field(default_factory=SpsaVariantApplyConfig)
 
@@ -185,8 +186,8 @@ class SpsaRunConfig(BaseModel):
 
     @property
     def is_crn_enabled(self) -> bool:
-        """Return whether CRN opening reuse is enabled."""
-        return bool(self.variants.is_crn_enabled)
+        """Direct plus/minus pairs always share their opening."""
+        return True
 
     @property
     def int_rounding(self) -> Literal["none", "stochastic"]:

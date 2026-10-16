@@ -4,9 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html),
-except for the explicitly documented 1.2.0 breaking-change exception.
+except for the documented 1.2.0 breaking-change exception and the SPSA run-resume boundary in 1.3.1.
 
 ## [Unreleased]
+
+## [1.3.1] - 2026-10-16
+
+### Fixed
+
+- SPSAが`crn: true`のとき、更新ごとに先頭の少数局面だけを繰り返し使う問題を修正した。
+  全開始局面から更新ごとの決定的な乱数で復元抽出し、ペア内では同じ局面でplus/minusの先後を入れ替えて対戦する。
+- 通常実行とresume時の局面選択を共通化した。
+  同じseed・run ID・局面列・割当規則で、中断後も同じ割当を再現する。
+
+### Compatibility
+
+- 局面割当規則を版管理し、1.3.0以前のSPSA runのresumeを拒否する。
+  既存runを保存し、別のrunディレクトリで新規実行すること。
+- `variants.crn`は既存設定の互換用として受け付けるが、値によって動作を切り替えない。
+  `true`と`false`のどちらでも、更新ごとの抽選とペア内の局面共有・先後反転を行う。
 
 ## [1.3.0] - 2026-09-26
 
@@ -685,7 +701,8 @@ dashboard 無効の長時間 run で event loop が秒単位で停止し、進�
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.7...v1.3.0
 [1.2.7]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.6...v1.2.7
 [1.2.6]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.5...v1.2.6

@@ -180,7 +180,7 @@ async def _run_one_spsa_update(self, update_idx, params, sfens):
     tuned_plus  = [p.value + flip * schedule.c[p.name] for p, flip in ...]
     tuned_minus = [p.value - flip * schedule.c[p.name] for p, flip in ...]
 
-    # 3. バッチ（m ペア）を実行し、スコアを集計（CRN あり/なし）
+    # 3. バッチ（m ペア）を実行し、同じ局面で先後反転し、スコアを集計
     step = score_sum - s_minus          # = Σ s⁺ − Σ s⁻
 
     # 4. パラメータ更新（グローバル学習率スカラは無い）
@@ -209,7 +209,6 @@ spsa:
       value: 0.1
 
   variants:                # 分散削減
-    crn: true              # Common Random Numbers
 
   early_stop:              # 早期終了（delta_norm が閾値を下回ったら停止）
     type: "delta_norm"

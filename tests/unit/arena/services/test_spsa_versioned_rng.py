@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -148,7 +151,7 @@ async def test_prepare_run_dir_generates_and_persists_256_bit_seed(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_prepare_run_dir_recovers_current_ledger_before_seed_read(
+async def test_prepare_run_dir_validates_snapshot_before_recovering_original(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -189,7 +192,7 @@ async def test_prepare_run_dir_recovers_current_ledger_before_seed_read(
 
     await runner.prepare_run_dir()
 
-    assert calls == ["recover", "read-seed"]
+    assert calls == ["read-seed", "recover"]
 
 
 def test_resume_seed_is_loaded_read_only_and_mismatch_fails(tmp_path: Path) -> None:
@@ -273,3 +276,71 @@ def test_resume_rejects_pre_versioned_rng_contract(tmp_path: Path) -> None:
 
 def test_rng_schema_identifier_is_versioned() -> None:
     assert SPSA_RNG_SCHEMA == "shogiarena.spsa.hmac-sha256.v1"
+
+
+@pytest.mark.parametrize("legacy_crn", [True, False])
+def test_opening_selection_uses_full_input_across_updates_and_restarts(tmp_path: Path, legacy_crn: bool) -> None:
+    def helper() -> SpsaOrchestratorUpdateMixin:
+        instance = object.__new__(SpsaOrchestratorUpdateMixin)
+        instance.config = SimpleNamespace(run_seed=RUN_SEED, experiment_name="run-1", is_crn_enabled=legacy_crn)
+        instance.run_dir = tmp_path
+        return instance
+
+    original = helper()
+    batches = {
+        update: original._select_opening_indices(update_idx=update, pair_count=8, opening_count=2000)
+        for update in range(1, 5)
+    }
+    assert len({tuple(batch) for batch in batches.values()}) == 4
+    assert any(index >= 8 for batch in batches.values() for index in batch)
+    restarted = helper()
+    for update in [4, 1, 3, 2]:
+        assert restarted._select_opening_indices(update_idx=update, pair_count=8, opening_count=2000) == batches[update]
+    assert original._select_opening_indices(update_idx=1, pair_count=8, opening_count=1) == [0] * 8
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_schema", [None, "shogiarena.spsa.opening.future.v99"])
+@pytest.mark.parametrize("crashed_wal", [False, True])
+async def test_old_opening_contract_is_rejected_without_rewriting_run(
+    tmp_path: Path, stored_schema: str | None, crashed_wal: bool
+) -> None:
+    ledger = open_spsa_ledger(tmp_path)
+    runtime = SpsaLedgerRuntime(ledger.connection, run_id="run-1")
+    runtime.initialize_run(
+        resume_hash="resume",
+        space_digest="space",
+        sealed_run_seed=RUN_SEED,
+        contract={"run_seed": RUN_SEED},
+        params=[ParamEntry("Threads", "int", 1.0, 1.0, 8.0, 1.0, 1.0, "", False)],
+    )
+    contract = {"run_seed": RUN_SEED}
+    if stored_schema is not None:
+        contract["opening_assignment_schema"] = stored_schema
+    ledger.connection.execute("UPDATE run_contract SET contract_json = ?", (json.dumps(contract),))
+    ledger.connection.commit()
+    ledger.close()
+    if crashed_wal:
+        # Commit a change only to WAL and exit without SQLite connection cleanup.
+        script = "\n".join(
+            [
+                "import os, sqlite3, sys",
+                "connection = sqlite3.connect(sys.argv[1])",
+                "connection.execute('PRAGMA journal_mode=WAL')",
+                "connection.execute('UPDATE run_contract SET updated_at = ?' , ('crash',))",
+                "connection.commit()",
+                "os._exit(0)",
+            ]
+        )
+        subprocess.run([sys.executable, "-c", script, str(tmp_path / "spsa" / "ledger.sqlite3")], check=True)
+        assert (tmp_path / "spsa" / "ledger.sqlite3-wal").stat().st_size > 0
+    (tmp_path / "state.json").write_text("{}\n", encoding="utf-8")
+    before = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    runner = object.__new__(SpsaRunner)
+    runner.config = SimpleNamespace(run_seed=RUN_SEED, experiment_name="run-1")
+    runner.run_dir = tmp_path
+    runner._run_options = RunOptions(should_skip_resume=False)
+    with pytest.raises(ValueError, match="unsupported opening assignment schema"):
+        await runner.prepare_run_dir()
+    after = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    assert before == after

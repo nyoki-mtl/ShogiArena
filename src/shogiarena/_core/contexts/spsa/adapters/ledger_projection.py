@@ -80,7 +80,7 @@ def project_spsa_ledger(
         "total_updates": len(updates),
         "last_updated": updates[-1]["timestamp"] if updates else 0,
         "int_rounding_policy": config.get("int_rounding"),
-        "crn_used": config.get("crn_enabled"),
+        "crn_used": True,
     }
     write_json_atomic(spsa_dir / "current.json", current)
     write_json_atomic(spsa_dir / "index.json", {"metadata": metadata, "updates": updates})

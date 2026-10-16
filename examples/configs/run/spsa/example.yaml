@@ -48,7 +48,6 @@ spsa:
       value: 0.1
   variants:
     pairing: plus_minus
-    crn: true
     integer_rounding: stochastic
     apply:
       clear_hash: true

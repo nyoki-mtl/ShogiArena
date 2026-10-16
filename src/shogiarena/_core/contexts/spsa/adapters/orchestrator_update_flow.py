@@ -203,17 +203,9 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
             rounding_samples={"plus_options": plus_options, "minus_options": minus_options},
         )
 
-    if orchestrator.config.is_crn_enabled:
-        opening_indices = [pair_idx % len(sfens) for pair_idx in range(batch_size)]
-    else:
-        opening_indices = [
-            orchestrator._make_rng(
-                domain="spsa.opening",
-                update_idx=int(update_idx),
-                pair_idx=pair_idx,
-            ).randrange(len(sfens))
-            for pair_idx in range(batch_size)
-        ]
+    opening_indices = orchestrator._select_opening_indices(
+        update_idx=int(update_idx), pair_count=batch_size, opening_count=len(sfens)
+    )
 
     score_sum, s_minus = await orchestrator._update_batch_execution_service.execute(
         request=SpsaUpdateBatchExecutionRequest(
@@ -221,7 +213,6 @@ async def run_one_spsa_update(orchestrator: Any, update_idx: int) -> None:
             batch_size=batch_size,
             num_workers=orchestrator.num_workers,
             inflight_factor=orchestrator.config.inflight_factor,
-            is_crn_enabled=orchestrator.config.is_crn_enabled,
             sfens=sfens,
             opening_indices=opening_indices,
             event_family=event_family,

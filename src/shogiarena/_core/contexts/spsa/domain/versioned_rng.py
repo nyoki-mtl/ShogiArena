@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Final, Literal, Protocol
 
 SPSA_RNG_SCHEMA: Final = "shogiarena.spsa.hmac-sha256.v1"
+SPSA_OPENING_ASSIGNMENT_SCHEMA: Final = "shogiarena.spsa.opening.per-update.v1"
 SpsaRngDomain = Literal[
     "spsa.flip",
     "spsa.opening",

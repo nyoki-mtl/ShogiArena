@@ -114,6 +114,13 @@ class SpsaOrchestratorUpdateMixin:
             counter=counter,
         )
 
+    def _select_opening_indices(self, *, update_idx: int, pair_count: int, opening_count: int) -> list[int]:
+        """Draw one opening per pair, independently of dispatch order and restart."""
+        return [
+            self._make_rng(domain="spsa.opening", update_idx=update_idx, pair_idx=pair_idx).randrange(opening_count)
+            for pair_idx in range(pair_count)
+        ]
+
     def _stochastic_round(self, value: float, rng: RandomSource) -> int:
         """Apply stochastic rounding for integers to reduce bias."""
         if self.config.int_rounding == "stochastic":

@@ -443,11 +443,12 @@ def test_derived_json_min_interval_rejects_out_of_range_values(tmp_path: Path) -
         load_spsa_run_config(config_path)
 
 
+@pytest.mark.filterwarnings("ignore:deprecated:DeprecationWarning")
 def test_alias_fields_accept_field_name_population() -> None:
     """alias 付きフィールドをフィールド名で構築しても値が捨てられないこと。
 
     populate_by_name がないと Pydantic v2 は alias のみを受け付け、
-    フィールド名指定を黙って無視する（`crn: false` が効かなくなる回帰の防止）。
+    フィールド名指定を黙って無視する。旧 `crn` 入力値も保持する。
     """
     variants = SpsaVariantsConfig(is_crn_enabled=False)
     assert variants.is_crn_enabled is False

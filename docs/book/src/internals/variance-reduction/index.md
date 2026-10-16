@@ -48,27 +48,14 @@ CRN あり:
 
 ### ShogiArena の実装
 
-```python
-if self.config.is_crn_enabled:
-    # 同じ SFEN を θ⁺ と θ⁻ の両方に使用
-    sfen = sfens[rng.randrange(len(sfens))]
-    s_plus  = await self._run_game_pair(sfen, tuned_plus, ...)
-    s_minus = await self._run_game_pair(sfen, tuned_minus, ...)
-else:
-    # 異なる SFEN を使用（分散が大きい）
-    sfen_plus  = sfens[rng.randrange(len(sfens))]
-    sfen_minus = sfens[rng.randrange(len(sfens))]
-    s_plus  = await self._run_game_pair(sfen_plus, tuned_plus, ...)
-    s_minus = await self._run_game_pair(sfen_minus, tuned_minus, ...)
-```
+現在のSPSAは、plusとminusを直接対戦させます。
+各ペアの開始局面を更新ごとの決定的な乱数で抽選し、同じ局面でplus/minusの先後を入れ替えて2局対戦します。
+局面は入力ファイル全体から復元抽出するため、重複する場合があります。
+更新間で同じ局面列に固定する必要はありません。
 
-### CRN を使うべき場合
-
-| 状況 | CRN | 理由 |
-|:---|:---:|:---|
-| SPSA 勾配推定 | ✓ | s⁺ - s⁻ の精度が直接的に影響 |
-| SPRT エンジン比較 | 推奨 | ペアゲームとの組み合わせが効果的 |
-| 多様な局面での評価 | ✗ | 局面の多様性を確保したい場合は CRN なし |
+割当の再現条件は、sealed run seed、run ID、更新番号、ペア番号、局面ファイルの内容と順序、割当規則の版が同じことです。
+並列実行順や中断・resumeによって割当は変わりません。
+`variants.crn`は旧設定の互換入力として受け付けますが、値によってこの動作を切り替えることはありません。
 
 ## ペアゲーム（先後入れ替え）
 
@@ -121,19 +108,9 @@ SPSA の 1 回の更新で、同じ摂動に対して複数の対局を実行し
 
 ### 実装
 
-```python
-batch_size = self.config.pairs_per_update or 1
-total_s_plus = 0.0
-total_s_minus = 0.0
-
-for batch_idx in range(batch_size):
-    s_plus_i, s_minus_i = await run_batch_item(batch_idx)
-    total_s_plus += s_plus_i
-    total_s_minus += s_minus_i
-
-s_plus = total_s_plus / batch_size
-s_minus = total_s_minus / batch_size
-```
+現在の実装はplus/minusの直接対戦を先後反転して行い、全対局の「plus勝ち数−plus負け数」を合計します。
+上の平均スコアの式は分散削減の説明用であり、runtimeでは平均しません。
+`pairs_per_update`を増やす場合は、更新幅も変わるため`r_end`の再調整が必要です。
 
 ### コストと利益のトレードオフ
 
@@ -157,13 +134,13 @@ s_minus = total_s_minus / batch_size
   │   ┌────────────────────────────────────────┐ │
   │   │ ペアゲーム: 先後入れ替え 2 局           │ │
   │   │   ┌───────────────────────────────────┐│ │
-  │   │   │ バッチ: B 回繰り返して平均         ││ │
+  │   │   │ バッチ: B ペアのスコアを集計         ││ │
   │   │   └───────────────────────────────────┘│ │
   │   └────────────────────────────────────────┘ │
   └─────────────────────────────────────────────┘
 ```
 
-1 回の更新あたりの対局数は \\(2 \times 2 \times B = 4B\\) 局になります。
+現在の直接対戦方式では、1回の更新あたりの対局数は2B局です。
 
 ### 推奨設定
 
@@ -171,8 +148,6 @@ s_minus = total_s_minus / batch_size
 spsa:
   pairs_per_update: 4        # 1 回の更新に使うペア数（バッチサイズ）
   inflight_factor: 8         # 同時進行させる対局数の乗数
-  variants:
-    crn: true                # CRN を有効化
 ```
 
 ## 効果の比較
@@ -186,13 +161,13 @@ spsa:
 | バッチ (B=4) | 75% | 4倍 | 低い |
 | 全手法併用 | 80-90% | 8倍 | 中 |
 
-> **注**：CRN は追加コストなしで分散を削減できるため、常に有効にすることを推奨します。
+> 現在の`plus_minus`ではペア内の局面共有が常時行われます。`crn`の指定は不要です。
 
 ## 実装リファレンス
 
 | ファイル | 設定キー/関数 | 役割 |
 |---------|-------------|------|
-| [config_spsa_models.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/adapters/orchestration/config_spsa_models.py) | `variants.crn`（`is_crn_enabled`） | CRN の有効と無効 |
+| [config_spsa_models.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/adapters/orchestration/config_spsa_models.py) | `variants.crn` | 旧設定の互換入力 |
 | [config_spsa_models.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/game_session/adapters/orchestration/config_spsa_models.py) | `pairs_per_update` | 1 回の更新に使うペア数 |
 | [orchestrator.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/contexts/spsa/adapters/orchestrator.py) | `SpsaOrchestrator` | ペアゲームの実行制御 |
 | [pentanomial.py](https://github.com/nyoki-mtl/ShogiArena/blob/main/src/shogiarena/_core/shared/kernel/statistics/pentanomial.py) | `compute_pentanomial()` | 五項分布の計算 |

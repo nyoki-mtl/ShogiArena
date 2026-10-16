@@ -122,7 +122,6 @@ spsa:
       value: 0.1
   variants:
     pairing: plus_minus
-    crn: true
     integer_rounding: stochastic
     apply:
       clear_hash: true
@@ -142,7 +141,7 @@ dashboard:
 | `pairs_per_update` | 1 更新あたりの対局ペア数 |
 | `inflight_factor` | 一回の更新で同時に投入する対局ペア数の係数。更新は順番に行う |
 | `algorithm` | SPSA のゲインスケジュール |
-| `variants.crn` | Common Random Numbers による分散削減 |
+| `variants.crn` | 旧設定との互換用。値にかかわらずペア内で同じ局面を使用する |
 | `variants.integer_rounding` | 整数パラメータの丸め方式 |
 | `variants.apply.clear_hash` | 設定変更後に置換表を初期化する。`true`ではエンジンの`Clear Hash`ボタンが必要 |
 | `num_parallel` | SPSA 用の並列数 |
@@ -157,8 +156,16 @@ dashboard:
 ## 開始局面
 
 SPSA では `rules.initial_positions.type: file` を指定し、開始局面 SFEN リストを用意する運用を推奨します。
-`flip_policy: pair_both` にすると、同じ開始局面を使い、先後を入れ替えて対局します。
-共通乱数（Common Random Numbers）によって、局面の違いによるノイズを抑えられます。
+`plus_minus`では、ペアごとに同じ開始局面を使い、plus/minusの先後を入れ替えて2局対戦します。
+開始局面は、更新番号とペア番号に対応する乱数で、入力ファイル全体から復元抽出します。
+同じ更新内や別の更新で同じ局面が選ばれることがあります。
+割当は`run_seed`、run ID、局面ファイルの内容と順序、割当規則の版が同じなら再現でき、中断・resumeや並列実行順に依存しません。
+
+1.3.1以降、`variants.crn`は互換用の入力です。
+`true`でも`false`でも、更新ごとの抽選とペア内の局面共有・先後反転を行います。
+1.3.0以前のrunは局面割当規則が異なるためresumeできません。
+既存runを保存したまま、別のrunディレクトリで新規実行してください。
+
 `shogiarena run spsa spsa.yaml` で実行する場合、相対 `source` はその YAML ファイルの場所を基準に解決されます。
 
 `sync_scope: pair`を指定すると、`flip_policy: pair_both`になっているか検証されます。

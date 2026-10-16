@@ -12,6 +12,7 @@ from collections.abc import Awaitable
 from pathlib import Path
 from typing import Any
 
+from shogiarena._core.contexts.dashboard.adapters.archive_snapshot import materialize_quiescent_database
 from shogiarena._core.contexts.game_session.adapters.context_factory import SessionContextFactory
 from shogiarena._core.contexts.game_session.adapters.dashboard_lifecycle import (
     DashboardCoordinator,
@@ -100,6 +101,7 @@ from shogiarena._core.contexts.spsa.application.runner_state import SpsaRunnerSt
 from shogiarena._core.contexts.spsa.domain.pair_identity import canonical_pair_ids
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry, SpsaGamePayload
 from shogiarena._core.contexts.spsa.domain.versioned_rng import (
+    SPSA_OPENING_ASSIGNMENT_SCHEMA,
     SPSA_RNG_SCHEMA,
     HmacSha256Rng,
 )
@@ -332,18 +334,18 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         self.write_interrupted_run_health(reason, is_provisional=True)
 
     async def prepare_run_dir(self) -> None:
-        if (
-            self.run_dir is not None
-            and not self._run_options.should_skip_resume
-            and (self.run_dir / "spsa" / "ledger.sqlite3").is_file()
-        ):
-            recover_spsa_ledger(self.run_dir)
         self.config.run_seed = _resolve_spsa_run_seed(
             configured_seed=self.config.run_seed,
             run_dir=self.run_dir,
             should_skip_resume=bool(self._run_options.should_skip_resume),
             experiment_name=self.config.experiment_name,
         )
+        if (
+            self.run_dir is not None
+            and not self._run_options.should_skip_resume
+            and (self.run_dir / "spsa" / "ledger.sqlite3").is_file()
+        ):
+            recover_spsa_ledger(self.run_dir)
         self.run_dir, self._frozen_run_config_payload = prepare_spsa_run_directory(
             run_dir=self.run_dir,
             should_skip_resume=bool(self._run_options.should_skip_resume),
@@ -460,8 +462,14 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
                 "existing artifacts were not migrated. Use --no-resume to start a fresh run."
             )
         if ledger_path.is_file():
-            with open_spsa_ledger(self.run_dir, read_only=True):
-                pass
+            with open_spsa_ledger(self.run_dir, read_only=True) as ledger:
+                row = ledger.connection.execute(
+                    "SELECT contract_json FROM run_contract WHERE run_id = ?",
+                    (str(self.config.experiment_name or self.run_dir.name),),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("SPSA ledger run contract is missing")
+                _validate_opening_assignment_contract(str(row[0]))
         frozen_payload = self._frozen_run_config_payload
         if frozen_payload is None:
             raise RuntimeError("inputs-only manifest must be written before prepare_domain")
@@ -828,17 +836,11 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
                 minus,
                 update_idx=update_idx,
             )
-            if self.config.is_crn_enabled:
-                opening_indices = [pair_idx % len(sfens) for pair_idx in range(int(self.config.pairs_per_update))]
-            else:
-                opening_indices = [
-                    helper._make_rng(
-                        domain="spsa.opening",
-                        update_idx=update_idx,
-                        pair_idx=pair_idx,
-                    ).randrange(len(sfens))
-                    for pair_idx in range(int(self.config.pairs_per_update))
-                ]
+            opening_indices = helper._select_opening_indices(
+                update_idx=update_idx,
+                pair_count=int(self.config.pairs_per_update),
+                opening_count=len(sfens),
+            )
             ltc_total_pairs = ltc_pair_count
             ltc_openings = [
                 helper._make_rng(
@@ -1129,6 +1131,12 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
             write_json_atomic(self.storage.run_dir / "spsa" / "terminal.provisional.json", provisional)
 
 
+def _validate_opening_assignment_contract(contract_json: str) -> None:
+    contract = json.loads(contract_json)
+    if not isinstance(contract, dict) or contract.get("opening_assignment_schema") != SPSA_OPENING_ASSIGNMENT_SCHEMA:
+        raise ValueError("SPSA run uses an unsupported opening assignment schema; start a fresh run with --no-resume")
+
+
 def _require_run_seed(config: SpsaRunConfig) -> str:
     seed = config.run_seed
     if seed is None:
@@ -1149,16 +1157,21 @@ def _resolve_spsa_run_seed(
     if not ledger_path.is_file():
         return configured_seed or secrets.token_hex(32)
     run_id = str(experiment_name or run_dir.name)
-    with open_spsa_ledger(run_dir, read_only=True) as ledger:
-        row = ledger.connection.execute(
-            "SELECT rng_schema, sealed_run_seed FROM run_contract WHERE run_id = ?",
-            (run_id,),
-        ).fetchone()
+    # A mode=ro open can alter WAL sidecars; recover a quiescent copy first.
+    with tempfile.TemporaryDirectory(prefix="shogiarena-spsa-contract-") as temp_dir:
+        snapshot_dir = Path(temp_dir)
+        materialize_quiescent_database(ledger_path, snapshot_dir / "spsa" / "ledger.sqlite3")
+        with open_spsa_ledger(snapshot_dir, read_only=True, immutable=True) as ledger:
+            row = ledger.connection.execute(
+                "SELECT rng_schema, sealed_run_seed, contract_json FROM run_contract WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
     if row is None:
         raise ValueError(f"SPSA ledger has no run contract for {run_id}")
-    rng_schema, sealed_seed = (str(value) for value in row)
+    rng_schema, sealed_seed, contract_json = (str(value) for value in row)
     if rng_schema != SPSA_RNG_SCHEMA:
         raise ValueError(f"SPSA run uses unsupported RNG schema {rng_schema!r}; start a fresh run with --no-resume")
+    _validate_opening_assignment_contract(contract_json)
     try:
         normalized_seed = HmacSha256Rng(
             seed_hex=sealed_seed,

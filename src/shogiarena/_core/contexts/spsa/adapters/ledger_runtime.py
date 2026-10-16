@@ -27,7 +27,7 @@ from shogiarena._core.contexts.spsa.adapters.runtime.ltc_regression_events impor
 )
 from shogiarena._core.contexts.spsa.domain.ledger_models import LedgerPairAssignment, SpsaUpdateState
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
-from shogiarena._core.contexts.spsa.domain.versioned_rng import SPSA_RNG_SCHEMA
+from shogiarena._core.contexts.spsa.domain.versioned_rng import SPSA_OPENING_ASSIGNMENT_SCHEMA, SPSA_RNG_SCHEMA
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.hash_normalization import HashInput
 from shogiarena._core.shared.kernel.json_types import JsonObject
@@ -68,7 +68,7 @@ class SpsaLedgerRuntime:
     ) -> None:
         """Create or strictly validate the sealed run contract and parameters。"""
 
-        expected_contract = _json_text(contract)
+        expected_contract = _json_text({**contract, "opening_assignment_schema": SPSA_OPENING_ASSIGNMENT_SCHEMA})
         row = self._connection.execute(
             """
             SELECT resume_hash, space_digest, rng_schema, sealed_run_seed, contract_json

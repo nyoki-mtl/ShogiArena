@@ -101,7 +101,7 @@ def build_spsa_algorithm_config(config: SpsaRunConfig) -> SpsaAlgorithmConfig:
         "A": float(config.algorithm_a) if config.algorithm_a is not None else None,
         "alpha": config.alpha,
         "gamma": config.gamma,
-        "is_crn_enabled": config.is_crn_enabled,
+        "is_crn_enabled": True,
         "int_rounding": config.int_rounding,
         "int_ck_floor": config.int_ck_floor,
         "should_snap_float_to_step": config.is_snap_float_to_step,
@@ -450,7 +450,7 @@ def _write_spsa_schedule_contract(*, run_dir: Path, config: SpsaRunConfig, param
             "params": [entry.name for entry in params],
             "num_updates": config.num_updates,
             "pairs_per_update": config.pairs_per_update,
-            "crn_enabled": config.is_crn_enabled,
+            "crn_enabled": True,
             "algorithm": build_spsa_algorithm_config(config),
         },
     }

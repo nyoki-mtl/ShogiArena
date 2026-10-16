@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import textwrap
 import time
+from contextlib import closing
 from pathlib import Path
 
+import pytest
 import yaml
 
 _ENGINE_SOURCE = """\
@@ -77,7 +80,7 @@ while True:
 """
 
 
-def _write_fixture(root: Path) -> tuple[Path, Path, Path, Path]:
+def _write_fixture(root: Path, *, legacy_crn: bool) -> tuple[Path, Path, Path, Path]:
     run_dir = root / "run"
     engine_dir = root / "engine"
     engine_dir.mkdir()
@@ -104,7 +107,12 @@ def _write_fixture(root: Path) -> tuple[Path, Path, Path, Path]:
         yaml.safe_dump({"name": "SPSA CLI Resume Mock", "engine_path": launcher.as_posix()}),
         encoding="utf-8",
     )
-    (root / "positions.sfen").write_text("startpos\n", encoding="utf-8")
+    (root / "positions.sfen").write_text(
+        "startpos\n"
+        "lnsgkgsnl/1r5b1/ppppppppp/9/9/2P6/PP1PPPPPP/1B5R1/LNSGKGSNL w - 2\n"
+        "lnsgkgsnl/1r5b1/pppppp1pp/6p2/9/2P6/PP1PPPPPP/1B5R1/LNSGKGSNL b - 3\n",
+        encoding="utf-8",
+    )
     (root / "space.yaml").write_text(
         yaml.safe_dump(
             {
@@ -152,8 +160,9 @@ def _write_fixture(root: Path) -> tuple[Path, Path, Path, Path]:
                 "spsa": {
                     "space": "space.yaml",
                     "run_seed": "11" * 32,
-                    "num_updates": 1,
-                    "pairs_per_update": 1,
+                    "variants": {"crn": legacy_crn},
+                    "num_updates": 3,
+                    "pairs_per_update": 2,
                     "inflight_factor": 1,
                     "num_parallel": 1,
                 },
@@ -205,8 +214,9 @@ def _wait_for_file(process: subprocess.Popen[str], path: Path, *, timeout: float
     raise AssertionError(f"SPSA CLI did not create {path} within {timeout:.1f}s")
 
 
-def test_public_cli_cancel_resume_and_complete(tmp_path: Path) -> None:
-    config, run_dir, first_go, resume_observation = _write_fixture(tmp_path)
+@pytest.mark.parametrize("legacy_crn", [True, False])
+def test_public_cli_cancel_resume_and_complete(tmp_path: Path, legacy_crn: bool) -> None:
+    config, run_dir, first_go, resume_observation = _write_fixture(tmp_path, legacy_crn=legacy_crn)
     environment = os.environ.copy()
     environment["PYTHONUNBUFFERED"] = "1"
     environment["SHOGI_ARENA_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS"] = "10"
@@ -232,6 +242,11 @@ def test_public_cli_cancel_resume_and_complete(tmp_path: Path) -> None:
     assert (run_dir / "completion_status.json").is_file()
     assert (run_dir / "spsa" / "terminal.provisional.json").is_file()
 
+    with closing(sqlite3.connect(run_dir / "spsa" / "ledger.sqlite3")) as connection:
+        before_assignments = connection.execute(
+            "SELECT pair_id, opening_json, color_assignment_json FROM pair_assignments ORDER BY pair_id"
+        ).fetchall()
+    assert before_assignments
     first_go.unlink()
     (tmp_path / "resume-armed.flag").touch()
     resumed = subprocess.run(
@@ -259,3 +274,20 @@ def test_public_cli_cancel_resume_and_complete(tmp_path: Path) -> None:
     assert completion["termination_reason"] == "completed"
     assert terminal["reason"] == "completed"
     assert (run_dir / "completed.flag").is_file()
+
+    with closing(sqlite3.connect(run_dir / "spsa" / "ledger.sqlite3")) as connection:
+        after_assignments = connection.execute(
+            "SELECT pair_id, opening_json, color_assignment_json FROM pair_assignments ORDER BY pair_id"
+        ).fetchall()
+    assert all(assignment in after_assignments for assignment in before_assignments)
+    assert len(after_assignments) == 6
+    # Golden assignment sequence for this sealed seed/run identity; repeats are valid.
+    assert [json.loads(row[1])["opening_idx"] for row in after_assignments] == [0, 0, 1, 0, 0, 0]
+    sfens = (tmp_path / "positions.sfen").read_text(encoding="utf-8").splitlines()
+    for pair_id, opening_json, colors_json in after_assignments:
+        opening = json.loads(opening_json)
+        assert opening["start_sfen"] == sfens[opening["opening_idx"]]
+        assert json.loads(colors_json)["games"] == [
+            {"slot": "black", "tuned_as": "black", "game_id": f"{pair_id}-black"},
+            {"slot": "white", "tuned_as": "white", "game_id": f"{pair_id}-white"},
+        ]
