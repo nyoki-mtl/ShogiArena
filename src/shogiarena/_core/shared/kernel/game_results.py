@@ -6,7 +6,7 @@ from rsshogi.initial_positions import InitialPosition
 from rsshogi.record import GameResult
 from rsshogi.types import Color
 
-STARTING_SFEN: str = InitialPosition.STANDARD.value
+STARTING_SFEN: str = InitialPosition["STANDARD"].value
 
 
 def timeout_win_result(winner: Color) -> GameResult:

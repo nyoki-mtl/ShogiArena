@@ -8,6 +8,12 @@ except for the documented 1.2.0 breaking-change exception and the SPSA run-resum
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-10-21
+
+### Changed
+
+- rsshogi の必要バージョンを 1.6.0 以上に引き上げた。
+
 ## [1.3.1] - 2026-10-16
 
 ### Fixed
