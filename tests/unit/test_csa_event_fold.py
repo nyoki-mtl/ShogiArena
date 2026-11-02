@@ -123,7 +123,7 @@ class TestFoldedFixtures:
         game = state.games[0]
         assert game.is_finished
         assert game.result == "win"
-        assert game.current_ply == 24
+        assert game.current_ply == 25
         assert state.score.wins == 1
         assert state.health.is_clean
 

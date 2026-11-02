@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from test_tournament_composition_timeout import (
     _block_after_parallel_bestmove_observations,
+    _block_before_parallel_go_commands,
     _run_tournament,
     _timeout_origins_in_db,
 )
@@ -45,7 +46,8 @@ async def test_in_flight_completion_after_breaker_stop_is_still_committed(
             ),
         )
 
-    _block_after_parallel_bestmove_observations(monkeypatch, observation_count=2, block_s=0.75)
+    _block_before_parallel_go_commands(monkeypatch, command_count=2, block_s=0.75)
+    _block_after_parallel_bestmove_observations(monkeypatch, observation_count=2, block_s=0.0)
 
     status = await _run_tournament(
         tmp_path,

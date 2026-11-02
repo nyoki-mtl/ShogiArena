@@ -1,11 +1,12 @@
 {
   "game_id": "csa_7a61acdc1e4977c3eb97fb7b4f2b6517c7a59fa82f41436c292fc5d7a24b1d8f",
   "initial_sfen": "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
-  "sfen": "ln1s2snl/1r1g1kgb1/pp3pppp/2ppp4/9/3P1PP2/PPP1P2PP/2SGG3L/LNB1RKSN1 b - 25",
+  "sfen": "ln1s2snl/1r1g1kgb1/pp3pppp/2ppp4/9/3P1PP2/PPPGP2PP/2SG4L/LNB1RKSN1 w - 26",
   "black_name": "fixture-arena",
   "white_name": "fixture-opponent-a",
-  "current_ply": 24,
+  "current_ply": 25,
   "latency_alerts": [
+    false,
     false,
     false,
     false,
@@ -40,10 +41,10 @@
       "current_game_id": null,
       "bridge_version": "0.1.0",
       "phase": "waiting_pairing",
-      "phase_since_ts": 1800000167620,
+      "phase_since_ts": 1800000175620,
       "stopped": false,
       "emits_liveness": false,
-      "last_event_ts": 1800000167620,
+      "last_event_ts": 1800000175620,
       "engine_name": null,
       "engine_author": null,
       "engine_options": [],
@@ -58,12 +59,12 @@
       "alerts": [],
       "outstanding_search": null,
       "deadline_ts": null,
-      "last_move_origin": "opponent",
+      "last_move_origin": "engine",
       "fallback_plies": [],
       "ledger": {
-        "black_ms": 340000,
+        "black_ms": 342000,
         "white_ms": 335000,
-        "as_of_ts": 1800000167620
+        "as_of_ts": 1800000175620
       },
       "score": {
         "wins": 1,
@@ -74,7 +75,7 @@
         {
           "game_id": "wdoor+floodgate-300-10F+fixture-arena+fixture-opponent-a+20260805120000",
           "result": "win",
-          "current_ply": 24,
+          "current_ply": 25,
           "black_name": "fixture-arena",
           "white_name": "fixture-opponent-a",
           "my_color": "black",
@@ -85,7 +86,7 @@
           ],
           "game_result": "BLACK_WIN",
           "started_ts": 1800000002100,
-          "ended_ts": 1800000167620,
+          "ended_ts": 1800000175620,
           "persistence": {
             "state": "pending",
             "attempts": 0,
@@ -133,7 +134,8 @@
     "3g3f",
     "4a3b",
     "4h4i",
-    "5b4b"
+    "5b4b",
+    "5h6g"
   ],
   "ki2_moves": [
     "▲７八銀",
@@ -159,7 +161,8 @@
     "▲３六歩",
     "△３二金",
     "▲４九玉",
-    "△４二玉"
+    "△４二玉",
+    "▲６七金右"
   ],
   "eval_black": [
     -83,
@@ -185,9 +188,11 @@
     257,
     null,
     -69,
-    null
+    null,
+    5
   ],
   "eval_white": [
+    null,
     null,
     null,
     null,
@@ -237,7 +242,8 @@
     1090741,
     null,
     1099383,
-    null
+    null,
+    1108025
   ],
   "depth_values": [
     21,
@@ -263,9 +269,11 @@
     21,
     null,
     23,
-    null
+    null,
+    20
   ],
   "seldepth_values": [
+    null,
     null,
     null,
     null,
@@ -315,9 +323,11 @@
     4000,
     5000,
     6000,
-    7000
+    7000,
+    8000
   ],
   "wall_times_ms": [
+    null,
     null,
     null,
     null,
@@ -367,9 +377,11 @@
     null,
     null,
     null,
+    null,
     null
   ],
   "latency_deltas_ms": [
+    null,
     null,
     null,
     null,
@@ -398,7 +410,7 @@
   "game_result": "BLACK_WIN",
   "time_control_black": "t300000+i10000",
   "time_control_white": "t300000+i10000",
-  "black_remain_ms": 340000,
+  "black_remain_ms": 342000,
   "white_remain_ms": 335000,
-  "clock_started_at_ms": 1800000167620
+  "clock_started_at_ms": 1800000175620
 }

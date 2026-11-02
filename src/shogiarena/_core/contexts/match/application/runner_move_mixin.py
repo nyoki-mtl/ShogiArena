@@ -210,7 +210,7 @@ class GameRunnerMoveMixin:
         # Update time control and notify
         pre_black_remain = state.black_time_control.active_time_left_ms()
         pre_white_remain = state.white_time_control.active_time_left_ms()
-        state.current_time_control.update_after_move(should_apply_increment=True)
+        state.current_time_control.update_after_move(should_apply_increment=True, observed_at_s=request.observed_at_s)
         notify_start = time.perf_counter()
         await self._notify_clock_increment(
             game_id=game_id,

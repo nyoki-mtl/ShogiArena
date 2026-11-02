@@ -43,6 +43,8 @@ class TimeoutBreakerPolicy:
 # 比率 1% は「軽微な停滞（0.33%）は通し、継続的な停滞（1.7% / 36.7%）は止める」線に引ける。
 # orchestrator_stall は最大連続が 2 までしか観測されなかったため、連続だけでは止まらない。
 # 比率閾値を持たせないと、停滞が確定していても run が続いてしまうので同じ比率を適用する。
+# Since 1.3.3, the normal observed-bestmove path cannot create orchestrator_stall.
+# Retain its policy for counters restored from older runs.
 TIMEOUT_BREAKER_POLICIES: dict[str, TimeoutBreakerPolicy] = {
     TimeoutOrigin.ORCHESTRATOR_STALL.value: TimeoutBreakerPolicy(
         consecutive_limit=5,

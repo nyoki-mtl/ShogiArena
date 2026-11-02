@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from shogiarena._core.contexts.game_session.application.orchestration.update_batch_execution_service import (
@@ -56,6 +58,76 @@ async def test_execute_runs_crn_batch_with_shared_sfen_per_pair() -> None:
     assert run_calls[1][0] == "plus"
     assert run_calls[0][1] == "s1"
     assert run_calls[1][1] == "s2"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [OSError, asyncio.CancelledError])
+@pytest.mark.parametrize("secondary_failure", [False, True])
+@pytest.mark.parametrize("cancel_batch", [False, True])
+async def test_execute_drains_other_pairs_before_propagating_failure(
+    failure, secondary_failure, cancel_batch, caplog
+) -> None:
+    started, failed, release, settled = (asyncio.Event() for _ in range(4))
+
+    async def run_pair(request):
+        if request.start_sfen == "fail":
+            await started.wait()
+            failed.set()
+            raise failure("pair failed")
+        started.set()
+        was_cancelled = False
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            # Terminal persistence drains before propagating cancellation.
+            was_cancelled = True
+            await release.wait()
+        settled.set()
+        if secondary_failure:
+            raise OSError("second DB failure")
+        if was_cancelled:
+            raise asyncio.CancelledError
+        return 0.0, None, None
+
+    task = asyncio.create_task(
+        SpsaUpdateBatchExecutionService().execute(
+            request=SpsaUpdateBatchExecutionRequest(
+                update_idx=1,
+                batch_size=2,
+                num_workers=2,
+                inflight_factor=1,
+                sfens=["fail", "drain"],
+                opening_indices=[0, 1],
+            ),
+            tuned_plus=[],
+            tuned_minus=[],
+            tuned_plus_options=None,
+            tuned_minus_options=None,
+            current_params=[],
+            reserve_pending_game=lambda request: f"{request.pair_id}-{request.game_slot}",
+            run_game_pair=run_pair,
+        )
+    )
+    try:
+        async with asyncio.timeout(3):
+            await failed.wait()
+            await asyncio.sleep(0.01)
+            assert not task.done()
+            if cancel_batch:
+                task.cancel()
+                await asyncio.sleep(0)
+            release.set()
+            with pytest.raises(asyncio.CancelledError if cancel_batch else failure):
+                await task
+        assert settled.is_set()
+        if secondary_failure:
+            assert "spsa-u000001-p000001" in caplog.text
+            assert any(record.exc_info and str(record.exc_info[1]) == "second DB failure" for record in caplog.records)
+        elif not cancel_batch:
+            assert not caplog.records
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

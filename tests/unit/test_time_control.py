@@ -4,6 +4,32 @@ from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkReques
 from shogiarena._core.shared.kernel.time_control import GameClock, TimeControlLimits
 
 
+@pytest.mark.parametrize("late_bestmove", [False, True])
+def test_clock_charges_bestmove_observation_before_runner_processing(monkeypatch, late_bestmove):
+    now = [100.0]
+    monkeypatch.setattr("shogiarena._core.shared.kernel.time_control.time.perf_counter", lambda: now[0])
+    clock = GameClock(TimeControlLimits(time_ms=500, increment_ms=100, expiry_margin_ms=20))
+    clock.initialize_for_game()
+    clock.start_timer()
+    observed = 100.75 if late_bestmove else 100.25
+    now[0] = 101.0  # expensive processing after the response was read
+    clock.update_after_move(observed_at_s=observed)
+    assert clock.is_expired() == late_bestmove
+    assert clock.last_charged_window == (100.0, observed)
+    assert clock.remaining_time_ms == (100 if late_bestmove else 350)
+
+
+def test_clock_does_not_credit_time_for_an_observation_before_timer_start(monkeypatch):
+    monkeypatch.setattr("shogiarena._core.shared.kernel.time_control.time.perf_counter", lambda: 100.0)
+    clock = GameClock(TimeControlLimits(time_ms=500, increment_ms=100))
+    clock.start_timer()
+    clock.update_after_move(observed_at_s=99.0)
+    assert clock.last_move_duration_ms == 0
+    assert clock.last_charged_window == (100.0, 100.0)
+    assert clock.remaining_time_ms == 600
+    assert not clock.is_expired()
+
+
 def test_fixed_time_go_command_and_timeout():
     limits = TimeControlLimits(fixed_time_ms=1000, expiry_margin_ms=100)
     tc = GameClock(limits)

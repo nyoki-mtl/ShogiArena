@@ -143,6 +143,47 @@ async def test_a_failing_side_does_not_leave_the_other_running() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_pair", [False, True])
+async def test_pair_logs_db_failure_hidden_by_side_cancellation(cancel_pair, caplog):
+    harness = _Harness(game_slots=2)
+    started, release, drained = (asyncio.Event() for _ in range(3))
+
+    async def execute(**kwargs):
+        if kwargs["is_tuned_as_black"]:
+            await started.wait()
+            raise asyncio.CancelledError
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()  # Finish the terminal write before failing.
+        drained.set()
+        raise OSError("white DB failed during drain")
+
+    harness._execute_game = execute
+    task = asyncio.create_task(harness._run_game_pair(**_pair_kwargs()))
+    try:
+        async with asyncio.timeout(3):
+            await started.wait()
+            await asyncio.sleep(0.01)
+            assert not task.done()
+            if cancel_pair:
+                task.cancel()
+                await asyncio.sleep(0)
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert drained.is_set()
+        assert "spsa-u000001-p000000-white" in caplog.text
+        assert any(
+            record.exc_info and str(record.exc_info[1]) == "white DB failed during drain" for record in caplog.records
+        )
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_both_sides_failing_records_one_quarantine() -> None:
     """Quarantine belongs to the pair's variant, so concurrent sides must record it once.
 

@@ -12,6 +12,7 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -88,7 +89,7 @@ async def test_game_completion_schedules_projection_instead_of_running_it_inline
         SimpleNamespace(on_game_complete=lambda _payload: calls.append("progress"))  # type: ignore[arg-type]
     )
 
-    monkeypatch.setattr(runner_module, "persist_spsa_game_completion", lambda **_kwargs: True)
+    monkeypatch.setattr(runner_module, "persist_spsa_game_completion", AsyncMock(return_value=True))
 
     event = _completion_event()
     await runner._handle_game_completion(event, event.payload)

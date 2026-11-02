@@ -215,14 +215,31 @@ class SpsaOrchestratorGameplayMixin:
         # only fills worker slots that would otherwise sit idle.
         # `return_exceptions` keeps a failing side from leaving the other running detached: both
         # settle before the first failure propagates.
-        settled = await asyncio.gather(
-            run_side(is_tuned_as_black=True, reserved_id=black_reserved),
-            run_side(is_tuned_as_black=False, reserved_id=white_reserved),
-            return_exceptions=True,
-        )
-        for outcome in settled:
-            if isinstance(outcome, BaseException):
-                raise outcome
+        def log_side_failure(index: int, failure: BaseException) -> None:
+            logger.warning(
+                "Additional SPSA game failure: update_idx=%s pair_id=%s game_id=%s",
+                update_idx,
+                pair_id,
+                (black_reserved, white_reserved)[index],
+                exc_info=(type(failure), failure, failure.__traceback__),
+            )
+
+        side_tasks = [
+            asyncio.create_task(run_side(is_tuned_as_black=True, reserved_id=black_reserved)),
+            asyncio.create_task(run_side(is_tuned_as_black=False, reserved_id=white_reserved)),
+        ]
+        try:
+            settled = await asyncio.gather(*side_tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            for index, task in enumerate(side_tasks):
+                if not task.cancelled() and (failure := task.exception()) is not None:
+                    log_side_failure(index, failure)
+            raise
+        failures = [(index, outcome) for index, outcome in enumerate(settled) if isinstance(outcome, BaseException)]
+        for index, failure in failures[1:]:
+            log_side_failure(index, failure)
+        if failures:
+            raise failures[0][1]
         black_outcome, white_outcome = settled
         assert not isinstance(black_outcome, BaseException)
         assert not isinstance(white_outcome, BaseException)

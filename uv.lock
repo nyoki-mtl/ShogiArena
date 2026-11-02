@@ -1,16 +1,16 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
-    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'win32'",
-    "python_full_version < '3.12' and sys_platform == 'win32'",
-    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'emscripten'",
-    "python_full_version < '3.12' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'emscripten'",
+    "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
 [[package]]
@@ -834,12 +834,12 @@ name = "numpy"
 version = "2.5.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'win32'",
-    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/22/fd/89965aa4ac08c74998539fcbf24fa3540f3e15237fbeb6bcf9c908f4aade/numpy-2.5.1.tar.gz", hash = "sha256:a48a113e6afea91f5608793bafa7ef2ad481fefbda87ec5069f483de61cb9fa3", size = 20755553, upload-time = "2026-07-04T17:08:00.933Z" }
 wheels = [
@@ -1302,39 +1302,40 @@ wheels = [
 
 [[package]]
 name = "rsshogi"
-version = "1.6.0"
+version = "1.7.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ab/da/9a00844981dca1b40fb7ad50b5d68182f3e470c70d7624f1ba70a31583be/rsshogi-1.6.0.tar.gz", hash = "sha256:7a09a24bf00020fc1413ba659d34db6bdcc1bf564458aae8f718079356b8c0c7", size = 486132, upload-time = "2026-10-21T05:46:28.136Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/60/1e/26c0f2564f16386f6693f7bec2d0b9b0e7290bba7fbfabf8cbe731186549/rsshogi-1.7.2.tar.gz", hash = "sha256:f94d2a62ba28177cd9f6409764a35f086a5eedfee4120a64f82541b2f573af69", size = 564157, upload-time = "2026-10-31T08:29:41.35Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/79/85/479e6cf9b126492afa9fb93a3d95fef0163e7c17df537b9dedcc0dc6c32c/rsshogi-1.6.0-cp311-cp311-macosx_10_12_x86_64.whl", hash = "sha256:791777f44f0cff445d45f2f82f0b1d48cd693d46056dbfb1826eae9d54d86bc1", size = 1469992, upload-time = "2026-10-21T05:45:37.556Z" },
-    { url = "https://files.pythonhosted.org/packages/2e/4f/ade9ada761710b6c7ee5e79e5997d4e3f365c4bfee5a14c894b59f8998de/rsshogi-1.6.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:70a94544e3e8fb520081da4da9400326ac983340fe12e52a41101092bd4dde3f", size = 1310724, upload-time = "2026-10-21T05:45:39.1Z" },
-    { url = "https://files.pythonhosted.org/packages/fd/82/3dbdf9ee0fabbde765b2d3e21324080137f13585ca9a42785e952dbaba64/rsshogi-1.6.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:42f8948c524427b226a9f6b3d323361d8db122b3fe1ffe37b2a8259069db668f", size = 1449372, upload-time = "2026-10-21T05:45:41.09Z" },
-    { url = "https://files.pythonhosted.org/packages/55/1d/ac5019efab0f565ba22c17269888b95a502e02cd1d01a7dab9cef31af7ea/rsshogi-1.6.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:86c132f86ea3615e56c144dfc227cd545118e3928a8b7012f989cc736b8dcb25", size = 1527760, upload-time = "2026-10-21T05:45:43.074Z" },
-    { url = "https://files.pythonhosted.org/packages/3e/ab/c8cb800269f4b9065aa7c41e6f765072b4018c65ff3c4890c754d3592098/rsshogi-1.6.0-cp311-cp311-win_amd64.whl", hash = "sha256:72b83a9f76a4327e44515c2c41ea9ddbec8d69863545ab132026f29619b06ed7", size = 1312833, upload-time = "2026-10-21T05:45:44.951Z" },
-    { url = "https://files.pythonhosted.org/packages/39/89/ca09cf456d1fdad6551e28e8e7bd0c406c528ac33759eefdfafff993e10b/rsshogi-1.6.0-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:fd03d96b6a1e5d91b4b465da6e3fdf96c699f48c257d50d0614577107bfdb5ff", size = 1469735, upload-time = "2026-10-21T05:45:46.545Z" },
-    { url = "https://files.pythonhosted.org/packages/c0/b7/93b846f672b2187116372403dc7b71838651f360140006a3e8a2f92758f5/rsshogi-1.6.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:fd573884eca3096b6d3ceed4dc5971409cd9da8017e1abbaaa0588f0d146e855", size = 1289359, upload-time = "2026-10-21T05:45:48.384Z" },
-    { url = "https://files.pythonhosted.org/packages/29/83/ff3b335e09ef144fe31de46dacb81f143960d55df1e3969dc0979b4f4338/rsshogi-1.6.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:02cf65f942a911bc4b3cd85bca2b8f906e9c00ae52913e513590b7711b7f9531", size = 1437976, upload-time = "2026-10-21T05:45:50.322Z" },
-    { url = "https://files.pythonhosted.org/packages/4f/a3/9986f94ae28087f545349f903961aeea29d3ebf9bfe749944ab6d037f5a5/rsshogi-1.6.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:bfcec64ac18613f58b3e83967ddebd97a3ccc376aa39c2e23be8674eb6e7640a", size = 1523032, upload-time = "2026-10-21T05:45:51.954Z" },
-    { url = "https://files.pythonhosted.org/packages/21/b8/0af9d55d97a75c8ef6c21ce21eb3131df86dd8c9bddfa6110285e41f7547/rsshogi-1.6.0-cp312-cp312-win_amd64.whl", hash = "sha256:67c928a5162a2449e367d3590f45929d1506477b116681b761435a7275ec560f", size = 1308703, upload-time = "2026-10-21T05:45:53.541Z" },
-    { url = "https://files.pythonhosted.org/packages/0f/b8/ab0244c55fdf40668bb78e5548c6ec7197b74c713e265db890f49f83129e/rsshogi-1.6.0-cp313-cp313-macosx_10_12_x86_64.whl", hash = "sha256:2d6a3f09eec00b63505ca7b136f771d1de45b2d9e8249391d4eb400abf3330ae", size = 1469813, upload-time = "2026-10-21T05:45:55.199Z" },
-    { url = "https://files.pythonhosted.org/packages/56/45/4a6b0b56c82a5a828f281653eeff7af89c36e852c575f5c59e0eecd39ece/rsshogi-1.6.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:3c1e5f8ff57766688426e142739848d93e682914fce682e502767bf059d1c372", size = 1289509, upload-time = "2026-10-21T05:45:56.783Z" },
-    { url = "https://files.pythonhosted.org/packages/a7/1c/6a6e49d0d2081de003bb24a7ef82cf3669d3d0f2e840f9f50a517e4745c2/rsshogi-1.6.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f903a88b053df5b466695ca23382e37c5f59134e4de80fefd1336e366beb8671", size = 1438396, upload-time = "2026-10-21T05:45:58.556Z" },
-    { url = "https://files.pythonhosted.org/packages/ba/42/1fc58261a7598e06307b7e289db81648e7f0dd2ffdd382e397c65ad50874/rsshogi-1.6.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:debe6e41dde4e142fffa709026c21f44417fea51c7cbb47a4f6d345afe0ab67f", size = 1523317, upload-time = "2026-10-21T05:46:00.807Z" },
-    { url = "https://files.pythonhosted.org/packages/a6/80/506b21f23cd631466826b5eeed749a69da953a75de426557cd3508d95c09/rsshogi-1.6.0-cp313-cp313-win_amd64.whl", hash = "sha256:e4b1d212223760f3912909c1dfb557d14be904302e4dbb61510c9271690124dd", size = 1309268, upload-time = "2026-10-21T05:46:02.493Z" },
-    { url = "https://files.pythonhosted.org/packages/d4/e0/abc49a972342018f4da4db9f0e1c48f865d962941c91a9193836c6f1ae2e/rsshogi-1.6.0-cp314-cp314-macosx_10_12_x86_64.whl", hash = "sha256:4fd1354ade9d74787ae0169d1bb2f9bdff761b3a065190fb7f54d2ed66fc7b60", size = 1469045, upload-time = "2026-10-21T05:46:04.405Z" },
-    { url = "https://files.pythonhosted.org/packages/77/6c/6fc0c2bf33a416c4e36001b2fd385be057af5efc002555c271939b3df86f/rsshogi-1.6.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:2ed145b62f8f8c8d2ea782eb6c7e3cf3da5e729869b6440fbe99ca507bef990c", size = 1289233, upload-time = "2026-10-21T05:46:05.942Z" },
-    { url = "https://files.pythonhosted.org/packages/45/2a/d57171c2172b6a0d8b0ff61491e7b5cde247a4ef90980c5488d5a7e03752/rsshogi-1.6.0-cp314-cp314-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:a810f60bb5f8efb2448bb689a2561742e4e9fd48f7447d8f465074775550c598", size = 1439230, upload-time = "2026-10-21T05:46:07.568Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/1b/51584e3d31de223e4c787d81df013710343212afb16ea7777264ede30cf0/rsshogi-1.6.0-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:928336564d02961c5fd894d8cd0e8ebd04be0ba81bcdf6222f1ff64af1539e4e", size = 1524542, upload-time = "2026-10-21T05:46:09.137Z" },
-    { url = "https://files.pythonhosted.org/packages/74/7d/7a871de4a9dadc16a341b62272df4734e6faf7545f059ab6b576fff25ddd/rsshogi-1.6.0-cp314-cp314-win_amd64.whl", hash = "sha256:364af7ca7c825e91228294761a41bbd7455a8da0ed00811af3a10418d2c1d8a1", size = 1306951, upload-time = "2026-10-21T05:46:11.042Z" },
-    { url = "https://files.pythonhosted.org/packages/ab/a1/475042fddce5fcbca18e1fe81373bdefeca4fe8c5bc7fb455a5ad8db7beb/rsshogi-1.6.0-cp314-cp314t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f0a4f83d6f6dd7d490fe02dcf2ad0d10fcbfd139af155765e227e26d2520d7a1", size = 1432383, upload-time = "2026-10-21T05:46:12.75Z" },
-    { url = "https://files.pythonhosted.org/packages/bd/3f/658f7abcec0e2a596afbd9c6fa9468c52e4eca99dc7c423a6969b318e4a9/rsshogi-1.6.0-cp314-cp314t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:db70094c0a6cc5b3ba5a338f65d59c3f289990019201ba18ce6845df897b4e67", size = 1518156, upload-time = "2026-10-21T05:46:14.688Z" },
-    { url = "https://files.pythonhosted.org/packages/1c/d2/89cc8b4c360d778f0a619e928e121367fcf9d736cec17fe485c0d922c588/rsshogi-1.6.0-cp315-cp315-macosx_11_0_arm64.whl", hash = "sha256:f4b1c412c682a762c631a624bf1f09ecd16085d477c44544ecd2b9015b6b9fa5", size = 1289321, upload-time = "2026-10-21T05:46:16.594Z" },
-    { url = "https://files.pythonhosted.org/packages/2d/76/3d5b9d92a62efce7b06ff0a414bc2d01c4eaeb97858cc09c7176c5aef21f/rsshogi-1.6.0-cp315-cp315-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:8793199184890589b02e07b5533619f9563ad0bee717c62c136380895b68e768", size = 1439573, upload-time = "2026-10-21T05:46:18.198Z" },
-    { url = "https://files.pythonhosted.org/packages/ed/6a/7860de259e5544e43121f64ca2409cf288800ce11d55f3f39f5f5b956964/rsshogi-1.6.0-cp315-cp315-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:11a3182d29f766de159a0e297517165cfc7d795d654552885bdae7fcbdf6ae85", size = 1524505, upload-time = "2026-10-21T05:46:20.116Z" },
-    { url = "https://files.pythonhosted.org/packages/26/ab/825c1224c2eda13e8ac9841fcdd91f54e412ecee4da51bd6b3f722721d16/rsshogi-1.6.0-cp315-cp315t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:20a7f1be7d3e4d455ee27708e978a93e7d0600fedf839289499eed27f16978d7", size = 1431510, upload-time = "2026-10-21T05:46:21.637Z" },
-    { url = "https://files.pythonhosted.org/packages/63/b3/0f993b9270ef8b87ea438828f5b31af37025c63c42c1b821de40239d0741/rsshogi-1.6.0-cp315-cp315t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c2e65a0effeca39cd7fdf829184130e5e4aa0346d9b8b8c1dbaef10dc54f163c", size = 1519609, upload-time = "2026-10-21T05:46:23.39Z" },
-    { url = "https://files.pythonhosted.org/packages/3f/85/2de5ab2059f31f6f5ae38b6f4d510bf7fc60494bf6350faef461fbbb6150/rsshogi-1.6.0-pp311-pypy311_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:a7f15f5da6a300ed7d723418e423ad68d2b8c2258284456fceb2c5adff8fec6b", size = 1466445, upload-time = "2026-10-21T05:46:24.903Z" },
-    { url = "https://files.pythonhosted.org/packages/25/be/9e926697b2aca005d3b358341727dea2e9352dbb7f04c30302d54d3ab313/rsshogi-1.6.0-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:bfa993b1452fef51b36d68aa27f5db43411a2cf011d92772bd52003beff5be2d", size = 1540505, upload-time = "2026-10-21T05:46:26.581Z" },
+    { url = "https://files.pythonhosted.org/packages/51/05/dc623bb6ebf364b77f6357ab89119faae9af9895b3e737fb74b725b1e7d5/rsshogi-1.7.2-cp311-cp311-macosx_10_12_x86_64.whl", hash = "sha256:0c6b6a5cfffc5607cee32bf870e678afaa07ce06417d38a93a84275030ab0067", size = 1474810, upload-time = "2026-10-31T08:28:49.336Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/5b/58ff21372e53b2043056330224cbe1e2d9f2abaea449fde9bf46326f32c7/rsshogi-1.7.2-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:713961a35334a798637ace9b95a00ed4832008c2c87c8eade7f942e16ede5724", size = 1316513, upload-time = "2026-10-31T08:28:50.863Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/2c/1f0e76237b16f9738f740fe670db163f7556743bc18ec8776c0f1f34fcec/rsshogi-1.7.2-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:34b25f6a66a5c59b3dbdaedab382d7c85c03b40720a4b17d738c988e29455af2", size = 1453970, upload-time = "2026-10-31T08:28:52.836Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/eb/d495ca18257d798493930a405a41472e9104b0537d02c19af66e59ba3547/rsshogi-1.7.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:e7643f2fb2e6ef855466944027d6c2785a4301e4ce3a14bb8c14f3e36dd53cda", size = 1529005, upload-time = "2026-10-31T08:28:54.48Z" },
+    { url = "https://files.pythonhosted.org/packages/12/2c/6015b5a33f7927161aa7c524023b367253cf106c467c5c5198c332f419f5/rsshogi-1.7.2-cp311-cp311-win_amd64.whl", hash = "sha256:b65094b6d5aa37a8695ed62885f40cd778796f7a4cdad4aa51c937452e813002", size = 1314083, upload-time = "2026-10-31T08:28:56.245Z" },
+    { url = "https://files.pythonhosted.org/packages/14/d5/098ec762477a17e90abe75677cc9dff8db3621c7e670e12c3d0bcadac55f/rsshogi-1.7.2-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:0abe1d45863fe8c773830ad5f54455baed892b09ed3a0634d99708d5648ac58a", size = 1474799, upload-time = "2026-10-31T08:28:58.066Z" },
+    { url = "https://files.pythonhosted.org/packages/29/46/c1004c9725924136a50047ed0f92364c3d245ee533ca79cd60e3d72a4a33/rsshogi-1.7.2-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:f0fac62cffa478a6e2b3cf763a55a8e3b0e37be6e13126e48fc9c72492d7d5a7", size = 1295243, upload-time = "2026-10-31T08:28:59.934Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/d6/ab94a6cc8490b56bfe50fd37a9efdbd4b41ab365cb84161f69615664819c/rsshogi-1.7.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:e60c212f20af169d6889cb00b9c4f99ff818e0edc7580723b0df244d96512ac6", size = 1441832, upload-time = "2026-10-31T08:29:01.566Z" },
+    { url = "https://files.pythonhosted.org/packages/75/ee/513b574e17a22c93284a24ca6dedaee2c4d495b2e93f2792db303630d3b6/rsshogi-1.7.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:99b4fc4dedc8080596faaad24c90c0c95a447ca473bca85fa154d86679e3ba78", size = 1524642, upload-time = "2026-10-31T08:29:03.451Z" },
+    { url = "https://files.pythonhosted.org/packages/db/52/e67857cd063a7baf1d0eb972e7d98af82eda00d1fd4bfc396fa82b415700/rsshogi-1.7.2-cp312-cp312-win_amd64.whl", hash = "sha256:f3528c9a748b20d6b1b735892787f439fd07f470b8d2919fe3c8de80253b6022", size = 1308945, upload-time = "2026-10-31T08:29:05.29Z" },
+    { url = "https://files.pythonhosted.org/packages/15/1a/34e5efe3743e19fe4b6b3200bb9f8fe5f6d9c72b67a6ebe57ea200efa120/rsshogi-1.7.2-cp313-cp313-macosx_10_12_x86_64.whl", hash = "sha256:60c2af0686fb213539aa474e294086241b2b682f6b52d15bbc36271b71226cab", size = 1474380, upload-time = "2026-10-31T08:29:07.064Z" },
+    { url = "https://files.pythonhosted.org/packages/0c/68/34e3067f0b9f7236839c232e68b7af8540d5096e38dc654f3a4098566b1b/rsshogi-1.7.2-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:a8d104c1759ebaae3ebebd6de7dd5a112cc82c8bfb74581460c2fcd39822aa15", size = 1295293, upload-time = "2026-10-31T08:29:08.811Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/bb/d615482a25dd07606cd69c7f76f40f2c74b0cbdfda7d283a83877096aa4c/rsshogi-1.7.2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:4b250b96a46ee18ab9150491f9c1e5f1495ac3c8d08957b01fb4efa7a9730304", size = 1441930, upload-time = "2026-10-31T08:29:11.105Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/d9/79e967c0d4a1e5d748a0c33a55f9c880024a47a8e800ac3ea8417fec70fd/rsshogi-1.7.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:0779006bcf552516ff37de83f24d31f5aa83dfec2eb4009d4bdb59e1e77152a3", size = 1524776, upload-time = "2026-10-31T08:29:12.603Z" },
+    { url = "https://files.pythonhosted.org/packages/56/ef/7da601f44f8c423f3bbbf86c039e1f6fa29d0e079560338a99c9907780f5/rsshogi-1.7.2-cp313-cp313-win_amd64.whl", hash = "sha256:42ab86062bc82679499804d0b87e3e458a15dd1a428236532b9f2f978f95a933", size = 1308988, upload-time = "2026-10-31T08:29:14.224Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/65/94a39e031852330c2aadf107ed4af9e0ea373fceb2768c844d53cb555fe0/rsshogi-1.7.2-cp314-cp314-macosx_10_12_x86_64.whl", hash = "sha256:d49510923bba73ce6bbd38b800642819fa88aaefb94f7e923ef6179e3fe9ded6", size = 1473784, upload-time = "2026-10-31T08:29:15.913Z" },
+    { url = "https://files.pythonhosted.org/packages/91/53/7fcbee48e63166f7d682251d5c994d999370e2c802405162b98c2c7fed6a/rsshogi-1.7.2-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:fd4c24442f9811afae50ddcda6078ed3b1bdc9d22fd7e0d46fa7661c07461353", size = 1294625, upload-time = "2026-10-31T08:29:17.556Z" },
+    { url = "https://files.pythonhosted.org/packages/38/06/94af04edc785238191763b7c7ec154302a06ca1760ada18a8cdfc6ac33b4/rsshogi-1.7.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:f0e97d28995f625131197bb9f8fd6f1ceba42024818e9c3177819c1ced7a6123", size = 1442446, upload-time = "2026-10-31T08:29:19.184Z" },
+    { url = "https://files.pythonhosted.org/packages/51/b4/a8bbb7337398546803dab6e7139dca7e8647755c3ab9c454c3694ac22a89/rsshogi-1.7.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:543ae3bc294dd31406abed0da4188b21f6ee63e507eaa45988a1acefbd97a52d", size = 1525559, upload-time = "2026-10-31T08:29:20.802Z" },
+    { url = "https://files.pythonhosted.org/packages/61/59/91923058d502697c4eafafb7613f26451394f0bf6b3db1ed86eadcc454f7/rsshogi-1.7.2-cp314-cp314-win_amd64.whl", hash = "sha256:d26bb65029f1be637fcb2477c386fae1db9bd6deb0b1d9a2158677c96e0f24bd", size = 1306886, upload-time = "2026-10-31T08:29:22.787Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/87/64d1fae9b31c3a0d7113556d88ea219e9d007c286b2e196dc517512389a9/rsshogi-1.7.2-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:0814817b32b6e7d58a4f06021d496615177655211fbbcea7032e538e13642463", size = 1434158, upload-time = "2026-10-31T08:29:24.551Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/93/797c2feee2f98b7d3347aa3b686eea63c0ff76af8cd47a9e5ee203074207/rsshogi-1.7.2-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:45cb639f619cd0ead0381db6eb67d1715344bd573806f60a86bea27a9ed682de", size = 1521681, upload-time = "2026-10-31T08:29:26.213Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/49/da641f8e5aba2c431eae633f218dd95a034e63aad251d666ea35b23ff622/rsshogi-1.7.2-cp315-cp315-macosx_11_0_arm64.whl", hash = "sha256:5d2a58b2aa5b3230cfbfed866d36eb0f8363c2df0c6237fa1fd354e38db37d55", size = 1294744, upload-time = "2026-10-31T08:29:27.81Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/93/9b659c2353f0d90c66629219391122f36d8b76078eb718fd37af299bee15/rsshogi-1.7.2-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:243ceb8035aa85ad8e1fc002f20a11145b16aebc4d741aa43bf0460e61d2da84", size = 1442520, upload-time = "2026-10-31T08:29:29.261Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/57/b1e92043c15fcff79ad0f5464b4bf301147a1adc3305c6ca67a080787dfb/rsshogi-1.7.2-cp315-cp315-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:af81125e99e8dff0750d1de6251dd21c2a5b1e6f132ebcbee8d1457eb71312fe", size = 1525851, upload-time = "2026-10-31T08:29:30.981Z" },
+    { url = "https://files.pythonhosted.org/packages/52/40/968c1219aac57a6b299b84585c37ed65572a6fa2965876f0bb93168659df/rsshogi-1.7.2-cp315-cp315-win_amd64.whl", hash = "sha256:9ba174c0b8f5e20c4050db3e5e36395006cc06f5b3bebd9e34e73aa01454e5f3", size = 1307151, upload-time = "2026-10-31T08:29:32.827Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/f7/b1843820fc4a2c1c45b4223e2b1b7a7f77678485d90e7058202dd1abf341/rsshogi-1.7.2-cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:a3d167a5ad587aeed507c4d229bb8f872dfafb994e3c3f8e0081e18e254ba7db", size = 1434709, upload-time = "2026-10-31T08:29:34.465Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/e7/29f6d65a4fdfd4e7588a6ec1709e89e32dfe487c0bc5e9135b766b75f58f/rsshogi-1.7.2-cp315-cp315t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:d15f10975e7af03e1f212af810bfa1d9b6ea9ae43ad072a0f45403f5b0c528e4", size = 1522926, upload-time = "2026-10-31T08:29:36.253Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/00/deb15f9f146e7c953da340be1dace6dae5cd86c0cc31d45817ebed170ae9/rsshogi-1.7.2-pp311-pypy311_pp73-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:422864595caa6c265ed4bb05c8bd21f89a5ff2593c3f25d8bf76a7c0475eb120", size = 1471104, upload-time = "2026-10-31T08:29:37.863Z" },
+    { url = "https://files.pythonhosted.org/packages/96/2e/1b2009e2f0711f75136c028bc0907907af1fbaedece08d4d5fcc97213889/rsshogi-1.7.2-pp311-pypy311_pp73-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:110ba23e0856f301bb9c3c89e7895c5877b290dc381d683c646b905ed2f509e7", size = 1542829, upload-time = "2026-10-31T08:29:39.453Z" },
 ]
 
 [[package]]
@@ -1364,7 +1365,7 @@ wheels = [
 
 [[package]]
 name = "shogiarena"
-version = "1.3.2"
+version = "1.3.3"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -1404,7 +1405,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "rsshogi", specifier = ">=1.6.0,<2" },
+    { name = "rsshogi", specifier = ">=1.7.2,<2" },
     { name = "sqlalchemy", specifier = ">=2.0.51" },
     { name = "typing-extensions", specifier = ">=4.16.0" },
 ]

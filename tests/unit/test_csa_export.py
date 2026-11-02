@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
+import sys
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -46,6 +48,39 @@ from .test_csa_event_fold import (
 )
 
 REPLAYER = RsshogiBoardReplay()
+
+
+def test_csa_export_cli_reports_unrepresentable_result_and_continues(tmp_path):
+    log_dir, out_dir = tmp_path / "logs", tmp_path / "export"
+    log_dir.mkdir()
+    fixture = Path(f"tests/fixtures/csa_watch/{EVEN_COMPLETE}-events.jsonl").read_text(encoding="utf-8")
+    invalid = []
+    for line in fixture.splitlines():
+        event = json.loads(line)
+        if event["game_id"]:
+            event["game_id"] += "-invalid"
+        if event["type"] == "game_end":
+            event["result"] = "lose"  # White resigns after 25 plies, so black must win.
+        invalid.append(json.dumps(event))
+    (log_dir / "1800000000-events.jsonl").write_text("\n".join(invalid) + "\n", encoding="utf-8")
+    (log_dir / "1800000001-events.jsonl").write_text(fixture, encoding="utf-8")
+    executable = Path(sys.executable).with_name("shogiarena.exe" if sys.platform == "win32" else "shogiarena")
+    result = subprocess.run(
+        [str(executable), "csa", "export", "--csa-log-dir", str(log_dir), "--out", str(out_dir)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert result.returncode != 0
+    assert "NOT WRITTEN" in result.stderr and "-invalid" in result.stderr
+    assert "terminal marker cannot represent the recorded result" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "1 written" in result.stderr
+    files = list(out_dir.glob("*.csa"))
+    assert len(files) == 1 and "-invalid" not in files[0].name
+    assert Record.from_csa_str(files[0].read_text(encoding="utf-8")).result == _exported(EVEN_COMPLETE).record.result
 
 
 def _export(run_id: str, *, should_include_comments: bool = True) -> ExportedGame | ExportFailure:
@@ -94,9 +129,11 @@ class TestExportedText:
         assert text.startswith("'CSA encoding=UTF-8\nV3.0\n")
 
     def test_the_output_reads_back(self) -> None:
-        text = render_csa(_exported(EVEN_COMPLETE).record)
+        exported = _exported(EVEN_COMPLETE)
+        text = render_csa(exported.record)
         restored = Record.from_csa_str(text)
         assert restored.move_count == fold_fixture(EVEN_COMPLETE).games[-1].current_ply
+        assert restored.result == exported.record.result
 
     def test_evaluations_are_written_in_the_floodgate_comment_form(self) -> None:
         text = render_csa(_exported(EVEN_COMPLETE).record)

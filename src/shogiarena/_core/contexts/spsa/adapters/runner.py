@@ -945,16 +945,33 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         event: GameCompletionEvent[GameCompletionPayload],
         payload: SpsaGamePayload,
     ) -> None:
-        if self._state.db_service is None:
+        db_service = self._state.db_service
+        if db_service is None:
             raise ValueError("SPSA runner requires db_service for game completion handling")
 
-        is_persisted = False
-        async with self._state.completion_lock:
-            is_persisted = persist_spsa_game_completion(
-                db_service=self._state.db_service,
-                event=event,
-                observation_ledger=self._state.observation_ledger,
-            )
+        async def persist_completion() -> bool:
+            async with self._state.completion_lock:
+                return await persist_spsa_game_completion(
+                    db_service=db_service,
+                    event=event,
+                    observation_ledger=self._state.observation_ledger,
+                )
+
+        # A terminal game must survive shutdown even while another completion
+        # owns the lock. Drain the whole DB -> ledger operation before returning
+        # cancellation to the worker, so cleanup cannot close either store early.
+        completion_task = asyncio.create_task(persist_completion())
+        was_cancelled = False
+        while True:
+            try:
+                is_persisted = await asyncio.shield(completion_task)
+                break
+            except asyncio.CancelledError:
+                if completion_task.cancelled():
+                    raise
+                was_cancelled = True
+        if was_cancelled:
+            raise asyncio.CancelledError
 
         if is_persisted:
             # The derived JSON views are rebuilt from the whole run, so projecting inline here

@@ -42,6 +42,7 @@ from shogiarena._core.contexts.instances.application.instance_models import Inst
 from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
 from shogiarena._core.contexts.match.application.runner_finalize_mixin import GameRunnerFinalizeMixin
 from shogiarena._core.contexts.match.application.runner_loop_mixin import GameRunnerLoopMixin
+from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine
 from shogiarena.tournament import build_tournament_runner, create_run_storage, load_tournament_config
 
 _ENGINE_SOURCE = """\
@@ -192,7 +193,7 @@ def _block_after_first_bestmove_observation(
     *,
     block_s: float,
 ) -> None:
-    """最初の bestmove 観測後だけ event loop を塞ぎ、処理側の時間切れを作る。"""
+    """最初の bestmove 観測後だけ event loop を塞ぐ。"""
     original = GameRunnerLoopMixin._observation_of
     blocked = False
 
@@ -205,6 +206,31 @@ def _block_after_first_bestmove_observation(
         return observation
 
     monkeypatch.setattr(GameRunnerLoopMixin, "_observation_of", staticmethod(block_once))
+
+
+def _block_before_parallel_go_commands(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    command_count: int,
+    block_s: float,
+) -> None:
+    """時計開始済みのgoを揃え、送信前にloopを塞いで受信を期限後にする。"""
+    original = AsyncUsiEngine._send_command
+    arrived = 0
+    ready = asyncio.Event()
+
+    async def wait_and_block(self: Any, command: str, *, state: str | None = None) -> None:
+        nonlocal arrived
+        if command.startswith("go ") and arrived < command_count:
+            arrived += 1
+            if arrived == command_count:
+                time.sleep(block_s)
+                ready.set()
+            else:
+                await asyncio.wait_for(ready.wait(), timeout=5.0)
+        await original(self, command, state=state)
+
+    monkeypatch.setattr(AsyncUsiEngine, "_send_command", wait_and_block)
 
 
 def _block_after_parallel_bestmove_observations(
@@ -429,18 +455,17 @@ async def test_production_composition_does_not_blame_the_engine_when_the_loop_st
 
 
 @pytest.mark.asyncio
-async def test_production_composition_records_a_positive_orchestrator_stall(
+async def test_production_composition_does_not_blame_engine_for_delayed_go_dispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """orchestrator 側の停滞を positive に立証できること。
+    """go送信前の停滞で期限を超えた応答を、engine起因と断定しないこと。
 
-    engine は即答するので観測時刻は deadline より前にある。それでも clock が尽きるのは
-    観測後の停滞が原因なので、``orchestrator_stall`` として engine と切り分けられる。
-    ``unknown``（因果不明）とは別の、証拠のある分類であることを production 配線で確認する。
+    engine は即答するが、時計開始後のgo送信前にloopを塞ぐため受信は期限後になる。
+    停滞だけで超過を説明できるため、既存の保守的な判定では``unknown``となる。
     """
 
-    _block_after_first_bestmove_observation(monkeypatch, block_s=0.75)
+    _block_before_parallel_go_commands(monkeypatch, command_count=1, block_s=0.75)
 
     status = await _run_tournament(
         tmp_path,
@@ -452,10 +477,30 @@ async def test_production_composition_records_a_positive_orchestrator_stall(
 
     origins = status.get("timeouts_by_origin")
     assert isinstance(origins, dict)
-    assert origins.get("orchestrator_stall", 0) > 0, f"expected a positive orchestrator_stall, got {origins}"
-    assert origins.get("engine_deadline", 0) == 0, f"the engine answered in time: {origins}"
+    assert origins.get("unknown", 0) > 0, f"dispatch stall must explain the late observation: {origins}"
+    assert origins.get("engine_deadline", 0) == 0, f"go dispatch was delayed by the runner: {origins}"
     # 無効局なので rating / SPRT へは入らない。
-    assert status["error_games"] >= origins["orchestrator_stall"]
+    assert status["error_games"] >= origins["unknown"]
+
+
+@pytest.mark.asyncio
+async def test_production_composition_does_not_charge_processing_after_bestmove(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """受信後の処理が予算を超えても、正常な応答を時間切れにしない。"""
+    _block_after_first_bestmove_observation(monkeypatch, block_s=0.75)
+    status = await _run_tournament(
+        tmp_path,
+        delay_s=0.0,
+        time_ms=500,
+        margin_ms=0,
+        games_per_pair=2,
+    )
+    assert status["status"] == "clean"
+    assert status["completed"] == 2
+    assert not status["timeouts_by_origin"]
+    assert not _timeout_origins_in_db(tmp_path / "run")
 
 
 @pytest.mark.asyncio

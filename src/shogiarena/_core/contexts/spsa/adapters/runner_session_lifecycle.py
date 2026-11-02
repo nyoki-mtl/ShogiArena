@@ -473,7 +473,7 @@ def _write_spsa_current_artifact(
     write_json_atomic(run_dir / "spsa" / "current.json", payload)
 
 
-def persist_spsa_game_completion(
+async def persist_spsa_game_completion(
     *,
     db_service: DatabaseServicePort,
     event: GameCompletionEvent[GameCompletionPayload],
@@ -501,10 +501,20 @@ def persist_spsa_game_completion(
     participation = _extract_participation(game_info)
     if not participation:
         raise ValueError("SPSA terminal game is missing required participation identity")
-    game_db_id = db_service.append_record_with_participation(
-        game_info,
-        participation=participation,
+    write_task = asyncio.create_task(
+        asyncio.to_thread(db_service.append_record_with_participation, game_info, participation=participation)
     )
+    was_cancelled = False
+    while True:
+        try:
+            game_db_id = await asyncio.shield(write_task)
+            break
+        except asyncio.CancelledError:
+            if write_task.cancelled():
+                raise
+            # A thread cannot be cancelled. Finish DB -> ledger while the caller
+            # still holds completion_lock, then propagate the stop request.
+            was_cancelled = True
     if observation_ledger is not None:
         observation_ledger.insert_committed(
             build_ledger_observation(
@@ -518,6 +528,8 @@ def persist_spsa_game_completion(
                 )
             )
         )
+    if was_cancelled:
+        raise asyncio.CancelledError
     return True
 
 

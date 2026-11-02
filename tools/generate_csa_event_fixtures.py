@@ -307,7 +307,7 @@ def build_even_complete() -> EventLogBuilder:
         my_color="black",
         black_name=OUR_NAME,
         white_name="fixture-opponent-a",
-        plies=24,
+        plies=25,  # White resigns on its turn, consistent with our black win.
         finish="win",
     )
     return builder

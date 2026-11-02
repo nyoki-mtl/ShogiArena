@@ -360,6 +360,7 @@ async def test_handle_recovered_bestmove_preserves_timeout_observation_until_exp
     move_state = _build_move_state(board)
     assert move_state.current_time_control.last_move_start_time is not None
     move_state.current_time_control.last_move_start_time -= 2.0
+    observed = move_state.current_time_control.last_move_start_time + 1.75
     harness = _RunnerMoveHarness(move_result={"is_game_over": False, "move": move})
 
     result = await harness._handle_recovered_bestmove(
@@ -378,7 +379,7 @@ async def test_handle_recovered_bestmove_preserves_timeout_observation_until_exp
             player_name="Black",
             is_black_turn=True,
             repetition_occurrences_to_draw=4,
-            observed_at_s=123.456,
+            observed_at_s=observed,
             observation_basis="local_pipe",
         ),
         state=RecoveredBestmoveStateRefs(move_state=move_state),
@@ -387,5 +388,5 @@ async def test_handle_recovered_bestmove_preserves_timeout_observation_until_exp
 
     assert result.result == GameResult.WHITE_WIN_BY_TIMEOUT
     assert harness.timeout_calls[-1]["site"] == "update_after_move_expired"
-    assert harness.timeout_calls[-1]["observed_at_s"] == 123.456
+    assert harness.timeout_calls[-1]["observed_at_s"] == observed
     assert harness.timeout_calls[-1]["observation_basis"] == "local_pipe"

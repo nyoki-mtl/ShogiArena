@@ -8,6 +8,23 @@ except for the documented 1.2.0 breaking-change exception and the SPSA run-resum
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-11-02
+
+### Fixed
+
+- bestmoveの受信後に行う合法性確認や局面更新の時間を、エンジンの消費時間へ含めないようにした。
+  受信を観測した時刻までを課金し、期限後の応答は引き続き時間切れとする。
+  時計開始前の観測時刻を受け取った場合も、消費時間を負にしない。
+- SPSAの対局保存を別スレッドで行い、DB保存中に他局のエンジン応答の受信が止まる問題を修正した。
+- SPSAの停止時に、保存待ちの終局結果もDBとledgerへの反映を完了してから終了するようにした。
+  複数の対局群が実行中の場合も、全対局群の回収を待ってから終了処理へ進む。
+- SPSAの停止や複数対局の失敗が重なったとき、DB保存などの追加エラーが記録から抜ける問題を修正した。
+- `csa export`で1局の勝敗をCSA形式に表現できない場合も、失敗した局を報告して残りの局の書き出しを続けるようにした。
+
+### Changed
+
+- rsshogiの必要バージョンを1.7.2以上、2.0未満に更新した。
+
 ## [1.3.2] - 2026-10-21
 
 ### Changed
@@ -707,7 +724,9 @@ dashboard 無効の長時間 run で event loop が秒単位で停止し、進�
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.2...v1.3.3
+[1.3.2]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.7...v1.3.0
 [1.2.7]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.2.6...v1.2.7

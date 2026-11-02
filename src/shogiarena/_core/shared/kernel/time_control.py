@@ -348,13 +348,16 @@ class GameClock:
         else:
             return f"GameClock(depth={self.limits.depth_limit}, nodes={self.limits.node_limit})"
 
-    def update_after_move(self, should_apply_increment: bool = True) -> None:
+    def update_after_move(self, should_apply_increment: bool = True, *, observed_at_s: float | None = None) -> None:
         # Override to extend with byoyomi handling while keeping original logic
         if self.last_move_start_time is None:
             logger.warning("update_after_move called without start_timer")
             return
 
-        now = time.perf_counter()
+        # End the charge when bestmove was read, before parsing, legality checks,
+        # notation and applying the move. Those operations belong to the runner.
+        now = time.perf_counter() if observed_at_s is None else observed_at_s
+        now = max(self.last_move_start_time, now)
         self.last_move_duration_ms = int((now - self.last_move_start_time) * 1000)
         # Capture the charged window (task 0047) before ``prev_remaining`` is consumed below.
         self.last_charged_window = (self.last_move_start_time, now)

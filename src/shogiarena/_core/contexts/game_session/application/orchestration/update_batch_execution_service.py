@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Generic, Literal, TypeVar
@@ -12,6 +13,7 @@ from shogiarena._core.shared.kernel.json_types import JsonObject
 ParamT = TypeVar("ParamT")
 RunResultT = TypeVar("RunResultT")
 PhaseLiteral = Literal["plus", "minus"]
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -178,9 +180,41 @@ class SpsaUpdateBatchExecutionService:
                 # SPSA score_sum is plus_wins - plus_losses over games.
                 return pair_score * 2.0, 0.0
 
-        batch_results = await asyncio.gather(*[run_batch_item(batch_idx) for batch_idx in range(request.batch_size)])
-        total_s_plus = sum(s_plus for s_plus, _s_minus in batch_results)
-        total_s_minus = sum(s_minus for _s_plus, s_minus in batch_results)
+        # Each pair owns terminal completion writes. Settle every pair before
+        # propagating failure/cancellation, otherwise runner cleanup can close
+        # the stores while another pair is still committing its observations.
+        def log_pair_failure(index: int, failure: BaseException) -> None:
+            logger.warning(
+                "Additional SPSA pair failure: update_idx=%s pair_id=spsa-u%06d-p%06d",
+                request.update_idx,
+                request.update_idx,
+                index,
+                exc_info=(type(failure), failure, failure.__traceback__),
+            )
+
+        batch_tasks = [asyncio.create_task(run_batch_item(index)) for index in range(request.batch_size)]
+        try:
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            # A cancelled gather drains its children but raises cancellation
+            # instead of returning their results. Keep any real failures visible.
+            for index, task in enumerate(batch_tasks):
+                if not task.cancelled() and (failure := task.exception()) is not None:
+                    log_pair_failure(index, failure)
+            raise
+        failures = [
+            (index, outcome) for index, outcome in enumerate(batch_results) if isinstance(outcome, BaseException)
+        ]
+        for index, failure in failures[1:]:
+            log_pair_failure(index, failure)
+        if failures:
+            raise failures[0][1]
+        total_s_plus = total_s_minus = 0.0
+        for outcome in batch_results:
+            assert not isinstance(outcome, BaseException)
+            s_plus, s_minus = outcome
+            total_s_plus += s_plus
+            total_s_minus += s_minus
         return total_s_plus, total_s_minus
 
 

@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-from shogiarena._core.contexts.csa_watch.application.game_export import export_games
+from shogiarena._core.contexts.csa_watch.application.game_export import ExportFailure, export_games
 from shogiarena._core.contexts.csa_watch.application.run_watcher import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     CsaRunWatcher,
@@ -152,20 +152,31 @@ async def _export_command(args: argparse.Namespace) -> None:
         )
         for game in exported:
             target = out_dir / game.file_name
-            size = writer.write(game.record, target)
+            try:
+                size = writer.write(game.record, target)
+            except ValueError as exc:
+                failures.append(
+                    ExportFailure(
+                        game_id=game.game_id,
+                        ply=game.record.move_count,
+                        usi="",
+                        reason=f"CSA serialization failed: {exc}",
+                    )
+                )
+                continue
             written += 1
             sys.stdout.write(f"wrote {target} ({size} bytes)\n")
         for failure in failures:
             failed += 1
             sys.stderr.write(
-                f"NOT WRITTEN {failure.game_id}: replay stopped at ply {failure.ply} "
+                f"NOT WRITTEN {failure.game_id}: export stopped at ply {failure.ply} "
                 f"({failure.usi}): {failure.reason}\n"
             )
     sys.stdout.flush()
     sys.stderr.flush()
     if failed:
         # An unverifiable game is a finding, not a warning to scroll past.
-        raise CliError(f"{failed} game(s) could not be replayed and were not written; {written} written")
+        raise CliError(f"{failed} game(s) could not be exported and were not written; {written} written")
 
 
 __all__ = ["register"]
