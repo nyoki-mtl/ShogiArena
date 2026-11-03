@@ -30,6 +30,7 @@ from shogiarena._core.contexts.instances.application.instance_pool import Instan
 from shogiarena._core.contexts.instances.ports.engine_factory import EngineFactoryService
 from shogiarena._core.contexts.match.application.engine_participant import EngineParticipant
 from shogiarena._core.contexts.match.application.runner import GameRunner
+from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
 from shogiarena._core.shared.kernel.game_results import game_result_name
 from shogiarena._core.shared.kernel.runtime_watchdog import RuntimeWatchdog
 
@@ -146,14 +147,22 @@ class GameExecutionWorkerAdapter:
             )
         finally:
             self._active_runner = None
-            await _shutdown_engines(
-                black_participant=black_participant,
-                white_participant=white_participant,
-                black_engine=black_engine,
-                white_engine=white_engine,
-            )
-            if watchdog is not None:
-                await watchdog.stop()
+
+            async def cleanup() -> None:
+                try:
+                    await _shutdown_engines(
+                        black_participant=black_participant,
+                        white_participant=white_participant,
+                        black_engine=black_engine,
+                        white_engine=white_engine,
+                    )
+                finally:
+                    if watchdog is not None:
+                        await watchdog.stop()
+
+            # Stdout can fail after normal cleanup has already begun. Its first
+            # cancellation must not abandon engine or watchdog teardown either.
+            await complete_before_cancelling(cleanup())
 
     async def _create_engine(
         self,

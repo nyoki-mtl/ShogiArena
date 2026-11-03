@@ -81,182 +81,189 @@ class GameRunnerRunMixin:
         # Initialize game state with normalized SFEN
         board = Board()
 
-        normalized_sfen = normalize_usi_position(initial_sfen)
-        if normalized_sfen == "startpos":
-            board.reset()
-        else:
-            board.set_sfen(normalized_sfen)
-        initial_sfen = normalized_sfen
+        try:
+            normalized_sfen = normalize_usi_position(initial_sfen)
+            if normalized_sfen == "startpos":
+                board.reset()
+            else:
+                board.set_sfen(normalized_sfen)
+            initial_sfen = normalized_sfen
 
-        start_ply_number = _starting_ply_number(initial_sfen)
+            start_ply_number = _starting_ply_number(initial_sfen)
 
-        start_time = datetime.now()
-        moves: list[Move] = []
-        eval_values: list[int | None] = []
-        # Search statistics arrays for enhanced dashboard
-        nodes_values: list[int | None] = []
-        depth_values: list[int | None] = []
-        seldepth_values: list[int | None] = []
-        move_times_ms: list[int | None] = []
-        wall_times_ms: list[int | None] = []
-        engine_wall_times_ms: list[int | None] = []
-        move_sources: list[str | None] = []
-        latency_deltas_ms: list[int | None] = []
+            start_time = datetime.now()
+            moves: list[Move] = []
+            eval_values: list[int | None] = []
+            # Search statistics arrays for enhanced dashboard
+            nodes_values: list[int | None] = []
+            depth_values: list[int | None] = []
+            seldepth_values: list[int | None] = []
+            move_times_ms: list[int | None] = []
+            wall_times_ms: list[int | None] = []
+            engine_wall_times_ms: list[int | None] = []
+            move_sources: list[str | None] = []
+            latency_deltas_ms: list[int | None] = []
 
-        # Initialize time control and adjudication (time control is required)
-        black_time_control: GameClock
-        white_time_control: GameClock
-        adjudicator: Adjudicator | None = None
+            # Initialize time control and adjudication (time control is required)
+            black_time_control: GameClock
+            white_time_control: GameClock
+            adjudicator: Adjudicator | None = None
 
-        # Prefer per-side overrides if provided; fallback to global limits
-        black_limits_raw = black_time_control_limits or self.time_control_limits
-        white_limits_raw = white_time_control_limits or self.time_control_limits
-        if black_limits_raw is None or white_limits_raw is None:
-            raise RuntimeError("Time control limits are required for both sides (provide per-side or global limits)")
-        black_limits = coerce_time_control_limits(black_limits_raw)
-        white_limits = coerce_time_control_limits(white_limits_raw)
-        black_time_control = GameClock(black_limits)
-        white_time_control = GameClock(white_limits)
-        black_time_control.initialize_for_game()
-        white_time_control.initialize_for_game()
-        logger.debug(f"Time control initialized (B/W): {black_time_control} / {white_time_control}")
+            # Prefer per-side overrides if provided; fallback to global limits
+            black_limits_raw = black_time_control_limits or self.time_control_limits
+            white_limits_raw = white_time_control_limits or self.time_control_limits
+            if black_limits_raw is None or white_limits_raw is None:
+                raise RuntimeError(
+                    "Time control limits are required for both sides (provide per-side or global limits)"
+                )
+            black_limits = coerce_time_control_limits(black_limits_raw)
+            white_limits = coerce_time_control_limits(white_limits_raw)
+            black_time_control = GameClock(black_limits)
+            white_time_control = GameClock(white_limits)
+            black_time_control.initialize_for_game()
+            white_time_control.initialize_for_game()
+            logger.debug(f"Time control initialized (B/W): {black_time_control} / {white_time_control}")
 
-        if self.adjudication_config:
-            adjudicator = Adjudicator(self.adjudication_config)
-            logger.debug(f"Adjudication initialized: {self.adjudication_config}")
+            if self.adjudication_config:
+                adjudicator = Adjudicator(self.adjudication_config)
+                logger.debug(f"Adjudication initialized: {self.adjudication_config}")
 
-        final_result_progress_attempted = False
+            final_result_progress_attempted = False
 
-        async def enqueue_final_game_result() -> None:
-            nonlocal final_result_progress_attempted
-            if game_result is None or result_progress_emitted[0] or final_result_progress_attempted:
-                return
-            await self._enqueue_game_result(
-                game_id=game_id,
-                moves=moves,
-                result=game_result,
-                initial_sfen=normalized_sfen,
-                final_sfen=board.to_sfen(),
-                black_name=black_engine.name,
-                white_name=white_engine.name,
-                start_ply_number=start_ply_number,
-            )
-            final_result_progress_attempted = True
+            async def enqueue_final_game_result(final_sfen: str) -> None:
+                nonlocal final_result_progress_attempted
+                if game_result is None or result_progress_emitted[0] or final_result_progress_attempted:
+                    return
+                await self._enqueue_game_result(
+                    game_id=game_id,
+                    moves=moves,
+                    result=game_result,
+                    initial_sfen=normalized_sfen,
+                    final_sfen=final_sfen,
+                    black_name=black_engine.name,
+                    white_name=white_engine.name,
+                    start_ply_number=start_ply_number,
+                )
+                final_result_progress_attempted = True
 
-        with (
-            self._engine_io_listener_context(
-                black_engine,
-                white_engine,
-                game_id,
-                initial_sfen,
-                black_engine.name,
-                white_engine.name,
-            ),
-        ):
-            is_cancelled = False
-            error: Exception | None = None
-            try:
-                # Prepare both engines for the game
-                if not self._is_shutting_down:
-                    await self._prepare_engines_for_game(black_engine, white_engine, initial_sfen)
-                else:
-                    raise asyncio.CancelledError()
-
-                # Game loop
-                game_result = await self._game_loop(
-                    board,
+            with (
+                self._engine_io_listener_context(
                     black_engine,
                     white_engine,
+                    game_id,
                     initial_sfen,
-                    start_ply_number,
-                    moves,
-                    eval_values,
-                    nodes_values,
-                    depth_values,
-                    seldepth_values,
-                    move_times_ms,
-                    wall_times_ms,
-                    engine_wall_times_ms,
-                    move_sources,
-                    latency_deltas_ms,
-                    black_time_control=black_time_control,
-                    white_time_control=white_time_control,
-                    game_id=game_id,
-                    adjudicator=adjudicator,
-                    result_progress_emitted=result_progress_emitted,
-                    timeout_decision_holder=timeout_decision_holder,
-                )
+                    black_engine.name,
+                    white_engine.name,
+                ),
+            ):
+                is_cancelled = False
+                error: Exception | None = None
+                try:
+                    # Prepare both engines for the game
+                    if not self._is_shutting_down:
+                        await self._prepare_engines_for_game(black_engine, white_engine, initial_sfen)
+                    else:
+                        raise asyncio.CancelledError()
 
-            except asyncio.CancelledError:
-                # Propagate cancellation to align with orchestrator-level SIGINT handling
-                is_cancelled = True
-                raise
-            except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
-                if self._is_shutting_down:
-                    # Suppress error spam on shutdown
-                    game_result = GameResult.PAUSED
-                else:
-                    logger.exception("Game %s failed with unhandled error", game_id)
-                    game_result = GameResult.ERROR
-                error = exc
-            finally:
-                should_finalize = not is_cancelled and not self._is_shutting_down
-                if should_finalize:
-                    if error is None:
-                        await enqueue_final_game_result()
-                    await self._finalize_game_safely(black_engine, white_engine, game_result, game_id)
+                    # Game loop
+                    game_result = await self._game_loop(
+                        board,
+                        black_engine,
+                        white_engine,
+                        initial_sfen,
+                        start_ply_number,
+                        moves,
+                        eval_values,
+                        nodes_values,
+                        depth_values,
+                        seldepth_values,
+                        move_times_ms,
+                        wall_times_ms,
+                        engine_wall_times_ms,
+                        move_sources,
+                        latency_deltas_ms,
+                        black_time_control=black_time_control,
+                        white_time_control=white_time_control,
+                        game_id=game_id,
+                        adjudicator=adjudicator,
+                        result_progress_emitted=result_progress_emitted,
+                        timeout_decision_holder=timeout_decision_holder,
+                    )
 
-        if error is not None:
-            raise error
+                except asyncio.CancelledError:
+                    # Propagate cancellation to align with orchestrator-level SIGINT handling
+                    is_cancelled = True
+                    raise
+                except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
+                    if self._is_shutting_down:
+                        # Suppress error spam on shutdown
+                        game_result = GameResult.PAUSED
+                    else:
+                        logger.exception("Game %s failed with unhandled error", game_id)
+                        game_result = GameResult.ERROR
+                    error = exc
+                finally:
+                    should_finalize = not is_cancelled and not self._is_shutting_down
+                    if should_finalize:
+                        if error is None:
+                            await enqueue_final_game_result(board.to_sfen())
+                        await self._finalize_game_safely(black_engine, white_engine, game_result, game_id)
 
-        end_time = datetime.now()
+            if error is not None:
+                raise error
 
-        # Send final result to progress queue (as move_progress with game_result)
-        await enqueue_final_game_result()
+            end_time = datetime.now()
 
-        # Build encoded TimeControl spec strings for DB/UI
-        tc_spec_black_str = limits_to_record_time_spec(black_time_control.limits)
-        tc_spec_white_str = limits_to_record_time_spec(white_time_control.limits)
-        record_attributes = {
-            "game_name": game_id,
-            "game_type": "arena",
-            "updated_date": end_time.isoformat(),
-        }
-        # Carry the classified timeout origin so completion can exclude orchestrator-stall timeouts
-        # from rating/SPRT, and later persist it (task 0047). Kept even for valid timeouts (calibration).
-        timeout_decision = timeout_decision_holder[0]
-        if timeout_decision is not None:
-            record_attributes["timeout_origin"] = timeout_decision.origin.value
-        record_metadata = rsshogi.record.RecordMetadata(
-            game_name=game_id,
-            game_type="arena",
-            black_player=black_engine.name,
-            white_player=white_engine.name,
-            start_date=start_time.isoformat(),
-            end_date=end_time.isoformat(),
-            updated_date=end_time.isoformat(),
-            black_time_control=rsshogi.record.TimeControl.from_spec(tc_spec_black_str),
-            white_time_control=rsshogi.record.TimeControl.from_spec(tc_spec_white_str),
-            attributes=record_attributes,
-        )
-        logger.debug(f"Game {game_id} completed: {game_result}")
-        record = rsshogi.record.Record.from_usi_main_line(
-            normalized_sfen,
-            [move.to_usi() for move in moves],
-            result=game_result,
-            move_times_ms=move_times_ms,
-            evals=eval_values,
-            nodes=nodes_values,
-            depths=depth_values,
-            seldepths=seldepth_values,
-            wall_times_ms=wall_times_ms,
-            latency_deltas_ms=latency_deltas_ms,
-            metadata=record_metadata,
-        )
-        record = attach_engine_wall_times(record, engine_wall_times_ms)
-        record = attach_move_source_metadata(record, move_sources=move_sources)
+            # Send final result to progress queue (as move_progress with game_result)
+            await enqueue_final_game_result(board.to_sfen())
 
-        return record
+            # Build encoded TimeControl spec strings for DB/UI
+            tc_spec_black_str = limits_to_record_time_spec(black_time_control.limits)
+            tc_spec_white_str = limits_to_record_time_spec(white_time_control.limits)
+            record_attributes = {
+                "game_name": game_id,
+                "game_type": "arena",
+                "updated_date": end_time.isoformat(),
+            }
+            # Carry the classified timeout origin so completion can exclude orchestrator-stall timeouts
+            # from rating/SPRT, and later persist it (task 0047). Kept even for valid timeouts (calibration).
+            timeout_decision = timeout_decision_holder[0]
+            if timeout_decision is not None:
+                record_attributes["timeout_origin"] = timeout_decision.origin.value
+            record_metadata = rsshogi.record.RecordMetadata(
+                game_name=game_id,
+                game_type="arena",
+                black_player=black_engine.name,
+                white_player=white_engine.name,
+                start_date=start_time.isoformat(),
+                end_date=end_time.isoformat(),
+                updated_date=end_time.isoformat(),
+                black_time_control=rsshogi.record.TimeControl.from_spec(tc_spec_black_str),
+                white_time_control=rsshogi.record.TimeControl.from_spec(tc_spec_white_str),
+                attributes=record_attributes,
+            )
+            logger.debug(f"Game {game_id} completed: {game_result}")
+            record = rsshogi.record.Record.from_usi_main_line(
+                normalized_sfen,
+                [move.to_usi() for move in moves],
+                result=game_result,
+                move_times_ms=move_times_ms,
+                evals=eval_values,
+                nodes=nodes_values,
+                depths=depth_values,
+                seldepths=seldepth_values,
+                wall_times_ms=wall_times_ms,
+                latency_deltas_ms=latency_deltas_ms,
+                metadata=record_metadata,
+            )
+            record = attach_engine_wall_times(record, engine_wall_times_ms)
+            record = attach_move_source_metadata(record, move_sources=move_sources)
+
+            return record
+        finally:
+            # Tracebacks may outlive this game and be collected on an I/O thread.
+            # Release the owner reference on the event-loop thread.
+            del board
 
     async def _finalize_game_safely(
         self,

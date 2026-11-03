@@ -8,6 +8,17 @@ except for the documented 1.2.0 breaking-change exception and the SPSA run-resum
 
 ## [Unreleased]
 
+## [1.3.5] - 2026-11-03
+
+### Fixed
+
+- 内部workerの進捗、最終結果、エラーのstdout出力を別スレッドで直列実行し、write/flush待ちが同じworkerのUSI受信や時計処理を止める問題を修正した。
+  停止時も出力とworkerの後片付けを回収し、最終結果より前のイベントを途中で打ち切らない。
+  出力不能時は対局を止めて非0終了し、壊れたstdoutへの再出力を避ける。
+  通常終了の後片付け中にstdoutが失敗した場合も、engine回収とwatchdog停止をキャンセルから保護する。
+- handshakeやbestmoveのtimeout後に例外のtracebackが盤面を保持し、後続のI/OスレッドのGCで盤面が破棄される問題を修正した。
+  対局終了時にevent loop上で盤面の参照を解放し、異スレッド破棄の警告を防ぐ。
+
 ## [1.3.4] - 2026-11-03
 
 ### Fixed
@@ -738,7 +749,8 @@ dashboard 無効の長時間 run で event loop が秒単位で停止し、進�
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.4...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.5...HEAD
+[1.3.5]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.4...v1.3.5
 [1.3.4]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.1...v1.3.2

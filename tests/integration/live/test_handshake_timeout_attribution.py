@@ -9,11 +9,13 @@ orchestrator or transport problem, not the engine exceeding its clock. Recording
 from __future__ import annotations
 
 import asyncio
+import gc
+import sys
 from collections import deque
 from collections.abc import Sequence
 
 import pytest
-from rsshogi.core import Move
+from rsshogi.core import Board, Move
 
 from shogiarena._core.contexts.match.application.runner import GameRunner
 from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort, InfoHandler
@@ -146,3 +148,48 @@ def test_handshake_timeout_is_a_timeout_error_subclass() -> None:
     # Existing broad `except TimeoutError` handlers must keep catching it; only the game loop
     # distinguishes it, and it does so by catching the subclass first.
     assert issubclass(UsiHandshakeTimeoutError, TimeoutError)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handshake", [True, False], ids=["handshake", "bestmove"])
+async def test_timeout_tracebacks_do_not_leave_boards_for_worker_thread_gc(
+    handshake: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later off-loop save can trigger GC of an earlier game's exception cycle."""
+    unraisable: list[str] = []
+    monkeypatch.setattr(sys, "unraisablehook", lambda event: unraisable.append(str(event.exc_value)))
+    gc.collect()
+    gc_was_enabled = gc.isenabled()
+    gc.disable()
+    retained_errors: list[BaseException] = []
+
+    async def play() -> None:
+        limits = TimeControlLimits(fixed_time_ms=200, expiry_margin_ms=500)
+        error = UsiHandshakeTimeoutError("isready stalled") if handshake else TimeoutError("no bestmove")
+        retained_errors.append(error)
+        black_engine = _StallingEngine("black", error)
+        white_engine = _StallingEngine("white", TimeoutError("unused"))
+        runner = _runner(limits)
+        if handshake:
+            with pytest.raises(UsiHandshakeTimeoutError, match="isready stalled"):
+                await runner.run_game(black_engine, white_engine)
+        else:
+            record = await runner.run_game(black_engine, white_engine)
+            assert record.result == GameResult.WHITE_WIN_BY_TIMEOUT
+
+    try:
+        await play()
+        # Even an engine retaining its original exception must not retain a live Board.
+        traceback = retained_errors[0].__traceback__
+        assert traceback is not None
+        while traceback is not None:
+            assert not any(isinstance(value, Board) for value in traceback.tb_frame.f_locals.values())
+            traceback = traceback.tb_next
+        retained_errors.clear()
+        # No automatic main-thread collection may hide the retained exception cycle.
+        await asyncio.to_thread(gc.collect)
+        assert unraisable == []
+    finally:
+        gc.collect()
+        if gc_was_enabled:
+            gc.enable()
