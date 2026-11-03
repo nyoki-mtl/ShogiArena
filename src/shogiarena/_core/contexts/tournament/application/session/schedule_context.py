@@ -114,6 +114,10 @@ class _InstancePool(Protocol):
 # ---------------------------------------------------------------------------
 
 
+async def _noop_save_run_state() -> None:
+    pass
+
+
 @dataclass
 class TournamentScheduleContext:
     """Infrastructure, config and callback refs for schedule service.
@@ -138,7 +142,7 @@ class TournamentScheduleContext:
     tournament_orchestrator: _TournamentOrchestrator | None = None
 
     # -- Callbacks ----------------------------------------------------------
-    save_run_state: Callable[..., None] = field(default=lambda: None)
+    save_run_state: Callable[..., Awaitable[None]] = field(default=_noop_save_run_state)
     update_dashboard: Callable[[], Awaitable[None]] = field(default=lambda: asyncio.sleep(0))
     reorder_and_shuffle: Callable[[list[GameSpec]], list[GameSpec]] = field(default=lambda g: g)
     is_generate_run: Callable[[], bool] = field(default=lambda: False)

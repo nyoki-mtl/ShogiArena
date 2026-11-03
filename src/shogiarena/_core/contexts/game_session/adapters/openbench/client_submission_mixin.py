@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import platform
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from logging import getLogger
 from typing import Protocol, cast
 
@@ -45,7 +45,7 @@ class OpenBenchClientSubmissionMixin(OpenBenchClientHttpMixin):
     _worker_tokens: dict[str, bool]
     _client_version: int
 
-    async def _submit_results(self, delta: OpenBenchCounters, *, persist_state: Callable[[], None]) -> bool:
+    async def _submit_results(self, delta: OpenBenchCounters, *, persist_state: Callable[[], Awaitable[None]]) -> bool:
         return await self._submit_results_once(
             delta,
             should_allow_recovery=True,
@@ -57,7 +57,7 @@ class OpenBenchClientSubmissionMixin(OpenBenchClientHttpMixin):
         delta: OpenBenchCounters,
         *,
         should_allow_recovery: bool,
-        persist_state: Callable[[], None],
+        persist_state: Callable[[], Awaitable[None]],
     ) -> bool:
         if self._workload_test_id is None or self._result_id is None:
             raise OpenBenchError("OpenBench workload is not assigned")
@@ -74,7 +74,7 @@ class OpenBenchClientSubmissionMixin(OpenBenchClientHttpMixin):
             if should_allow_recovery and self._is_recoverable_worker_error(error):
                 await self._recover_worker_assignment(error=error, endpoint="clientSubmitResults")
                 try:
-                    persist_state()
+                    await persist_state()
                 except Exception as exc:
                     raise OpenBenchError(
                         f"Failed to persist recovered OpenBench assignment before result retry: {exc}"

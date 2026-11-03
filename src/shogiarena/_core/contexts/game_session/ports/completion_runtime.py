@@ -88,7 +88,7 @@ class CompletionStateContext:
     stop_controller: CompletionStopControllerPort
     is_dashboard_enabled: bool
     total_games: int
-    save_run_state: Callable[[], None]
+    save_run_state: Callable[[], Awaitable[None]]
     # origin ごとの連続無効 timeout 数と累計（task 0052）。breaker は result 値ではなく
     # timeout policy を入力にするため、origin 別に独立した counter を持つ。
     #

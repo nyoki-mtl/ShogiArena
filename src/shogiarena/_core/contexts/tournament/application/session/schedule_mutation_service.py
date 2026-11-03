@@ -25,6 +25,7 @@ from shogiarena._core.contexts.tournament.application.session.schedule_snapshot_
     ScheduleSnapshotService,
 )
 from shogiarena._core.contexts.tournament.domain.tournament_models import GameSpec
+from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,10 @@ class ScheduleMutationService:
     ) -> bool:
         """Apply a queued reschedule request after the orchestrator drains."""
 
+        return await complete_before_cancelling(self._apply_pending_reschedule(state, ctx))
+
+    async def _apply_pending_reschedule(self, state: TournamentRunnerState, ctx: TournamentScheduleContext) -> bool:
+
         pending_schedule: list[GameSpec] | None
         pending_seed: int | None
         async with state.reschedule_lock:
@@ -153,7 +158,7 @@ class ScheduleMutationService:
             }
         reset_schedule_tracking(state, list(ctx.config.engines))
         self.write_schedule_file(state, ctx, state.game_schedule)
-        ctx.save_run_state()
+        await ctx.save_run_state()
 
         if ctx.is_dashboard_enabled:
             await ctx.update_dashboard()
@@ -183,22 +188,22 @@ class ScheduleMutationService:
                     digest = hashlib.sha256(seed_text.encode("utf-8")).hexdigest()
                     new_seed = int(digest[:8], 16)
 
-        completed_ids = set(state.completed_game_ids)
-        completed_specs = [spec for spec in state.game_schedule if spec.game_id in completed_ids]
-        pending_count = len(state.game_schedule) - len(completed_specs)
-        if pending_count <= 0:
-            raise RuntimeError("no pending games remain to reschedule")
-
-        new_schedule = generate_schedule_for_seed(ctx, seed=str(new_seed))
-        if len(new_schedule) < pending_count:
-            raise RuntimeError("generated schedule shorter than pending games")
-
-        new_pending = new_schedule[:pending_count]
-        combined_schedule = completed_specs + new_pending
-
         should_apply_immediately = False
         orchestrator = None
         async with state.reschedule_lock:
+            completed_ids = state.completed_game_ids | state.pending_completion_counts.keys()
+            completed_specs = [spec for spec in state.game_schedule if spec.game_id in completed_ids]
+            pending_count = len(state.game_schedule) - len(completed_specs)
+            if pending_count <= 0:
+                raise RuntimeError("no pending games remain to reschedule")
+
+            new_schedule = generate_schedule_for_seed(ctx, seed=str(new_seed))
+            if len(new_schedule) < pending_count:
+                raise RuntimeError("generated schedule shorter than pending games")
+
+            new_pending = new_schedule[:pending_count]
+            combined_schedule = completed_specs + new_pending
+
             state.pending_reschedule = combined_schedule
             state.pending_reschedule_seed = new_seed
             orchestrator = ctx.orchestrator
@@ -228,17 +233,22 @@ class ScheduleMutationService:
     async def cancel_pending_games(self, state: TournamentRunnerState, ctx: TournamentScheduleContext) -> JsonObject:
         """Cancel remaining pending games while keeping the session alive for future schedules."""
 
-        active_ids: set[str] = set()
-        pool = ctx.instance_pool
-        if pool is not None:
-            for instance in pool.list_instances():
-                active_ids.update(instance.active_game_by_id.keys())
+        return await complete_before_cancelling(self._cancel_pending_games(state, ctx))
 
+    async def _cancel_pending_games(self, state: TournamentRunnerState, ctx: TournamentScheduleContext) -> JsonObject:
+
+        active_ids: set[str] = set()
         async with state.reschedule_lock:
+            pool = ctx.instance_pool
+            if pool is not None:
+                for instance in pool.list_instances():
+                    active_ids.update(instance.active_game_by_id.keys())
             remaining_specs = [
                 spec
                 for spec in state.game_schedule
-                if spec.game_id not in state.completed_game_ids and spec.game_id not in active_ids
+                if spec.game_id not in state.completed_game_ids
+                and spec.game_id not in state.pending_completion_counts
+                and spec.game_id not in active_ids
             ]
             state.pending_reschedule = None
             state.pending_reschedule_seed = None
@@ -257,7 +267,7 @@ class ScheduleMutationService:
         )
         refresh_game_assignments(state, list(ctx.config.engines))
         self.write_schedule_file(state, ctx, state.game_schedule)
-        ctx.save_run_state()
+        await ctx.save_run_state()
 
         controller = ctx.stop_controller
         controller.request_stop(reason="cancelled")
@@ -280,13 +290,14 @@ class ScheduleMutationService:
     ) -> JsonObject:
         """Cancel a single pending game by its identifier."""
 
-        pool = ctx.instance_pool
-        if pool is not None:
-            for instance in pool.list_instances():
-                if game_id in instance.active_game_by_id:
-                    raise RuntimeError(f"game {game_id} is currently running and cannot be cancelled")
-
         async with state.reschedule_lock:
+            pool = ctx.instance_pool
+            if pool is not None:
+                for instance in pool.list_instances():
+                    if game_id in instance.active_game_by_id:
+                        raise RuntimeError(f"game {game_id} is currently running and cannot be cancelled")
+            if game_id in state.pending_completion_counts:
+                raise RuntimeError(f"game {game_id} is completing and cannot be cancelled")
             if game_id in state.completed_game_ids:
                 raise RuntimeError(f"game {game_id} has already completed")
             if game_id in state.cancelled_game_ids:
@@ -316,7 +327,7 @@ class ScheduleMutationService:
 
             refresh_game_assignments(state, list(ctx.config.engines))
             self.write_schedule_file(state, ctx, state.game_schedule)
-            ctx.save_run_state()
+            await ctx.save_run_state()
 
         if ctx.is_dashboard_enabled:
             await ctx.update_dashboard()
@@ -339,13 +350,20 @@ class ScheduleMutationService:
     ) -> JsonObject:
         """Restore a previously cancelled game back into the pending schedule."""
 
-        pool = ctx.instance_pool
-        if pool is not None:
-            for instance in pool.list_instances():
-                if game_id in instance.active_game_by_id:
-                    raise RuntimeError(f"game {game_id} is currently running and cannot be restored")
+        return await complete_before_cancelling(self._restore_game(state, ctx, game_id))
+
+    async def _restore_game(
+        self, state: TournamentRunnerState, ctx: TournamentScheduleContext, game_id: str
+    ) -> JsonObject:
 
         async with state.reschedule_lock:
+            pool = ctx.instance_pool
+            if pool is not None:
+                for instance in pool.list_instances():
+                    if game_id in instance.active_game_by_id:
+                        raise RuntimeError(f"game {game_id} is currently running and cannot be restored")
+            if game_id in state.pending_completion_counts:
+                raise RuntimeError(f"game {game_id} is completing and cannot be restored")
             already_scheduled = any(spec.game_id == game_id for spec in state.game_schedule)
             restored_spec = state.cancelled_specs.get(game_id)
             if restored_spec is None or game_id not in state.cancelled_game_ids:
@@ -384,7 +402,7 @@ class ScheduleMutationService:
 
             refresh_game_assignments(state, list(ctx.config.engines))
             self.write_schedule_file(state, ctx, state.game_schedule)
-            ctx.save_run_state()
+            await ctx.save_run_state()
             notify_schedule_available(state)
 
         if ctx.is_dashboard_enabled:
@@ -453,6 +471,8 @@ class ScheduleMutationService:
                 raise ValueError(f"unknown instance '{candidate}'")
 
         async with state.reschedule_lock:
+            if game_id in state.pending_completion_counts:
+                raise RuntimeError(f"game {game_id} is completing and cannot be reassigned")
             if game_id in state.completed_game_ids:
                 raise RuntimeError(f"game {game_id} has already completed")
             if game_id in state.cancelled_game_ids:
@@ -477,7 +497,7 @@ class ScheduleMutationService:
             target_spec.should_require_install = bool(should_require_install)
             refresh_game_assignments(state, list(ctx.config.engines))
             self.write_schedule_file(state, ctx, state.game_schedule)
-            ctx.save_run_state()
+            await ctx.save_run_state()
 
         if ctx.is_dashboard_enabled:
             await ctx.update_dashboard()

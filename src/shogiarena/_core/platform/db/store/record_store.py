@@ -52,11 +52,15 @@ def _record_datetime(value: object) -> datetime | None:
 
 
 def _push_record_move(board: Board, move_obj: Move | Move32) -> Move:
-    if isinstance(move_obj, Move):
-        return board.push_move(move_obj).to_move()
-    if isinstance(move_obj, Move32):
-        return board.push_move32(move_obj).to_move()
-    raise TypeError(f"db storage requires Move/Move32 payload, got {type(move_obj)!r}")
+    try:
+        if isinstance(move_obj, Move):
+            return board.push_move(move_obj).to_move()
+        if isinstance(move_obj, Move32):
+            return board.push_move32(move_obj).to_move()
+        raise TypeError(f"db storage requires Move/Move32 payload, got {type(move_obj)!r}")
+    finally:
+        # Exception tracebacks may cross threads; never let them own PyBoard.
+        del board
 
 
 def _engine_wall_time_from_info(engine_info: rsshogi.record.EngineInfo | None) -> int | None:
@@ -167,144 +171,151 @@ class DBRecordStore:
     def _append(self, records: Iterable[rsshogi.record.Record | None], *, should_update: bool = False) -> None:
         session = self._repository.session
         board = Board()
-        has_attribution_table = self._has_timeout_attribution_table(session)
+        try:
+            has_attribution_table = self._has_timeout_attribution_table(session)
 
-        for item in records:
-            if item is None:
-                continue
-            record = item
-            metadata = record.metadata
-            metadata_attributes_json = _serialize_metadata_attributes(metadata.attributes)
-            timeout_origin = _timeout_origin_from_attributes(metadata.attributes)
-            game_name = record.game_name
-            game_type = record.game_type
-            black_name = metadata.black_player
-            white_name = metadata.white_player
-            if game_name is None:
-                raise ValueError("Record.game_name must be defined")
-            if game_type is None:
-                raise ValueError("Record.game_type must be defined")
-            if black_name is None or white_name is None:
-                raise ValueError("Record player names must be defined")
-            updated_date_new = _database_datetime(coerce_iso_datetime(record.updated_date))
-            if updated_date_new is None:
-                raise ValueError("Record.updated_date must be ISO-8601 datetime")
-            start_date = _record_datetime(metadata.start_date)
-            end_date = _record_datetime(metadata.end_date)
-            black_tc = record.black_time_control
-            white_tc = record.white_time_control
-            tc_black = black_tc.to_spec() if black_tc is not None else None
-            tc_white = white_tc.to_spec() if white_tc is not None else None
-            result_obj = record.result
-            if result_obj is None:
-                raise ValueError("Record.result must be defined")
-            game_result = game_result_name(result_obj)
-            end_time_ms = record.end_time_ms
-            end_comment = record.end_comment
-            move_records = list(record.moves)
-            init_sfen = record.init_position_sfen
-            if init_sfen is None:
-                raise ValueError("Record.init_position_sfen must be defined")
-
-            existing_game_id = session.execute(select(Game.id).where(Game.game_name == game_name)).scalar_one_or_none()
-            if existing_game_id is not None:
-                if not should_update:
+            for item in records:
+                if item is None:
                     continue
-                existing_updated_date = session.execute(
-                    select(Game.updated_date).where(Game.id == existing_game_id)
+                record = item
+                metadata = record.metadata
+                metadata_attributes_json = _serialize_metadata_attributes(metadata.attributes)
+                timeout_origin = _timeout_origin_from_attributes(metadata.attributes)
+                game_name = record.game_name
+                game_type = record.game_type
+                black_name = metadata.black_player
+                white_name = metadata.white_player
+                if game_name is None:
+                    raise ValueError("Record.game_name must be defined")
+                if game_type is None:
+                    raise ValueError("Record.game_type must be defined")
+                if black_name is None or white_name is None:
+                    raise ValueError("Record player names must be defined")
+                updated_date_new = _database_datetime(coerce_iso_datetime(record.updated_date))
+                if updated_date_new is None:
+                    raise ValueError("Record.updated_date must be ISO-8601 datetime")
+                start_date = _record_datetime(metadata.start_date)
+                end_date = _record_datetime(metadata.end_date)
+                black_tc = record.black_time_control
+                white_tc = record.white_time_control
+                tc_black = black_tc.to_spec() if black_tc is not None else None
+                tc_white = white_tc.to_spec() if white_tc is not None else None
+                result_obj = record.result
+                if result_obj is None:
+                    raise ValueError("Record.result must be defined")
+                game_result = game_result_name(result_obj)
+                end_time_ms = record.end_time_ms
+                end_comment = record.end_comment
+                move_records = list(record.moves)
+                init_sfen = record.init_position_sfen
+                if init_sfen is None:
+                    raise ValueError("Record.init_position_sfen must be defined")
+
+                existing_game_id = session.execute(
+                    select(Game.id).where(Game.game_name == game_name)
                 ).scalar_one_or_none()
-                existing_updated_date = _database_datetime(existing_updated_date)
-                if existing_updated_date is None or updated_date_new is None:
-                    if existing_updated_date is None and updated_date_new is None:
+                if existing_game_id is not None:
+                    if not should_update:
                         continue
-                elif existing_updated_date >= updated_date_new:
-                    continue
-                session.execute(delete(GameMove).where(GameMove.game_id == existing_game_id))
-                if has_attribution_table:
-                    session.execute(
-                        delete(GameTimeoutAttribution).where(GameTimeoutAttribution.game_id == existing_game_id)
+                    existing_updated_date = session.execute(
+                        select(Game.updated_date).where(Game.id == existing_game_id)
+                    ).scalar_one_or_none()
+                    existing_updated_date = _database_datetime(existing_updated_date)
+                    if existing_updated_date is None or updated_date_new is None:
+                        if existing_updated_date is None and updated_date_new is None:
+                            continue
+                    elif existing_updated_date >= updated_date_new:
+                        continue
+                    session.execute(delete(GameMove).where(GameMove.game_id == existing_game_id))
+                    if has_attribution_table:
+                        session.execute(
+                            delete(GameTimeoutAttribution).where(GameTimeoutAttribution.game_id == existing_game_id)
+                        )
+                    session.execute(delete(Game).where(Game.id == existing_game_id))
+                    logger.info(
+                        "Update game %s %s -> %s",
+                        game_name,
+                        existing_updated_date,
+                        updated_date_new,
                     )
-                session.execute(delete(Game).where(Game.id == existing_game_id))
-                logger.info(
-                    "Update game %s %s -> %s",
-                    game_name,
-                    existing_updated_date,
-                    updated_date_new,
+
+                num_moves = len(move_records)
+                black_player, _ = self._repository.get_player_from_player_name(black_name, game_type, True)
+                white_player, _ = self._repository.get_player_from_player_name(white_name, game_type, True)
+                game = Game(
+                    game_type=game_type,
+                    game_name=game_name,
+                    start_date=start_date,
+                    end_date=end_date,
+                    game_result=game_result,
+                    num_moves=num_moves,
+                    time_control_black=tc_black,
+                    time_control_white=tc_white,
+                    initial_position_sfen=init_sfen,
+                    end_time_ms=end_time_ms,
+                    end_comment=end_comment,
+                    updated_date=updated_date_new,
+                    metadata_attributes_json=metadata_attributes_json,
+                    black_player=black_player,
+                    white_player=white_player,
                 )
+                session.add(game)
+                if timeout_origin is not None and has_attribution_table:
+                    session.add(GameTimeoutAttribution(game=game, origin=timeout_origin))
 
-            num_moves = len(move_records)
-            black_player, _ = self._repository.get_player_from_player_name(black_name, game_type, True)
-            white_player, _ = self._repository.get_player_from_player_name(white_name, game_type, True)
-            game = Game(
-                game_type=game_type,
-                game_name=game_name,
-                start_date=start_date,
-                end_date=end_date,
-                game_result=game_result,
-                num_moves=num_moves,
-                time_control_black=tc_black,
-                time_control_white=tc_white,
-                initial_position_sfen=init_sfen,
-                end_time_ms=end_time_ms,
-                end_comment=end_comment,
-                updated_date=updated_date_new,
-                metadata_attributes_json=metadata_attributes_json,
-                black_player=black_player,
-                white_player=white_player,
-            )
-            session.add(game)
-            if timeout_origin is not None and has_attribution_table:
-                session.add(GameTimeoutAttribution(game=game, origin=timeout_origin))
+                board.set_sfen(init_sfen)
+                for move_record in move_records:
+                    move_obj = move_record.move
+                    ply = int(board.game_ply) - 1
+                    try:
+                        mv = _push_record_move(board, move_obj)
+                    except ValueError as exc:
+                        raise ValueError(f"db storage requires legal move payload: {move_obj!r}") from exc
+                    engine_info = move_record.engine_info
+                    wall_time_ms = engine_info.wall_time_ms if engine_info is not None else None
+                    engine_wall_time_ms = _engine_wall_time_from_info(engine_info)
+                    latency_delta_ms = engine_info.latency_delta_ms if engine_info is not None else None
+                    move_source = _move_source_from_info(engine_info)
+                    book_hit = _book_hit_from_info(engine_info)
+                    game_move = GameMove(
+                        ply=ply,
+                        next_move=int(mv),
+                        next_move_time_ms=move_record.time_ms,
+                        wall_time_ms=wall_time_ms,
+                        engine_wall_time_ms=engine_wall_time_ms,
+                        latency_delta_ms=latency_delta_ms,
+                        game=game,
+                        next_move_comment=move_record.comment,
+                        eval=engine_info.eval if engine_info is not None else None,
+                        depth=engine_info.depth if engine_info is not None else None,
+                        seldepth=engine_info.seldepth if engine_info is not None else None,
+                        nodes=engine_info.nodes if engine_info is not None else None,
+                        move_source=move_source,
+                        book_hit=book_hit,
+                    )
+                    session.add(game_move)
 
-            board.set_sfen(init_sfen)
-            for move_record in move_records:
-                move_obj = move_record.move
-                ply = int(board.game_ply) - 1
-                try:
-                    mv = _push_record_move(board, move_obj)
-                except ValueError as exc:
-                    raise ValueError(f"db storage requires legal move payload: {move_obj!r}") from exc
-                engine_info = move_record.engine_info
-                wall_time_ms = engine_info.wall_time_ms if engine_info is not None else None
-                engine_wall_time_ms = _engine_wall_time_from_info(engine_info)
-                latency_delta_ms = engine_info.latency_delta_ms if engine_info is not None else None
-                move_source = _move_source_from_info(engine_info)
-                book_hit = _book_hit_from_info(engine_info)
-                game_move = GameMove(
-                    ply=ply,
-                    next_move=int(mv),
-                    next_move_time_ms=move_record.time_ms,
-                    wall_time_ms=wall_time_ms,
-                    engine_wall_time_ms=engine_wall_time_ms,
-                    latency_delta_ms=latency_delta_ms,
+                end_game_move = GameMove(
+                    ply=int(board.game_ply) - 1,
+                    next_move=int(Move.MOVE_END),
+                    next_move_time_ms=end_time_ms,
+                    wall_time_ms=None,
+                    engine_wall_time_ms=None,
+                    latency_delta_ms=None,
                     game=game,
-                    next_move_comment=move_record.comment,
-                    eval=engine_info.eval if engine_info is not None else None,
-                    depth=engine_info.depth if engine_info is not None else None,
-                    seldepth=engine_info.seldepth if engine_info is not None else None,
-                    nodes=engine_info.nodes if engine_info is not None else None,
-                    move_source=move_source,
-                    book_hit=book_hit,
+                    next_move_comment=end_comment,
+                    eval=None,
+                    depth=None,
+                    seldepth=None,
+                    nodes=None,
+                    move_source=None,
+                    book_hit=None,
                 )
-                session.add(game_move)
-
-            end_game_move = GameMove(
-                ply=int(board.game_ply) - 1,
-                next_move=int(Move.MOVE_END),
-                next_move_time_ms=end_time_ms,
-                wall_time_ms=None,
-                engine_wall_time_ms=None,
-                latency_delta_ms=None,
-                game=game,
-                next_move_comment=end_comment,
-                eval=None,
-                depth=None,
-                seldepth=None,
-                nodes=None,
-                move_source=None,
-                book_hit=None,
-            )
-            session.add(end_game_move)
+                session.add(end_game_move)
+        finally:
+            # Keep thread-affine Board destruction on the creating worker even
+            # when validation or SQL errors are re-raised to the event loop.
+            del board
 
     def load(self, *, game_id: int | None = None, game_name: str | None = None) -> rsshogi.record.Record | None:
         """Load one record and release its task-scoped session."""

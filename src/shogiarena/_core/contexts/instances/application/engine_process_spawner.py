@@ -5,7 +5,6 @@ Notes:
 - Host key verification follows instance settings (strict by default) via asyncssh.
 """
 
-import asyncio
 import logging
 import re
 import shlex
@@ -126,11 +125,8 @@ class EngineProcessSpawner:
         logger.debug(f"Starting local engine: {' '.join(cmd)} in {work_dir}")
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            process = await LocalEngineProcess.spawn(
+                cmd,
                 cwd=work_dir,
                 env=env,
                 # Raise the StreamReader buffer well above the 64KB default so long
@@ -143,7 +139,7 @@ class EngineProcessSpawner:
             if cpu_affinity:
                 apply_cpu_affinity(process.pid, cpu_affinity, logger)
 
-            return LocalEngineProcess(process)
+            return process
 
         except (OSError, ValueError) as exc:
             logger.error("Failed to start local engine %s: %s", resolved_engine_path, exc)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, MutableMapping, MutableSet
+from collections.abc import Awaitable, Callable, MutableMapping, MutableSet
 
 from shogiarena._core.contexts.game_session.ports.completion_runtime import (
     CompletionGameSummary,
@@ -69,7 +69,7 @@ class CompletionRuntimeContextService:
         stop_controller: CompletionStopControllerPort,
         is_dashboard_enabled: bool,
         total_games: int,
-        save_run_state: Callable[[], None],
+        save_run_state: Callable[[], Awaitable[None]],
         consecutive_invalid_timeouts_by_origin: MutableMapping[str, int],
         invalid_timeouts_by_origin: MutableMapping[str, int],
     ) -> CompletionStateContext:

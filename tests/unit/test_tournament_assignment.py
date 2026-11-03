@@ -1,6 +1,7 @@
 import asyncio
 import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -149,7 +150,7 @@ def _make_facade_with_schedule(spec: GameSpec) -> DashboardScheduleFacade:
             engine_instance_defaults={},
             orchestrator=None,
             tournament_orchestrator=None,
-            save_run_state=lambda *a, **kw: None,
+            save_run_state=AsyncMock(side_effect=lambda *a, **kw: None),
             update_dashboard=lambda: asyncio.sleep(0),
             reorder_and_shuffle=lambda g: g,
             is_generate_run=lambda: False,
@@ -304,7 +305,7 @@ async def test_request_reschedule_uses_injected_snapshot_service() -> None:
         engine_instance_defaults={},
         orchestrator=None,
         tournament_orchestrator=None,
-        save_run_state=lambda *a, **kw: None,
+        save_run_state=AsyncMock(side_effect=lambda *a, **kw: None),
         update_dashboard=lambda: asyncio.sleep(0),
         reorder_and_shuffle=lambda g: list(g),
         is_generate_run=lambda: False,

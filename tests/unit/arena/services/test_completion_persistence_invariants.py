@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -124,7 +125,7 @@ def _context(
             stop_controller=cast(Any, SimpleNamespace(request_stop=lambda **_kwargs: None)),
             is_dashboard_enabled=False,
             total_games=1,
-            save_run_state=lambda: (saved if saved is not None else []).append(None),
+            save_run_state=AsyncMock(side_effect=lambda: (saved if saved is not None else []).append(None)),
             consecutive_invalid_timeouts_by_origin={},
             invalid_timeouts_by_origin={},
         ),

@@ -192,7 +192,7 @@ class TournamentSummaryFinalizeService:
                 raise
             logger.warning("OpenBench final flush failed; continuing (strict=false): %s", exc)
 
-        runtime.actions.save_run_state(True)
+        await runtime.actions.save_run_state(True)
 
         if runtime.request.is_dashboard_enabled:
             await runtime.actions.update_dashboard()

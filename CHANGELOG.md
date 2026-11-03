@@ -8,6 +8,20 @@ except for the documented 1.2.0 breaking-change exception and the SPSA run-resum
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-11-03
+
+### Fixed
+
+- tournamentとgenerateの終局時のDB保存、棋譜出力、state保存を別スレッドで行い、同期ディスクI/Oが他局の時計処理を止める問題を修正した。
+- 停止時はlock待ちを含む終局保存を完了してから終了し、保存中の局を取消や再割当の対象から除外するようにした。
+  dashboard操作などによるstate保存も直列化し、同時書き込みや古い状態による上書きを防ぐ。
+  保存や終了処理の完了後に伝えるキャンセルでは、最初のキャンセル要求のメッセージを保持する。
+- DB保存の失敗時に、盤面オブジェクトが別スレッドで破棄される問題を修正した。
+- 対局停止時に、キャンセル要求が残ったtaskからの終了処理が不要な強制終了へ進む問題を修正した。
+  ローカルプロセスの終了コードが確定済みでも、stdio pipeの切断完了を待ってから終了し、Windowsでtransport破棄時に警告が出る問題を防ぐ。
+- ヘルスチェックの中断時にも、起動中のcommandとpipeを回収するようにした。
+  Linuxではcommand専用のprocess groupも終了し、shell終了後に子プロセスやpipeが残る問題を防ぐ。
+
 ## [1.3.3] - 2026-11-02
 
 ### Fixed
@@ -724,7 +738,8 @@ dashboard 無効の長時間 run で event loop が秒単位で停止し、進�
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.3...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.4...HEAD
+[1.3.4]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.0...v1.3.1

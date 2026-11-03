@@ -66,7 +66,7 @@ def build_tournament_completion_runtime_context(
     stop_controller: CompletionStopControllerPort,
     is_dashboard_enabled: bool,
     total_games: int,
-    save_run_state_fn: Callable[[], None],
+    save_run_state_fn: Callable[[], Awaitable[None]],
     consecutive_invalid_timeouts_by_origin: MutableMapping[str, int],
     invalid_timeouts_by_origin: MutableMapping[str, int],
     openbench_client: CompletionOpenBenchClientPort | None,

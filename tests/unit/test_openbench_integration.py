@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -509,7 +510,9 @@ async def test_openbench_client_submit_results_recovers_from_invalid_secret(monk
     monkeypatch.setattr(client, "_register_worker", _fake_register_worker)
     monkeypatch.setattr(client, "_claim_target_workload", _fake_claim_target_workload)
 
-    should_stop = await client._submit_results(OpenBenchCounters(wins=1), persist_state=lambda: None)
+    should_stop = await client._submit_results(
+        OpenBenchCounters(wins=1), persist_state=AsyncMock(side_effect=lambda: None)
+    )
     assert should_stop is False
     assert register_calls == 1
     assert claim_calls == 1

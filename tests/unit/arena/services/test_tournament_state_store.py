@@ -349,7 +349,7 @@ async def test_try_setup_tournament_resumes_existing_run_state_round_trip(tmp_pa
 
     store = TournamentSessionStateStore()
     _write_sealed_manifest(tmp_path)
-    store.save_run_state(
+    await store.save_run_state(
         _build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=saved_openbench)
     )
 
@@ -418,7 +418,7 @@ async def test_try_setup_tournament_resumes_generate_games_by_generate_game_type
     openbench = _OpenBenchStub()
     store = TournamentSessionStateStore()
     _write_sealed_manifest(tmp_path)
-    store.save_run_state(
+    await store.save_run_state(
         _build_save_context(
             run_dir=tmp_path,
             config=config,
@@ -471,7 +471,9 @@ async def test_try_setup_tournament_rejects_unsealed_manifest(tmp_path: Path) ->
     saved_state = TournamentRunnerState(game_schedule=[_make_game("g001")])
     openbench = _OpenBenchStub()
     store = TournamentSessionStateStore()
-    store.save_run_state(_build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench))
+    await store.save_run_state(
+        _build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench)
+    )
     (tmp_path / "manifest.json").write_text(
         json.dumps({"schema_version": 2, "status": "inputs_only", "hashes": {"resume_hash": None}}),
         encoding="utf-8",
@@ -595,7 +597,9 @@ async def test_try_setup_tournament_rejects_malformed_persisted_schedule(tmp_pat
     openbench = _OpenBenchStub()
     store = TournamentSessionStateStore()
     _write_sealed_manifest(tmp_path)
-    store.save_run_state(_build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench))
+    await store.save_run_state(
+        _build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench)
+    )
     (tmp_path / "schedule.json").write_text(json.dumps({"games": [{"black": "EngineA"}]}), encoding="utf-8")
     ctx = TournamentStateSetupContext(
         run_dir=tmp_path,
@@ -646,7 +650,9 @@ async def test_try_setup_tournament_rejects_inconsistent_sprt_resume(
     saved_state = TournamentRunnerState(game_schedule=[_make_game("g001")], sprt=saved_sprt)
     store = TournamentSessionStateStore()
     _write_sealed_manifest(tmp_path)
-    store.save_run_state(_build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench))
+    await store.save_run_state(
+        _build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench)
+    )
     resumed_state = TournamentRunnerState(sprt=Sprt(0.0, 5.0))
     ctx = TournamentStateSetupContext(
         run_dir=tmp_path,
@@ -686,7 +692,9 @@ async def test_try_setup_tournament_excludes_non_game_db_records_from_sprt_count
     saved_state = TournamentRunnerState(game_schedule=[_make_game("g001")], sprt=saved_sprt)
     store = TournamentSessionStateStore()
     _write_sealed_manifest(tmp_path)
-    store.save_run_state(_build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench))
+    await store.save_run_state(
+        _build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench)
+    )
     resumed_state = TournamentRunnerState(sprt=Sprt(0.0, 5.0))
     ctx = TournamentStateSetupContext(
         run_dir=tmp_path,
@@ -734,7 +742,9 @@ async def test_resume_invalidates_stale_terminal_markers(tmp_path: Path) -> None
     saved_state = TournamentRunnerState(game_schedule=[_make_game("g001"), _make_game("g002")])
     store = TournamentSessionStateStore()
     _write_sealed_manifest(tmp_path)
-    store.save_run_state(_build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench))
+    await store.save_run_state(
+        _build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench)
+    )
     (tmp_path / "completed.flag").touch()
     (tmp_path / "completion_status.json").write_text(json.dumps({"status": "clean"}), encoding="utf-8")
 
@@ -781,7 +791,9 @@ async def test_rejected_resume_keeps_existing_terminal_markers(tmp_path: Path) -
     saved_state = TournamentRunnerState(game_schedule=[_make_game("g001")])
     openbench = _OpenBenchStub()
     store = TournamentSessionStateStore()
-    store.save_run_state(_build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench))
+    await store.save_run_state(
+        _build_save_context(run_dir=tmp_path, config=config, state=saved_state, openbench=openbench)
+    )
     (tmp_path / "manifest.json").write_text(
         json.dumps({"schema_version": 2, "status": "inputs_only", "hashes": {"resume_hash": None}}),
         encoding="utf-8",

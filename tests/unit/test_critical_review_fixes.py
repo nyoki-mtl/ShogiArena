@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -100,7 +101,7 @@ async def test_paused_completion_does_not_mark_game_complete() -> None:
             stop_controller=SimpleNamespace(request_stop=lambda **_kwargs: None),
             is_dashboard_enabled=True,
             total_games=1,
-            save_run_state=lambda: saved.append(None),
+            save_run_state=AsyncMock(side_effect=lambda: saved.append(None)),
             consecutive_invalid_timeouts_by_origin={},
             invalid_timeouts_by_origin={},
         ),

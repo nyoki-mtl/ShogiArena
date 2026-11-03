@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -176,7 +177,7 @@ def _state_context(sprt: Sprt, *, min_games: int, controller: SessionStopControl
         consecutive_invalid_timeouts_by_origin={},
         invalid_timeouts_by_origin={},
         is_dashboard_enabled=False,
-        save_run_state=lambda: None,
+        save_run_state=AsyncMock(side_effect=lambda: None),
     )
 
 

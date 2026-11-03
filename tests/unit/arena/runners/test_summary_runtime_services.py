@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -109,7 +110,7 @@ def _build_runtime(run_dir: Path) -> TournamentSummaryRuntimeContext:
             is_generate_run=lambda: False,
             get_schedule_snapshot=_noop_async,
             flush_openbench=_noop_async,
-            save_run_state=lambda _is_finished: None,
+            save_run_state=AsyncMock(side_effect=lambda _is_finished: None),
             update_dashboard=_noop_async,
             stop_services=_noop_async,
         ),
@@ -144,7 +145,7 @@ async def test_finalize_service_uses_grouped_runtime_actions(tmp_path: Path) -> 
         is_generate_run=runtime.actions.is_generate_run,
         get_schedule_snapshot=runtime.actions.get_schedule_snapshot,
         flush_openbench=lambda: _record_async(flush_calls, "flush"),
-        save_run_state=lambda is_finished: save_calls.append(is_finished),
+        save_run_state=AsyncMock(side_effect=lambda is_finished: save_calls.append(is_finished)),
         update_dashboard=lambda: _record_async(dashboard_calls, "dashboard"),
         stop_services=lambda: _record_async(cleanup_calls, "stop_services"),
     )

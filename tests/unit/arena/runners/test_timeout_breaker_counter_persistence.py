@@ -8,6 +8,7 @@ counter が resume でゼロへ戻ると、閾値の直前で pause / resume を
 from __future__ import annotations
 
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -279,7 +280,7 @@ def _context(controller: _StopController, *, totals: dict[str, int], consecutive
         consecutive_invalid_timeouts_by_origin=consecutive,
         invalid_timeouts_by_origin=totals,
         is_dashboard_enabled=False,
-        save_run_state=lambda: None,
+        save_run_state=AsyncMock(side_effect=lambda: None),
     )
 
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast, runtime_checkable
 
 from shogiarena._core.platform.engine_provisioning.provisioning_ports import NamedInstancePort
+from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
 from shogiarena._core.shared.kernel.engine_process import EngineProcessInfo
 
 
@@ -34,6 +35,11 @@ class _EngineProcessPort(Protocol):
 
 
 EngineProcessSpawnerFn = Callable[..., Awaitable[Any]]
+
+
+@runtime_checkable
+class _ProcessTransportClosePort(Protocol):
+    async def close_transport(self) -> None: ...
 
 
 logger = logging.getLogger(__name__)
@@ -81,6 +87,7 @@ class SpawnerBackedUSIBridge:
         self._stderr_task: asyncio.Task[None] | None = None
         self._stderr_handler: Callable[[str], None] | None = None
         self._is_stopping = False
+        self._stop_task: asyncio.Task[None] | None = None
         self._reap_tasks: set[asyncio.Task[None]] = set()
         # timeout attribution 用の観測時刻（task 0052）。``receive_lines`` は消費側が処理を
         # 終えるまで次の ``readline`` へ進まないため、消費側が読む時点の値は必ずその行のもの。
@@ -110,16 +117,21 @@ class SpawnerBackedUSIBridge:
         if not isinstance(spawned_process, _EngineProcessPort):
             raise RuntimeError("EngineProcessSpawner returned an incompatible process object")
         self.process = spawned_process
+        self._stop_task = None
 
         if self.process.stderr is not None:
             self._stderr_task = asyncio.create_task(self._read_stderr(), name=f"stderr-{self.name}")
         logger.debug("Engine process %s (pid: %s) started", self.name, self.process.pid if self.process else None)
 
     async def stop_process(self) -> None:
-        if self._is_stopping:
-            logger.debug("Stop already in progress for %s", self.name)
-            return
-        if not self.process:
+        if self._stop_task is None:
+            if self.process is None:
+                return
+            self._stop_task = asyncio.create_task(self._stop_process())
+        await complete_before_cancelling(self._stop_task)
+
+    async def _stop_process(self) -> None:
+        if self.process is None:
             logger.debug("Process %s not running or already stopped", self.name)
             return
 
@@ -137,21 +149,23 @@ class SpawnerBackedUSIBridge:
                         raise
                 self._stderr_task = None
 
-            if proc and proc.returncode is None:
+            if proc.returncode is None:
                 writer = proc.stdin
                 if writer is not None and not writer.is_closing():
                     with contextlib.suppress(RuntimeError):
                         await self.send_line("quit")
+            # An exit status alone does not establish completed pipe callbacks
+            # (and SSH wait also owns connection cleanup).
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=self.GRACEFUL_STOP_TIMEOUT_SECONDS)
+            except TimeoutError:
+                logger.warning("Process %s did not terminate gracefully, killing", self.name)
+                proc.kill()
                 try:
-                    await asyncio.wait_for(proc.wait(), timeout=self.GRACEFUL_STOP_TIMEOUT_SECONDS)
+                    await asyncio.wait_for(proc.wait(), timeout=self.KILL_WAIT_TIMEOUT_SECONDS)
                 except TimeoutError:
-                    logger.warning("Process %s did not terminate gracefully, killing", self.name)
-                    proc.kill()
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=self.KILL_WAIT_TIMEOUT_SECONDS)
-                    except TimeoutError:
-                        logger.warning("Process %s did not exit after kill; continuing reap in background", self.name)
-                        self._schedule_background_reap(proc)
+                    logger.warning("Process %s did not exit after kill; continuing reap in background", self.name)
+                    self._schedule_background_reap(proc)
         except asyncio.CancelledError:
             # Cancellation of shutdown must not detach a live child process. Kill
             # and reap it before preserving the caller's cancellation signal.
@@ -160,8 +174,12 @@ class SpawnerBackedUSIBridge:
             finally:
                 raise
         finally:
-            self.process = None
-            self._is_stopping = False
+            try:
+                if isinstance(proc, _ProcessTransportClosePort):
+                    await proc.close_transport()
+            finally:
+                self.process = None
+                self._is_stopping = False
         logger.debug("Engine process %s stop procedure finished", self.name)
 
     async def _kill_and_reap_cancelled_stop(self, proc: _EngineProcessPort) -> None:
@@ -216,7 +234,10 @@ class SpawnerBackedUSIBridge:
             writer.write(f"{command}\n".encode())
             await writer.drain()
         except (BrokenPipeError, ConnectionResetError) as exc:
-            await self.stop_process()
+            # A failing quit is already inside the owned stop task. Joining it
+            # recursively would make shutdown wait for itself forever.
+            if not self._is_stopping:
+                await self.stop_process()
             raise RuntimeError(f"Failed to send command due to broken pipe: {command}") from exc
 
     async def _read_stderr(self) -> None:

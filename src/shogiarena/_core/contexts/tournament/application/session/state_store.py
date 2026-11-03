@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Mapping
@@ -17,6 +18,7 @@ from shogiarena._core.contexts.tournament.ports.session_state_runtime import (
     TournamentStateSetupContext,
     normalize_schedule_seed,
 )
+from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
 from shogiarena._core.shared.kernel.atomic_json import write_json_atomic
 from shogiarena._core.shared.kernel.boundary_parsers.runner_state_payloads.parsers import (
     parse_tournament_run_state_boundary,
@@ -53,6 +55,9 @@ def _normalize_assignment_override_payload(raw_payload: object) -> AssignmentOve
 
 class TournamentSessionStateStore:
     """Extracted run-state save/resume flow used by tournament runner."""
+
+    def __init__(self) -> None:
+        self._save_lock = asyncio.Lock()
 
     def assert_no_submitted_openbench_results(self, run_dir: Path) -> None:
         """加算済みの OpenBench 結果を持つ run dir の破棄を拒否する。
@@ -114,6 +119,10 @@ class TournamentSessionStateStore:
     async def setup_new_tournament(self, ctx: TournamentStateSetupContext) -> None:
         """Setup a new tournament schedule."""
 
+        await complete_before_cancelling(self._setup_new_tournament(ctx))
+
+    async def _setup_new_tournament(self, ctx: TournamentStateSetupContext) -> None:
+
         logger.debug("Setting up new tournament in %s", ctx.run_dir)
 
         # Warn about flip_policy choices for statistical robustness
@@ -163,7 +172,7 @@ class TournamentSessionStateStore:
         # Save run state
         ctx.state.completed_game_summaries.clear()
         ctx.reset_schedule_tracking()
-        self.save_run_state(ctx.build_save_context())
+        await self.save_run_state(ctx.build_save_context())
         ctx.write_schedule_file(ctx.state.game_schedule)
         ctx.notify_schedule_available()
 
@@ -358,12 +367,18 @@ class TournamentSessionStateStore:
                 ) from exc
         logger.debug("Invalidated stale terminal markers in %s before resuming", run_dir)
 
-    def save_run_state(self, ctx: TournamentStateSaveContext, *, is_finished: bool = False) -> None:
-        """Persist current run-state payload."""
+    async def save_run_state(self, ctx: TournamentStateSaveContext, *, is_finished: bool = False) -> None:
+        """Serialize snapshots and durable writes across every state-save caller."""
 
-        run_state = build_run_state_payload(ctx, is_finished=is_finished)
-        run_state_path = ctx.run_dir / "state.json"
-        write_json_atomic(run_state_path, run_state)
+        async def save() -> None:
+            async with self._save_lock:
+                # Snapshot on the loop after preceding writes have drained. Never
+                # pass mutable runner state to the worker or publish an old snapshot
+                # after a newer dashboard/OpenBench/finalization save.
+                run_state = build_run_state_payload(ctx, is_finished=is_finished)
+                await asyncio.to_thread(write_json_atomic, ctx.run_dir / "state.json", run_state)
+
+        await complete_before_cancelling(save())
 
     @staticmethod
     def _reconcile_sprt_with_completed_games(

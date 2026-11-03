@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
 from typing import Protocol, TypeAlias
@@ -113,7 +113,7 @@ class OpenBenchDelegate:
         *,
         db_service: DatabaseServicePort | None,
         stop_controller: _StopController,
-        persist_state: Callable[[], None],
+        persist_state: Callable[[], Awaitable[None]],
     ) -> None:
         """Sync results to OpenBench after a game completion."""
         self.raise_pending_error()
@@ -128,7 +128,7 @@ class OpenBenchDelegate:
         *,
         db_service: DatabaseServicePort | None,
         stop_controller: _StopController,
-        persist_state: Callable[[], None],
+        persist_state: Callable[[], Awaitable[None]],
     ) -> None:
         """Flush all pending results to OpenBench."""
         self.raise_pending_error()

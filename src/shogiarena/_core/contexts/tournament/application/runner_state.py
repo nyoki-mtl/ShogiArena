@@ -26,6 +26,9 @@ class TournamentRunnerState:
     # -- Schedule / game lifecycle -----------------------------------------
     game_schedule: list[GameSpec] = field(default_factory=list)
     completed_game_ids: set[str] = field(default_factory=set)
+    # Terminal callbacks remain non-pending while queued for the completion lock
+    # or writing to disk. Counts also cover overlapping duplicate callbacks.
+    pending_completion_counts: dict[str, int] = field(default_factory=dict)
     completed_game_summaries: dict[str, JsonObject] = field(default_factory=dict)
     cancelled_game_ids: set[str] = field(default_factory=set)
     cancelled_specs: dict[str, GameSpec] = field(default_factory=dict)

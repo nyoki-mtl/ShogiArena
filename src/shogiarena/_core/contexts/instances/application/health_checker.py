@@ -4,7 +4,6 @@ SSH transport uses asyncssh (mandatory). There is no system ssh/scp fallback.
 Host key verification behavior follows instance configuration (strict by default).
 """
 
-import asyncio
 import logging
 import platform
 
@@ -15,12 +14,12 @@ from .health_checker_metrics import (
     collect_local_mpstat,
     collect_remote_mpstat,
     parse_system_output,
-    terminate_subprocess,
     windows_fill_cpu_metrics,
     windows_fill_memory_metrics,
     windows_fill_metrics_psutil,
 )
 from .instance_models import Instance, InstanceMetrics
+from .local_command import run_local_command
 
 logger = logging.getLogger(__name__)
 
@@ -55,20 +54,14 @@ class HealthChecker:
     async def _check_local_health(instance: Instance) -> InstanceMetrics:
         """Check health of local instance using system commands."""
         sysname = platform.system().lower()
-        process: asyncio.subprocess.Process | None = None
         try:
             if sysname == "linux":
                 cmd = "uptime; nproc; free -m; top -bn1 | head -5; cat /proc/cpuinfo | grep -m 1 -i 'model name'"
-                process = await asyncio.create_subprocess_shell(
-                    cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
-                if process.returncode != 0:
+                returncode, stdout, stderr = await run_local_command(["/bin/sh", "-c", cmd], timeout=30.0)
+                if returncode != 0:
                     logger.error(
                         "Local health check failed with return code %s: %s",
-                        process.returncode,
+                        returncode,
                         stderr.decode(),
                     )
                     return InstanceMetrics(is_reachable=False)
@@ -98,8 +91,6 @@ class HealthChecker:
             return InstanceMetrics(is_reachable=False)
 
         except TimeoutError:
-            if process is not None and process.returncode is None:
-                await terminate_subprocess(process, "local health check")
             logger.error("Local health check timed out for %s", instance.name)
             return InstanceMetrics(is_reachable=False)
         except (OSError, RuntimeError, ValueError) as exc:

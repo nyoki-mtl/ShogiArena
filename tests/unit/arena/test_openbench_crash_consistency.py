@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -75,7 +76,7 @@ async def test_openbench_does_not_send_when_write_ahead_persistence_fails(
     monkeypatch.setattr(client, "_post", _fake_post)
 
     with pytest.raises(OpenBenchError, match="submission intent"):
-        await client.try_sync(_OneGameDatabase(), persist_state=_fail_persist)
+        await client.try_sync(_OneGameDatabase(), persist_state=AsyncMock(side_effect=_fail_persist))
 
     assert post_calls == 0
     assert client.snapshot_state().get("inflight_submission") is None
@@ -99,7 +100,7 @@ async def test_openbench_response_loss_preserves_ambiguity_and_disables_retry(
     with pytest.raises(OpenBenchError, match="connection closed"):
         await client.try_sync(
             _OneGameDatabase(),
-            persist_state=lambda: persisted.append(deepcopy(client.snapshot_state())),
+            persist_state=AsyncMock(side_effect=lambda: persisted.append(deepcopy(client.snapshot_state()))),
         )
 
     assert post_calls == 1
@@ -107,7 +108,7 @@ async def test_openbench_response_loss_preserves_ambiguity_and_disables_retry(
     assert client.snapshot_state()["inflight_submission"] is not None
 
     with pytest.raises(OpenBenchError, match="automatic retry is disabled"):
-        await client.try_sync(_OneGameDatabase(), persist_state=lambda: None)
+        await client.try_sync(_OneGameDatabase(), persist_state=AsyncMock(side_effect=lambda: None))
     assert post_calls == 1
 
     resumed = _assigned_client(is_strict=False)
@@ -129,7 +130,7 @@ async def test_openbench_acknowledged_submission_durably_clears_write_ahead_mark
 
     should_stop = await client.try_sync(
         _OneGameDatabase(),
-        persist_state=lambda: persisted.append(deepcopy(client.snapshot_state())),
+        persist_state=AsyncMock(side_effect=lambda: persisted.append(deepcopy(client.snapshot_state()))),
     )
 
     assert should_stop is False
@@ -163,14 +164,14 @@ async def test_openbench_ack_persistence_failure_keeps_ambiguity_marker(
     monkeypatch.setattr(client, "_post", _acknowledge)
 
     with pytest.raises(OpenBenchError, match="submission acknowledgement"):
-        await client.try_sync(_OneGameDatabase(), persist_state=_persist_then_fail_ack)
+        await client.try_sync(_OneGameDatabase(), persist_state=AsyncMock(side_effect=_persist_then_fail_ack))
 
     snapshot = client.snapshot_state()
     assert snapshot["inflight_submission"] is not None
     assert snapshot["submitted"]["wins"] == 0
 
     with pytest.raises(OpenBenchError, match="automatic retry is disabled"):
-        await client.try_sync(_OneGameDatabase(), persist_state=lambda: None)
+        await client.try_sync(_OneGameDatabase(), persist_state=AsyncMock(side_effect=lambda: None))
 
 
 @pytest.mark.asyncio
@@ -204,7 +205,7 @@ async def test_openbench_recovery_persists_new_result_identity_before_retry(
     with pytest.raises(OpenBenchError, match="retry response lost"):
         await client.try_sync(
             _OneGameDatabase(),
-            persist_state=lambda: persisted.append(deepcopy(client.snapshot_state())),
+            persist_state=AsyncMock(side_effect=lambda: persisted.append(deepcopy(client.snapshot_state()))),
         )
 
     assert len(persisted) == 2

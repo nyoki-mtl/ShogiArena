@@ -11,6 +11,7 @@ import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -146,7 +147,7 @@ def _build_runtime(
             is_generate_run=lambda: False,
             get_schedule_snapshot=_noop_async,
             flush_openbench=flush_openbench,
-            save_run_state=lambda _is_finished: None,
+            save_run_state=AsyncMock(side_effect=lambda _is_finished: None),
             update_dashboard=_noop_async,
             stop_services=stop_services,
         ),

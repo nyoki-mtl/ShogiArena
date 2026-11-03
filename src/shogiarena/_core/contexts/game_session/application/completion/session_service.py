@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Mapping
 
@@ -157,7 +158,6 @@ class TournamentSessionCompletionService:
                 # continue へ戻し、`sprt-finished` で止めた run が `incomplete` になる。
                 context.sprt_service.latch_decision()
                 context.stop_controller.request_stop(reason="sprt-finished")
-        context.save_run_state()
         return bool(context.is_dashboard_enabled)
 
     def _apply_timeout_burst_breaker(
@@ -243,7 +243,7 @@ class TournamentSessionCompletionService:
             return False, result
         # Ordering is fixed by task 0052 / Decision 8: enrich and read the timeout decision, run the
         # pure policy pre-checks, persist the terminal record, then mutate rating/SPRT/completed
-        # state. Nothing that can raise runs after the completed set has been updated.
+        # state. A failed state snapshot can be reconciled from game.db on resume.
         summary = self.enrich_record_and_summarize(context, game_spec, record=record)
         # Orchestrator-stall timeouts are recorded as ERROR with a ``timeout_origin`` attribute; read
         # it once here and let the SPRT path exclude such invalid games without aborting (task 0047).
@@ -256,7 +256,10 @@ class TournamentSessionCompletionService:
         )
         should_persist = self.should_persist_record(result, is_stop_requested=is_stop_requested)
         if should_persist:
-            self.persist_record_outputs(
+            # Record is transferable; any thread-affine Board is created inside
+            # the DB operation. The caller owns and drains the completion lock.
+            await asyncio.to_thread(
+                self.persist_record_outputs,
                 context.persistence,
                 record=record,
                 game_id=str(game_spec.game_id),
@@ -271,6 +274,7 @@ class TournamentSessionCompletionService:
             result=result,
             invalid_timeout_origin=invalid_timeout_origin,
         )
+        await context.state.save_run_state()
         await self.sync_openbench(context.openbench, openbench_error_type=openbench_error_type)
         return update_dashboard, result
 

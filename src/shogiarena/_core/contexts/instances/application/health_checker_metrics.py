@@ -1,6 +1,5 @@
 """Metric parsing and platform-specific collectors for instance health checks."""
 
-import asyncio
 import logging
 import re
 from typing import TypedDict
@@ -10,6 +9,7 @@ import psutil
 from shogiarena._core.contexts.instances.application.ssh_transport import SshTransport
 
 from .instance_models import InstanceMetrics
+from .local_command import run_local_command
 
 logger = logging.getLogger(__name__)
 
@@ -19,44 +19,18 @@ class _MpstatData(TypedDict):
     per_core: list[float] | None
 
 
-async def terminate_subprocess(proc: asyncio.subprocess.Process, label: str) -> None:
-    """Best-effort terminate a subprocess to avoid leaks after timeouts."""
-    try:
-        proc.kill()
-    except ProcessLookupError:
-        return
-    except (OSError, RuntimeError) as exc:
-        logger.debug("Failed to kill %s process: %s", label, exc)
-        return
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=5.0)
-    except (TimeoutError, OSError, RuntimeError) as exc:
-        logger.debug("Timed out waiting for %s process to exit: %s", label, exc)
-
-
 async def collect_local_mpstat() -> _MpstatData | None:
     """Collect per-core CPU usage using mpstat on the local machine."""
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "mpstat",
-            "-P",
-            "ALL",
-            "1",
-            "1",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        returncode, stdout, stderr = await run_local_command(["mpstat", "-P", "ALL", "1", "1"], timeout=20.0)
     except FileNotFoundError:
         return None
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=20.0)
     except TimeoutError:
         logger.debug("mpstat local run timed out")
-        await terminate_subprocess(proc, "mpstat local")
         return None
-    if proc.returncode != 0:
-        logger.debug("mpstat local failed rc=%s: %s", proc.returncode, stderr.decode("utf-8", errors="ignore"))
+    if returncode != 0:
+        logger.debug("mpstat local failed rc=%s: %s", returncode, stderr.decode("utf-8", errors="ignore"))
         return None
     return _parse_mpstat_output(stdout.decode("utf-8", errors="ignore"))
 
@@ -157,18 +131,17 @@ def windows_fill_metrics_psutil(metrics: InstanceMetrics) -> bool:
 
 async def windows_fill_memory_metrics(metrics: InstanceMetrics) -> None:
     """Fill memory metrics on Windows using WMIC then PowerShell fallback."""
-    proc: asyncio.subprocess.Process | None = None
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "wmic",
-            "OS",
-            "get",
-            "TotalVisibleMemorySize,FreePhysicalMemory",
-            "/Value",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        _, out, _ = await run_local_command(
+            [
+                "wmic",
+                "OS",
+                "get",
+                "TotalVisibleMemorySize,FreePhysicalMemory",
+                "/Value",
+            ],
+            timeout=15.0,
         )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
         text = out.decode("utf-8", errors="ignore")
         vals: dict[str, int] = {}
         for line in text.splitlines():
@@ -190,26 +163,23 @@ async def windows_fill_memory_metrics(metrics: InstanceMetrics) -> None:
                     metrics.mem_used_pct = round((metrics.mem_used_mb or 0) / max(metrics.mem_total_mb, 1) * 100, 1)
         return
     except TimeoutError:
-        if proc is not None and proc.returncode is None:
-            await terminate_subprocess(proc, "wmic memory")
         logger.debug("WMIC memory query timed out")
     except (OSError, ValueError, RuntimeError) as exc:
         logger.debug("WMIC memory query failed: %s", exc)
 
-    proc = None
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            (
-                "$os = Get-CimInstance Win32_OperatingSystem;"
-                'Write-Output ("$($os.TotalVisibleMemorySize) $($os.FreePhysicalMemory)")'
-            ),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        _, out, _ = await run_local_command(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                (
+                    "$os = Get-CimInstance Win32_OperatingSystem;"
+                    'Write-Output ("$($os.TotalVisibleMemorySize) $($os.FreePhysicalMemory)")'
+                ),
+            ],
+            timeout=15.0,
         )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
         text = out.decode("utf-8", errors="ignore").strip()
         parts = text.split()
         if len(parts) >= 2:
@@ -225,8 +195,6 @@ async def windows_fill_memory_metrics(metrics: InstanceMetrics) -> None:
             except ValueError:
                 logger.debug("PowerShell memory output is not parseable as integers: %s", text)
     except TimeoutError:
-        if proc is not None and proc.returncode is None:
-            await terminate_subprocess(proc, "powershell memory")
         logger.debug("PowerShell memory query timed out")
     except (OSError, ValueError, RuntimeError) as exc:
         logger.debug("PowerShell memory query failed: %s", exc)
@@ -234,18 +202,17 @@ async def windows_fill_memory_metrics(metrics: InstanceMetrics) -> None:
 
 async def windows_fill_cpu_metrics(metrics: InstanceMetrics) -> None:
     """Fill CPU usage metrics on Windows using WMIC then PowerShell fallback."""
-    proc: asyncio.subprocess.Process | None = None
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "wmic",
-            "CPU",
-            "get",
-            "LoadPercentage",
-            "/Value",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        _, out, _ = await run_local_command(
+            [
+                "wmic",
+                "CPU",
+                "get",
+                "LoadPercentage",
+                "/Value",
+            ],
+            timeout=10.0,
         )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
         text = out.decode("utf-8", errors="ignore")
         loads: list[float] = []
         for line in text.splitlines():
@@ -258,36 +225,31 @@ async def windows_fill_cpu_metrics(metrics: InstanceMetrics) -> None:
             metrics.cpu_usage_pct = sum(loads) / len(loads)
             return
     except TimeoutError:
-        if proc is not None and proc.returncode is None:
-            await terminate_subprocess(proc, "wmic cpu")
         logger.debug("WMIC CPU load query timed out")
     except (OSError, ValueError, RuntimeError) as exc:
         logger.debug("WMIC CPU load query failed: %s", exc)
 
-    proc = None
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            (
-                "(Get-CimInstance Win32_Processor |"
-                " Select-Object -ExpandProperty LoadPercentage) |"
-                " Measure-Object -Average |"
-                " Select-Object -ExpandProperty Average"
-            ),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        _, out, _ = await run_local_command(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                (
+                    "(Get-CimInstance Win32_Processor |"
+                    " Select-Object -ExpandProperty LoadPercentage) |"
+                    " Measure-Object -Average |"
+                    " Select-Object -ExpandProperty Average"
+                ),
+            ],
+            timeout=10.0,
         )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
         text = out.decode("utf-8", errors="ignore").strip()
         try:
             metrics.cpu_usage_pct = float(text)
         except ValueError:
             logger.debug("PowerShell CPU output is not parseable as float: %s", text)
     except TimeoutError:
-        if proc is not None and proc.returncode is None:
-            await terminate_subprocess(proc, "powershell cpu")
         logger.debug("PowerShell CPU load query timed out")
     except (OSError, ValueError, RuntimeError) as exc:
         logger.debug("PowerShell CPU load query failed: %s", exc)

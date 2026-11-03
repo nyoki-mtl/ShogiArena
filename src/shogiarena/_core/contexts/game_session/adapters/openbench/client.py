@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 
 import aiohttp
 
@@ -114,10 +114,10 @@ class OpenBenchClient(OpenBenchClientSubmissionMixin, OpenBenchClientAssignmentM
                 "do not reuse this run directory with --no-resume."
             )
 
-    async def try_sync(self, db: DatabaseServicePort, *, persist_state: Callable[[], None]) -> bool:
+    async def try_sync(self, db: DatabaseServicePort, *, persist_state: Callable[[], Awaitable[None]]) -> bool:
         return await self._submit_if_delta(db, should_check_interval=True, persist_state=persist_state)
 
-    async def try_flush(self, db: DatabaseServicePort, *, persist_state: Callable[[], None]) -> bool:
+    async def try_flush(self, db: DatabaseServicePort, *, persist_state: Callable[[], Awaitable[None]]) -> bool:
         return await self._submit_if_delta(db, should_check_interval=False, persist_state=persist_state)
 
     async def _submit_if_delta(
@@ -125,7 +125,7 @@ class OpenBenchClient(OpenBenchClientSubmissionMixin, OpenBenchClientAssignmentM
         db: DatabaseServicePort,
         *,
         should_check_interval: bool,
-        persist_state: Callable[[], None],
+        persist_state: Callable[[], Awaitable[None]],
     ) -> bool:
         if not self._has_assignment:
             return False
@@ -147,7 +147,7 @@ class OpenBenchClient(OpenBenchClientSubmissionMixin, OpenBenchClientAssignmentM
         # and offers no idempotency key or query that can safely prove whether this delta landed.
         self._inflight_submission = delta
         try:
-            persist_state()
+            await persist_state()
         except Exception as exc:
             self._inflight_submission = None
             raise OpenBenchError(f"Failed to persist OpenBench submission intent: {exc}") from exc
@@ -159,7 +159,7 @@ class OpenBenchClient(OpenBenchClientSubmissionMixin, OpenBenchClientAssignmentM
         self._last_synced_games = totals.games
         self._inflight_submission = None
         try:
-            persist_state()
+            await persist_state()
         except Exception as exc:
             # Preserve the ambiguity marker in memory.  A later ordinary state save must not
             # erase the durable write-ahead intent when acknowledgement persistence failed.

@@ -173,6 +173,7 @@ from shogiarena._core.platform.records.binary_writer import (
     RecordBinaryWriter,
     RecordBinaryWriterConfig,
 )
+from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.json_coercion import to_json_object
 from shogiarena._core.shared.kernel.json_types import JsonObject
@@ -446,19 +447,33 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
         is_stop_requested: bool,
     ) -> None:
         """Handle post-processing for a completed game."""
-        should_update_dashboard = False
-        result: GameResult
-        async with self._state.completion_lock:
-            self._state.engine_metadata_cache = None
-            runtime_context = self._build_completion_runtime_context()
-            should_update_dashboard, result = await self._completion_service.process_game_completion(
-                runtime_context,
-                game_spec,
-                record=game_info,
-                is_stop_requested=is_stop_requested,
-                extract_participation=_extract_participation,
-                openbench_error_type=OpenBenchError,
-            )
+
+        async def complete() -> tuple[bool, GameResult, CompletionRuntimeContext]:
+            async with self._state.completion_lock:
+                self._state.engine_metadata_cache = None
+                runtime_context = self._build_completion_runtime_context()
+                should_update_dashboard, result = await self._completion_service.process_game_completion(
+                    runtime_context,
+                    game_spec,
+                    record=game_info,
+                    is_stop_requested=is_stop_requested,
+                    extract_participation=_extract_participation,
+                    openbench_error_type=OpenBenchError,
+                )
+
+                return should_update_dashboard, result, runtime_context
+
+        game_id = str(game_spec.game_id)
+        pending = self._state.pending_completion_counts
+        pending[game_id] = pending.get(game_id, 0) + 1
+        try:
+            should_update_dashboard, result, runtime_context = await complete_before_cancelling(complete())
+        finally:
+            remaining = pending[game_id] - 1
+            if remaining:
+                pending[game_id] = remaining
+            else:
+                del pending[game_id]
 
         if should_update_dashboard:
             await self._update_dashboard()
@@ -1048,9 +1063,9 @@ class TournamentRunner(BaseSessionRunner[TournamentRunResult, None]):
     async def has_applied_pending_reschedule(self) -> bool:
         return await self._mutation_service.has_applied_pending_reschedule(self._state, self._schedule_ctx)
 
-    def _save_run_state(self, is_finished: bool = False) -> None:
+    async def _save_run_state(self, is_finished: bool = False) -> None:
         ctx = self._build_state_save_context()
-        self._state_store.save_run_state(ctx, is_finished=is_finished)
+        await self._state_store.save_run_state(ctx, is_finished=is_finished)
 
     def _cleanup_existing_run(self) -> None:
         """Remove existing run artifacts."""

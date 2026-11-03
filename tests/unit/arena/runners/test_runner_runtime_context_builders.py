@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from shogiarena._core.contexts.game_session.application.completion.openbench_context_service import (
     CompletionOpenBenchContextService,
@@ -98,7 +99,7 @@ def test_build_completion_runtime_context_shares_completed_summaries_mapping() -
         stop_controller=_StopControllerStub(),
         is_dashboard_enabled=True,
         total_games=2,
-        save_run_state_fn=_noop,
+        save_run_state_fn=AsyncMock(side_effect=_noop),
         consecutive_invalid_timeouts_by_origin={},
         invalid_timeouts_by_origin={},
         openbench_client=None,
@@ -162,7 +163,7 @@ def test_build_summary_runtime_context_groups_state_and_adapts_dependencies(tmp_
             is_generate_run=lambda: False,
             get_schedule_snapshot=_noop_async,
             flush_openbench=_noop_async,
-            save_run_state=lambda _is_finished: None,
+            save_run_state=AsyncMock(side_effect=lambda _is_finished: None),
             update_dashboard=_noop_async,
             stop_services=_noop_async,
         ),

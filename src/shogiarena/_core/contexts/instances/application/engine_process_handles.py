@@ -1,15 +1,21 @@
 """Engine process handle abstractions and shared helpers."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import shlex
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Protocol
 
 import asyncssh
 import psutil
 
+from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
+
 from .instance_models import Instance
+from .local_process_protocol import LocalProcessProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -120,9 +126,40 @@ class EngineProcess(ABC):
 class LocalEngineProcess(EngineProcess):
     """Wrapper for local asyncio subprocess."""
 
-    def __init__(self, process: asyncio.subprocess.Process) -> None:
+    def __init__(
+        self,
+        process: asyncio.subprocess.Process,
+        *,
+        transport: asyncio.SubprocessTransport,
+        disconnected: asyncio.Future[None],
+    ) -> None:
         """Initialize with asyncio subprocess."""
         self.process = process
+        self._transport = transport
+        self._disconnected = disconnected
+
+    @classmethod
+    async def spawn(
+        cls, command: list[str], *, cwd: Path, env: dict[str, str] | None, limit: int
+    ) -> LocalEngineProcess:
+        loop = asyncio.get_running_loop()
+        protocol = LocalProcessProtocol(loop, limit=limit)
+        transport, _ = await loop.subprocess_exec(
+            lambda: protocol,
+            *command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+            env=env,
+        )
+        process = asyncio.subprocess.Process(transport, protocol.streams, loop)
+        return cls(process, transport=transport, disconnected=protocol.disconnected)
+
+    async def close_transport(self) -> None:
+        """Close all pipe handles and drain their callbacks before loop shutdown."""
+        self._transport.close()
+        await complete_before_cancelling(self._disconnected)
 
     @property
     def stdin(self) -> ProcessStreamWriterPort | None:

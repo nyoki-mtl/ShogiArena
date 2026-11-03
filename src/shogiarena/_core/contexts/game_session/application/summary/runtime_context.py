@@ -75,7 +75,7 @@ class SummaryRuntimeActionRefs:
     is_generate_run: Callable[[], bool]
     get_schedule_snapshot: Callable[[], Awaitable[JsonObject]]
     flush_openbench: Callable[[], Awaitable[None]]
-    save_run_state: Callable[[bool], None]
+    save_run_state: Callable[[bool], Awaitable[None]]
     update_dashboard: Callable[[], Awaitable[None]]
     # terminal status を commit する前に全 service を停止する（task 0052、idempotent）。
     stop_services: Callable[[], Awaitable[None]]
