@@ -214,7 +214,8 @@ async def test_production_game_pair_rejects_valid_invalid_pair_before_update_com
         else []
     )
     assert all(event.get("event") != "update" for event in events)
-    assert sum(event.get("status") == "pending" for event in events) == 1
+    # Runtime diagnostics must not create or mutate projector-owned compatibility files.
+    assert not events_path.exists()
 
 
 @pytest.mark.asyncio

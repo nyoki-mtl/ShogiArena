@@ -61,6 +61,7 @@ from shogiarena._core.contexts.spsa.adapters.fixed_option_preflight import (
     run_verified_spsa_fixed_option_preflight,
     validate_sealed_fixed_option_evidence,
 )
+from shogiarena._core.contexts.spsa.adapters.ledger_live_writer import SpsaLiveLedgerWriter
 from shogiarena._core.contexts.spsa.adapters.ledger_observations import (
     SpsaObservationLedger,
 )
@@ -107,6 +108,7 @@ from shogiarena._core.contexts.spsa.domain.versioned_rng import (
 )
 from shogiarena._core.contexts.spsa.ports.dashboard_factory import DashboardSpsaServicesFactory
 from shogiarena._core.platform.settings import project_dirs
+from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
 from shogiarena._core.shared.kernel.atomic_json import write_json_atomic
 from shogiarena._core.shared.kernel.content_hashing import sha256_file
 from shogiarena._core.shared.kernel.json_types import JsonObject
@@ -219,6 +221,32 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         assert self._state.engine_metadata_cache is not None
         return self._state.engine_metadata_cache
 
+    async def _engine_metadata_async(self) -> list[JsonObject]:
+        # Freeze runtime snapshots on the loop; only metadata I/O runs off-loop.
+        runtime_options, runtime_info = fetch_runtime_snapshots(self._orchestrator, logger=logger)
+        engines = spsa_engine_configs(self.config)
+        run_dir = self.run_dir or self.storage.run_dir
+        resolver = self._require_artifact_resolver()
+        metadata, runtime_sig = await asyncio.to_thread(
+            resolve_engine_metadata_cache,
+            existing_metadata=self._state.engine_metadata_cache,
+            existing_runtime_sig=self._state.engine_metadata_runtime_sig,
+            runtime_options=runtime_options,
+            runtime_info=runtime_info,
+            collect_metadata_fn=lambda: collect_engine_metadata(
+                engines=engines,
+                rules=self.config.rules,
+                config_source_path=None,
+                run_dir=run_dir,
+                runtime_options=runtime_options,
+                runtime_info=runtime_info,
+                artifact_resolver=resolver,
+            ),
+        )
+        self._state.engine_metadata_cache = metadata
+        self._state.engine_metadata_runtime_sig = runtime_sig
+        return metadata
+
     def _require_artifact_resolver(self) -> ArtifactResolutionPort:
         resolver = self._engine_factory_service.artifact_resolver
         if resolver is None:
@@ -263,12 +291,25 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
     # ======================================================================
 
     async def _stop_additional_services(self) -> None:
+        await complete_before_cancelling(self._stop_spsa_services())
+
+    async def _stop_spsa_services(self) -> None:
         cleanup_error: BaseException | None = None
         terminal_error: BaseException | None = None
         # Stop background projections before the terminal commit so a stale in-flight
         # projection cannot overwrite the terminal view.
-        if self._derived_json_scheduler is not None:
-            await self._derived_json_scheduler.drain()
+        try:
+            if self._state.live_ledger_writer is not None:
+                await self._state.live_ledger_writer.close()
+                self._state.live_ledger_writer = None
+        except BaseException as exc:  # noqa: BLE001 - always finish store teardown
+            cleanup_error = exc
+        try:
+            if self._derived_json_scheduler is not None:
+                await self._derived_json_scheduler.drain()
+        except BaseException as exc:  # noqa: BLE001 - always finish store teardown
+            if cleanup_error is None:
+                cleanup_error = exc
         try:
             await RunFailureRecordService().materialize_snapshots_async(self.storage.run_dir)
         except asyncio.CancelledError as exc:
@@ -395,7 +436,7 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         self._init_dashboard_services()
         summary_payload = await build_spsa_dashboard_summary_payload(
             summary_service=self._state.spsa_summary_service,
-            engine_metadata=self.engine_metadata,
+            engine_metadata=await self._engine_metadata_async(),
             run_dir=self.run_dir,
         )
         if summary_payload is not None:
@@ -448,6 +489,7 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
             summary_updater=self._update_dashboard if self.is_dashboard_enabled else None,
             api_server=self.api_server,
             ledger_runtime=self._state.ledger_runtime,
+            live_ledger_writer=self._state.live_ledger_writer,
             derived_json_scheduler=self._derived_json_scheduler,
             remote_worker_bundle=self._remote_worker_bundle,
         )
@@ -704,6 +746,7 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         self._state.ledger = ledger
         self._state.ledger_runtime = ledger_runtime
         self._state.observation_ledger = SpsaObservationLedger(ledger.connection)
+        self._state.live_ledger_writer = SpsaLiveLedgerWriter(run_dir=self.run_dir, run_id=run_id)
         self._derived_json_scheduler = SpsaDerivedJsonScheduler(
             run_dir=self.run_dir,
             run_id=run_id,
@@ -955,23 +998,13 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
                     db_service=db_service,
                     event=event,
                     observation_ledger=self._state.observation_ledger,
+                    live_ledger_writer=self._state.live_ledger_writer,
                 )
 
         # A terminal game must survive shutdown even while another completion
         # owns the lock. Drain the whole DB -> ledger operation before returning
         # cancellation to the worker, so cleanup cannot close either store early.
-        completion_task = asyncio.create_task(persist_completion())
-        was_cancelled = False
-        while True:
-            try:
-                is_persisted = await asyncio.shield(completion_task)
-                break
-            except asyncio.CancelledError:
-                if completion_task.cancelled():
-                    raise
-                was_cancelled = True
-        if was_cancelled:
-            raise asyncio.CancelledError
+        is_persisted = await complete_before_cancelling(persist_completion())
 
         if is_persisted:
             # The derived JSON views are rebuilt from the whole run, so projecting inline here
@@ -1000,7 +1033,10 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
         if run_dir is None:
             raise RuntimeError("SPSA run directory is unavailable for projection")
         try:
-            self._state.ledger_runtime.project_derived_json(run_dir=run_dir)
+            if self._derived_json_scheduler is not None:
+                self._derived_json_scheduler.project_blocking()
+            else:
+                self._state.ledger_runtime.project_derived_json(run_dir=run_dir)
         except (OSError, ValueError) as exc:
             logger.warning("SPSA ledger remains authoritative after derived JSON projection failure: %s", exc)
 

@@ -99,37 +99,41 @@ def compute_out_of_book(
     from rsshogi.core import Board
 
     board = Board(start_sfen) if start_sfen is not None else Board()
-    in_book_plies = 0
+    try:
+        in_book_plies = 0
 
-    for index, move_usi in enumerate(moves_usi):
-        ply = index + 1
-        if ply > book_moves_limit:
-            return OutOfBookResult(
-                out_of_book_ply=None,
-                in_book_plies=in_book_plies,
-                book_moves_limit=book_moves_limit,
-                clipped=True,
-                evaluated_plies=ply - 1,
-            )
-        entry = book.lookup_sfen(board.to_sfen())
-        if entry is None or move_usi not in _move_usi_set(entry):
-            return OutOfBookResult(
-                out_of_book_ply=ply,
-                in_book_plies=in_book_plies,
-                book_moves_limit=book_moves_limit,
-                clipped=False,
-                evaluated_plies=ply,
-            )
-        in_book_plies += 1
-        board.apply_usi(move_usi)
+        for index, move_usi in enumerate(moves_usi):
+            ply = index + 1
+            if ply > book_moves_limit:
+                return OutOfBookResult(
+                    out_of_book_ply=None,
+                    in_book_plies=in_book_plies,
+                    book_moves_limit=book_moves_limit,
+                    clipped=True,
+                    evaluated_plies=ply - 1,
+                )
+            entry = book.lookup_sfen(board.to_sfen())
+            if entry is None or move_usi not in _move_usi_set(entry):
+                return OutOfBookResult(
+                    out_of_book_ply=ply,
+                    in_book_plies=in_book_plies,
+                    book_moves_limit=book_moves_limit,
+                    clipped=False,
+                    evaluated_plies=ply,
+                )
+            in_book_plies += 1
+            board.apply_usi(move_usi)
 
-    return OutOfBookResult(
-        out_of_book_ply=None,
-        in_book_plies=in_book_plies,
-        book_moves_limit=book_moves_limit,
-        clipped=len(moves_usi) >= book_moves_limit,
-        evaluated_plies=min(len(moves_usi), book_moves_limit),
-    )
+        return OutOfBookResult(
+            out_of_book_ply=None,
+            in_book_plies=in_book_plies,
+            book_moves_limit=book_moves_limit,
+            clipped=len(moves_usi) >= book_moves_limit,
+            evaluated_plies=min(len(moves_usi), book_moves_limit),
+        )
+    finally:
+        # Tracebacks may be collected on another thread; release unsendable Board refs here.
+        del board
 
 
 __all__ = [

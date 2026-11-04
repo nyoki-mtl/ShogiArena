@@ -82,7 +82,10 @@ async def test_spsa_db_write_yields_and_drains_before_ledger(tmp_path, cancel):
     db.append_record_with_participation = slow_append
     runner = SimpleNamespace(
         _state=SimpleNamespace(
-            db_service=db, completion_lock=lock, observation_ledger=SimpleNamespace(insert_committed=insert)
+            db_service=db,
+            completion_lock=lock,
+            observation_ledger=SimpleNamespace(insert_committed=insert),
+            live_ledger_writer=None,
         ),
         _request_derived_json_projection=lambda: None,
         progress=SimpleNamespace(on_game_complete=lambda _: None),
@@ -159,7 +162,10 @@ async def test_spsa_signal_drains_terminal_games_waiting_for_completion_lock(tmp
     db.append_record_with_participation = slow_append
     runner = SimpleNamespace(
         _state=SimpleNamespace(
-            db_service=db, completion_lock=lock, observation_ledger=SimpleNamespace(insert_committed=insert)
+            db_service=db,
+            completion_lock=lock,
+            observation_ledger=SimpleNamespace(insert_committed=insert),
+            live_ledger_writer=None,
         ),
         _request_derived_json_projection=lambda: None,
         progress=SimpleNamespace(on_game_complete=lambda _: None),

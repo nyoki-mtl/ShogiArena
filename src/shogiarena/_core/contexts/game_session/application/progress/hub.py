@@ -39,6 +39,7 @@ class ProgressHub:
         self._progress_task: asyncio.Task[None] | None = None
         self._summary_update_task: asyncio.Task[None] | None = None
         self._is_summary_update_requested = False
+        self._is_shutting_down = False
 
     def update_api_server(self, api_server: DashboardServerPort | None) -> None:
         self._api_server = api_server
@@ -54,6 +55,7 @@ class ProgressHub:
         on_summary_update: SummaryUpdateCallback | None = None,
     ) -> None:
         """Start consume_progress_loop as a task."""
+        self._is_shutting_down = False
         state = ProgressState(
             num_workers=num_workers,
             game_to_worker=game_to_worker,
@@ -74,6 +76,8 @@ class ProgressHub:
 
     async def shutdown(self) -> None:
         """Cancel progress task and await summary updater."""
+        self._is_shutting_down = True
+        self._is_summary_update_requested = False
         pt = self._progress_task
         if pt is not None:
             pt.cancel()
@@ -108,6 +112,8 @@ class ProgressHub:
             logger.debug("Failed to broadcast worker update for %s: %s", worker_idx, exc, exc_info=True)
 
     def _schedule_summary_update(self, updater: SummaryUpdateCallback) -> None:
+        if self._is_shutting_down:
+            return
         if self._summary_update_task and not self._summary_update_task.done():
             self._is_summary_update_requested = True
             return
@@ -125,6 +131,9 @@ class ProgressHub:
 
         def _cleanup(task: asyncio.Task[None]) -> None:
             self._summary_update_task = None
+            if task.cancelled():
+                self._is_summary_update_requested = False
+                return
             exc = task.exception()
             if exc:
                 logger.warning("Summary updater task failed", exc_info=exc)

@@ -51,7 +51,7 @@ from shogiarena._core.contexts.spsa.adapters.orchestrator_lifecycle_mixin import
 from shogiarena._core.contexts.spsa.adapters.orchestrator_remote_game_mixin import SpsaOrchestratorRemoteGameMixin
 from shogiarena._core.contexts.spsa.adapters.orchestrator_update_mixin import SpsaOrchestratorUpdateMixin
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
-from shogiarena._core.contexts.spsa.ports.ledger_ports import SpsaLedgerRuntimePort
+from shogiarena._core.contexts.spsa.ports.ledger_ports import SpsaLedgerRuntimePort, SpsaLiveLedgerWriterPort
 from shogiarena._core.shared.kernel.service_ports import DatabaseServicePort
 from shogiarena._core.shared.kernel.session_hooks import GameLifecycleHooks
 
@@ -74,6 +74,7 @@ class SpsaOrchestrator(
         summary_updater: SummaryUpdateCallback | None = None,
         api_server: DashboardServerPort | None = None,
         ledger_runtime: SpsaLedgerRuntimePort,
+        live_ledger_writer: SpsaLiveLedgerWriterPort | None = None,
         derived_json_scheduler: SpsaDerivedJsonScheduler | None = None,
         remote_worker_bundle: WorkerBundleBuildResult | None = None,
     ) -> None:
@@ -99,6 +100,7 @@ class SpsaOrchestrator(
         session_uuid = str(metadata.get("session_uuid") or "").strip()
         self._session_uuid: str = session_uuid or session.run_id
         self._ledger_runtime = ledger_runtime
+        self._live_ledger_writer = live_ledger_writer
         self._derived_json_scheduler = derived_json_scheduler
 
         # Unique game id sequencer

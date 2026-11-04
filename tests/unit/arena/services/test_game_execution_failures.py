@@ -98,6 +98,41 @@ async def _cancelled_resource_context() -> object:
 
 
 @pytest.mark.asyncio
+async def test_initial_cancellation_drains_diagnostic_write_off_loop(tmp_path, monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    original_append = RunFailureRecordService.append_failure
+    original_cancel = asyncio.CancelledError("initial interruption")
+    main_thread = threading.get_ident()
+
+    async def cancel_prepare(*args):
+        raise original_cancel
+
+    def append(self, **kwargs):
+        assert threading.get_ident() != main_thread
+        entered.set()
+        assert release.wait(5)
+        return original_append(self, **kwargs)
+
+    monkeypatch.setattr(game_execution, "_prepare_resource_context", cancel_prepare)
+    monkeypatch.setattr(RunFailureRecordService, "append_failure", append)
+    task = asyncio.create_task(execute_game(_Owner(tmp_path), _GameSpec()))
+    try:
+        async with asyncio.timeout(5):
+            while not entered.is_set():
+                await asyncio.sleep(0.001)
+        for _ in range(2):
+            task.cancel("later cancellation")
+            await asyncio.sleep(0)
+        assert not task.done()
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError) as raised:
+            await task
+    assert raised.value is original_cancel
+    assert len(RunFailureRecordService().load_failures(tmp_path)) == 1
+
+
+@pytest.mark.asyncio
 async def test_failure_write_does_not_block_event_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     owner = _Owner(tmp_path / "run")
     entered = threading.Event()
@@ -147,12 +182,13 @@ async def test_cancellation_waits_for_failure_write(
     task = asyncio.create_task(execute_game(owner, _GameSpec()))
     try:
         assert await asyncio.to_thread(entered.wait, 1)
-        task.cancel()
-        await asyncio.sleep(0)
+        for _ in range(2):
+            task.cancel()
+            await asyncio.sleep(0)
         assert not task.done()
     finally:
         release.set()
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(RuntimeError, match="prepare failed"):
         await task
     assert len(RunFailureRecordService().load_failures(owner.run_dir)) == (0 if writer_fails else 1)
 

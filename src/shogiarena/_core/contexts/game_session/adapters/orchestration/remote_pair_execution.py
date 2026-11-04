@@ -9,6 +9,7 @@ from typing import Any
 import rsshogi.record
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution_manifest import (
+    complete_game_manifest_io,
     ensure_remote_logical_job_key,
     persist_remote_game_assignment,
 )
@@ -98,16 +99,19 @@ async def execute_remote_pair_game(
             should_allow_default_str=should_allow_default_str,
         )
 
-    def persist_assignment(assignment: JsonObject) -> None:
-        persist_remote_game_assignment(
-            run_dir=orchestrator.run_dir,
-            game_id=game_id,
-            assignment=assignment,
+    async def persist_assignment(assignment: JsonObject) -> None:
+        await complete_game_manifest_io(
+            orchestrator._game_execution_manifest_lock,
+            lambda: persist_remote_game_assignment(
+                run_dir=orchestrator.run_dir,
+                game_id=game_id,
+                assignment=assignment,
+            ),
         )
 
-    logical_job_key = ensure_remote_logical_job_key(
-        run_dir=orchestrator.run_dir,
-        game_id=game_id,
+    logical_job_key = await complete_game_manifest_io(
+        orchestrator._game_execution_manifest_lock,
+        lambda: ensure_remote_logical_job_key(run_dir=orchestrator.run_dir, game_id=game_id),
     )
     outcome = await executor.run_remote_pair(
         remote_root=remote_root,

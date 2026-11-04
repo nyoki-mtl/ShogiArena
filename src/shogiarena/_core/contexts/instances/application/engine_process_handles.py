@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shlex
+import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Protocol
@@ -236,25 +237,36 @@ class SSHEngineProcess(EngineProcess):
         return self._proc.stderr
 
     async def wait(self) -> int:
-        wait_result = await self._proc.wait()
-        if isinstance(wait_result, asyncssh.SSHCompletedProcess):
-            exit_status = wait_result.exit_status
-            if not isinstance(exit_status, int):
-                raise RuntimeError("SSH process completed without an integer exit status")
-            code = exit_status
-        else:
-            code = int(wait_result)
-        if not self._is_closed:
+        try:
+            wait_result = await self._proc.wait()
+            if isinstance(wait_result, asyncssh.SSHCompletedProcess):
+                exit_status = wait_result.exit_status
+                if not isinstance(exit_status, int):
+                    raise RuntimeError("SSH process completed without an integer exit status")
+                code = exit_status
+            else:
+                code = int(wait_result)
+            return code
+        finally:
+            pending_error = sys.exc_info()[1]
+
+            async def close_owned() -> None:
+                if not self._is_closed:
+                    try:
+                        self._conn.close()
+                        await self._conn.wait_closed()
+                    except (asyncssh.Error, OSError) as exc:
+                        logger.debug("Failed to close SSH connection after wait: %s", exc)
+                    self._is_closed = True
+                if self._probe_task is not None:
+                    await self._instance.stop_network_probe(self._probe_task)
+                    self._probe_task = None
+
             try:
-                self._conn.close()
-                await self._conn.wait_closed()
-            except (asyncssh.Error, OSError) as exc:
-                logger.debug("Failed to close SSH connection after wait: %s", exc)
-            self._is_closed = True
-        if self._probe_task is not None:
-            await self._instance.stop_network_probe(self._probe_task)
-            self._probe_task = None
-        return code
+                await complete_before_cancelling(close_owned())
+            except asyncio.CancelledError:
+                if pending_error is None:
+                    raise
 
     def terminate(self) -> None:
         if self._probe_task is not None:

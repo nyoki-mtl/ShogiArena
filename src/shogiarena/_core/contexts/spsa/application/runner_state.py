@@ -11,6 +11,7 @@ from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
 from shogiarena._core.contexts.spsa.ports.ledger_ports import (
     SpsaLedgerHandlePort,
     SpsaLedgerRuntimePort,
+    SpsaLiveLedgerWriterPort,
     SpsaObservationLedgerPort,
 )
 from shogiarena._core.contexts.spsa.ports.spsa_store_port import (
@@ -46,6 +47,7 @@ class SpsaRunnerState:
     # -- Service references (initialized during runner lifecycle) ----------
     db_service: DatabaseServicePort | None = None
     ledger: SpsaLedgerHandlePort | None = None
+    live_ledger_writer: SpsaLiveLedgerWriterPort | None = None
     ledger_runtime: SpsaLedgerRuntimePort | None = None
     observation_ledger: SpsaObservationLedgerPort | None = None
     has_resumable_terminal: bool = False

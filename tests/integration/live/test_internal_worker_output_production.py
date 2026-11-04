@@ -48,6 +48,7 @@ def test_internal_cli_receives_bestmove_while_stdout_is_blocked(tmp_path, monkey
     entered, finished, read_release = threading.Event(), threading.Event(), threading.Event()
     intervals, go_times, move_times = [], [], []
     reader_timed_out = threading.Event()
+    reader_paused = threading.Event()
     main_thread = threading.get_ident()
     original_write = output._write_and_flush
     collected = []
@@ -60,12 +61,18 @@ def test_internal_cli_receives_bestmove_while_stdout_is_blocked(tmp_path, monkey
         pipe_writer = os.fdopen(write_fd, "w", encoding="utf-8")
 
         def read_pipe():
-            if not read_release.wait(10):
-                # Drain even on regression so an inline write cannot deadlock
-                # the test process forever while its event loop is blocked.
-                reader_timed_out.set()
             with pipe_reader:
-                collected.append(pipe_reader.read())
+                for line in pipe_reader:
+                    collected.append(line)
+                    parsed = json.loads(line)
+                    if parsed.get("type") == "move_progress" and parsed.get("ply", 0) == 1:
+                        # Drain startup events before blocking the intended write.
+                        # Keep a timeout so an inline writer cannot deadlock the test.
+                        reader_paused.set()
+                        if not read_release.wait(10):
+                            reader_timed_out.set()
+                        collected.append(pipe_reader.read())
+                        break
 
         reader = threading.Thread(target=read_pipe)
         reader.start()
@@ -81,10 +88,11 @@ def test_internal_cli_receives_bestmove_while_stdout_is_blocked(tmp_path, monkey
             started = time.perf_counter()
             entered.set()
             if sink_kind == "pipe":
-                # Leading JSON whitespace fills the real OS pipe without
-                # changing any event fields or inserting an extra event.
-                stream.write(" " * (2 * 1024 * 1024))
                 original_write(stream, payload)
+                # The reader pauses after this event. Whitespace fills the pipe
+                # before the next JSON line without changing any event fields.
+                stream.write(" " * (2 * 1024 * 1024))
+                stream.flush()
             elif sink_kind == "write":
                 time.sleep(0.4)
                 original_write(stream, payload)
@@ -108,6 +116,11 @@ def test_internal_cli_receives_bestmove_while_stdout_is_blocked(tmp_path, monkey
             go_count += 1
             if go_count == 2:
                 assert await asyncio.to_thread(entered.wait, 5)
+                if sink_kind == "pipe":
+                    assert await asyncio.to_thread(reader_paused.wait, 5)
+            elif go_count == 1 and sink_kind == "pipe":
+                # Let startup I/O batches arrive before the first move too.
+                await asyncio.sleep(0.2)
         result = await original_send(self, command, state=state)
         if is_go:
             go_times.append(time.perf_counter())
@@ -119,7 +132,7 @@ def test_internal_cli_receives_bestmove_while_stdout_is_blocked(tmp_path, monkey
         result = await original_move(self, board, think_result, engine_name)
         move_times.append(time.perf_counter())
         if sink_kind == "pipe" and len(move_times) == 4:
-            # No pipe reader runs until the entire real game has progressed.
+            # The reader stays paused after the first move until game completion.
             assert entered.is_set() and not finished.is_set()
             read_release.set()
         return result
@@ -137,7 +150,7 @@ def test_internal_cli_receives_bestmove_while_stdout_is_blocked(tmp_path, monkey
             reader.join(5)
             assert not reader.is_alive()
 
-    text = collected[0] if sink_kind == "pipe" else target.getvalue()
+    text = "".join(collected) if sink_kind == "pipe" else target.getvalue()
     rows = [json.loads(line) for line in text.splitlines()]
     assert len(intervals) == 1
     assert not reader_timed_out.is_set()

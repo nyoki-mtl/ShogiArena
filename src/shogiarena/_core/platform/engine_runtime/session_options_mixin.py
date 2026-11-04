@@ -82,14 +82,14 @@ class AsyncUsiEngineOptionsMixin:
         validation: UsiOptionValidationMode | Mapping[str, UsiOptionValidationMode] | None = None,
     ) -> None:
         """Apply additional engine options on top of the static configuration."""
-        if not options:
+        if not options and not clear_hash and after_setoption == "none":
             return
         if after_setoption not in {"none", "isready"}:
             raise ValueError("after_setoption must be one of: none, isready")
         if not self._is_started:
             await self.start()
         applied_count = 0
-        for name, value in options.items():
+        for name, value in (options or {}).items():
             await self._set_option(name, value, validation=validation)
             applied_count += 1
         did_clear_hash = False

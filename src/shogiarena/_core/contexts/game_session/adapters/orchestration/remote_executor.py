@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -50,6 +51,7 @@ from shogiarena._core.platform.engine_provisioning.remote_paths import (
     RemotePathResolver,
     RemotePosixPath,
 )
+from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonScalar
 from shogiarena._core.shared.kernel.serialization import json_serialize
 from shogiarena._core.shared.kernel.service_ports import ArtifactResolutionPort
@@ -73,8 +75,6 @@ class RemoteJobExecutionOutcome:
 class RemoteExecutor:
     """Run a single game on an SSH instance using an immutable deployment."""
 
-    _prepare_tasks: dict[str, asyncio.Future[PreparedRemoteDeployment]] = {}
-
     def __init__(
         self,
         instance: Instance,
@@ -84,6 +84,8 @@ class RemoteExecutor:
     ) -> None:
         if instance.config.type != InstanceType.SSH:
             raise ValueError("RemoteExecutor requires SSH instance")
+        self._prepare_tasks: dict[str, asyncio.Task[PreparedRemoteDeployment]] = {}
+        self._prepare_waiters: dict[str, int] = {}
         self.instance = instance
         self.worker_bundle = worker_bundle
         self._artifact_resolver = artifact_resolver
@@ -147,41 +149,40 @@ class RemoteExecutor:
         key = f"{endpoint_identity}::{remote_root}::{self.cache_signature()}"
         if self._deployment is not None and self._deployment_cache_key == key:
             return self._deployment
-        inflight = RemoteExecutor._prepare_tasks.get(key)
-        if inflight is not None:
-            # A cancelled waiter must not cancel the shared preparation result.
+        inflight = self._prepare_tasks.get(key)
+        if inflight is None:
+
+            async def prepare() -> PreparedRemoteDeployment:
+                absolute_root = await self.path_resolver.expand(RemotePosixPath(remote_root))
+                return await self.deployment_manager.prepare(remote_root=absolute_root, bundle=self.worker_bundle)
+
+            inflight = asyncio.create_task(prepare())
+            self._prepare_tasks[key] = inflight
+        self._prepare_waiters[key] = self._prepare_waiters.get(key, 0) + 1
+        try:
             prepared = await asyncio.shield(inflight)
             self._deployment = prepared
             self._deployment_cache_key = key
             return prepared
-
-        loop = asyncio.get_running_loop()
-        inflight = loop.create_future()
-        RemoteExecutor._prepare_tasks[key] = inflight
-        try:
-            absolute_root = await self.path_resolver.expand(RemotePosixPath(remote_root))
-            prepared = await self.deployment_manager.prepare(
-                remote_root=absolute_root,
-                bundle=self.worker_bundle,
-            )
-            self._deployment = prepared
-            self._deployment_cache_key = key
-            if not inflight.done():
-                inflight.set_result(prepared)
-            return prepared
-        except asyncio.CancelledError:
-            if not inflight.done():
-                inflight.cancel()
-            raise
-        except BaseException as exc:
-            if not inflight.done():
-                inflight.set_exception(exc)
-                # Mark the exception as observed in case no other waiter is attached.
-                inflight.exception()
-            raise
         finally:
-            if RemoteExecutor._prepare_tasks.get(key) is inflight:
-                RemoteExecutor._prepare_tasks.pop(key, None)
+            remaining = self._prepare_waiters[key] - 1
+            if remaining:
+                self._prepare_waiters[key] = remaining
+            else:
+                self._prepare_waiters.pop(key, None)
+                # New callers must not attach to a retiring cancelled preparation.
+                if self._prepare_tasks.get(key) is inflight:
+                    self._prepare_tasks.pop(key, None)
+                try:
+                    if not inflight.done():
+                        inflight.cancel()
+                        try:
+                            await complete_before_cancelling(inflight)
+                        except asyncio.CancelledError:
+                            pass
+                finally:
+                    if self._prepare_tasks.get(key) is inflight:
+                        self._prepare_tasks.pop(key, None)
 
     async def provision_game_engine_artifacts(
         self,
@@ -248,7 +249,7 @@ class RemoteExecutor:
         logical_job_key: str,
         timeout: float | None = None,
         on_event: Callable[[JsonObject], None] | None = None,
-        on_assignment: Callable[[JsonObject], None] | None = None,
+        on_assignment: Callable[[JsonObject], Awaitable[None] | None] | None = None,
     ) -> RemoteJobExecutionOutcome:
         """Execute a remote pair run and return the collected JSON events."""
         coordinator_started_at = datetime.now(UTC)
@@ -288,7 +289,9 @@ class RemoteExecutor:
             ),
         }
         if on_assignment is not None:
-            on_assignment(assignment)
+            assignment_result = on_assignment(assignment)
+            if inspect.isawaitable(assignment_result):
+                await assignment_result
         job_root = instance_root / "jobs" / identity.job_id
         secret_refs = _engine_secret_references(sealed_spec)
         missing_refs = sorted(secret_ref for secret_ref in secret_refs if secret_ref not in os.environ)
@@ -358,12 +361,7 @@ class RemoteExecutor:
             wait_timeout = timeout
             if wait_timeout is None:
                 wait_timeout = (sealed_spec.time.startup_grace_ms + sealed_spec.time.outer_deadline_ms + 15_000) / 1000
-            try:
-                status = await client.wait_for_terminal(job_root=job_root, timeout=wait_timeout)
-            except (asyncssh.Error, OSError):
-                await self.transport.close()
-                await self.transport.connect()
-                status = await client.wait_for_terminal(job_root=job_root, timeout=wait_timeout)
+            status = await self._wait_for_terminal_with_recovery(client, job_root=job_root, timeout=wait_timeout)
             if status.terminal_kind != "completed":
                 lease_release_safe = await _cleanup_and_acknowledge_observed_terminal(
                     client,
@@ -478,12 +476,28 @@ class RemoteExecutor:
             error,
         )
 
+    async def _wait_for_terminal_with_recovery(
+        self, client: RemoteJobClient, *, job_root: RemotePosixPath, timeout: float
+    ) -> RemoteJobStatus:
+        if timeout <= 0:
+            raise ValueError("remote job wait timeout must be positive")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+
+        async def wait() -> RemoteJobStatus:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError(f"remote job status did not become terminal before deadline: {job_root}")
+            return await client.wait_for_terminal(job_root=job_root, timeout=remaining)
+
+        return await self._retry_after_reconnect(wait)
+
     async def _retry_after_reconnect(self, operation: Callable[[], Awaitable[ResultT]]) -> ResultT:
+        generation = self.transport.generation
         try:
             return await operation()
         except (asyncssh.Error, OSError):
-            await self.transport.close()
-            await self.transport.connect()
+            await self.transport.reconnect(failed_generation=generation)
             return await operation()
 
     async def _start_with_recovery(
@@ -493,11 +507,11 @@ class RemoteExecutor:
         job_root: RemotePosixPath,
         start: Callable[[], Awaitable[RemoteJobStatus]],
     ) -> RemoteJobStatus:
+        generation = self.transport.generation
         try:
             return await start()
         except (asyncssh.Error, OSError):
-            await self.transport.close()
-            await self.transport.connect()
+            await self.transport.reconnect(failed_generation=generation)
             status = await client.query_status(job_root)
             if status.state == RemoteJobState.PREPARED:
                 return await start()

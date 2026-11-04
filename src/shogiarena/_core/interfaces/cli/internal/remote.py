@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import signal
+import sys
 import traceback
 from json import JSONDecodeError
 from pathlib import Path
@@ -27,6 +29,8 @@ from shogiarena._core.shared.kernel.async_completion import complete_before_canc
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
 from .output import write_line
+
+logger = logging.getLogger(__name__)
 
 _STREAM_END: tuple[int, int, None] = (-1, -1, None)
 
@@ -135,7 +139,7 @@ async def _finish_execution(
             worker.request_shutdown()
             payload = _json_error("cancelled by signal")
             rc = 1
-        except (OSError, RuntimeError, TimeoutError, ValueError, TypeError) as exc:
+        except Exception as exc:  # noqa: BLE001 - every execution failure needs a wire envelope
             worker.request_shutdown()
             payload = _json_error(
                 f"remote game failed: {type(exc).__name__}: {exc}".rstrip(),
@@ -147,6 +151,7 @@ async def _finish_execution(
         await streamer
         return rc
     finally:
+        primary_error = sys.exc_info()[1]
         try:
             if not execution.done():
                 _stop_execution(worker, execution)
@@ -156,10 +161,18 @@ async def _finish_execution(
                     pass
             elif not execution.cancelled():
                 execution.exception()
+        except Exception:
+            if primary_error is None:
+                raise
+            logger.warning("Worker cleanup failed while preserving the primary output failure", exc_info=True)
         finally:
             if not streamer.done():
                 queue.put_nowait(_STREAM_END)
-            await streamer
+                await streamer
+            elif not streamer.cancelled():
+                # A failed output task was already awaited in the body. Retrieving
+                # it here avoids replacing execution cleanup with the same failure.
+                streamer.exception()
 
 
 async def run_game_execution_spec(spec: GameExecutionSpec, *, execution_root: Path) -> int:

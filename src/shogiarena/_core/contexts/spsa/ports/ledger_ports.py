@@ -26,6 +26,18 @@ class SpsaLedgerHandlePort(Protocol):
     def close(self) -> None: ...
 
 
+class SpsaLiveLedgerWriterPort(Protocol):
+    """対局中のledger更新を直列化し、完了まで所有する。"""
+
+    async def insert_committed(self, observation: LedgerGameObservation) -> bool: ...
+
+    async def record_variant_quarantine(
+        self, *, update_idx: int, pair_id: str, variant_id: str, failure_classification: str
+    ) -> None: ...
+
+    async def close(self) -> None: ...
+
+
 class SpsaObservationLedgerPort(Protocol):
     """Observation reconciliation operations used by the runner。"""
 

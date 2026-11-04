@@ -56,6 +56,7 @@ from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry, SpsaAl
 from shogiarena._core.contexts.spsa.ports.dashboard_factory import DashboardSpsaServicesFactory
 from shogiarena._core.contexts.spsa.ports.ledger_ports import (
     SpsaLedgerRuntimePort,
+    SpsaLiveLedgerWriterPort,
     SpsaObservationLedgerPort,
 )
 from shogiarena._core.contexts.spsa.ports.spsa_store_port import (
@@ -68,6 +69,7 @@ from shogiarena._core.contexts.spsa.ports.spsa_store_port import (
 )
 from shogiarena._core.platform.engine_runtime.usi_config import UsiEngineConfig
 from shogiarena._core.platform.settings import project_dirs
+from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
 from shogiarena._core.shared.kernel.atomic_json import write_json_atomic
 from shogiarena._core.shared.kernel.database_types import SpsaGameDatabaseRecord
 from shogiarena._core.shared.kernel.exceptions import ContractParseError
@@ -478,6 +480,7 @@ async def persist_spsa_game_completion(
     db_service: DatabaseServicePort,
     event: GameCompletionEvent[GameCompletionPayload],
     observation_ledger: SpsaObservationLedgerPort | None = None,
+    live_ledger_writer: SpsaLiveLedgerWriterPort | None = None,
 ) -> bool:
     game_info = event.game_info
     game_info.update_metadata({"game_type": "spsa"}, strict=True)
@@ -501,36 +504,28 @@ async def persist_spsa_game_completion(
     participation = _extract_participation(game_info)
     if not participation:
         raise ValueError("SPSA terminal game is missing required participation identity")
-    write_task = asyncio.create_task(
-        asyncio.to_thread(db_service.append_record_with_participation, game_info, participation=participation)
-    )
-    was_cancelled = False
-    while True:
-        try:
-            game_db_id = await asyncio.shield(write_task)
-            break
-        except asyncio.CancelledError:
-            if write_task.cancelled():
-                raise
-            # A thread cannot be cancelled. Finish DB -> ledger while the caller
-            # still holds completion_lock, then propagate the stop request.
-            was_cancelled = True
-    if observation_ledger is not None:
-        observation_ledger.insert_committed(
-            build_ledger_observation(
-                SpsaGameDatabaseRecord(
-                    game_db_id=game_db_id,
-                    game_id=str(game_info.game_name),
-                    result=result,
-                    participation_extras=tuple(
-                        to_json_object(record.extra) for record in participation if record.extra is not None
-                    ),
-                )
+
+    async def persist() -> bool:
+        game_db_id = await asyncio.to_thread(
+            db_service.append_record_with_participation, game_info, participation=participation
+        )
+        observation = build_ledger_observation(
+            SpsaGameDatabaseRecord(
+                game_db_id=game_db_id,
+                game_id=str(game_info.game_name),
+                result=result,
+                participation_extras=tuple(
+                    to_json_object(record.extra) for record in participation if record.extra is not None
+                ),
             )
         )
-    if was_cancelled:
-        raise asyncio.CancelledError
-    return True
+        if live_ledger_writer is not None:
+            await live_ledger_writer.insert_committed(observation)
+        elif observation_ledger is not None:
+            observation_ledger.insert_committed(observation)
+        return True
+
+    return await complete_before_cancelling(persist())
 
 
 def build_spsa_final_result(
@@ -651,7 +646,7 @@ async def build_spsa_dashboard_summary_payload(
     summary_payload.setdefault("mode", "spsa")
     summary_payload["timestamp"] = datetime.now(tz=UTC).isoformat()
     summary_payload["engines_meta"] = engine_metadata
-    summary_payload["preflight_status"] = load_fixed_option_preflight_status(run_dir)
+    summary_payload["preflight_status"] = await asyncio.to_thread(load_fixed_option_preflight_status, run_dir)
     return summary_payload
 
 
@@ -665,6 +660,7 @@ def create_spsa_orchestrator(
     summary_updater: SummaryUpdateCallback | None,
     api_server: DashboardServerPort | None,
     ledger_runtime: SpsaLedgerRuntimePort,
+    live_ledger_writer: SpsaLiveLedgerWriterPort | None = None,
     derived_json_scheduler: SpsaDerivedJsonScheduler | None = None,
     remote_worker_bundle: WorkerBundleBuildResult | None = None,
 ) -> SpsaOrchestrator:
@@ -677,6 +673,7 @@ def create_spsa_orchestrator(
         summary_updater=summary_updater,
         api_server=api_server,
         ledger_runtime=ledger_runtime,
+        live_ledger_writer=live_ledger_writer,
         derived_json_scheduler=derived_json_scheduler,
         remote_worker_bundle=remote_worker_bundle,
     )

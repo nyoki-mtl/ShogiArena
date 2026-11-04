@@ -319,15 +319,8 @@ class SpsaAPI:
     async def get_game(self, request: web.Request) -> web.Response:
         game_id = request.match_info["game_id"]
 
-        record = self._game_query.load_game_record(
-            self._db_path,
-            game_name=game_id,
-            immutable=self._read_only,
-        )
-        if record is not None:
-            game_data = build_game_detail_payload(record=record, game_id=game_id, logger=logger)
-
-            event_meta = self._update_query_service.get_game_event_snapshot(game_id) or {}
+        game_data, event_meta = await asyncio.to_thread(self._load_game_detail_payload, game_id)
+        if game_data is not None:
             phase_value = event_meta.get("phase")
             update_idx_value = event_meta.get("update_idx")
             resolved_variant = resolve_variant_id(update_idx_value)
@@ -344,6 +337,18 @@ class SpsaAPI:
             return web.json_response(game_data)
 
         return json_error_response("Game not found", status=404, code="game_not_found")
+
+    def _load_game_detail_payload(self, game_id: str) -> tuple[JsonObject | None, JsonObject]:
+        record = self._game_query.load_game_record(
+            self._db_path,
+            game_name=game_id,
+            immutable=self._read_only,
+        )
+        if record is None:
+            return None, {}
+        game_data = build_game_detail_payload(record=record, game_id=game_id, logger=logger)
+        event_meta = self._update_query_service.get_game_event_snapshot(game_id) or {}
+        return game_data, event_meta
 
     async def get_ltc_summary(self, _request: web.Request) -> web.Response:
         summary = await asyncio.to_thread(self._ltc_service.compute_ltc_summary)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from datetime import UTC
 from pathlib import Path
@@ -29,16 +30,9 @@ def _ensure_spsa_dir(run_dir: Path) -> Path:
     return spsa_dir
 
 
-def append_event(run_dir: Path, session_uuid: str, payload: dict[str, JsonValue]) -> None:
-    data: JsonObject = {str(key): value for key, value in payload.items()}
-    data.setdefault("projection_schema", "shogiarena.spsa.runtime-compat-export.v1")
-    data.setdefault("projection_source", "runtime-cache; ledger remains authoritative")
-    data.setdefault("session_uuid", session_uuid)
-    data.setdefault("ts", int(time.time() * 1000))
-
-    events_path = _ensure_spsa_dir(run_dir) / "events.jsonl"
-    with open(events_path, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(data, ensure_ascii=False) + "\n")
+def log_runtime_event(run_dir: Path, session_uuid: str, payload: dict[str, JsonValue]) -> None:
+    """Log transient runtime diagnostics; events.jsonl is owned by ledger projection."""
+    logging.getLogger(__name__).debug("SPSA runtime event run=%s session=%s payload=%s", run_dir, session_uuid, payload)
 
 
 def _load_spsa_index(index_path: Path) -> dict[str, JsonValue]:
@@ -175,39 +169,5 @@ def record_ltc_result(
     with open(results_path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(out_record, ensure_ascii=False) + "\n")
 
-    index_path = _ensure_spsa_dir(run_dir) / "index.json"
-    index_data = _load_spsa_index(index_path)
 
-    metadata_raw = index_data.get("metadata")
-    metadata: JsonObject = {}
-    if isinstance(metadata_raw, dict):
-        normalized_metadata = json_serialize(metadata_raw)
-        if isinstance(normalized_metadata, dict):
-            metadata = {str(key): value for key, value in normalized_metadata.items()}
-    index_data["metadata"] = metadata
-    metadata["projection_schema"] = "shogiarena.spsa.runtime-compat-export.v1"
-    metadata["projection_source"] = "runtime-cache; ledger remains authoritative"
-
-    metadata["ltc_regression"] = {
-        "last_update_idx": out_record.get("update_idx"),
-        "status": out_record.get("status"),
-        "winrate": out_record.get("winrate"),
-        "elo": out_record.get("elo"),
-        "pairs_played": out_record.get("pairs_played"),
-        "tuned_wins": out_record.get("tuned_wins"),
-        "baseline_wins": out_record.get("baseline_wins"),
-        "draws": out_record.get("draws"),
-        "total_games": out_record.get("total_games"),
-        "timestamp": out_record.get("ts"),
-        "baseline_update_idx": out_record.get("baseline_update_idx"),
-        "baseline_variant_token": out_record.get("baseline_variant_token"),
-        "tuned_variant_token": out_record.get("tuned_variant_token"),
-        "is_accepted": out_record.get("is_accepted"),
-        "sprt": out_record.get("sprt"),
-        "sprt_decision": out_record.get("sprt_decision"),
-    }
-
-    write_json_atomic(index_path, index_data)
-
-
-__all__ = ["append_event", "record_ltc_result", "update_index_json"]
+__all__ = ["log_runtime_event", "record_ltc_result", "update_index_json"]

@@ -89,53 +89,57 @@ def build_game_detail_payload(*, record: Any, game_id: str, logger: logging.Logg
     initial_sfen_raw = record.init_position_sfen
     initial_sfen = initial_sfen_raw if initial_sfen_raw != "startpos" else None
     board = Board()
-    if initial_sfen:
-        board.set_sfen(initial_sfen)
-    moves_usi: list[str] = []
-    moves_ki2: list[str] = []
-    eval_values: list[int | None] = []
-    nodes_values: list[int | None] = []
-    depth_values: list[int | None] = []
-    seldepth_values: list[int | None] = []
-    move_times_ms: list[int | None] = []
-    wall_times_ms: list[int | None] = []
-    engine_wall_times_ms: list[int | None] = []
-    latency_deltas_ms: list[int | None] = []
-    for move_entry in record.moves:
-        mv = move_entry.move
-        move_time = move_entry.time_ms
-        engine_info = move_entry.engine_info
-        move_text = mv.to_usi()
-        if not board.is_legal_move(mv):
-            logger.error("Illegal move: %s", move_text)
-            break
-        moves_ki2.append(normalize_ki2_move_text(board.move32_from_move(mv).to_ki2(board) or mv.to_usi()))
-        moves_usi.append(move_text)
-        board.apply_move(mv)
+    try:
+        if initial_sfen:
+            board.set_sfen(initial_sfen)
+        moves_usi: list[str] = []
+        moves_ki2: list[str] = []
+        eval_values: list[int | None] = []
+        nodes_values: list[int | None] = []
+        depth_values: list[int | None] = []
+        seldepth_values: list[int | None] = []
+        move_times_ms: list[int | None] = []
+        wall_times_ms: list[int | None] = []
+        engine_wall_times_ms: list[int | None] = []
+        latency_deltas_ms: list[int | None] = []
+        for move_entry in record.moves:
+            mv = move_entry.move
+            move_time = move_entry.time_ms
+            engine_info = move_entry.engine_info
+            move_text = mv.to_usi()
+            if not board.is_legal_move(mv):
+                logger.error("Illegal move: %s", move_text)
+                break
+            moves_ki2.append(normalize_ki2_move_text(board.move32_from_move(mv).to_ki2(board) or mv.to_usi()))
+            moves_usi.append(move_text)
+            board.apply_move(mv)
 
-        eval_cp = engine_info.eval if engine_info is not None else None
-        nodes = engine_info.nodes if engine_info is not None else None
-        depth = engine_info.depth if engine_info is not None else None
-        seldepth = engine_info.seldepth if engine_info is not None else None
-        wall_time = engine_info.wall_time_ms if engine_info is not None else None
-        engine_wall_time = None
-        if engine_info is not None:
-            engine_wall_time = engine_info.extras.get("engine_wall_time_ms")
-        latency_delta = engine_info.latency_delta_ms if engine_info is not None else None
-        move_time_value = strict_int(move_time)
-        eval_value = strict_int(eval_cp)
-        nodes_value = strict_int(nodes)
-        depth_value = strict_int(depth)
-        seldepth_values.append(strict_int(seldepth))
-        wall_time_value = strict_int(wall_time)
-        engine_wall_time_value = strict_int(engine_wall_time)
-        latency_deltas_ms.append(strict_int(latency_delta))
-        move_times_ms.append(move_time_value)
-        eval_values.append(eval_value)
-        nodes_values.append(nodes_value)
-        depth_values.append(depth_value)
-        wall_times_ms.append(wall_time_value)
-        engine_wall_times_ms.append(engine_wall_time_value)
+            eval_cp = engine_info.eval if engine_info is not None else None
+            nodes = engine_info.nodes if engine_info is not None else None
+            depth = engine_info.depth if engine_info is not None else None
+            seldepth = engine_info.seldepth if engine_info is not None else None
+            wall_time = engine_info.wall_time_ms if engine_info is not None else None
+            engine_wall_time = None
+            if engine_info is not None:
+                engine_wall_time = engine_info.extras.get("engine_wall_time_ms")
+            latency_delta = engine_info.latency_delta_ms if engine_info is not None else None
+            move_time_value = strict_int(move_time)
+            eval_value = strict_int(eval_cp)
+            nodes_value = strict_int(nodes)
+            depth_value = strict_int(depth)
+            seldepth_values.append(strict_int(seldepth))
+            wall_time_value = strict_int(wall_time)
+            engine_wall_time_value = strict_int(engine_wall_time)
+            latency_deltas_ms.append(strict_int(latency_delta))
+            move_times_ms.append(move_time_value)
+            eval_values.append(eval_value)
+            nodes_values.append(nodes_value)
+            depth_values.append(depth_value)
+            wall_times_ms.append(wall_time_value)
+            engine_wall_times_ms.append(engine_wall_time_value)
+    finally:
+        # Tracebacks may be collected on another thread; release unsendable Board refs here.
+        del board
 
     if not any(value is not None for value in move_times_ms):
         move_times_ms = []

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -124,7 +125,7 @@ async def test_local_and_remote_production_builders_seal_identical_linux_spec(
         **common,
     )
     _executor, _root, remote_payload = await prepare_remote_game_spec(
-        SimpleNamespace(run_dir=tmp_path / "run"),
+        SimpleNamespace(run_dir=tmp_path / "run", _game_execution_manifest_lock=asyncio.Lock()),
         remote_instance=SimpleNamespace(),
         black_option_layers=layers,
         white_option_layers=layers,

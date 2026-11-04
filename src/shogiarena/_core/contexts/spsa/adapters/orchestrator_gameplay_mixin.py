@@ -192,12 +192,21 @@ class SpsaOrchestratorGameplayMixin:
                 # sides cannot both pass it.
                 if not is_quarantine_recorded:
                     is_quarantine_recorded = True
-                    self._ledger_runtime.record_variant_quarantine(
-                        update_idx=update_idx,
-                        pair_id=pair_id,
-                        variant_id=variant_token(update_idx) + phase_symbol(phase),
-                        failure_classification=str(failure),
-                    )
+                    writer = getattr(self, "_live_ledger_writer", None)
+                    if writer is not None:
+                        await writer.record_variant_quarantine(
+                            update_idx=update_idx,
+                            pair_id=pair_id,
+                            variant_id=variant_token(update_idx) + phase_symbol(phase),
+                            failure_classification=str(failure),
+                        )
+                    else:
+                        self._ledger_runtime.record_variant_quarantine(
+                            update_idx=update_idx,
+                            pair_id=pair_id,
+                            variant_id=variant_token(update_idx) + phase_symbol(phase),
+                            failure_classification=str(failure),
+                        )
                 if failure is first_error:
                     raise failure from None
                 raise failure from first_error

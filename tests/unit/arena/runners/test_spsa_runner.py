@@ -86,6 +86,7 @@ async def test_spsa_runner_does_not_persist_error_result_when_stop_requested() -
         db_service=db_service,
         completion_lock=asyncio.Lock(),
         observation_ledger=None,
+        live_ledger_writer=None,
     )
     runner = types.SimpleNamespace(
         _state=state,

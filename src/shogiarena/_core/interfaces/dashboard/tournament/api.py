@@ -150,7 +150,9 @@ class TournamentAPI:
         limit = parsed_query.limit
         offset = parsed_query.offset
 
-        raw_payload = self._game_query.build_match_history_raw_payload(self._db_path, limit=limit, offset=offset)
+        raw_payload = await asyncio.to_thread(
+            self._game_query.build_match_history_raw_payload, self._db_path, limit=limit, offset=offset
+        )
         try:
             payload = parse_tournament_payload(
                 "match_history",
@@ -169,9 +171,8 @@ class TournamentAPI:
     async def get_game(self, request: web.Request) -> web.Response:
         game_id = request.match_info["game_id"]
 
-        record = self._game_query.load_game_record(self._db_path, game_name=game_id)
-        if record is not None:
-            raw_payload = build_game_detail_payload(record=record, game_id=game_id, logger=logger)
+        raw_payload = await asyncio.to_thread(self._load_game_detail_payload, game_id)
+        if raw_payload is not None:
             try:
                 payload = parse_tournament_payload(
                     "game",
@@ -186,6 +187,12 @@ class TournamentAPI:
             return web.json_response(payload)
 
         return json_error_response("Game not found", status=404, code="game_not_found")
+
+    def _load_game_detail_payload(self, game_id: str) -> JsonObject | None:
+        record = self._game_query.load_game_record(self._db_path, game_name=game_id)
+        if record is None:
+            return None
+        return build_game_detail_payload(record=record, game_id=game_id, logger=logger)
 
     async def get_standings(self, _request: web.Request) -> web.Response:
         try:

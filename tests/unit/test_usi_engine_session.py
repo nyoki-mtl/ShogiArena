@@ -268,6 +268,71 @@ async def test_engine_recognises_option_lines_for_custom_spsa_params(tmp_path) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("options", [{}, None])
+@pytest.mark.parametrize(
+    ("clear_hash", "after_setoption", "expected"),
+    [
+        (True, "isready", ["setoption name Clear Hash", "isready"]),
+        (True, "none", ["setoption name Clear Hash"]),
+        (False, "isready", ["isready"]),
+        (False, "none", []),
+    ],
+)
+async def test_empty_runtime_options_honor_reset_policy(
+    tmp_path, options, clear_hash, after_setoption, expected
+) -> None:
+    config = UsiEngineConfig.from_mapping({"name": "Dummy", "engine_path": str(tmp_path / "engine")})
+    bridge = DummyBridge()
+
+    async def handle_usi(command: str) -> None:
+        await bridge.enqueue("option name Clear Hash type button")
+        await bridge.enqueue("usiok")
+
+    bridge.set_handler("usi", handle_usi)
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        bridge.commands.clear()
+        await eng.apply_engine_options(options, clear_hash=clear_hash, after_setoption=after_setoption)
+        assert bridge.commands == expected
+
+
+@pytest.mark.asyncio
+async def test_empty_runtime_options_without_reset_does_not_start_engine(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping({"name": "Dummy", "engine_path": str(tmp_path / "engine")})
+    bridge = DummyBridge()
+    eng = AsyncUsiEngine(config=config, bridge=bridge)
+
+    await eng.apply_engine_options({}, clear_hash=False, after_setoption="none")
+
+    assert bridge.commands == []
+    assert not bridge.is_running()
+
+
+@pytest.mark.asyncio
+async def test_runtime_options_start_before_setoption_clear_hash_and_isready(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping({"name": "Dummy", "engine_path": str(tmp_path / "engine")})
+    bridge = DummyBridge()
+
+    async def handle_usi(command: str) -> None:
+        await bridge.enqueue("option name Threads type spin default 1 min 1 max 2")
+        await bridge.enqueue("option name Clear Hash type button")
+        await bridge.enqueue("usiok")
+
+    bridge.set_handler("usi", handle_usi)
+    eng = AsyncUsiEngine(config=config, bridge=bridge)
+    try:
+        await eng.apply_engine_options({"Threads": 2})
+        assert bridge.commands == [
+            "usi",
+            "isready",
+            "setoption name Threads value 2",
+            "setoption name Clear Hash",
+            "isready",
+        ]
+    finally:
+        await eng.close()
+
+
+@pytest.mark.asyncio
 async def test_engine_option_validation_can_allow_unlisted_combo_value(tmp_path) -> None:
     config = UsiEngineConfig.from_mapping(
         {

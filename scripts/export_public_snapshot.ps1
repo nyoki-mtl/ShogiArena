@@ -229,7 +229,7 @@ if ($NotesFile -and -not (Test-Path -LiteralPath $NotesFile)) {
 
 # release-notes/ は除外対象なので、overlay と削除の過程で作業ツリーから消える。
 # コミット直前に読もうとすると必ず失敗するため、ここで内容を確保しておく。
-$releaseNotesLines = if ($NotesFile) { @(Get-Content -LiteralPath $NotesFile) } else { @() }
+$releaseNotesLines = if ($NotesFile) { @([System.IO.File]::ReadAllLines((Resolve-Path -LiteralPath $NotesFile).Path, [System.Text.Encoding]::UTF8)) } else { @() }
 
 $exportBranch = "export-public"
 $publicGitAuthorName = if ($env:PUBLIC_GIT_AUTHOR_NAME) { $env:PUBLIC_GIT_AUTHOR_NAME } else { "nyoki-mtl" }

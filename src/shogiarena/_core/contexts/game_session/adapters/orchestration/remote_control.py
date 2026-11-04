@@ -11,6 +11,7 @@ from shogiarena._core.contexts.game_session.adapters.orchestration.config_builde
     UsiOptionLayers,
 )
 from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution_manifest import (
+    complete_game_manifest_io,
     persist_game_execution_manifest,
 )
 from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution_spec_resolver import (
@@ -290,16 +291,19 @@ async def prepare_remote_game_spec(
             ),
         )
     )
-    persist_game_execution_manifest(
-        run_dir=Path(orchestrator.run_dir),
-        game_id=game_id,
-        payload={
-            "game_execution_spec": spec.model_dump(mode="json"),
-            "engine_provenance": [
-                black_resolved.provenance.to_payload(),
-                white_resolved.provenance.to_payload(),
-            ],
-        },
+    await complete_game_manifest_io(
+        orchestrator._game_execution_manifest_lock,
+        lambda: persist_game_execution_manifest(
+            run_dir=Path(orchestrator.run_dir),
+            game_id=game_id,
+            payload={
+                "game_execution_spec": spec.model_dump(mode="json"),
+                "engine_provenance": [
+                    black_resolved.provenance.to_payload(),
+                    white_resolved.provenance.to_payload(),
+                ],
+            },
+        ),
     )
     return executor, remote_root, spec.model_dump(mode="json")
 

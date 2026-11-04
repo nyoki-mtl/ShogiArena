@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import tarfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -64,6 +66,98 @@ class _CasTransport:
         if command.startswith("test ! -L") or command.startswith("test -d"):
             return (0 if self.has_object else 1), "", ""
         return 0, "", ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_site", ["hash", "mkdir", "upload"])
+@pytest.mark.parametrize("cancelled", [False, True], ids=["error", "cancel"])
+async def test_directory_archive_is_removed_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_site: str, cancelled: bool
+) -> None:
+    from shogiarena._core.platform.engine_provisioning import remote_artifact_store
+
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "data").write_bytes(b"data")
+    reference = _directory_ref(tree)
+    archive = _build_deterministic_tar(tree)
+    failure = asyncio.CancelledError("cancel upload") if cancelled else OSError("upload failed")
+
+    def fail_hash(_path: Path) -> str:
+        raise failure
+
+    class Transport(_CasTransport):
+        async def mkdir(self, path: str, *, is_existing_ok: bool = True) -> None:
+            if failure_site == "mkdir":
+                raise failure
+
+        async def put_file(self, local: Path, remote: str) -> None:
+            if failure_site == "upload":
+                raise failure
+
+    monkeypatch.setattr(remote_artifact_store, "_build_deterministic_tar", lambda _path: archive)
+    if failure_site == "hash":
+        monkeypatch.setattr(remote_artifact_store, "sha256_file", fail_hash)
+    store = RemoteArtifactStore(Transport("ssh://test"))  # type: ignore[arg-type]
+    with pytest.raises(type(failure)) as caught:
+        await store._upload_directory(tree, RemotePosixPath("/srv/cas/object"), reference)
+    if not cancelled:
+        assert caught.value is failure
+    assert not archive.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked_site", ["build", "hash"])
+async def test_directory_upload_drains_file_worker_before_cancelled_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked_site: str
+) -> None:
+    from shogiarena._core.platform.engine_provisioning import remote_artifact_store
+
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "data").write_bytes(b"data")
+    reference = _directory_ref(tree)
+    archive = _build_deterministic_tar(tree)
+    started = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def block_with_open_archive() -> None:
+        with archive.open("rb"):
+            loop.call_soon_threadsafe(started.set)
+            if not release.wait(timeout=10):
+                raise TimeoutError("file worker was not released")
+
+    def build(_path: Path) -> Path:
+        if blocked_site == "build":
+            block_with_open_archive()
+        return archive
+
+    def hash_archive(path: Path) -> str:
+        if blocked_site == "hash":
+            block_with_open_archive()
+        return sha256_file(path)
+
+    monkeypatch.setattr(remote_artifact_store, "_build_deterministic_tar", build)
+    monkeypatch.setattr(remote_artifact_store, "sha256_file", hash_archive)
+    store = RemoteArtifactStore(_CasTransport("ssh://test"))  # type: ignore[arg-type]
+    task = asyncio.create_task(store._upload_directory(tree, RemotePosixPath("/srv/cas/object"), reference))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        task.cancel("stop upload")
+        await asyncio.sleep(0)
+        task.cancel("stop again")
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert archive.exists()
+        release.set()
+        with pytest.raises(asyncio.CancelledError, match="stop upload"):
+            await task
+        assert not archive.exists()
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        archive.unlink(missing_ok=True)
 
 
 def _file_ref(path: Path, *, digest: str | None = None) -> PlatformArtifactRef:

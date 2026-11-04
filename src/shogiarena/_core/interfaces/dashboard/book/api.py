@@ -7,6 +7,7 @@ engine 別 / out-of-book ply 分布）を提供する。out-of-book 算出はク
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -45,7 +46,8 @@ class BookAPI:
         # "full"=大規模 book も validate_full して算出（高コスト opt-in）。
         compute_oob, allow_full = self._parse_out_of_book(request)
         try:
-            payload = build_book_tab_payload(
+            payload = await asyncio.to_thread(
+                build_book_tab_payload,
                 self._game_query,
                 self._db_path,
                 compute_out_of_book_plies=compute_oob,
@@ -59,7 +61,8 @@ class BookAPI:
     async def get_pairs(self, request: web.Request) -> web.StreamResponse:
         compute_oob, allow_full = self._parse_out_of_book(request)
         try:
-            payload = build_book_pair_payload(
+            payload = await asyncio.to_thread(
+                build_book_pair_payload,
                 self._game_query,
                 self._db_path,
                 compute_out_of_book_plies=compute_oob,

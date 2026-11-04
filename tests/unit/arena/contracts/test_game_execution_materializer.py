@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import AsyncMock
+
+import pytest
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution import (
     _engine_pool_contract_digest,
 )
 from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution_materializer import (
+    apply_engine_variant,
     materialize_engine_config,
     materialize_opening_sfen,
     resolve_effective_handshake_timeout,
@@ -152,3 +156,20 @@ def test_effective_handshake_timeout_precedence_and_common_default() -> None:
     assert resolve_effective_handshake_timeout(12.0, 30.0) == 12.0
     assert resolve_effective_handshake_timeout(None, 30.0) == 30.0
     assert resolve_effective_handshake_timeout(None, None) == 120.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("after_setoption", ["none", "isready"])
+async def test_empty_variant_honors_explicit_readiness_policy(after_setoption: str) -> None:
+    engine = AsyncMock()
+    base = _engine()
+    spec = base.model_copy(update={"usi": base.usi.model_copy(update={"after_variant_setoption": after_setoption})})
+
+    await apply_engine_variant(engine, spec)
+
+    if after_setoption == "none":
+        engine.apply_engine_options.assert_not_awaited()
+    else:
+        engine.apply_engine_options.assert_awaited_once_with(
+            {}, clear_hash=False, after_setoption="isready", validation="strict"
+        )

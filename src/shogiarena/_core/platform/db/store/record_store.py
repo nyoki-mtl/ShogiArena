@@ -348,49 +348,53 @@ class DBRecordStore:
 
         move_records: list[rsshogi.record.MoveEntry] = []
         board = Board()
-        board.set_sfen(game.initial_position_sfen)
-        end_time_ms: int | None = game.end_time_ms
-        end_comment: str | None = game.end_comment
-        for (game_move,) in game_moves:
-            if game_move.next_move == int(Move.MOVE_END):
-                end_time_ms = game_move.next_move_time_ms
-                end_comment = game_move.next_move_comment
-                break
-            try:
-                mv = Move(game_move.next_move)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"Invalid move in db record: {game_move.next_move}") from exc
-            try:
-                pushed_move = board.push_move(mv).to_move()
-            except ValueError as exc:
-                raise ValueError(f"Illegal move in db record: {game_move.next_move}") from exc
-            wall_time = game_move.wall_time_ms
-            engine_wall_time = game_move.engine_wall_time_ms
-            latency_delta = game_move.latency_delta_ms
-            extras: dict[str, str | int | float] = {}
-            if engine_wall_time is not None:
-                extras["engine_wall_time_ms"] = int(engine_wall_time)
-            if game_move.move_source is not None:
-                extras["move_source"] = game_move.move_source
-            if game_move.book_hit is not None:
-                extras["book_hit"] = int(game_move.book_hit)
-            engine_info = rsshogi.record.EngineInfo(
-                eval=game_move.eval,
-                depth=game_move.depth,
-                seldepth=game_move.seldepth,
-                nodes=game_move.nodes,
-                wall_time_ms=int(wall_time) if wall_time is not None else None,
-                latency_delta_ms=int(latency_delta) if latency_delta is not None else None,
-                extras=extras or None,
-            )
-            move_records.append(
-                rsshogi.record.MoveEntry(
-                    pushed_move,
-                    time_ms=game_move.next_move_time_ms,
-                    comment=game_move.next_move_comment,
-                    engine_info=engine_info,
+        try:
+            board.set_sfen(game.initial_position_sfen)
+            end_time_ms: int | None = game.end_time_ms
+            end_comment: str | None = game.end_comment
+            for (game_move,) in game_moves:
+                if game_move.next_move == int(Move.MOVE_END):
+                    end_time_ms = game_move.next_move_time_ms
+                    end_comment = game_move.next_move_comment
+                    break
+                try:
+                    mv = Move(game_move.next_move)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"Invalid move in db record: {game_move.next_move}") from exc
+                try:
+                    pushed_move = board.push_move(mv).to_move()
+                except ValueError as exc:
+                    raise ValueError(f"Illegal move in db record: {game_move.next_move}") from exc
+                wall_time = game_move.wall_time_ms
+                engine_wall_time = game_move.engine_wall_time_ms
+                latency_delta = game_move.latency_delta_ms
+                extras: dict[str, str | int | float] = {}
+                if engine_wall_time is not None:
+                    extras["engine_wall_time_ms"] = int(engine_wall_time)
+                if game_move.move_source is not None:
+                    extras["move_source"] = game_move.move_source
+                if game_move.book_hit is not None:
+                    extras["book_hit"] = int(game_move.book_hit)
+                engine_info = rsshogi.record.EngineInfo(
+                    eval=game_move.eval,
+                    depth=game_move.depth,
+                    seldepth=game_move.seldepth,
+                    nodes=game_move.nodes,
+                    wall_time_ms=int(wall_time) if wall_time is not None else None,
+                    latency_delta_ms=int(latency_delta) if latency_delta is not None else None,
+                    extras=extras or None,
                 )
-            )
+                move_records.append(
+                    rsshogi.record.MoveEntry(
+                        pushed_move,
+                        time_ms=game_move.next_move_time_ms,
+                        comment=game_move.next_move_comment,
+                        engine_info=engine_info,
+                    )
+                )
+        finally:
+            # Tracebacks may be collected on another thread; release unsendable Board refs here.
+            del board
 
         tc_black = (
             rsshogi.record.TimeControl.from_spec(game.time_control_black)

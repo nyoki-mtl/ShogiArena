@@ -140,6 +140,14 @@ try {
     foreach ($path in ($publicFiles + $devOnlyFiles)) {
         Write-TestFile (Join-Path $sourceRepo $path)
     }
+    # Windows PowerShell 5.1 の既定 ANSI 読み込みでは壊れる BOM なし UTF-8 を使う。
+    $releaseNotes = "日本語のリリースノート`n`n修正内容を正確に保持します。"
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $sourceRepo "release-notes/v0.9.0.txt"),
+        $releaseNotes + "`n",
+        $utf8NoBom
+    )
     # -f を付けないと、利用者の global core.excludesFile が .env などを弾いて
     # seed が tracked にならず、検証が「何も無いので合格」に化ける。
     Invoke-Git add -A -f
@@ -219,13 +227,16 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "export_public_snapshot.ps1 with -NotesFile failed with exit code $LASTEXITCODE"
     }
-    $commitSubject = (Get-GitOutput log -1 --format=%s)
-    if ($commitSubject -ne "Release v0.0.0") {
-        throw "unexpected release commit subject: $commitSubject"
+    # git の出力と PowerShell のデコードを共に UTF-8 に固定して全文を比較する。
+    $previousConsoleOutputEncoding = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = $utf8NoBom
+        $commitMessage = (Get-GitOutput -c i18n.logOutputEncoding=utf-8 log -1 --format=format:%B) -join "`n"
+    } finally {
+        [Console]::OutputEncoding = $previousConsoleOutputEncoding
     }
-    $commitBody = (Get-GitOutput log -1 --format=%b) -join "`n"
-    if ($commitBody -notmatch "x") {
-        throw "release notes were not embedded in the export commit message"
+    if ($commitMessage -cne "Release v0.0.0`n`n$releaseNotes") {
+        throw "export commit message did not preserve the UTF-8 release notes exactly"
     }
     $snapshotPaths = @(Get-GitOutput ls-files)
 

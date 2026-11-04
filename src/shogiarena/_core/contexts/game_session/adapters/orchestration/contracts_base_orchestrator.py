@@ -92,6 +92,7 @@ class BaseOrchestrator:
         self._worker_tasks: set[asyncio.Task[None]] = set()
         self._running_tasks: set[asyncio.Task[None]] = set()
         self._stop_event = asyncio.Event()
+        self._game_execution_manifest_lock = asyncio.Lock()
         self._active_game_runners: set[GameRunner] = set()
         self.engine_pool: EnginePool | None = None
         self.instance_pool: InstancePool | None = session_context.instance_pool

@@ -13,7 +13,7 @@ from shogiarena._core.contexts.game_session.adapters.orchestration.config_builde
 )
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_engine import EngineConfig
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_spsa_models import SpsaRunConfig
-from shogiarena._core.contexts.spsa.adapters.runtime.persistence import append_event, record_ltc_result
+from shogiarena._core.contexts.spsa.adapters.runtime.persistence import log_runtime_event, record_ltc_result
 from shogiarena._core.contexts.spsa.adapters.runtime.tokens import make_game_token, phase_symbol, variant_token
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry, PhaseLiteral
 from shogiarena._core.shared.kernel.json_types import JsonObject
@@ -41,7 +41,7 @@ class SpsaOrchestratorLifecycleMixin:
     _store_ltc_baseline: Any
 
     def _append_spsa_event(self, payload: JsonObject) -> None:
-        append_event(self.run_dir, self._session_uuid, payload)
+        log_runtime_event(self.run_dir, self._session_uuid, payload)
 
     def _record_ltc_result(self, record: JsonObject) -> None:
         record_ltc_result(

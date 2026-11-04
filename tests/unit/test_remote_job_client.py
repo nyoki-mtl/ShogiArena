@@ -227,6 +227,7 @@ async def test_remote_executor_production_path_uses_durable_job_protocol() -> No
             super().__init__(terminal_kind=terminal_kind)
             self.close_count = 0
             self.connect_count = 0
+            self.generation = 0
             self.disconnect_status_count = disconnect_status_count
             self.status_never_terminal = status_never_terminal
             self.cleanup_error = cleanup_error
@@ -236,6 +237,12 @@ async def test_remote_executor_production_path_uses_durable_job_protocol() -> No
             self.disconnect_start_count = disconnect_start_count
             self.disconnect_result_count = disconnect_result_count
             self.reap_error = reap_error
+
+        async def reconnect(self, *, failed_generation: int) -> None:
+            if self.generation == failed_generation:
+                await self.close()
+                await self.connect()
+                self.generation += 1
 
         async def connect(self) -> None:
             self.connect_count += 1

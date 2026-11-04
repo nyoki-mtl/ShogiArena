@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import shlex
 import stat
@@ -16,11 +17,12 @@ from shogiarena._core.contexts.game_session.ports.worker_deployment import WORKE
 from shogiarena._core.platform.engine_provisioning.provisioning_ports import SshFileTransportPort
 from shogiarena._core.platform.engine_provisioning.remote_paths import RemotePosixPath
 from shogiarena._core.platform.engine_provisioning.remote_uv import REMOTE_UV_DISCOVERY_SCRIPT
+from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
 from shogiarena._core.shared.kernel.content_hashing import (
     CANONICAL_ARTIFACT_DIRECTORY_MODE,
     CANONICAL_ARTIFACT_FILE_MODE,
     sha256_file,
-    sha256_tree,
+    sha256_path_cached,
 )
 from shogiarena._core.shared.kernel.remote_provisioning import current_remote_provisioning_policy
 
@@ -56,8 +58,42 @@ class RemoteArtifactStore:
 
     def __init__(self, transport: SshFileTransportPort) -> None:
         self._transport = transport
+        self._verified: dict[tuple[str, str, str, str, str, str], RemoteArtifact] = {}
+        self._ensure_lock = asyncio.Lock()
 
     async def ensure(
+        self, *, remote_root: RemotePosixPath, reference: PlatformArtifactRef, local_path: Path
+    ) -> RemoteArtifact:
+        """Artifact保存をキャンセル時も回収する。"""
+        return await complete_before_cancelling(
+            self._ensure_owned(remote_root=remote_root, reference=reference, local_path=local_path)
+        )
+
+    async def _ensure_owned(
+        self, *, remote_root: RemotePosixPath, reference: PlatformArtifactRef, local_path: Path
+    ) -> RemoteArtifact:
+        """同一sessionの検証を直列化し、確認済みCAS objectを再利用する。"""
+        kind, digest = await asyncio.to_thread(sha256_path_cached, local_path)
+        if (kind == "directory") != (reference.kind == "directory") or digest != reference.sha256:
+            raise RemoteArtifactIntegrityError(f"local artifact digest mismatch for {reference.logical_id}")
+        async with self._ensure_lock:
+            endpoint = await self._transport.endpoint_identity()
+            key = (
+                endpoint,
+                str(remote_root),
+                reference.sha256,
+                reference.kind,
+                reference.logical_id,
+                str(reference.target_platform),
+            )
+            if current_remote_provisioning_policy().mode != "preplaced" and key in self._verified:
+                cached = self._verified[key]
+                return RemoteArtifact(endpoint, reference, cached.path, False)
+            artifact = await self._ensure_verified(remote_root=remote_root, reference=reference, local_path=local_path)
+            self._verified[key] = artifact
+            return artifact
+
+    async def _ensure_verified(
         self,
         *,
         remote_root: RemotePosixPath,
@@ -69,12 +105,6 @@ class RemoteArtifactStore:
         platform = reference.target_platform
         if platform.operating_system != "linux":
             raise ValueError("remote artifact store only supports linux targets")
-        actual_digest = sha256_tree(local_path) if reference.kind == "directory" else sha256_file(local_path)
-        if actual_digest != reference.sha256:
-            raise RemoteArtifactIntegrityError(
-                f"local artifact digest mismatch for {reference.logical_id}: "
-                f"expected {reference.sha256}, got {actual_digest}"
-            )
         await self._verify_remote_platform(reference)
         endpoint = await self._transport.endpoint_identity()
         policy = current_remote_provisioning_policy()
@@ -171,36 +201,40 @@ class RemoteArtifactStore:
         object_root: RemotePosixPath,
         reference: PlatformArtifactRef,
     ) -> None:
-        archive_path = _build_deterministic_tar(local_path)
-        archive_digest = sha256_file(archive_path)
-        staging = object_root.parent / f".{reference.sha256}.{uuid.uuid4().hex}.tmp"
-        remote_archive = staging / "content.tar"
-        content = staging / "content"
-        await self._transport.mkdir(str(staging), is_existing_ok=False)
-        try:
-            await self._transport.put_file(archive_path, str(remote_archive))
-            command = (
-                "set -eu; "
-                f"test \"$(sha256sum {remote_archive.shell_quote()} | cut -d' ' -f1)\" = "
-                f"{shlex.quote(archive_digest)}; "
-                f"mkdir -p {content.shell_quote()}; tar -xf {remote_archive.shell_quote()} "
-                f"-C {content.shell_quote()}; "
-                f"find {content.shell_quote()} -type d -exec chmod "
-                f"{CANONICAL_ARTIFACT_DIRECTORY_MODE:o} {{}} +; "
-                f"find {content.shell_quote()} -type f -exec chmod "
-                f"{CANONICAL_ARTIFACT_FILE_MODE:o} {{}} +; "
-                f"rm -f -- {remote_archive.shell_quote()}; "
-                f"{_remote_tree_digest_command(content, reference.sha256)}; "
-                f"mkdir -p {object_root.parent.shell_quote()}; "
-                f"mv -T {staging.shell_quote()} {object_root.shell_quote()} 2>/dev/null "
-                f"|| rm -rf -- {staging.shell_quote()}"
-            )
-            await self._run_checked(command)
-        except BaseException:
-            await self._transport.run(f"rm -rf -- {staging.shell_quote()}")
-            raise
-        finally:
-            archive_path.unlink(missing_ok=True)
+        async def upload_owned() -> None:
+            archive_path = await asyncio.to_thread(_build_deterministic_tar, local_path)
+            try:
+                archive_digest = await asyncio.to_thread(sha256_file, archive_path)
+                staging = object_root.parent / f".{reference.sha256}.{uuid.uuid4().hex}.tmp"
+                remote_archive = staging / "content.tar"
+                content = staging / "content"
+                await self._transport.mkdir(str(staging), is_existing_ok=False)
+                try:
+                    await self._transport.put_file(archive_path, str(remote_archive))
+                    command = (
+                        "set -eu; "
+                        f"test \"$(sha256sum {remote_archive.shell_quote()} | cut -d' ' -f1)\" = "
+                        f"{shlex.quote(archive_digest)}; "
+                        f"mkdir -p {content.shell_quote()}; tar -xf {remote_archive.shell_quote()} "
+                        f"-C {content.shell_quote()}; "
+                        f"find {content.shell_quote()} -type d -exec chmod "
+                        f"{CANONICAL_ARTIFACT_DIRECTORY_MODE:o} {{}} +; "
+                        f"find {content.shell_quote()} -type f -exec chmod "
+                        f"{CANONICAL_ARTIFACT_FILE_MODE:o} {{}} +; "
+                        f"rm -f -- {remote_archive.shell_quote()}; "
+                        f"{_remote_tree_digest_command(content, reference.sha256)}; "
+                        f"mkdir -p {object_root.parent.shell_quote()}; "
+                        f"mv -T {staging.shell_quote()} {object_root.shell_quote()} 2>/dev/null "
+                        f"|| rm -rf -- {staging.shell_quote()}"
+                    )
+                    await self._run_checked(command)
+                except BaseException:
+                    await self._transport.run(f"rm -rf -- {staging.shell_quote()}")
+                    raise
+            finally:
+                archive_path.unlink(missing_ok=True)
+
+        await complete_before_cancelling(upload_owned())
 
     async def _run_checked(self, command: str) -> None:
         rc, stdout, stderr = await self._transport.run(command)

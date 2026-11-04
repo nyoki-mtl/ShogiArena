@@ -9,6 +9,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import BinaryIO, Literal, Protocol
 
+from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
 from shogiarena._core.shared.kernel.engine_io import UsiIoEvent
 from shogiarena._core.shared.kernel.usi_transcript_contract import (
     TranscriptRole,
@@ -208,9 +209,20 @@ class GameUsiTranscriptContext:
         self._cleanups: list[Callable[[], None]] = []
 
     async def __aenter__(self) -> GameUsiTranscriptContext:
-        self._register("black", self._black_engine, self._black_name)
-        self._register("white", self._white_engine, self._white_name)
-        return self
+        async def open_owned() -> GameUsiTranscriptContext:
+            await self._register("black", self._black_engine, self._black_name)
+            await self._register("white", self._white_engine, self._white_name)
+            return self
+
+        try:
+            return await complete_before_cancelling(open_owned())
+        except BaseException:
+            # __aexit__ is not called when entry fails or is cancelled.
+            try:
+                await complete_before_cancelling(self._close())
+            except asyncio.CancelledError:
+                pass
+            raise
 
     async def __aexit__(
         self,
@@ -218,6 +230,9 @@ class GameUsiTranscriptContext:
         _exc: BaseException | None,
         _tb: TracebackType | None,
     ) -> None:
+        await complete_before_cancelling(self._close())
+
+    async def _close(self) -> None:
         await asyncio.gather(
             self._black_engine.flush_io_log_handlers(),
             self._white_engine.flush_io_log_handlers(),
@@ -225,11 +240,16 @@ class GameUsiTranscriptContext:
         )
         for cleanup in self._cleanups:
             cleanup()
-        for writer in self._writers:
-            writer.close()
 
-    def _register(self, role: TranscriptRole, engine: UsiTranscriptEnginePort, engine_name: str) -> None:
-        writer = UsiTranscriptWriter(
+        def close_writers() -> None:
+            for writer in self._writers:
+                writer.close()
+
+        await asyncio.to_thread(close_writers)
+
+    async def _register(self, role: TranscriptRole, engine: UsiTranscriptEnginePort, engine_name: str) -> None:
+        writer = await asyncio.to_thread(
+            UsiTranscriptWriter,
             path=transcript_path_for_game(self._run_dir, game_id=self._game_id, role=role),
             game_id=self._game_id,
             role=role,

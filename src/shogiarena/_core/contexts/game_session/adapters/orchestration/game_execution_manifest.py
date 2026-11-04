@@ -2,19 +2,35 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import secrets
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError, field_validator
 
 from shogiarena._core.contexts.game_session.ports.game_execution_spec import Sha256Digest
+from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
 from shogiarena._core.shared.kernel.atomic_json import write_json_atomic
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
 _NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+_T = TypeVar("_T")
+
+
+async def complete_game_manifest_io(lock: asyncio.Lock, operation: Callable[[], _T]) -> _T:
+    """manifest更新を直列実行し、キャンセル時も保存を回収する。"""
+
+    async def save() -> _T:
+        async with lock:
+            return await asyncio.to_thread(operation)
+
+    return await complete_before_cancelling(save())
+
+
 _RemoteJobToken = Annotated[str, StringConstraints(pattern=r"^[a-z]+-[0-9a-f]{32}$")]
 
 

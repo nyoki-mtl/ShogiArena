@@ -124,7 +124,11 @@ def materialize_opening_sfen(opening: OpeningSpec) -> str:
 async def apply_engine_variant(engine: EngineOptionApplicationPort, spec: EngineExecutionSpec) -> None:
     """Spec の variant option policy を engine へ適用する。"""
 
-    if not spec.usi.variant_options and not spec.usi.clear_hash_before_game:
+    if (
+        not spec.usi.variant_options
+        and not spec.usi.clear_hash_before_game
+        and spec.usi.after_variant_setoption == "none"
+    ):
         return
     validation: object = dict(spec.usi.option_validation_overrides) or spec.usi.option_validation
     await engine.apply_engine_options(

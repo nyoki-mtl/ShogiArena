@@ -71,6 +71,7 @@ from shogiarena._core.contexts.instances.application.instance_pool import Resour
 from shogiarena._core.contexts.match.application.engine_participant import EngineParticipant
 from shogiarena._core.platform.engine_runtime.usi_engine_session import AsyncUsiEngine
 from shogiarena._core.platform.engine_runtime.usi_engine_session_models import UsiEngineStartError
+from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
 from shogiarena._core.shared.kernel.dispatch_control import GameDispatchStoppedError
 from shogiarena._core.shared.kernel.game_results import game_result_name
 from shogiarena._core.shared.kernel.json_types import JsonObject
@@ -157,42 +158,46 @@ async def execute_game(orchestrator: Any, spec: Any) -> rsshogi.record.Record:
             raise ValueError("Local GameExecutionSpec requires both resolved engine configs")
         black_layers = build_usi_option_layers(owner.extra_options, black_config)
         white_layers = build_usi_option_layers(owner.extra_options, white_config)
-        resolved_execution = resolve_local_game_execution(
-            run_id=owner.session_context.run_id,
-            game_id=game_spec.game_id,
-            initial_sfen=game_spec.initial_sfen,
-            black_name=black_config.name or game_spec.black_item.pool_key,
-            white_name=white_config.name or game_spec.white_item.pool_key,
-            black_config_path=Path(game_spec.black_item.config_path),
-            white_config_path=Path(game_spec.white_item.config_path),
-            black_artifact_overlay_options=black_layers.artifact_overlay,
-            white_artifact_overlay_options=white_layers.artifact_overlay,
-            black_arena_options=black_layers.arena,
-            white_arena_options=white_layers.arena,
-            black_overlay_options=black_layers.declared_overlays,
-            white_overlay_options=white_layers.declared_overlays,
-            black_inline_options=black_layers.inline,
-            white_inline_options=white_layers.inline,
-            black_variant_options=game_spec.black_variant_options,
-            white_variant_options=game_spec.white_variant_options,
-            black_variant_id=game_spec.black_variant_id,
-            white_variant_id=game_spec.white_variant_id,
-            clear_hash_before_game=game_spec.clear_hash_before_game,
-            after_variant_setoption=game_spec.after_variant_setoption,
-            black_path_option_names=tuple(black_config.path_options),
-            white_path_option_names=tuple(white_config.path_options),
-            black_go_options={str(key): value for key, value in black_config.go_options.items()},
-            white_go_options={str(key): value for key, value in white_config.go_options.items()},
-            black_handshake_timeout_s=_effective_handshake_timeout(owner, black_config),
-            white_handshake_timeout_s=_effective_handshake_timeout(owner, white_config),
-            black_limits=black_limits,
-            white_limits=white_limits,
-            rules=owner.config.rules,
-            engine_lifecycle=owner._engine_lifecycle,
-            timeout_reclassification_enabled=owner._timeout_reclassification_enabled,
+        resolved_execution = await complete_before_cancelling(
+            asyncio.to_thread(
+                resolve_local_game_execution,
+                run_id=owner.session_context.run_id,
+                game_id=game_spec.game_id,
+                initial_sfen=game_spec.initial_sfen,
+                black_name=black_config.name or game_spec.black_item.pool_key,
+                white_name=white_config.name or game_spec.white_item.pool_key,
+                black_config_path=Path(game_spec.black_item.config_path),
+                white_config_path=Path(game_spec.white_item.config_path),
+                black_artifact_overlay_options=black_layers.artifact_overlay,
+                white_artifact_overlay_options=white_layers.artifact_overlay,
+                black_arena_options=black_layers.arena,
+                white_arena_options=white_layers.arena,
+                black_overlay_options=black_layers.declared_overlays,
+                white_overlay_options=white_layers.declared_overlays,
+                black_inline_options=black_layers.inline,
+                white_inline_options=white_layers.inline,
+                black_variant_options=game_spec.black_variant_options,
+                white_variant_options=game_spec.white_variant_options,
+                black_variant_id=game_spec.black_variant_id,
+                white_variant_id=game_spec.white_variant_id,
+                clear_hash_before_game=game_spec.clear_hash_before_game,
+                after_variant_setoption=game_spec.after_variant_setoption,
+                black_path_option_names=tuple(black_config.path_options),
+                white_path_option_names=tuple(white_config.path_options),
+                black_go_options={str(key): value for key, value in black_config.go_options.items()},
+                white_go_options={str(key): value for key, value in white_config.go_options.items()},
+                black_handshake_timeout_s=_effective_handshake_timeout(owner, black_config),
+                white_handshake_timeout_s=_effective_handshake_timeout(owner, white_config),
+                black_limits=black_limits,
+                white_limits=white_limits,
+                rules=owner.config.rules,
+                engine_lifecycle=owner._engine_lifecycle,
+                timeout_reclassification_enabled=owner._timeout_reclassification_enabled,
+            )
         )
         validate_minimum_worker_version(resolved_execution.spec, worker_version=__version__)
-        persist_game_execution_manifest(
+        await _persist_execution_manifest(
+            owner._game_execution_manifest_lock,
             run_dir=owner.run_dir,
             game_id=game_spec.game_id,
             payload=resolved_execution.manifest_payload(),
@@ -219,8 +224,13 @@ async def execute_game(orchestrator: Any, spec: Any) -> rsshogi.record.Record:
         )
         black_contract_digest = _engine_pool_contract_digest(black_mapping)
         white_contract_digest = _engine_pool_contract_digest(white_mapping)
-        Path(str(black_mapping["working_directory"])).mkdir(parents=True, exist_ok=True)
-        Path(str(white_mapping["working_directory"])).mkdir(parents=True, exist_ok=True)
+        await complete_before_cancelling(
+            asyncio.to_thread(
+                _prepare_working_directories,
+                Path(str(black_mapping["working_directory"])),
+                Path(str(white_mapping["working_directory"])),
+            )
+        )
         black_engine, white_engine = await ep.acquire_pair_from_mappings(
             (
                 game_spec.black_item.pool_key,
@@ -321,6 +331,21 @@ async def execute_game(orchestrator: Any, spec: Any) -> rsshogi.record.Record:
             )
 
 
+def _prepare_working_directories(black: Path, white: Path) -> None:
+    black.mkdir(parents=True, exist_ok=True)
+    white.mkdir(parents=True, exist_ok=True)
+
+
+async def _persist_execution_manifest(lock: asyncio.Lock, *, run_dir: Path, game_id: str, payload: JsonObject) -> None:
+    async def save() -> None:
+        # Preserve the former serial write order, including cancelled lock waiters.
+        async with lock:
+            await asyncio.to_thread(persist_game_execution_manifest, run_dir=run_dir, game_id=game_id, payload=payload)
+
+    # Own the writer until it finishes; shield alone would leave it behind on cancel.
+    await complete_before_cancelling(save())
+
+
 def _artifact_paths(engine_spec: EngineExecutionSpec, provenance: EngineSpecProvenance) -> dict[str, Path]:
     paths = {
         engine_spec.process.artifact.logical_id: Path(provenance.engine_source_path),
@@ -378,33 +403,11 @@ async def _record_run_failure(owner: Any, game_spec: _GameSpecPort, exc: BaseExc
     )
     try:
         service = RunFailureRecordService()
-        if isinstance(exc, asyncio.CancelledError):
-            # A cancelled to_thread future can keep appending after terminal snapshot creation.
-            service.append_failure(run_dir=run_dir, record=record)
-        else:
-            write_task = asyncio.create_task(asyncio.to_thread(service.append_failure, run_dir=run_dir, record=record))
-            cancellation: asyncio.CancelledError | None = None
-            while not write_task.done():
-                try:
-                    await asyncio.shield(write_task)
-                except asyncio.CancelledError as cancelled:
-                    # Keep the writer attached to this game until it finishes.
-                    cancellation = cancelled
-                except Exception:
-                    # The writer has failed. Preserve an earlier cancellation below.
-                    break
-            if cancellation is not None:
-                try:
-                    await write_task
-                except Exception as record_exc:
-                    logger.warning(
-                        "Failed to persist run failure record for game %s during cancellation: %s",
-                        game_spec.game_id,
-                        record_exc,
-                        exc_info=True,
-                    )
-                raise cancellation
-            await write_task
+        try:
+            await complete_before_cancelling(asyncio.to_thread(service.append_failure, run_dir=run_dir, record=record))
+        except asyncio.CancelledError:
+            # Diagnostic persistence is drained; retain the original execution failure.
+            pass
     except Exception as record_exc:  # noqa: BLE001 - diagnostic write must not mask the game failure
         # Persisting the diagnostic must never mask the original failure that we
         # are in the middle of propagating.

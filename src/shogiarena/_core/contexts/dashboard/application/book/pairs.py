@@ -135,29 +135,33 @@ def _lookup_hits(
     book_moves_limit: int,
 ) -> list[bool | None]:
     board = Board(start_sfen) if start_sfen is not None and start_sfen != "startpos" else Board()
-    hits: list[bool | None] = []
-    for index, move_usi in enumerate(moves_usi):
-        ply = index + 1
-        lookup = None
-        if ply <= book_moves_limit:
-            book = black_book if board.turn == Color.BLACK else white_book
-            lookup = _lookup_for_book(book, opener=opener, cache=cache)
-        if lookup is None:
-            hits.append(None)
-        else:
-            try:
-                hits.append(is_book_candidate(lookup, board.to_sfen(), move_usi))
-            except ValueError as exc:
-                logger.debug("book prefix lookup failed at ply %s: %s", ply, exc)
+    try:
+        hits: list[bool | None] = []
+        for index, move_usi in enumerate(moves_usi):
+            ply = index + 1
+            lookup = None
+            if ply <= book_moves_limit:
+                book = black_book if board.turn == Color.BLACK else white_book
+                lookup = _lookup_for_book(book, opener=opener, cache=cache)
+            if lookup is None:
                 hits.append(None)
-        try:
-            board.apply_usi(move_usi)
-        except ValueError as exc:
-            logger.debug("book prefix board replay failed at ply %s: %s", ply, exc)
-            remaining = len(moves_usi) - len(hits)
-            hits.extend([None] * remaining)
-            break
-    return hits
+            else:
+                try:
+                    hits.append(is_book_candidate(lookup, board.to_sfen(), move_usi))
+                except ValueError as exc:
+                    logger.debug("book prefix lookup failed at ply %s: %s", ply, exc)
+                    hits.append(None)
+            try:
+                board.apply_usi(move_usi)
+            except ValueError as exc:
+                logger.debug("book prefix board replay failed at ply %s: %s", ply, exc)
+                remaining = len(moves_usi) - len(hits)
+                hits.extend([None] * remaining)
+                break
+        return hits
+    finally:
+        # Tracebacks may be collected on another thread; release unsendable Board refs here.
+        del board
 
 
 def _combined_hits(

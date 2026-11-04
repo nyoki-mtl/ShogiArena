@@ -82,6 +82,18 @@ def project_spsa_ledger(
         "int_rounding_policy": config.get("int_rounding"),
         "crn_used": True,
     }
+    latest_ltc = connection.execute(
+        "SELECT tested_update_idx, evidence_json, decided_at FROM ltc_decisions "
+        "WHERE run_id = ? ORDER BY tested_update_idx DESC LIMIT 1",
+        (run_id,),
+    ).fetchone()
+    if latest_ltc is not None:
+        ltc = _object(str(latest_ltc[1]), label="latest LTC decision")
+        metadata["ltc_regression"] = {
+            **ltc,
+            "last_update_idx": int(latest_ltc[0]),
+            "timestamp": _epoch_ms(str(latest_ltc[2])),
+        }
     write_json_atomic(spsa_dir / "current.json", current)
     write_json_atomic(spsa_dir / "index.json", {"metadata": metadata, "updates": updates})
     _write_events_atomic(

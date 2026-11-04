@@ -28,6 +28,9 @@ class _RecordingScheduler:
     def request(self) -> None:
         self._calls.append("scheduler-request")
 
+    def project_blocking(self) -> None:
+        self._calls.append("inline-project")
+
     async def drain(self) -> None:
         self._calls.append("scheduler-drain")
 

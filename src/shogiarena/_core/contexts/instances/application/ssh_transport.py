@@ -21,6 +21,7 @@ from shogiarena._core.contexts.instances.ports.secret_transport import (
     RemoteSecretFileHandle,
     RemoteSecretFileRequest,
 )
+from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
 
 logger = logging.getLogger(__name__)
 _SECRET_FILE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -37,12 +38,24 @@ class SshTransport:
         if instance.config.type != InstanceType.SSH:
             raise ValueError("SshTransport requires SSH instance")
         self.instance = instance
+        self._generation = 0
 
     async def connect(self) -> None:  # pragma: no cover - interface
         raise NotImplementedError
 
     async def close(self) -> None:  # pragma: no cover - interface
         raise NotImplementedError
+
+    @property
+    def generation(self) -> int:
+        """接続の世代を返す。"""
+        return self._generation
+
+    async def reconnect(self, *, failed_generation: int) -> None:
+        """失敗した接続世代の回復を要求する。"""
+        if failed_generation == self.generation:
+            await self.close()
+            await self.connect()
 
     async def run(
         self,
@@ -237,10 +250,16 @@ class _AsyncSshTransport(SshTransport):
         self._connection_config = _connection_config_from_instance(instance)
         self._conn: SSHClientConnection | None = None
         self._sftp: SFTPClient | None = None
+        self._connection_lock = asyncio.Lock()
 
     async def connect(self) -> None:
-        if self._conn is not None:
-            return
+        async with self._connection_lock:
+            if self._conn is not None and not self._conn.is_closed():
+                return
+            await self._close_locked()
+            await self._connect_locked()
+
+    async def _connect_locked(self) -> None:
         client_keys = [self._connection_config.identity_file] if self._connection_config.identity_file else None
         connect_kwargs = {
             "port": self._connection_config.port,
@@ -249,23 +268,51 @@ class _AsyncSshTransport(SshTransport):
         }
         if not self._connection_config.is_strict_host_key_checking:
             connect_kwargs["known_hosts"] = None
-        self._conn = await asyncssh.connect(self._connection_config.host, **connect_kwargs)
-        self._sftp = await self._conn.start_sftp_client()
+        connection = await asyncssh.connect(self._connection_config.host, **connect_kwargs)
+        try:
+            sftp = await connection.start_sftp_client()
+        except BaseException:
+            connection.close()
+            try:
+                await complete_before_cancelling(connection.wait_closed())
+            except asyncio.CancelledError:
+                pass
+            raise
+        self._conn, self._sftp = connection, sftp
+        self._generation += 1
 
     async def close(self) -> None:
-        if self._sftp is not None:
-            try:
-                self._sftp.exit()
-            except (asyncssh.Error, OSError) as exc:
-                logger.debug("SFTP client exit error: %s", exc)
-        if self._conn is not None:
-            try:
-                self._conn.close()
-                await self._conn.wait_closed()
-            except (asyncssh.Error, OSError) as exc:
-                logger.debug("SSH connection close error: %s", exc)
+        async def close_owned() -> None:
+            async with self._connection_lock:
+                await self._close_locked()
+
+        await complete_before_cancelling(close_owned())
+
+    async def _close_locked(self) -> None:
+        connection, sftp = self._conn, self._sftp
         self._conn = None
         self._sftp = None
+        if sftp is not None:
+            try:
+                sftp.exit()
+            except (asyncssh.Error, OSError) as exc:
+                logger.debug("SFTP client exit error: %s", exc)
+        if connection is not None:
+            try:
+                connection.close()
+                await connection.wait_closed()
+            except (asyncssh.Error, OSError) as exc:
+                logger.debug("SSH connection close error: %s", exc)
+
+    async def reconnect(self, *, failed_generation: int) -> None:
+        async with self._connection_lock:
+            if self.generation != failed_generation:
+                return
+            if self._conn is not None and not self._conn.is_closed():
+                # A channel/file error must not disconnect healthy sibling jobs.
+                return
+            await self._close_locked()
+            await self._connect_locked()
 
     async def run(
         self,
@@ -331,14 +378,12 @@ class _AsyncSshTransport(SshTransport):
         return f"ssh://{config.user}@{config.host}:{config.port}?host_key={fingerprint}"
 
     async def _ensure_connection(self) -> SSHClientConnection:
-        if self._conn is None:
-            await self.connect()
+        await self.connect()
         assert self._conn is not None
         return self._conn
 
     async def _ensure_sftp(self) -> SFTPClient:
-        if self._sftp is None:
-            await self.connect()
+        await self.connect()
         assert self._sftp is not None
         return self._sftp
 

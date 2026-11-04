@@ -4,6 +4,7 @@ import json
 import math
 import random
 import sqlite3
+from pathlib import Path
 
 import pytest
 import rsshogi
@@ -817,6 +818,7 @@ def test_invalid_or_skipped_transition_is_rejected() -> None:
 @pytest.mark.parametrize("is_passed", [True, False])
 def test_ltc_decision_commits_final_theta_baseline_and_revision_atomically(
     is_passed: bool,
+    tmp_path: Path,
 ) -> None:
     connection, runtime = _runtime()
     runtime.plan_update(
@@ -848,6 +850,16 @@ def test_ltc_decision_commits_final_theta_baseline_and_revision_atomically(
     )
 
     assert runtime.update_state(1) == SpsaUpdateState.COMMITTED
+    connection.execute("UPDATE game_observations SET observed_at = '2026-11-03T00:00:00+00:00'")
+    connection.commit()
+    runtime.project_derived_json(run_dir=tmp_path)
+    ltc_projection = json.loads((tmp_path / "spsa/index.json").read_text(encoding="utf-8"))["metadata"][
+        "ltc_regression"
+    ]
+    assert ltc_projection["last_update_idx"] == 1
+    assert ltc_projection["status"] == _ltc_evidence(is_passed=is_passed)["status"]
+    assert ltc_projection["winrate"] == _ltc_evidence(is_passed=is_passed)["winrate"]
+
     assert runtime.current_theta() == {"Threads": 2.0 if is_passed else 1.0}
     baseline = connection.execute(
         "SELECT accepted_update_idx, theta_json FROM accepted_baseline WHERE run_id = 'run-1'"

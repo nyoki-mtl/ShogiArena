@@ -16,6 +16,7 @@ from shogiarena._core.contexts.game_session.ports.game_execution_spec import (
     PlatformArtifactRef,
     TargetPlatform,
 )
+from shogiarena._core.contexts.instances.application.instance_models import Instance, InstanceConfig, InstanceType
 from shogiarena._core.platform.engine_provisioning.remote_deployment import PreparedRemoteDeployment
 from shogiarena._core.platform.engine_provisioning.remote_paths import RemotePosixPath
 
@@ -47,15 +48,13 @@ async def test_remote_deployment_is_reused_for_the_same_endpoint_and_root() -> N
             )
 
     manager = _Manager()
-    executor = object.__new__(RemoteExecutor)
-    executor.worker_bundle = SimpleNamespace(  # type: ignore[assignment]
-        manifest=SimpleNamespace(deployment_id="d" * 64)
+    executor = RemoteExecutor(
+        Instance(config=InstanceConfig(name="worker", type=InstanceType.SSH, engine_dir="", host="example")),
+        SimpleNamespace(manifest=SimpleNamespace(deployment_id="d" * 64)),  # type: ignore[arg-type]
     )
     executor._transport = _Transport()  # type: ignore[assignment]  # noqa: SLF001
     executor._path_resolver = _Resolver()  # type: ignore[assignment]  # noqa: SLF001
     executor._deployment_manager = manager  # type: ignore[assignment]  # noqa: SLF001
-    executor._deployment = None  # noqa: SLF001
-    executor._deployment_cache_key = None  # noqa: SLF001
 
     first = await executor.ensure_deployment("/srv/arena")
     repeated = await executor.ensure_deployment("/srv/arena")
