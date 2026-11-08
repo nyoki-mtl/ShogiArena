@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, NamedTuple, Protocol, TypedDict, runtime_checkable
 
@@ -273,7 +274,12 @@ _ProgressPayload = (
 class _ReadyStateEnginePort(Protocol):
     async def prepare_ready_state(self) -> None: ...
 
-    async def prepare_new_game_position(self, *, initial_sfen: str) -> None: ...
+    async def prepare_new_game_position(
+        self,
+        *,
+        initial_sfen: str,
+        opening_moves: Sequence[Move] = (),
+    ) -> None: ...
 
 
 @runtime_checkable

@@ -21,6 +21,7 @@ from shogiarena._core.shared.kernel.engine_io import UsiIoEvent
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.run_manifest_reader import read_run_manifest
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_str
+from shogiarena._core.shared.kernel.schedule_metadata import extract_schedule_metadata
 from shogiarena._core.shared.kernel.serialization import json_serialize
 from shogiarena._core.shared.kernel.usi_transcript_contract import (
     TranscriptRole,
@@ -162,7 +163,11 @@ async def _command(args: argparse.Namespace) -> None:
     target = _load_replay_target(run_dir=run_dir, game_id=str(args.game_id), ply=int(args.ply))
     mode: ReplayMode = "replay_history" if args.replay_history else "fresh"
     traces = _load_transcript_traces(run_dir=run_dir, game_id=target.game_id, role=target.role)
-    target_trace = _find_trace_for_ply(traces, target.ply)
+    target_trace = _find_trace_for_ply(
+        traces,
+        target.ply,
+        expected_moves_before=len(target.moves_before),
+    )
     target_request = _target_request_from_args(args, fallback=target_trace.request if target_trace else None)
 
     engine_args = tuple(args.compare) if args.compare else (args.engine,)
@@ -203,16 +208,34 @@ def _load_replay_target(*, run_dir: Path, game_id: str, ply: int) -> ReplayTarge
         raise CliArgumentError(f"--ply {ply} is beyond the saved game length ({len(moves)} moves)")
 
     board = Board()
-    board.set_sfen(initial_sfen)
-    for move in moves[: ply - 1]:
-        board.apply_move(move)
-    role: TranscriptRole = "black" if board.turn.is_black() else "white"
+    try:
+        board.set_sfen(initial_sfen)
+        for move in moves[: ply - 1]:
+            board.apply_move(move)
+        role: TranscriptRole = "black" if board.turn.is_black() else "white"
+    finally:
+        del board
     saved_move = moves[ply - 1] if ply <= len(moves) else None
 
     metadata = getattr(record, "metadata", None)
     black_player = coerce_str(getattr(metadata, "black_player", None)) or ""
     white_player = coerce_str(getattr(metadata, "white_player", None)) or ""
     resolved_game_id = coerce_str(getattr(record, "game_name", None)) or game_id
+
+    engine_sfen = initial_sfen
+    opening_prefix_moves: list[Move] = []
+    schedule_meta = extract_schedule_metadata(record)
+    if schedule_meta is not None:
+        raw_opening_moves = schedule_meta.get("opening_moves_usi")
+        if isinstance(raw_opening_moves, list) and raw_opening_moves:
+            try:
+                opening_prefix_moves = [Move.from_usi(str(item)) for item in raw_opening_moves if isinstance(item, str)]
+            except ValueError:
+                opening_prefix_moves = []
+            if opening_prefix_moves:
+                engine_sfen = coerce_str(schedule_meta.get("opening_base_sfen")) or "startpos"
+
+    moves_before = (*opening_prefix_moves, *moves[: ply - 1])
     return ReplayTarget(
         game_id=resolved_game_id,
         ply=ply,
@@ -220,9 +243,9 @@ def _load_replay_target(*, run_dir: Path, game_id: str, ply: int) -> ReplayTarge
         black_player=black_player,
         white_player=white_player,
         role=role,
-        position_command=_build_position_command(initial_sfen, moves[: ply - 1]),
-        sfen=initial_sfen,
-        moves_before=tuple(moves[: ply - 1]),
+        position_command=_build_position_command(engine_sfen, moves_before),
+        sfen=engine_sfen,
+        moves_before=moves_before,
         saved_move=saved_move,
     )
 
@@ -298,11 +321,20 @@ def _load_transcript_traces(*, run_dir: Path, game_id: str, role: TranscriptRole
     return traces
 
 
-def _find_trace_for_ply(traces: Sequence[SearchTrace], ply: int) -> SearchTrace | None:
-    moves_before = ply - 1
+def _find_trace_for_ply(
+    traces: Sequence[SearchTrace],
+    ply: int,
+    *,
+    expected_moves_before: int | None = None,
+) -> SearchTrace | None:
+    moves_before = expected_moves_before if expected_moves_before is not None else (ply - 1)
     for trace in traces:
         if len(trace.moves) == moves_before:
             return trace
+    if moves_before != ply - 1:
+        for trace in traces:
+            if len(trace.moves) == ply - 1:
+                return trace
     return None
 
 

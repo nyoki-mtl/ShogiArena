@@ -312,7 +312,7 @@ def _build_path_resource(
 
 
 def _target_option_values(resource: PathResource, *, target_path: str) -> dict[str, str]:
-    if resource.kind == "scalar":
+    if resource.kind == "scalar" or len(resource.option_keys) == 1:
         return {resource.option_keys[0]: target_path}
     file_key = resource.option_keys[-1]
     directory_keys = resource.option_keys[:-1]

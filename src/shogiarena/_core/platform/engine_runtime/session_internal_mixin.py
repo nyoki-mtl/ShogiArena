@@ -71,7 +71,11 @@ class AsyncUsiEngineInternalMixin:
         else:
             command = f"position sfen {sfen}"
         if moves:
-            command += f" moves {' '.join(m.to_usi() for m in moves)}"
+            move_tokens = " ".join(m.to_usi() for m in moves)
+            if " moves " in command or command.endswith(" moves"):
+                command += f" {move_tokens}"
+            else:
+                command += f" moves {move_tokens}"
         await self._send_command(command)
 
     async def _sync_ignored_bestmoves_before_go(self) -> None:

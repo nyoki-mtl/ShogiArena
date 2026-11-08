@@ -614,6 +614,8 @@ async def test_engine_start_failure_phase_is_isready_on_ready_timeout(tmp_path) 
             pass
 
     assert exc_info.value.failure_phase == "isready"
+    assert exc_info.value.diagnostic_payload()["failure_phase"] == "isready"
+    assert exc_info.value.diagnostic_payload()["exception_class"] == "UsiHandshakeTimeoutError"
 
 
 @pytest.mark.asyncio

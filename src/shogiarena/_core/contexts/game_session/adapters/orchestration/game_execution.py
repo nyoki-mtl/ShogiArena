@@ -99,6 +99,8 @@ class _GameSpecPort(Protocol):
     black_item: _EngineItemPort
     white_item: _EngineItemPort
     initial_sfen: str
+    opening_base_sfen: str | None
+    opening_moves_usi: tuple[str, ...]
     game_id: str
     black_limits: _TimeControlLimitsPort | None
     white_limits: _TimeControlLimitsPort | None
@@ -164,6 +166,8 @@ async def execute_game(orchestrator: Any, spec: Any) -> rsshogi.record.Record:
                 run_id=owner.session_context.run_id,
                 game_id=game_spec.game_id,
                 initial_sfen=game_spec.initial_sfen,
+                opening_base_sfen=getattr(game_spec, "opening_base_sfen", None),
+                opening_moves_usi=tuple(getattr(game_spec, "opening_moves_usi", ()) or ()),
                 black_name=black_config.name or game_spec.black_item.pool_key,
                 white_name=white_config.name or game_spec.white_item.pool_key,
                 black_config_path=Path(game_spec.black_item.config_path),
@@ -271,6 +275,8 @@ async def execute_game(orchestrator: Any, spec: Any) -> rsshogi.record.Record:
             black_engine_spec=resource_context.black_engine_spec,
             white_engine_spec=resource_context.white_engine_spec,
             initial_sfen=materialize_opening_sfen(resolved_execution.spec.opening),
+            opening_base_sfen=resolved_execution.spec.opening.initial_sfen,
+            opening_moves=tuple(resolved_execution.spec.opening.moves_usi),
         )
         result_envelope = build_game_execution_result(
             resolved_execution.spec,
@@ -592,6 +598,8 @@ async def _run_game_with_engines(
     black_engine_spec: EngineConfig | None,
     white_engine_spec: EngineConfig | None,
     initial_sfen: str,
+    opening_base_sfen: str | None = None,
+    opening_moves: tuple[str, ...] = (),
 ) -> rsshogi.record.Record:
     black_pool_key = game_spec.black_item.pool_key
     white_pool_key = game_spec.white_item.pool_key
@@ -638,6 +646,8 @@ async def _run_game_with_engines(
             game_spec.game_id,
             black_time_control_limits=game_spec.black_limits,
             white_time_control_limits=game_spec.white_limits,
+            opening_base_sfen=opening_base_sfen,
+            opening_moves=opening_moves,
         )
     else:
         async with transcript_context:
@@ -648,6 +658,8 @@ async def _run_game_with_engines(
                 game_spec.game_id,
                 black_time_control_limits=game_spec.black_limits,
                 white_time_control_limits=game_spec.white_limits,
+                opening_base_sfen=opening_base_sfen,
+                opening_moves=opening_moves,
             )
 
     completed_at = datetime.now(UTC)

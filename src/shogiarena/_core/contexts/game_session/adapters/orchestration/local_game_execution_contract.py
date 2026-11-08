@@ -28,8 +28,40 @@ from shogiarena._core.contexts.game_session.ports.game_execution_spec import (
     TargetPlatform,
     TimeoutPolicySpec,
 )
+from shogiarena._core.shared.kernel.initial_position_entry import resolve_opening_position_text
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonScalar
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
+
+
+def build_opening_spec(
+    *,
+    initial_sfen: str,
+    opening_base_sfen: str | None = None,
+    opening_moves_usi: tuple[str, ...] = (),
+    black_name: str,
+    white_name: str,
+) -> OpeningSpec:
+    if opening_moves_usi:
+        base_sfen = normalize_usi_position(opening_base_sfen or "startpos")
+        return OpeningSpec(
+            initial_sfen=base_sfen,
+            moves_usi=list(opening_moves_usi),
+            black_engine_id=black_name,
+            white_engine_id=white_name,
+        )
+    resolved = resolve_opening_position_text(initial_sfen)
+    if resolved.opening_moves_usi:
+        return OpeningSpec(
+            initial_sfen=resolved.opening_base_sfen or "startpos",
+            moves_usi=list(resolved.opening_moves_usi),
+            black_engine_id=black_name,
+            white_engine_id=white_name,
+        )
+    return OpeningSpec(
+        initial_sfen=normalize_usi_position(initial_sfen),
+        black_engine_id=black_name,
+        white_engine_id=white_name,
+    )
 
 
 def resolve_local_game_execution(
@@ -37,6 +69,8 @@ def resolve_local_game_execution(
     run_id: str,
     game_id: str,
     initial_sfen: str,
+    opening_base_sfen: str | None = None,
+    opening_moves_usi: tuple[str, ...] = (),
     black_name: str,
     white_name: str,
     black_config_path: Path,
@@ -141,10 +175,12 @@ def resolve_local_game_execution(
                 after_variant_setoption=_after_setoption(after_variant_setoption),
                 default_handshake_timeout_s=white_handshake_timeout_s,
             ),
-            opening=OpeningSpec(
-                initial_sfen=normalize_usi_position(initial_sfen),
-                black_engine_id=black_name,
-                white_engine_id=white_name,
+            opening=build_opening_spec(
+                initial_sfen=initial_sfen,
+                opening_base_sfen=opening_base_sfen,
+                opening_moves_usi=opening_moves_usi,
+                black_name=black_name,
+                white_name=white_name,
             ),
             time=GameTimeSpec(
                 black=_time_control(black_limits),
@@ -235,4 +271,4 @@ def _after_setoption(value: str) -> Literal["none", "isready"]:
     raise ValueError("after_variant_setoption must be one of: none, isready")
 
 
-__all__ = ["resolve_local_game_execution"]
+__all__ = ["build_opening_spec", "resolve_local_game_execution"]

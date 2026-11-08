@@ -91,3 +91,21 @@ class TestBuildBookProvenance:
         fingerprint = provenance["fingerprint"]
         assert isinstance(fingerprint, dict)
         assert fingerprint["basename"] == "user_book1.ybb"
+
+    def test_records_native_book_options(self, tmp_path: Path) -> None:
+        book = tmp_path / "StandardBook.book"
+        book.write_bytes(b"native-book-bytes")
+        provenance = build_book_provenance(
+            {
+                "BookFile": str(book),
+                "BookEnableFlip": True,
+                "BookIgnorePly": False,
+                "Threads": 2,
+            }
+        )
+        assert provenance is not None
+        options = provenance["options"]
+        assert isinstance(options, dict)
+        assert options["BookEnableFlip"] is True
+        assert options["BookIgnorePly"] is False
+        assert "Threads" not in options

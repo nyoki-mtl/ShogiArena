@@ -71,7 +71,8 @@ while True:
                 ),
                 encoding="utf-8",
             )
-        time.sleep(0.5)
+        else:
+            time.sleep(0.5)
         send("bestmove resign")
     elif line == "stop":
         send("bestmove resign")

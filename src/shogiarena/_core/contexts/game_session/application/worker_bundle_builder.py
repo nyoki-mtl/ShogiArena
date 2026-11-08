@@ -80,6 +80,7 @@ def build_worker_bundle(
         dependencies_path = build_dir / "requirements.lock"
         environment = os.environ.copy()
         environment["SOURCE_DATE_EPOCH"] = "315532800"
+        environment["UV_NO_CONFIG"] = "1"
         _run_checked(
             ["uv", "build", "--wheel", "--out-dir", str(wheel_dir), str(root)],
             environment=environment,

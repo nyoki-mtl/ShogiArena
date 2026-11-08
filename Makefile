@@ -1,4 +1,4 @@
-.PHONY: help test test-cov test-unit test-property test-integration format format-check lint lint-fix python-import-cycle-check ts-import-cycle-check import-cycle-check type-safety-audit-check ty-check frontend-typecheck typecheck typing-audit typing-audit-baseline typing-audit-ci architecture-lint architecture-lint-strict architecture-lint-dynamic architecture-lint-dynamic-strict architecture-lint-final architecture-lint-final-strict convention-lint convention-lint-strict frontend-test check check-powershell-encoding check-full ci ci-public ci-develop ci-private clean check-distribution-artifacts check-examples check-public-export check-promote-release check-env docs docs-build docs-serve
+.PHONY: help test test-cov test-unit test-integration format format-check lint lint-fix python-import-cycle-check ts-import-cycle-check import-cycle-check type-safety-audit-check ty-check frontend-typecheck typecheck typing-audit typing-audit-baseline typing-audit-ci architecture-lint architecture-lint-strict architecture-lint-dynamic architecture-lint-dynamic-strict architecture-lint-final architecture-lint-final-strict convention-lint convention-lint-strict frontend-test check check-powershell-encoding check-full ci ci-public ci-develop ci-private clean check-distribution-artifacts check-examples check-public-export check-promote-release check-env docs docs-build docs-serve
 
 # PATH 上の mdbook を使う。別の場所にある場合は `make docs MDBOOK=/path/to/mdbook` で上書きする。
 MDBOOK ?= mdbook
@@ -16,10 +16,9 @@ help:
 	@echo ""
 	@echo "Available targets:"
 	@echo "  sync         - 全依存関係を同期"
-	@echo "  test         - 全テスト実行（単体・プロパティ・統合）"
+	@echo "  test         - 全テスト実行（単体・統合）"
 	@echo "  test-cov     - カバレッジ付きテスト実行"
 	@echo "  test-unit    - 単体テストのみ実行"
-	@echo "  test-property - プロパティベーステストのみ実行"
 	@echo "  test-integration - 統合テストのみ実行"
 	@echo "  format       - コードフォーマット（ruff format）"
 	@echo "  format-check - コードフォーマット確認（非破壊）"
@@ -36,10 +35,10 @@ help:
 	@echo "  convention-lint-strict - 命名/構成規約違反を失敗扱い"
 	@echo "  check        - format 後に lint, convention-lint, typecheck, check-js を並列実行（テストなし）"
 	@echo "  check-full   - check + test + frontend:test"
-	@echo "  ci           - GitHub Actions の public CI と同等の検証"
-	@echo "  ci-public    - public CI と同等の検証（ci の別名）"
-	@echo "  ci-develop   - GitHub Actions の develop CI と同等の検証（typing-audit含む）"
-	@echo "  ci-private   - develop CI と同等の検証（ci-develop の別名）"
+	@echo "  ci           - ローカル統合検証（lint / typecheck / test / package build）"
+	@echo "  ci-public    - ローカル公開検証（ci の別名）"
+	@echo "  ci-develop   - ローカル開発検証（typing-audit + ci）"
+	@echo "  ci-private   - ci-develop の別名"
 	@echo "  check-distribution-artifacts - wheelのdashboard・型情報・第三者noticeを検証"
 	@echo "  check-examples - 公開example設定をproduction CLIのdry-runで検証"
 	@echo "  clean        - キャッシュファイルの削除"
@@ -56,9 +55,6 @@ test-cov:
 
 test-unit:
 	uv run pytest tests/unit/ -v
-
-test-property:
-	uv run pytest tests/property/ -v
 
 test-integration:
 	uv run pytest tests/integration/ -v

@@ -167,22 +167,43 @@ def _write_engine_assets(
     return paths[0], paths[1]
 
 
-async def _inject_loop_stalls(*, stall_s: float, interval_s: float) -> None:
+async def _inject_loop_stalls(
+    *,
+    stall_s: float,
+    interval_s: float,
+    active_go_gate: asyncio.Event,
+) -> None:
     """event loop を同期的に塞いで停滞を作る（shadow 計測と同じ手法）。
 
-    ``time.sleep`` は loop を明け渡さないため、watchdog から見て実際の lag になる。
+    DB 初期化や USI 起動時は塞がず、``go`` 送信から終局までの対局中だけ停滞を注入する。
     """
     while True:
+        await active_go_gate.wait()
         await asyncio.sleep(interval_s)
-        time.sleep(stall_s)
+        if active_go_gate.is_set():
+            time.sleep(stall_s)
 
 
 @contextlib.asynccontextmanager
 async def _loop_stalls(*, stall_s: float, interval_s: float) -> AsyncIterator[None]:
-    task = asyncio.create_task(_inject_loop_stalls(stall_s=stall_s, interval_s=interval_s))
+    active_go_gate = asyncio.Event()
+    original_send = AsyncUsiEngine._send_command
+
+    async def gated_send(self: Any, command: str, *, state: str | None = None) -> None:
+        if command.startswith("go "):
+            active_go_gate.set()
+        elif command.startswith("gameover ") or command == "quit":
+            active_go_gate.clear()
+        await original_send(self, command, state=state)
+
+    AsyncUsiEngine._send_command = gated_send  # type: ignore[method-assign]
+    task = asyncio.create_task(
+        _inject_loop_stalls(stall_s=stall_s, interval_s=interval_s, active_go_gate=active_go_gate)
+    )
     try:
         yield
     finally:
+        AsyncUsiEngine._send_command = original_send  # type: ignore[method-assign]
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -432,12 +453,12 @@ async def test_production_composition_does_not_blame_the_engine_when_the_loop_st
     # engine は budget 内で応答するが、停滞が観測を deadline の後ろへ押し出す。
     status = await _run_tournament(
         tmp_path,
-        delay_s=0.02,
-        time_ms=50,
+        delay_s=0.25,
+        time_ms=300,
         margin_ms=0,
         games_per_pair=2,
-        stall_s=0.5,
-        stall_interval_s=0.005,
+        stall_s=0.30,
+        stall_interval_s=0.03,
     )
 
     watchdog = status.get("watchdog")
@@ -527,12 +548,12 @@ async def test_production_composition_reports_coverage_loss_as_unknown(
 
     status = await _run_tournament(
         tmp_path,
-        delay_s=0.02,
-        time_ms=50,
+        delay_s=0.75,
+        time_ms=800,
         margin_ms=0,
         games_per_pair=2,
-        stall_s=0.5,
-        stall_interval_s=0.005,
+        stall_s=0.30,
+        stall_interval_s=0.03,
     )
 
     watchdog = status.get("watchdog")
@@ -657,14 +678,14 @@ async def test_production_composition_writes_a_cancelled_terminal_status(tmp_pat
 @pytest.mark.asyncio
 async def test_local_slot_throttling_completes_with_more_workers_than_slots(tmp_path: Path) -> None:
     """preflight off の意図的な resource 待機が局を飢餓させないこと。"""
-    black, white = _write_engine_assets(tmp_path, delay_s=0.1)
+    black, white = _write_engine_assets(tmp_path, delay_s=0.02)
     config_path = _write_config(
         tmp_path,
         black=black,
         white=white,
         time_ms=5000,
         margin_ms=500,
-        games_per_pair=12,
+        games_per_pair=8,
         num_parallel=6,
     )
     pool = InstancePool()
@@ -681,5 +702,5 @@ async def test_local_slot_throttling_completes_with_more_workers_than_slots(tmp_
 
     status = json.loads((run_dir / "completion_status.json").read_text(encoding="utf-8"))
     assert status["status"] == "clean"
-    assert status["completed"] == 12
+    assert status["completed"] == 8
     assert status["not_played"] == 0

@@ -148,8 +148,15 @@ def test_opening_moves_are_applied_to_initial_sfen() -> None:
         black_engine_id="engine-a",
         white_engine_id="engine-b",
     )
+    hirate_sfen_opening = OpeningSpec(
+        initial_sfen="lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+        moves_usi=["7g7f", "3c3d"],
+        black_engine_id="engine-a",
+        white_engine_id="engine-b",
+    )
 
     assert materialize_opening_sfen(opening).endswith(" b - 3")
+    assert materialize_opening_sfen(hirate_sfen_opening) == materialize_opening_sfen(opening)
 
 
 def test_effective_handshake_timeout_precedence_and_common_default() -> None:

@@ -16,7 +16,6 @@
     "frontend:format-check": "biome format src/shogiarena/_core/interfaces/dashboard/frontend/src",
     "frontend:format-all": "npm run frontend:format && npm run frontend:format-static && npm run frontend:format-html",
     "frontend:check": "npm run frontend:lint && npm run frontend:typecheck && npm run frontend:test",
-    "frontend:visual": "playwright test --config visual-tests/playwright.config.ts",
     "frontend:knip": "knip --reporter compact --tsConfig src/shogiarena/_core/interfaces/dashboard/frontend/tsconfig.json"
   },
   "devDependencies": {

@@ -33,7 +33,12 @@ from shogiarena._core.contexts.spsa.domain.participation_identity import (
     attach_spsa_participation_identity,
 )
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry
+from shogiarena._core.shared.kernel.initial_position_entry import (
+    extract_opening_source_format,
+    resolve_opening_position_text,
+)
 from shogiarena._core.shared.kernel.json_types import JsonObject
+from shogiarena._core.shared.kernel.schedule_metadata import attach_schedule_metadata
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
 
 logger = logging.getLogger(__name__)
@@ -94,12 +99,16 @@ class SpsaOrchestratorRemoteGameMixin:
         w_engine_config = self.config.baseline[0] if is_tuned_as_black else self.config.tuned[0]
 
         max_plies = max_plies_from_rules(self.config.rules)
+        resolved_opening = resolve_opening_position_text(
+            start_sfen,
+            source_format=extract_opening_source_format(self.config),
+        )
         remote_result = None
         spec = None
         async with manage_remote_pair_instance_lifecycle(
             self,
             game_id=game_id,
-            initial_sfen=start_sfen,
+            initial_sfen=resolved_opening.post_opening_sfen,
             round_index=update_idx,
             instance_id=remote_instance.name,
             black_engine_name=black_name,
@@ -140,7 +149,9 @@ class SpsaOrchestratorRemoteGameMixin:
                 white_variant_id=baseline_variant_id if is_tuned_as_black else tuned_variant_id,
                 clear_hash_before_game=clear_hash_before_game,
                 after_variant_setoption=after_variant_setoption,
-                start_sfen=start_sfen,
+                start_sfen=resolved_opening.post_opening_sfen,
+                opening_base_sfen=resolved_opening.opening_base_sfen,
+                opening_moves_usi=resolved_opening.opening_moves_usi,
                 game_id=game_id,
                 run_id=self.session_context.run_id,
                 black_name=black_name,
@@ -168,7 +179,7 @@ class SpsaOrchestratorRemoteGameMixin:
                 remote_root=remote_root,
                 prepared_spec=spec,
                 game_id=game_id,
-                start_sfen=start_sfen,
+                start_sfen=resolved_opening.post_opening_sfen,
                 black_name=black_display,
                 white_name=white_display,
                 black_limits=black_limits,
@@ -217,6 +228,16 @@ class SpsaOrchestratorRemoteGameMixin:
             game_record=game_info,
             participation_records=participation,
         )
+        if resolved_opening.opening_moves_usi:
+            attach_schedule_metadata(
+                game_record=game_info,
+                schedule_metadata={
+                    "schema_version": 1,
+                    "initial_sfen": resolved_opening.post_opening_sfen,
+                    "opening_base_sfen": resolved_opening.opening_base_sfen,
+                    "opening_moves_usi": list(resolved_opening.opening_moves_usi),
+                },
+            )
         logger.info(
             "[%s] end game %s: result=%s",
             remote_instance.name,

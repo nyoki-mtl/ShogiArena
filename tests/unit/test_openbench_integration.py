@@ -724,3 +724,9 @@ def test_openbench_create_payload_rejects_out_of_range_sprt_confidence(
     )
     with pytest.raises(ValueError, match="test_confidence"):
         runner._openbench._resolve_config()
+
+
+def test_openbench_counters_state_roundtrip() -> None:
+    original = OpenBenchCounters(wins=5, draws=3, losses=2, ww=1, dw=2, dd=1, ld=1, ll=0)
+    restored = OpenBenchCounters.from_state(original.to_state())
+    assert restored == original

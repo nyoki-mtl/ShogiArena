@@ -283,7 +283,7 @@ class TournamentOrchestrator(BaseOrchestrator):
     ) -> rsshogi.record.Record:
         # Expand "startpos" / USI position notation to a full board SFEN (from_dict rejects
         # "startpos"), and stamp the date fields the DB persistence path requires.
-        initial_sfen = parse_usi_position_parts(game_spec.initial_sfen).initial_sfen
+        initial_sfen = parse_usi_position_parts(game_spec.initial_sfen).final_sfen
         now = datetime.now(UTC).isoformat()
         record = rsshogi.record.Record.from_dict(
             {
@@ -429,6 +429,8 @@ class TournamentOrchestrator(BaseOrchestrator):
                     black_item=black_item,
                     white_item=white_item,
                     initial_sfen=game_spec.initial_sfen,
+                    opening_base_sfen=game_spec.opening_base_sfen,
+                    opening_moves_usi=game_spec.opening_moves_usi,
                     game_id=game_spec.game_id,
                     black_limits=black_limits,
                     white_limits=white_limits,

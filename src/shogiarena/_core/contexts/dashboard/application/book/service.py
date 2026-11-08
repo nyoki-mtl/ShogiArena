@@ -14,8 +14,12 @@ import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from rsshogi.record import GameResult
+
+if TYPE_CHECKING:
+    from rsshogi.book import NativeCandidate
 
 from shogiarena._core.contexts.dashboard.application.book.aggregation import (
     BookGameInput,
@@ -58,6 +62,37 @@ def side_outcome(result: GameResult, color: Color) -> SideOutcome | None:
     return None
 
 
+@dataclass(frozen=True, slots=True)
+class _NativeBookEntryView:
+    moves: tuple[NativeCandidate, ...]
+
+
+class _NativeBookLookupAdapter:
+    """`rsshogi.book.NativeBook` を :class:`BookLookup` プロトコルへ適合させる。"""
+
+    def __init__(self, book: object) -> None:
+        from rsshogi.book import NativeBook
+
+        if not isinstance(book, NativeBook):
+            raise TypeError(f"Expected NativeBook, got {type(book).__name__}")
+        self._book = book
+
+    def lookup_sfen(self, sfen: str) -> _NativeBookEntryView | None:
+        from rsshogi.core import Board
+
+        board: Board | None = None
+        try:
+            board = Board(sfen)
+            entry = self._book.get(board)
+            if entry is None:
+                return None
+            return _NativeBookEntryView(moves=tuple(entry.candidates))
+        except ValueError:
+            return None
+        finally:
+            del board
+
+
 def make_default_book_opener(*, allow_full_validation: bool = False) -> BookOpener:
     """既定の book opener を返す。
 
@@ -65,15 +100,31 @@ def make_default_book_opener(*, allow_full_validation: bool = False) -> BookOpen
     ``complete is False`` の book（2.4GB 級など）は既定でスキップする。
     ``allow_full_validation=True`` の場合のみ ``validate_full()``（全読みで高コスト）を実行し、
     sorted なら lookup 可能として扱う。これが大規模 book の out-of-book 算出 opt-in 経路。
+    ``.book``（rsshogi NativeBook）はブロック索引を持つため ``open()`` 後に直接 lookup できる。
     """
 
     def opener(path: str) -> BookLookup | None:
+        candidate = Path(path)
+        if not candidate.is_absolute() or not candidate.is_file():
+            return None
+        if candidate.suffix.lower() == ".book":
+            try:
+                from rsshogi.book import NativeBook
+            except ImportError:
+                return None
+            try:
+                native_book = NativeBook.open(str(candidate))
+                if allow_full_validation:
+                    native_book.validate_full()
+            except (ValueError, OSError):
+                return None
+            if len(native_book) == 0:
+                return None
+            return _NativeBookLookupAdapter(native_book)
+
         try:
             from rsshogi.book import YaneuraOuBook
         except ImportError:
-            return None
-        candidate = Path(path)
-        if not candidate.is_absolute() or not candidate.is_file():
             return None
         try:
             book = YaneuraOuBook.open(str(candidate))

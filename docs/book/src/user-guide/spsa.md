@@ -169,8 +169,7 @@ SPSA では `rules.initial_positions.type: file` を指定し、開始局面 SFE
 `shogiarena run spsa spsa.yaml` で実行する場合、相対 `source` はその YAML ファイルの場所を基準に解決されます。
 
 `sync_scope: pair`を指定すると、`flip_policy: pair_both`になっているか検証されます。
-USI形式の指し手列から始めたい場合は、指し手列をあらかじめ SFEN リストへ変換して `source_format: sfen` として渡してください。
-指し手列は対局前に SFEN へ反映されるだけで、棋譜に強制手として保存されません。
+`source_format` には `auto`、`sfen`、`usi_line` を指定できます。`usi_line`（または `auto` で指し手列を含む行）では、到達局面の SFEN を初期局面として記録し強制手を棋譜へ混入させない一方、審判盤面と USI エンジンには基底局面と事前手順（`position startpos moves <開始手順> <対局手順>` 等）を引き継ぎます。
 
 ## ダッシュボード
 

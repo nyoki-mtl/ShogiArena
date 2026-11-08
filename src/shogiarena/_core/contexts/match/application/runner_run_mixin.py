@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
 import rsshogi
-from rsshogi.core import Board, Move, normalize_usi_position
+from rsshogi.core import Board, Move, normalize_usi_position, parse_usi_position
 
 from shogiarena._core.contexts.match.domain.adjudication import Adjudicator
 from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort
 from shogiarena._core.shared.kernel.game_results import (
     GameResult,
+)
+from shogiarena._core.shared.kernel.initial_position_entry import (
+    format_usi_position_with_moves,
+    resolve_opening_position_text,
 )
 from shogiarena._core.shared.kernel.json_coercion import to_json_object
 from shogiarena._core.shared.kernel.record_engine_metrics import attach_engine_wall_times, attach_move_source_metadata
@@ -52,6 +56,9 @@ class GameRunnerRunMixin:
         game_id: str | None = None,
         black_time_control_limits: TimeControlLimitsPort | None = None,
         white_time_control_limits: TimeControlLimitsPort | None = None,
+        *,
+        opening_base_sfen: str | None = None,
+        opening_moves: Sequence[str] = (),
     ) -> rsshogi.record.Record:
         """
         Run a single game between two engines.
@@ -82,11 +89,32 @@ class GameRunnerRunMixin:
         board = Board()
 
         try:
-            normalized_sfen = normalize_usi_position(initial_sfen)
-            if normalized_sfen == "startpos":
-                board.reset()
+            opening_moves_tuple = tuple(opening_moves)
+            if opening_moves_tuple:
+                engine_initial_sfen = normalize_usi_position(opening_base_sfen or "startpos")
+                position_cmd = format_usi_position_with_moves(engine_initial_sfen, opening_moves_tuple)
+                board = parse_usi_position(position_cmd)
+                prefix_moves = tuple(Move.from_usi(m) for m in opening_moves_tuple)
+                normalized_sfen = normalize_usi_position(board.to_sfen())
             else:
-                board.set_sfen(normalized_sfen)
+                resolved_opening = resolve_opening_position_text(initial_sfen)
+                if resolved_opening.opening_moves_usi:
+                    engine_initial_sfen = resolved_opening.opening_base_sfen or "startpos"
+                    position_cmd = format_usi_position_with_moves(
+                        engine_initial_sfen,
+                        resolved_opening.opening_moves_usi,
+                    )
+                    board = parse_usi_position(position_cmd)
+                    prefix_moves = tuple(Move.from_usi(m) for m in resolved_opening.opening_moves_usi)
+                    normalized_sfen = normalize_usi_position(resolved_opening.post_opening_sfen)
+                else:
+                    normalized_sfen = normalize_usi_position(initial_sfen)
+                    engine_initial_sfen = normalized_sfen
+                    prefix_moves = ()
+                    if normalized_sfen == "startpos":
+                        board.reset()
+                    else:
+                        board.set_sfen(normalized_sfen)
             initial_sfen = normalized_sfen
 
             start_ply_number = _starting_ply_number(initial_sfen)
@@ -161,7 +189,12 @@ class GameRunnerRunMixin:
                 try:
                     # Prepare both engines for the game
                     if not self._is_shutting_down:
-                        await self._prepare_engines_for_game(black_engine, white_engine, initial_sfen)
+                        await self._prepare_engines_for_game(
+                            black_engine,
+                            white_engine,
+                            engine_initial_sfen,
+                            opening_moves=prefix_moves,
+                        )
                     else:
                         raise asyncio.CancelledError()
 
@@ -188,6 +221,8 @@ class GameRunnerRunMixin:
                         adjudicator=adjudicator,
                         result_progress_emitted=result_progress_emitted,
                         timeout_decision_holder=timeout_decision_holder,
+                        engine_initial_sfen=engine_initial_sfen,
+                        opening_moves=prefix_moves,
                     )
 
                 except asyncio.CancelledError:
@@ -282,6 +317,8 @@ class GameRunnerRunMixin:
         black_engine: GameEnginePort,
         white_engine: GameEnginePort,
         initial_sfen: str,
+        *,
+        opening_moves: tuple[Move, ...] = (),
     ) -> None:
         """Prepare engines for a new game."""
         if self._is_shutting_down:
@@ -294,10 +331,22 @@ class GameRunnerRunMixin:
                 black_engine.prepare_ready_state(),
                 white_engine.prepare_ready_state(),
             )
-            await asyncio.gather(
-                black_engine.prepare_new_game_position(initial_sfen=initial_sfen),
-                white_engine.prepare_new_game_position(initial_sfen=initial_sfen),
-            )
+            if opening_moves:
+                await asyncio.gather(
+                    black_engine.prepare_new_game_position(
+                        initial_sfen=initial_sfen,
+                        opening_moves=opening_moves,
+                    ),
+                    white_engine.prepare_new_game_position(
+                        initial_sfen=initial_sfen,
+                        opening_moves=opening_moves,
+                    ),
+                )
+            else:
+                await asyncio.gather(
+                    black_engine.prepare_new_game_position(initial_sfen=initial_sfen),
+                    white_engine.prepare_new_game_position(initial_sfen=initial_sfen),
+                )
         else:
             await asyncio.gather(
                 black_engine.prepare(initial_sfen=initial_sfen),

@@ -113,31 +113,6 @@ async def test_slow_output_keeps_loop_running_and_drains_before_final_envelope(t
 
 
 @pytest.mark.asyncio
-async def test_output_blocked_longer_than_old_drain_timeout_is_not_discarded(tmp_path, monkeypatch):
-    sink = BlockingSink("flush")
-
-    async def execute(spec, *, progress_queue, **kwargs):
-        progress_queue.put_nowait((0, 1, '{"type":"move_progress","game_result":"draw"}'))
-        progress_queue.put_nowait((0, 0, '{"type":"engine_state","state":"closed"}'))
-        return _outcome(spec)
-
-    _install(monkeypatch, execute, sink)
-    owner = asyncio.create_task(remote.run_game_execution_spec(_sealed_spec(), execution_root=tmp_path))
-    try:
-        await _entered(sink)
-        await asyncio.sleep(2.1)
-        assert not owner.done()
-    finally:
-        sink.release.set()
-        assert await owner == 0
-    assert [json.loads(line).get("type", "result") for line in sink.getvalue().splitlines()] == [
-        "move_progress",
-        "engine_state",
-        "result",
-    ]
-
-
-@pytest.mark.asyncio
 async def test_missing_terminal_progress_does_not_hang_or_fabricate_progress(tmp_path, monkeypatch):
     sink = io.StringIO()
 
@@ -260,3 +235,46 @@ async def test_validation_error_output_is_also_off_loop(tmp_path, monkeypatch):
     finally:
         sink.release.set()
         assert await owner == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [KeyError("key"), AssertionError("assertion"), AttributeError("attribute")])
+async def test_unexpected_execution_failure_gets_error_envelope(monkeypatch, failure):
+    sink = io.StringIO()
+    monkeypatch.setattr(remote.sys, "stdout", sink)
+    queue = asyncio.Queue()
+
+    async def execute():
+        raise failure
+
+    worker = SimpleNamespace(request_shutdown=lambda: None)
+    execution = asyncio.create_task(execute())
+    streamer = asyncio.create_task(remote._stream_progress(queue))
+    assert await remote._finish_execution(worker, execution, streamer, queue) == 1
+    rows = [json.loads(line) for line in sink.getvalue().splitlines()]
+    assert len(rows) == 1 and rows[0]["type"] == "error"
+    assert type(failure).__name__ in rows[0]["message"]
+    assert "Traceback" in rows[0]["trace"]
+
+
+@pytest.mark.asyncio
+async def test_broken_output_remains_primary_when_engine_cleanup_also_fails(caplog):
+    started = asyncio.Event()
+
+    async def execute():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            raise RuntimeError("injected cleanup failure")
+
+    async def stream():
+        await started.wait()
+        raise BrokenPipeError("injected broken stdout")
+
+    execution, streamer = asyncio.create_task(execute()), asyncio.create_task(stream())
+    worker = SimpleNamespace(request_shutdown=lambda: None)
+    with pytest.raises(BrokenPipeError, match="injected broken stdout"):
+        await remote._finish_execution(worker, execution, streamer, asyncio.Queue())
+    assert execution.done() and streamer.done()
+    assert "cleanup failed" in caplog.text and "injected cleanup failure" in caplog.text

@@ -243,3 +243,55 @@ async def test_lease_and_gc_serialize_on_same_deployment_lock() -> None:
     expected_lock = f"/srv/arena/locks/deployments/{deployment_id}.lock"
     assert expected_lock in lease_command
     assert "/srv/arena/locks/deployments/$id.lock" in gc_command
+
+
+@pytest.mark.asyncio
+async def test_remote_path_resolver_expands_without_eval() -> None:
+    from shogiarena._core.platform.engine_provisioning.remote_paths import RemotePathResolver
+
+    class _EnvTransport:
+        def __init__(self, *, env_output: str = "") -> None:
+            self.env_output = env_output
+            self.commands: list[str] = []
+
+        async def run(self, command: str) -> tuple[int, str, str]:
+            self.commands.append(command)
+            return 0, self.env_output, ""
+
+    transport = _EnvTransport(env_output="__HOME__=/home/arena\nHOME=/home/arena\nENGINE_DIR=/opt/engines\n")
+    resolver = RemotePathResolver(transport)
+
+    assert str(await resolver.expand(RemotePosixPath("~/book"))) == "/home/arena/book"
+    assert str(await resolver.expand(RemotePosixPath("$ENGINE_DIR/bin"))) == "/opt/engines/bin"
+    assert all("eval" not in command for command in transport.commands)
+
+
+def test_remote_posix_path_rejects_coordinator_windows_separator_and_quotes_shell() -> None:
+    with pytest.raises(ValueError, match="POSIX separators"):
+        RemotePosixPath(r"C:\worker\deployments")
+
+    root = RemotePosixPath("$HOME/Shogi Arena")
+    deployment = root / "deployments" / "abc123"
+
+    assert str(deployment) == "$HOME/Shogi Arena/deployments/abc123"
+    assert deployment.shell_quote() == "'$HOME/Shogi Arena/deployments/abc123'"
+
+
+def test_safe_remote_engine_dir_assignment_has_no_eval_and_expands_home() -> None:
+    import subprocess
+    import sys
+
+    from shogiarena._core.contexts.instances.application.engine_process_spawner import (
+        _safe_remote_engine_dir_assignment,
+    )
+
+    if sys.platform.startswith("win"):
+        pytest.skip(
+            "リモート(Linux)ホスト上で実行される sh スニペットの検証。Windows にはローカル POSIX シェルの前提がない"
+        )
+
+    script = _safe_remote_engine_dir_assignment("~/engines") + '; printf "%s" "$ENGINE_DIR"'
+    output = subprocess.check_output(["bash", "-lc", script], text=True)
+
+    assert "eval" not in script
+    assert output.endswith("/engines")

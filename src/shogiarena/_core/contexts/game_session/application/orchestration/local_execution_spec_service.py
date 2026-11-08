@@ -26,6 +26,8 @@ class LocalExecutionSpecRequest(Generic[TEngineItem]):
     game_id: str
     black_limits: object
     white_limits: object
+    opening_base_sfen: str | None = None
+    opening_moves_usi: tuple[str, ...] = ()
     black_variant_options: JsonObject | None = None
     white_variant_options: JsonObject | None = None
     black_variant_id: str | None = None
@@ -55,6 +57,10 @@ def build_local_execution_spec(
     }
     if request.black_variant_options:
         payload["black_variant_options"] = request.black_variant_options
+    if request.opening_base_sfen is not None:
+        payload["opening_base_sfen"] = request.opening_base_sfen
+    if request.opening_moves_usi:
+        payload["opening_moves_usi"] = request.opening_moves_usi
     if request.white_variant_options:
         payload["white_variant_options"] = request.white_variant_options
     if request.black_variant_id is not None:

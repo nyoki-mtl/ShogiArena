@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import inspect
+from collections.abc import Callable
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
+from typing import Any, cast, get_args, get_type_hints
 
 import pytest
 
@@ -11,54 +14,136 @@ import shogiarena.cli
 import shogiarena.composition
 import shogiarena.engine
 import shogiarena.tournament
+from shogiarena._core.contexts.game_session.adapters.results.run_result_models import (
+    TournamentRunResultBuilder,
+)
+from shogiarena._core.contexts.game_session.domain.summary_models import TournamentResults
+from shogiarena.engine import UsiEngineConfig
+from shogiarena.tournament import GameSpec, TournamentRunResult
+
+EXPECTED_ENGINE_EXPORTS = {
+    "AnalysisHandle",
+    "AsyncUsiProcessBridgePort",
+    "EngineLifecycleEvent",
+    "EngineProcessInfo",
+    "InstancePool",
+    "JsonObject",
+    "JsonValue",
+    "PonderHandle",
+    "PonderHitTimings",
+    "UsiAnalyzeItem",
+    "UsiAnalyzePosition",
+    "UsiAnalyzeResetPolicy",
+    "UsiBound",
+    "UsiEngineConfig",
+    "UsiEngineSession",
+    "UsiEngineStartError",
+    "UsiEngineState",
+    "UsiEvalValue",
+    "UsiIoEvent",
+    "UsiMateResult",
+    "UsiOption",
+    "UsiOptionValidationMode",
+    "UsiProtocolParser",
+    "UsiThinkPV",
+    "UsiThinkRequest",
+    "UsiThinkResult",
+    "create_engine",
+    "create_engine_from_mapping",
+    "move_from_usi",
+}
+
+EXPECTED_TOURNAMENT_EXPORTS = {
+    "DefaultRoot",
+    "EngineWdlCounts",
+    "FilesystemRunStorage",
+    "GameSpec",
+    "InstancePool",
+    "JsonValue",
+    "ProgressReporterPort",
+    "RunStoragePort",
+    "SprtDecision",
+    "SprtResult",
+    "TournamentResults",
+    "TournamentRunConfig",
+    "TournamentRunResult",
+    "TournamentRunner",
+    "build_tournament_runner",
+    "create_run_storage",
+    "load_tournament_config",
+    "run_tournament",
+}
+
+# 位置引数での構築を許したまま v1 に入れると、field 追加が破壊的変更になる。
+# 例外は provisional 面の単純な構築子に限り、理由をここに残す。
+_POSITIONAL_CONSTRUCTION_EXEMPTIONS = {
+    # provisional: run ディレクトリ 1 つだけを取る構築子で、field 追加の予定がない。
+    "FilesystemRunStorage",
+    # provisional: composition root の内部組み立て結果で、利用者は build_default_root() 経由で得る。
+    "DefaultRoot",
+}
 
 
-def test_public_cli_module_exports_expected_surface() -> None:
+def _contains_any(annotation: object) -> bool:
+    return annotation is Any or any(_contains_any(argument) for argument in get_args(annotation))
+
+
+def _assert_no_any_annotation(function: object) -> None:
+    hints = get_type_hints(function)
+    assert hints
+    for name, hint in hints.items():
+        assert not _contains_any(hint), f"{function!r} exposes Any inside {name}"
+
+
+def _public_dataclasses(module: ModuleType) -> list[tuple[str, type[object]]]:
+    found: list[tuple[str, type[object]]] = []
+    for name in module.__all__:
+        exported = getattr(module, name)
+        if isinstance(exported, type) and dataclasses.is_dataclass(exported):
+            found.append((name, exported))
+    return found
+
+
+def _assert_keyword_only(model: type[object]) -> None:
+    signature = inspect.signature(model)
+    assert signature.parameters
+    assert all(parameter.kind is inspect.Parameter.KEYWORD_ONLY for parameter in signature.parameters.values())
+
+
+def test_public_cli_and_composition_modules_export_expected_surface() -> None:
     assert set(shogiarena.cli.__all__) == {"CliArgumentError", "CliError", "build_parser", "main"}
-
-
-def test_resolve_instance_pool_injects_default_local_when_implicit() -> None:
-    from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
-    from shogiarena.engine import _resolve_instance_pool
-
-    # No instance_id and no pool -> a real local pool must be injected (the runtime factory
-    # no longer synthesizes a placeholder), so a plain create_engine*() call works.
-    pool = _resolve_instance_pool(None, None)
-    assert isinstance(pool, InstancePool)
-    assert pool.ensure_local_instance().is_local
-
-
-def test_resolve_instance_pool_preserves_explicit_pool_and_instance_id() -> None:
-    from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
-    from shogiarena.engine import _resolve_instance_pool
-
-    explicit = InstancePool()
-    assert _resolve_instance_pool(None, explicit) is explicit
-    # instance_id without a pool stays None so the factory fails fast (explicit pool required).
-    assert _resolve_instance_pool("worker-1", None) is None
-
-
-def test_public_composition_module_exports_expected_surface() -> None:
     assert set(shogiarena.composition.__all__) == {"DefaultRoot", "build_default_root"}
 
 
-def test_public_engine_module_exports_expected_symbols() -> None:
-    exported = set(shogiarena.engine.__all__)
-    assert "AsyncUsiEngine" not in exported
-    assert "AsyncUsiProcess" not in exported
-    assert "SpawnerBackedUSIBridge" not in exported
-    assert "EngineLifecycleEvent" in exported
-    assert "EngineProcessInfo" in exported
-    assert "UsiAnalyzePosition" in exported
-    assert "UsiEngineSession" in exported
-    assert "UsiEngineConfig" in exported
-    assert "UsiEvalValue" in exported
-    assert "UsiIoEvent" in exported
-    assert "UsiThinkRequest" in exported
-    assert "InstancePool" in exported
-    assert "JsonObject" in exported
-    assert "create_engine" in exported
-    assert "create_engine_from_mapping" in exported
+def test_public_facades_export_exact_contract() -> None:
+    assert set(shogiarena.engine.__all__) == EXPECTED_ENGINE_EXPORTS
+    assert set(shogiarena.tournament.__all__) == EXPECTED_TOURNAMENT_EXPORTS
+    for module, names in (
+        (shogiarena.engine, EXPECTED_ENGINE_EXPORTS),
+        (shogiarena.tournament, EXPECTED_TOURNAMENT_EXPORTS),
+    ):
+        for name in names:
+            assert hasattr(module, name), f"{module.__name__}.{name} is not importable"
+
+
+def test_removed_concrete_runtime_types_are_not_module_attributes() -> None:
+    for name in ("AsyncUsiEngine", "AsyncUsiProcess", "SpawnerBackedUSIBridge"):
+        assert not hasattr(shogiarena.engine, name)
+    assert not hasattr(shogiarena.tournament, "RunStorage")
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "shogiarena.contexts",
+        "shogiarena.platform",
+        "shogiarena.interfaces",
+        "shogiarena.shared",
+    ],
+)
+def test_legacy_top_level_internal_modules_are_not_importable(module_name: str) -> None:
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(module_name)
 
 
 def test_public_engine_factory_return_annotations_are_session_contract() -> None:
@@ -68,31 +153,136 @@ def test_public_engine_factory_return_annotations_are_session_contract() -> None
     assert mapping_signature.return_annotation == "UsiEngineSession"
 
 
-def test_public_tournament_module_exports_expected_symbols() -> None:
-    exported = set(shogiarena.tournament.__all__)
-    assert "TournamentRunConfig" in exported
-    assert "TournamentRunner" in exported
-    assert "create_run_storage" in exported
-    assert "build_tournament_runner" in exported
-    assert "load_tournament_config" in exported
-    assert "run_tournament" in exported
-    assert "RunStorage" not in exported
-    assert "RunStoragePort" in exported
-    assert "TournamentRunResult" in exported
-
-
 @pytest.mark.parametrize(
-    ("module_name",),
+    "function",
     [
-        ("shogiarena.contexts",),
-        ("shogiarena.platform",),
-        ("shogiarena.interfaces",),
-        ("shogiarena.shared",),
+        shogiarena.engine.create_engine,
+        shogiarena.engine.create_engine_from_mapping,
+        shogiarena.tournament.create_run_storage,
+        shogiarena.tournament.build_tournament_runner,
+        shogiarena.tournament.load_tournament_config,
+        shogiarena.tournament.run_tournament,
+        shogiarena.tournament.TournamentRunner.run,
+        shogiarena.tournament.TournamentRunner.calculate_results,
+        shogiarena.tournament.TournamentRunner.finalize_tournament,
     ],
 )
-def test_legacy_top_level_internal_modules_are_not_importable(module_name: str) -> None:
-    with pytest.raises(ModuleNotFoundError):
-        importlib.import_module(module_name)
+def test_public_facade_signatures_do_not_expose_any(function: object) -> None:
+    _assert_no_any_annotation(function)
+
+
+def test_tournament_result_annotations_are_concrete() -> None:
+    facade_hint = get_type_hints(shogiarena.tournament.run_tournament)["return"]
+    runner_hint = get_type_hints(shogiarena.tournament.TournamentRunner.run)["return"]
+    expected = shogiarena.tournament.TournamentRunResult | None
+    assert facade_hint == expected
+    assert runner_hint == expected
+    assert get_type_hints(shogiarena.tournament.TournamentRunner.calculate_results)["return"] is TournamentResults
+    assert get_type_hints(shogiarena.tournament.TournamentRunner.finalize_tournament)["results"] is TournamentResults
+
+
+@pytest.mark.parametrize("module", [shogiarena.engine, shogiarena.tournament], ids=lambda m: m.__name__)
+def test_every_exported_dataclass_is_keyword_only(module: ModuleType) -> None:
+    exported = _public_dataclasses(module)
+    assert exported, f"{module.__name__} exports no dataclass; the ratchet would silently pass"
+    for name, model in exported:
+        if name in _POSITIONAL_CONSTRUCTION_EXEMPTIONS:
+            continue
+        _assert_keyword_only(model)
+
+
+def test_stable_result_field_types_are_importable_from_the_same_module() -> None:
+    hints = get_type_hints(TournamentRunResult)
+    exported = set(shogiarena.tournament.__all__)
+    for field in dataclasses.fields(TournamentRunResult):
+        hint = hints[field.name]
+        for referenced in (hint, *getattr(hint, "__args__", ())):
+            name = getattr(referenced, "__name__", None)
+            if name is None or referenced.__module__.startswith(("builtins", "collections", "datetime", "pathlib")):
+                continue
+            assert name in exported, f"TournamentRunResult.{field.name} references {name} outside shogiarena.tournament"
+
+
+def test_usi_engine_config_constructor_hides_private_provenance() -> None:
+    signature = inspect.signature(UsiEngineConfig)
+    assert "_raw_engine_path" not in signature.parameters
+    assert "_raw_working_directory" not in signature.parameters
+    assert "_raw_options" not in signature.parameters
+    constructor = cast(Callable[..., UsiEngineConfig], UsiEngineConfig)
+    with pytest.raises(TypeError):
+        constructor(name="engine", engine_path="engine.exe", _raw_engine_path="hidden")
+
+
+def test_usi_engine_config_preserves_provenance_across_public_operations(tmp_path: Path) -> None:
+    first_output_dir = tmp_path / "first-output"
+    second_output_dir = tmp_path / "second-output"
+    engine_dir = tmp_path / "engines"
+    config = UsiEngineConfig.from_mapping(
+        {
+            "name": "engine",
+            "engine_path": "{engine_dir}/engine.exe",
+            "working_directory": "{output_dir}/work",
+            "options": {"EvalDir": "{output_dir}/eval"},
+        }
+    )
+
+    first = config.resolve_paths(output_dir=first_output_dir, engine_dir=engine_dir)
+    overridden = first.with_overrides(options={"EvalDir": "{output_dir}/book"}, output_dir=first_output_dir)
+    second = overridden.resolve_paths(output_dir=second_output_dir, engine_dir=engine_dir)
+
+    assert second.engine_path == str((engine_dir / "engine.exe").resolve())
+    assert second.working_directory == str((second_output_dir / "work").resolve())
+    assert second.options["EvalDir"] == str((second_output_dir / "book").resolve())
+
+
+def test_direct_usi_engine_config_construction_initializes_provenance(tmp_path: Path) -> None:
+    config = UsiEngineConfig(
+        name="engine",
+        engine_path="{engine_dir}/engine.exe",
+        options={"EvalDir": "{output_dir}/eval"},
+    )
+    resolved = config.resolve_paths(output_dir=tmp_path / "output", engine_dir=tmp_path / "engines")
+
+    assert resolved.engine_path == str((tmp_path / "engines" / "engine.exe").resolve())
+    assert resolved.options["EvalDir"] == str((tmp_path / "output" / "eval").resolve())
+
+
+def test_game_spec_rejects_positional_construction() -> None:
+    constructor = cast(Callable[..., GameSpec], GameSpec)
+    with pytest.raises(TypeError):
+        constructor("black", "white", "startpos", "g0001-test")
+
+
+def test_resolve_instance_pool_injects_default_local_or_preserves_explicit() -> None:
+    from shogiarena._core.contexts.instances.application.instance_pool import InstancePool
+    from shogiarena.engine import _resolve_instance_pool
+
+    pool = _resolve_instance_pool(None, None)
+    assert isinstance(pool, InstancePool)
+    assert pool.ensure_local_instance().is_local
+
+    explicit = InstancePool()
+    assert _resolve_instance_pool(None, explicit) is explicit
+    assert _resolve_instance_pool("worker-1", None) is None
+
+
+def test_production_result_builder_returns_public_result_type(tmp_path: Path) -> None:
+    storage = shogiarena.tournament.create_run_storage(tmp_path)
+    tournament = TournamentResults(
+        engine_stats={},
+        pair_results={},
+        completed_games=[],
+        total_games=0,
+        completed_games_count=0,
+    )
+    result = TournamentRunResultBuilder(
+        run_id="contract-test",
+        run_dir=tmp_path,
+        storage=storage,
+    ).build_tournament_run_result(tournament, None)
+
+    assert isinstance(result, shogiarena.tournament.TournamentRunResult)
+    assert result.tournament is tournament
 
 
 def test_load_tournament_config_from_mapping_uses_runtime_request(tmp_path: Path) -> None:
@@ -132,12 +322,9 @@ async def test_run_tournament_builds_runner_and_executes(monkeypatch: pytest.Mon
     root = object()
     captured: dict[str, object] = {}
 
-    async def _run() -> object:
-        return result
-
     class _Runner:
         async def run(self) -> object:
-            return await _run()
+            return result
 
     def _fake_load_tournament_config(config_source: object, *, root: object) -> object:
         captured["config_source"] = config_source

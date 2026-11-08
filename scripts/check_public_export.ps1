@@ -119,7 +119,8 @@ $publicFiles = @(
     "README.md",
     "pyproject.toml",
     "src/shogiarena/__init__.py",
-    ".github/workflows/public-ci.yml"
+    ".github/workflows/public-docs.yml",
+    ".github/workflows/public-release.yml"
 )
 
 $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("shogiarena-public-export-" + [System.Guid]::NewGuid().ToString("N"))

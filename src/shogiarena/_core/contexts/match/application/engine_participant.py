@@ -184,9 +184,14 @@ class EngineParticipant(GameEnginePort):
         else:
             await self._engine.trigger_isready()
 
-    async def prepare_new_game_position(self, *, initial_sfen: str) -> None:
+    async def prepare_new_game_position(
+        self,
+        *,
+        initial_sfen: str,
+        opening_moves: Sequence[Move] = (),
+    ) -> None:
         await self._engine.new_game()
-        await self._engine.submit_position(initial_sfen, ())
+        await self._engine.submit_position(initial_sfen, tuple(opening_moves))
         self._is_prepared = True
         self._ponder_handle = None
         self._ponder_predicted_move = None

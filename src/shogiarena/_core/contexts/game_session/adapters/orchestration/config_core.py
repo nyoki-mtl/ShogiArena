@@ -11,10 +11,12 @@ from urllib.parse import urlparse
 
 from omegaconf import DictConfig, OmegaConf
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from rsshogi.core import parse_usi_position
 
 from shogiarena._core.shared.kernel.game_results import STARTING_SFEN
-from shogiarena._core.shared.kernel.initial_position_entry import InitialPositionEntry
+from shogiarena._core.shared.kernel.initial_position_entry import (
+    InitialPositionEntry,
+    resolve_opening_position_text,
+)
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
 from shogiarena._core.shared.kernel.scalar_coercion.api import coerce_int
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
@@ -112,6 +114,9 @@ class InitialPositionConfig(BaseModel):
         if self.source_format == "usi_line":
             return self._parse_usi_line_entry(line, line_no=line_no)
 
+        parts = line.split()
+        if "moves" in parts:
+            return self._parse_usi_line_entry(line, line_no=line_no)
         if line.startswith("sfen ") or line.startswith("position sfen "):
             initial_sfen = self._parse_sfen_line(line)
             return InitialPositionEntry(
@@ -121,7 +126,7 @@ class InitialPositionConfig(BaseModel):
                 line_id=self._line_id(line_no) if self.preserve_line_metadata else None,
                 source_path=source_path if self.preserve_line_metadata else None,
             )
-        if line == "startpos":
+        if line in {"startpos", "position startpos"}:
             return InitialPositionEntry(
                 initial_sfen=STARTING_SFEN,
                 source_line=line if self.preserve_line_metadata else None,
@@ -131,7 +136,6 @@ class InitialPositionConfig(BaseModel):
             )
         if line.startswith("position startpos") or line.startswith("startpos "):
             return self._parse_usi_line_entry(line, line_no=line_no)
-        parts = line.split()
         if len(parts) >= 3 and "/" in parts[0]:
             return InitialPositionEntry(
                 initial_sfen=line,
@@ -151,32 +155,17 @@ class InitialPositionConfig(BaseModel):
         return line
 
     def _parse_usi_line_entry(self, line: str, *, line_no: int) -> InitialPositionEntry:
-        position_text = line
-        if not line.startswith("position ") and not line.startswith("startpos"):
-            position_text = f"position startpos moves {line}"
-        board = parse_usi_position(position_text)
+        resolved = resolve_opening_position_text(line, treat_as_usi_line=True)
         return InitialPositionEntry(
-            initial_sfen=board.to_sfen(),
+            initial_sfen=resolved.post_opening_sfen,
+            opening_base_sfen=resolved.opening_base_sfen,
+            opening_moves_usi=resolved.opening_moves_usi,
             source_line=line if self.preserve_line_metadata else None,
             source_line_no=line_no if self.preserve_line_metadata else None,
-            line_moves_usi=self._extract_line_moves(line) if self.preserve_line_metadata else (),
+            line_moves_usi=resolved.opening_moves_usi if self.preserve_line_metadata else (),
             line_id=self._line_id(line_no) if self.preserve_line_metadata else None,
             source_path=self.source if self.preserve_line_metadata else None,
         )
-
-    @staticmethod
-    def _extract_line_moves(line: str) -> tuple[str, ...]:
-        parts = line.split()
-        if not parts:
-            return ()
-        if "moves" in parts:
-            moves_index = parts.index("moves")
-            return tuple(parts[moves_index + 1 :])
-        if parts[0] == "position":
-            return ()
-        if parts[0] == "startpos":
-            return tuple(parts[1:])
-        return tuple(parts)
 
     def _line_id(self, line_no: int) -> str | None:
         if self.source is None:

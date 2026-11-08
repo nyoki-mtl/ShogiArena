@@ -109,6 +109,7 @@ options:
 
 `USI_OwnBook` が明示的に `false` でなく、`BookFile` が `no_book` でない場合、`BookDir + BookFile` の実体パスを起動前に検証します。
 大きな YANEURAOU-DB2016 形式の book では `BookOnTheFly: true` を使う運用を推奨します。
+rsshogi の `NativeBook`（`.book` 形式）を指定した場合は、起動前に `.book` ヘッダ・ブロック索引の健全性と非空確認を行い、`BookEnableFlip`・`BookIgnorePly` を含む主要オプションを出所（provenance）として記録します。
 
 `BookFile: user_book1.db` の `.db` がなく、同じ場所に `user_book1.ybb` がある場合は、`.ybb` を定跡ファイルとして使います。
 元の指定と実際に使ったパスを記録し、リモート実行でも `.ybb` を配布します。
@@ -126,7 +127,7 @@ ShogiArena が通常の USI 出力から観測できる範囲では、book を�
 サンプルのオプション上書き用 YAML では `BookFile: no_book` を使っています。
 
 共通の開始局面や、先後を入れ替えて同じ手順を使う設定は、`rules.initial_positions` で指定します。
-指し手列は対局前に初期局面の SFEN へ変換され、棋譜には挿入されません。
+指し手列（`usi_line`）を指定した場合、棋譜の初期局面としては到達局面の SFEN が記録され強制手は棋譜へ挿入されませんが、審判盤面と USI エンジンには基底局面と事前手順（`position startpos moves <開始手順> <対局手順>` 等）が引き継がれます。
 内蔵定跡を有効にしている場合は、その初期局面からさらに定跡手が続くことがあります。
 
 ## artifact エンジン

@@ -108,6 +108,8 @@ async def run_remote_tournament_game(
                 orchestrator._default_engine_handshake_timeout,
             ),
             start_sfen=game_spec.initial_sfen,
+            opening_base_sfen=game_spec.opening_base_sfen,
+            opening_moves_usi=game_spec.opening_moves_usi,
             game_id=game_spec.game_id,
             run_id=orchestrator.session_context.run_id,
             black_name=black_name,

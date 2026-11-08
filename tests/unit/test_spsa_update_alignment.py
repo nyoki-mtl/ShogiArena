@@ -537,3 +537,71 @@ async def test_spsa_completion_uses_actual_worker_after_deferred_assignment(tmp_
     assert hooks.events[-1].worker_idx == 1
 
     await orch.shutdown()
+
+
+def test_spsa_update_index_uses_one_based_update_count(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from shogiarena._core.contexts.spsa.adapters.runtime.persistence import update_index_json
+
+    now = "2026-07-03T00:00:00+00:00"
+    (tmp_path / "state.json").write_text(
+        json.dumps(
+            {
+                "type": "spsa",
+                "created_at": now,
+                "updated_at": now,
+                "is_finished": False,
+                "completed_updates": 0,
+                "total_updates": 3,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = SimpleNamespace(num_updates=3)
+
+    update_index_json(
+        tmp_path,
+        config,
+        update_idx=1,
+        params={"p": 1.0},
+        s_plus=1.0,
+        s_minus=0.0,
+        step=0.5,
+        gradients={"p": 1.0},
+        deltas={"p": 1.0},
+        delta_norm=0.5,
+        batch_size=2,
+        total_games=2,
+        timestamp=1,
+        a_k=1.0,
+        c_k=1.0,
+        iteration_k=1,
+        perturbations=None,
+    )
+    state_after_first = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert state_after_first["completed_updates"] == 1
+    assert state_after_first["is_finished"] is False
+
+    update_index_json(
+        tmp_path,
+        config,
+        update_idx=3,
+        params={"p": 3.0},
+        s_plus=1.0,
+        s_minus=0.0,
+        step=0.5,
+        gradients={"p": 1.0},
+        deltas={"p": 1.0},
+        delta_norm=0.5,
+        batch_size=2,
+        total_games=2,
+        timestamp=2,
+        a_k=1.0,
+        c_k=1.0,
+        iteration_k=3,
+        perturbations=None,
+    )
+    state_after_third = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert state_after_third["completed_updates"] == 3
+    assert state_after_third["is_finished"] is True

@@ -113,3 +113,28 @@ def test_end_to_end_aggregation_from_rows(tmp_path: Path) -> None:
     entry = payload["books"][0]
     assert entry["overall"]["games"] == 4  # 2 局 x 先後
     assert entry["out_of_book"]["histogram"] == {"2": 4}
+
+
+def test_default_book_opener_supports_native_book(tmp_path: Path) -> None:
+    from rsshogi.core import Move
+
+    book_path = tmp_path / "StandardBook.book"
+    editor = rs_book.NativeBookEditor.create(str(book_path))
+    editor.upsert_candidate(Board(), rs_book.NativeCandidate(Move.from_usi("7g7f")))
+    editor.save()
+    editor.close()
+
+    book_prov = _book(str(book_path))
+    rows = [
+        BookGameRow(
+            black_engine="E1",
+            white_engine="E2",
+            result=GameResult.BLACK_WIN,
+            black_book=book_prov,
+            white_book=None,
+            moves_usi=("7g7f", "3c3d"),
+            start_sfen=None,
+        )
+    ]
+    inputs = build_book_inputs(rows, compute_out_of_book_plies=True)
+    assert inputs[0].black.out_of_book_ply == 2

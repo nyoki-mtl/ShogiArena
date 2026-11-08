@@ -131,6 +131,8 @@ class GameExecutionWorkerAdapter:
                 game_id=spec.identity.game_id,
                 black_time_control_limits=policy.black_limits,
                 white_time_control_limits=policy.white_limits,
+                opening_base_sfen=spec.opening.initial_sfen,
+                opening_moves=tuple(spec.opening.moves_usi),
             )
             return GameExecutionOutcome(
                 record=record,

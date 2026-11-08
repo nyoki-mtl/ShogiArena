@@ -5,8 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from rsshogi.core import normalize_usi_position
-
 from shogiarena._core.contexts.game_session.adapters.orchestration.config_builders import (
     UsiOptionLayers,
 )
@@ -17,6 +15,9 @@ from shogiarena._core.contexts.game_session.adapters.orchestration.game_executio
 from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution_spec_resolver import (
     EngineSpecResolveRequest,
     resolve_engine_execution,
+)
+from shogiarena._core.contexts.game_session.adapters.orchestration.local_game_execution_contract import (
+    build_opening_spec,
 )
 from shogiarena._core.contexts.game_session.adapters.orchestration.remote_executor import RemoteExecutor
 from shogiarena._core.contexts.game_session.application.preplaced_resource_mapping import (
@@ -29,7 +30,6 @@ from shogiarena._core.contexts.game_session.ports.game_execution_spec import (
     GameRulesSpec,
     GameTimeControlSpec,
     GameTimeSpec,
-    OpeningSpec,
     OutputContract,
     RepetitionSpec,
     ResourceRequirements,
@@ -120,6 +120,8 @@ async def prepare_remote_game_spec(
     clear_hash_before_game: bool = False,
     after_variant_setoption: str = "none",
     start_sfen: str,
+    opening_base_sfen: str | None = None,
+    opening_moves_usi: tuple[str, ...] = (),
     game_id: str,
     run_id: str,
     black_name: str,
@@ -245,10 +247,12 @@ async def prepare_remote_game_spec(
             ),
             black_engine=black_spec,
             white_engine=white_spec,
-            opening=OpeningSpec(
-                initial_sfen=normalize_usi_position(start_sfen),
-                black_engine_id=black_name,
-                white_engine_id=white_name,
+            opening=build_opening_spec(
+                initial_sfen=start_sfen,
+                opening_base_sfen=opening_base_sfen,
+                opening_moves_usi=opening_moves_usi,
+                black_name=black_name,
+                white_name=white_name,
             ),
             time=GameTimeSpec(
                 black=_time_control_spec(black_limits),

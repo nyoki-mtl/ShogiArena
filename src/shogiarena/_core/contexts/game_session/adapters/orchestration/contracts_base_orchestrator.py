@@ -301,6 +301,8 @@ class BaseOrchestrator:
         game_id: str
         black_limits: TimeControlLimits | None
         white_limits: TimeControlLimits | None
+        opening_base_sfen: str | None = None
+        opening_moves_usi: tuple[str, ...] = ()
         black_variant_options: JsonObject | None = None
         white_variant_options: JsonObject | None = None
         black_variant_id: str | None = None

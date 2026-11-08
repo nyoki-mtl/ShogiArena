@@ -268,6 +268,12 @@ class TournamentSessionStateStore:
             if spec.game_id in cancelled_ids:
                 entry = payload_by_id.get(spec.game_id)
                 if entry is not None:
+                    raw_opening_moves = entry.get("opening_moves_usi")
+                    opening_moves = (
+                        tuple(str(move) for move in raw_opening_moves if isinstance(move, str))
+                        if isinstance(raw_opening_moves, list)
+                        else ()
+                    )
                     raw_moves = entry.get("opening_line_moves_usi")
                     line_moves = (
                         tuple(str(move) for move in raw_moves if isinstance(move, str))
@@ -294,6 +300,8 @@ class TournamentSessionStateStore:
                         if entry.get("pair_index") is not None
                         else spec.pair_index,
                         matchup_key=coerce_str(entry.get("matchup_key")) or spec.matchup_key,
+                        opening_base_sfen=coerce_str(entry.get("opening_base_sfen")) or spec.opening_base_sfen,
+                        opening_moves_usi=opening_moves or spec.opening_moves_usi,
                         opening_line_id=coerce_str(entry.get("opening_line_id")) or spec.opening_line_id,
                         opening_line_moves_usi=line_moves or spec.opening_line_moves_usi,
                         opening_source=coerce_str(entry.get("opening_source")) or spec.opening_source,
@@ -607,6 +615,19 @@ class TournamentSessionStateStore:
                     f"Invalid schedule.json for resume: games[{index}] requires black and white engines. "
                     "Use --no-resume to start fresh."
                 )
+            raw_opening_moves = item.get("opening_moves_usi")
+            if raw_opening_moves is not None and (
+                not isinstance(raw_opening_moves, list) or any(not isinstance(move, str) for move in raw_opening_moves)
+            ):
+                raise RuntimeError(
+                    f"Invalid schedule.json for resume: games[{index}].opening_moves_usi must be strings. "
+                    "Use --no-resume to start fresh."
+                )
+            opening_moves = (
+                tuple(str(move) for move in raw_opening_moves if isinstance(move, str))
+                if isinstance(raw_opening_moves, list)
+                else ()
+            )
             raw_moves = item.get("opening_line_moves_usi")
             if raw_moves is not None and (
                 not isinstance(raw_moves, list) or any(not isinstance(move, str) for move in raw_moves)
@@ -629,6 +650,8 @@ class TournamentSessionStateStore:
                 pair_slot=coerce_int(item.get("pair_slot")),
                 pair_index=coerce_int(item.get("pair_index")),
                 matchup_key=coerce_str(item.get("matchup_key")),
+                opening_base_sfen=coerce_str(item.get("opening_base_sfen")),
+                opening_moves_usi=opening_moves,
                 opening_line_id=coerce_str(item.get("opening_line_id")),
                 opening_line_moves_usi=line_moves,
                 opening_source=coerce_str(item.get("opening_source")),

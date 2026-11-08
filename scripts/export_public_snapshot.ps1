@@ -190,7 +190,7 @@ function Assert-NoDevOnlyPaths {
             $path -like ".serena/*" -or
             $path -like "dist/*" -or
             $path -like "site/*" -or
-            $path -eq ".github/workflows/develop-ci.yml"
+            $path -like ".github/workflows/develop-*.yml"
         ) {
             Write-Error "dev-only path would be exported: $path"
             $found = $true
@@ -271,7 +271,7 @@ $excludePaths = @(
     ".serena/**",
     "dist/**",
     "site/**",
-    ".github/workflows/develop-ci.yml"
+    ".github/workflows/develop-*.yml"
 )
 
 # removePaths は SourceRef に commit されているパスだけを列挙する。
@@ -293,7 +293,7 @@ $removePaths = @(
     "release-notes",
     "dist",
     "site",
-    ".github/workflows/develop-ci.yml"
+    ".github/workflows/develop-*.yml"
 )
 
 Require-CleanTree

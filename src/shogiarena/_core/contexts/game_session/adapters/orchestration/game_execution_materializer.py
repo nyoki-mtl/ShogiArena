@@ -112,12 +112,11 @@ def materialize_opening_sfen(opening: OpeningSpec) -> str:
     if not opening.moves_usi:
         return normalize_usi_position(opening.initial_sfen)
     base = opening.initial_sfen.strip()
-    if base == "startpos":
-        position = "position startpos"
-    elif base.startswith("position "):
+    if base.startswith("position "):
         position = base
     else:
-        position = f"position sfen {normalize_usi_position(base)}"
+        normalized_base = normalize_usi_position(base)
+        position = "position startpos" if normalized_base == "startpos" else f"position sfen {normalized_base}"
     return normalize_usi_position(f"{position} moves {' '.join(opening.moves_usi)}")
 
 

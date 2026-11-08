@@ -109,6 +109,8 @@ def _create_game_spec(
         spec.pair_slot = pair_slot
         spec.pair_index = pair_index if pair_index is not None else pair_slot
         spec.pair_key = f"{effective_matchup}|slot-{pair_slot}"
+    spec.opening_base_sfen = entry.opening_base_sfen
+    spec.opening_moves_usi = entry.opening_moves_usi
     spec.opening_line_id = entry.line_id
     spec.opening_line_moves_usi = entry.line_moves_usi
     spec.opening_source = entry.source_path

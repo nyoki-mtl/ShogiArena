@@ -26,6 +26,8 @@ class GameSpec:
     pair_slot: int | None = None
     pair_index: int | None = None
     matchup_key: str | None = None
+    opening_base_sfen: str | None = None
+    opening_moves_usi: tuple[str, ...] = ()
     opening_line_id: str | None = None
     opening_line_moves_usi: tuple[str, ...] = ()
     opening_source: str | None = None
@@ -87,6 +89,10 @@ class GameSpec:
             payload["pair_index"] = self.pair_index
         if self.matchup_key is not None:
             payload["matchup_key"] = self.matchup_key
+        if self.opening_base_sfen is not None:
+            payload["opening_base_sfen"] = self.opening_base_sfen
+        if self.opening_moves_usi:
+            payload["opening_moves_usi"] = list(self.opening_moves_usi)
         if self.opening_line_id is not None:
             payload["opening_line_id"] = self.opening_line_id
         if self.opening_source is not None:

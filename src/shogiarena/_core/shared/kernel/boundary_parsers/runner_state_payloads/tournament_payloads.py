@@ -58,10 +58,28 @@ class _CancelledGameEntryPayload(BaseModel):
     white: str | None = None
     round: int | None = None
     sfen: str | None = None
+    display_order: int | None = None
+    pair_key: str | None = None
+    pair_slot: int | None = None
+    pair_index: int | None = None
+    matchup_key: str | None = None
+    opening_base_sfen: str | None = None
+    opening_moves_usi: list[str] | None = None
+    opening_line_id: str | None = None
+    opening_line_moves_usi: list[str] | None = None
+    opening_source: str | None = None
+    opening_source_line_no: int | None = None
     assignment: _AssignmentOverrideWire = None
     should_require_install: bool = False
 
-    @field_validator("round", mode="before")
+    @field_validator(
+        "round",
+        "display_order",
+        "pair_slot",
+        "pair_index",
+        "opening_source_line_no",
+        mode="before",
+    )
     @classmethod
     def _coerce_round(cls, value: Any | None) -> int | None:
         return coerce_optional_int_strict(value)

@@ -21,6 +21,7 @@
 *.db binary
 *.ybb binary
 *.sbk binary
+*.book binary
 *.exe binary
 *.dll binary
 

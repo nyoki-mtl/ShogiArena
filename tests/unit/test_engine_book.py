@@ -133,3 +133,43 @@ class TestCollectBookPreflightErrors:
             working_dir=tmp_path,
         )
         assert errors == []
+
+    def test_valid_native_book_has_no_errors(self, tmp_path: Path) -> None:
+        from rsshogi.book import NativeBookEditor, NativeCandidate
+        from rsshogi.core import Board, Move
+
+        book_path = tmp_path / "StandardBook.book"
+        editor = NativeBookEditor.create(str(book_path))
+        editor.upsert_candidate(Board(), NativeCandidate(Move.from_usi("7g7f")))
+        editor.save()
+        editor.close()
+
+        errors = collect_book_preflight_errors(
+            {"BookFile": str(book_path)},
+            engine_name="rsshogi-nnue",
+        )
+        assert errors == []
+
+    def test_empty_native_book_is_error(self, tmp_path: Path) -> None:
+        from rsshogi.book import NativeBookEditor
+
+        book_path = tmp_path / "empty.book"
+        editor = NativeBookEditor.create(str(book_path))
+        editor.save()
+        editor.close()
+
+        errors = collect_book_preflight_errors(
+            {"BookFile": str(book_path)},
+            engine_name="rsshogi-nnue",
+        )
+        assert len(errors) == 1
+        assert "no book entries" in errors[0]
+
+    def test_corrupt_native_book_is_error(self, tmp_path: Path) -> None:
+        book_path = _write_book(tmp_path, "broken.book", "not a native binary book")
+        errors = collect_book_preflight_errors(
+            {"BookFile": str(book_path)},
+            engine_name="rsshogi-nnue",
+        )
+        assert len(errors) == 1
+        assert "not a readable NativeBook (.book)" in errors[0]

@@ -12,7 +12,7 @@ from typing import Any
 
 import rsshogi
 import rsshogi.record
-from rsshogi.core import normalize_usi_position
+from rsshogi.core import parse_usi_position_parts
 
 from shogiarena._core.contexts.game_session.adapters.orchestration.contracts_base_orchestrator import BaseOrchestrator
 from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution import (
@@ -75,6 +75,12 @@ from shogiarena._core.contexts.spsa.domain.participation_identity import (
 from shogiarena._core.contexts.spsa.domain.spsa_models import ParamEntry, PhaseLiteral, SpsaGamePayload
 from shogiarena._core.contexts.spsa.ports.ledger_ports import SpsaLedgerRuntimePort
 from shogiarena._core.shared.kernel.game_results import GameResult, game_result_name
+from shogiarena._core.shared.kernel.initial_position_entry import (
+    OpeningSourceFormat,
+    extract_opening_source_format,
+    normalize_usi_line_command,
+    resolve_opening_position_text,
+)
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.participation_records import extract_participation
 from shogiarena._core.shared.kernel.time_control import TimeControlLimits
@@ -389,6 +395,7 @@ class SpsaOrchestratorGameplayMixin:
         dispatch_selection = setup.dispatch_selection
         event_common = setup.event_common
         game_id = assignment.game_id
+        source_format = extract_opening_source_format(self.config)
         restored_result_kind = self._ledger_runtime.game_result_kind(game_id=game_id)
         if restored_result_kind is not None:
             if restored_result_kind == "INCOMPLETE":
@@ -401,6 +408,7 @@ class SpsaOrchestratorGameplayMixin:
                 black_player=context.black_player_label,
                 white_player=context.white_player_label,
                 result_kind=restored_result_kind,
+                source_format=source_format,
             )
             return self._calculate_winner_code(restored_game, is_tuned_as_black), restored_game
         # Prepare engine items and per-side time control limits
@@ -408,10 +416,11 @@ class SpsaOrchestratorGameplayMixin:
             is_tuned_as_black=is_tuned_as_black,
             time_control_override=time_control_override,
         )
+        resolved_opening = resolve_opening_position_text(start_sfen, source_format=source_format)
         emit_game_assigned_event(
             progress_queue=self.progress_sink,
             game_id=game_id,
-            initial_sfen=start_sfen,
+            initial_sfen=resolved_opening.post_opening_sfen,
             black_name=context.black_player_label,
             white_name=context.white_player_label,
             black_limits=black_limits,
@@ -509,7 +518,9 @@ class SpsaOrchestratorGameplayMixin:
                 local_execution=LocalExecutionSpecRequest(
                     black_item=black_item,
                     white_item=white_item,
-                    initial_sfen=normalize_usi_position(start_sfen),
+                    initial_sfen=resolved_opening.post_opening_sfen,
+                    opening_base_sfen=resolved_opening.opening_base_sfen,
+                    opening_moves_usi=resolved_opening.opening_moves_usi,
                     game_id=game_id,
                     black_limits=black_limits,
                     white_limits=white_limits,
@@ -519,6 +530,16 @@ class SpsaOrchestratorGameplayMixin:
                     white_variant_id=(baseline_token if is_tuned_as_black else tuned_token),
                     clear_hash_before_game=bool(self.config.variants.apply.is_clear_hash_enabled),
                     after_variant_setoption=str(self.config.variants.apply.after_setoption),
+                    schedule_metadata=(
+                        {
+                            "schema_version": 1,
+                            "initial_sfen": resolved_opening.post_opening_sfen,
+                            "opening_base_sfen": resolved_opening.opening_base_sfen,
+                            "opening_moves_usi": list(resolved_opening.opening_moves_usi),
+                        }
+                        if resolved_opening.opening_moves_usi
+                        else None
+                    ),
                     before_game_hook=_hook,
                     on_game_start=mark_running_once,
                 ),
@@ -652,12 +673,15 @@ def _build_restored_game(
     black_player: str,
     white_player: str,
     result_kind: str,
+    source_format: OpeningSourceFormat = "auto",
 ) -> rsshogi.record.Record:
     result = {
         "BLACK_WIN": GameResult.BLACK_WIN,
         "WHITE_WIN": GameResult.WHITE_WIN,
         "DRAW": GameResult.DRAW_BY_REPETITION,
     }[result_kind]
+    resolved = resolve_opening_position_text(start_sfen, source_format=source_format)
+    init_position_sfen = parse_usi_position_parts(normalize_usi_line_command(resolved.post_opening_sfen)).final_sfen
     return rsshogi.record.Record.from_dict(
         {
             "metadata": {
@@ -667,7 +691,7 @@ def _build_restored_game(
                 "white_player": white_player,
                 "attributes": {"game_name": game_id, "game_type": "spsa"},
             },
-            "init_position_sfen": normalize_usi_position(start_sfen),
+            "init_position_sfen": init_position_sfen,
             "moves": [],
             "result": {"result": result.name, "ply_count": 0},
         }

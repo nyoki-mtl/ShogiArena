@@ -17,6 +17,17 @@ class _CancelledGameEntryType(TypedDict, total=False):
     white: str | None
     round: int | None
     sfen: str | None
+    display_order: int | None
+    pair_key: str | None
+    pair_slot: int | None
+    pair_index: int | None
+    matchup_key: str | None
+    opening_base_sfen: str | None
+    opening_moves_usi: list[str] | None
+    opening_line_id: str | None
+    opening_line_moves_usi: list[str] | None
+    opening_source: str | None
+    opening_source_line_no: int | None
     assignment: _AssignmentOverrideWire
     should_require_install: bool
 

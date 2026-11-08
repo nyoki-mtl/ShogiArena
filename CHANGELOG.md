@@ -8,6 +8,18 @@ except for the documented 1.2.0 breaking-change exception and the SPSA run-resum
 
 ## [Unreleased]
 
+## [1.3.7] - 2026-11-08
+
+### Added
+
+- 内蔵定跡の起動前検証（preflight）・provenance記録・Dashboard Book集計で rsshogi の `NativeBook`（`.book` 形式）に対応し、`BookEnableFlip` と `BookIgnorePly` を主要定跡オプションとして記録するようにした。
+- `usi_line`（および事前手順を含む開始局面指定）で、到達局面の SFEN を `game.db`・ペア照合・Dashboard 表示の初期局面として維持しつつ、審判盤面と USI エンジン（通常探索・ponder・`replay-position`）の双方に基底局面と事前手順（`position startpos moves <開始手順> <対局手順>` 等）を引き継ぐようにした。
+
+### Fixed
+
+- `BookDir` を伴わない単体 `BookFile` 指定時に、Remote 実行の CAS 展開パスが相対ファイル名へ潰れる問題を修正した。
+- Tournament の再開時にキャンセル済み対局の開始手順メタデータを境界検証で保持できるようにし、SPSA の部分再開時にも初期局面 SFEN を 4 フィールド形式で復元するようにした。
+
 ## [1.3.6] - 2026-11-04
 
 ### Fixed

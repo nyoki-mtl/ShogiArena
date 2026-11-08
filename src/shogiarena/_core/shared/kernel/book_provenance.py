@@ -37,6 +37,8 @@ KEY_BOOK_OPTIONS: tuple[str, ...] = (
     "BookEvalDiff",
     "BookDepthLimit",
     "ConsiderBookMoveCount",
+    "BookEnableFlip",
+    "BookIgnorePly",
 )
 
 # 軽量 fingerprint で読む先頭/末尾バイト数。

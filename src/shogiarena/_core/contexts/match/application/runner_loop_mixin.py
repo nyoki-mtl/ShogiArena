@@ -199,6 +199,8 @@ class GameRunnerLoopMixin:
         adjudicator: Adjudicator | None = None,
         result_progress_emitted: list[bool] | None = None,
         timeout_decision_holder: list[TimeoutAttributionDecision | None] | None = None,
+        engine_initial_sfen: str | None = None,
+        opening_moves: tuple[Move, ...] = (),
     ) -> GameResult:
         """
         Main game loop.
@@ -227,6 +229,7 @@ class GameRunnerLoopMixin:
             # Pre-compute time control spec strings for UI (per-side)
             time_control_black_str: str = black_time_control.limits.to_spec_str()
             time_control_white_str: str = white_time_control.limits.to_spec_str()
+            usi_sfen = engine_initial_sfen if engine_initial_sfen is not None else initial_sfen
 
             while True:
                 # Determine current player and engine
@@ -349,8 +352,8 @@ class GameRunnerLoopMixin:
                             )
                             engine_wall_start = time.perf_counter()
                             think_result = await current_engine.think(
-                                sfen=initial_sfen,
-                                moves=tuple(moves),
+                                sfen=usi_sfen,
+                                moves=(*opening_moves, *moves),
                                 request=think_request,
                                 timeout=timeout_seconds,
                             )
@@ -360,8 +363,8 @@ class GameRunnerLoopMixin:
                     else:
                         engine_wall_start = time.perf_counter()
                         think_result = await current_engine.think(
-                            sfen=initial_sfen,
-                            moves=tuple(moves),
+                            sfen=usi_sfen,
+                            moves=(*opening_moves, *moves),
                             request=think_request,
                             timeout=timeout_seconds,
                         )
@@ -493,8 +496,8 @@ class GameRunnerLoopMixin:
                         engine=current_engine,
                         think_result=think_result,
                         is_black_turn=is_black_turn,
-                        initial_sfen=initial_sfen,
-                        moves=moves,
+                        initial_sfen=usi_sfen,
+                        moves=[*opening_moves, *moves],
                         current_time_control=current_time_control,
                         enemy_time_control=enemy_time_control,
                     )

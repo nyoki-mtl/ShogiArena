@@ -328,3 +328,37 @@ def test_full_resolver_seals_transport_neutral_spec_and_manifest_provenance(tmp_
     spec_payload = resolved.spec.model_dump(mode="json")
     assert "execution_mode" not in spec_payload
     assert "instance_id" not in spec_payload
+
+
+def test_resolver_preserves_full_target_path_for_standalone_book_file(tmp_path: Path) -> None:
+    from shogiarena._core.contexts.game_session.adapters.orchestration.game_execution_materializer import (
+        materialize_engine_config,
+    )
+
+    config_path, engine_path, _ = _write_engine_fixture(tmp_path)
+    book_path = tmp_path / "StandardBook.book"
+    book_path.write_bytes(b"native-book")
+    config_text = config_path.read_text(encoding="utf-8")
+    config_path.write_text(
+        config_text.replace(
+            "go_options:\n",
+            f"  BookFile: {book_path}\ngo_options:\n",
+        ),
+        encoding="utf-8",
+    )
+
+    resolved = resolve_engine_execution(_request(config_path))
+    book_resources = [r for r in resolved.spec.usi.path_resources if "BookFile" in r.option_values]
+    assert len(book_resources) == 1
+    book_res = book_resources[0]
+    assert book_res.option_values == {"BookFile": book_res.target_relative_path}
+
+    materialized = materialize_engine_config(
+        resolved.spec,
+        execution_root=tmp_path / "exec",
+        artifact_paths={resolved.spec.process.artifact.logical_id: engine_path},
+        secret_values={"SHOGIARENA_SECRET_ENGINE_LICENSE": "ok"},
+    )
+    options = materialized["options"]
+    assert isinstance(options, dict)
+    assert Path(str(options["BookFile"])) == (tmp_path / "exec" / book_res.target_relative_path)

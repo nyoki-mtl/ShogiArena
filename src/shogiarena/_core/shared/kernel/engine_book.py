@@ -147,12 +147,29 @@ def _validate_book_health(*, engine_name: str | None, path: Path) -> str | None:
     2.4GB 級の DB でも起動前コストを抑えられる。
     """
 
-    if path.suffix.lower() == ".ybb":
+    suffix = path.suffix.lower()
+    if suffix == ".ybb":
         logger.info(
             "Engine '%s' opening book uses .ybb fallback; skipping YaneuraOu DB2016 text diagnostics: %s",
             engine_name,
             path,
         )
+        return None
+
+    if suffix == ".book":
+        try:
+            from rsshogi.book import NativeBook
+        except ImportError:
+            logger.debug("rsshogi.book unavailable; skipping NativeBook health check for engine '%s'", engine_name)
+            return None
+
+        try:
+            native_book = NativeBook.open(str(path))
+        except (ValueError, OSError) as exc:
+            return f"Engine '{engine_name}' opening book is not a readable NativeBook (.book): {path}: {exc}"
+
+        if len(native_book) == 0:
+            return f"Engine '{engine_name}' opening book contains no book entries: {path} (wrong file or empty book?)"
         return None
 
     try:

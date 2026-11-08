@@ -111,6 +111,10 @@ from shogiarena._core.platform.settings import project_dirs
 from shogiarena._core.shared.kernel.async_completion import complete_before_cancelling
 from shogiarena._core.shared.kernel.atomic_json import write_json_atomic
 from shogiarena._core.shared.kernel.content_hashing import sha256_file
+from shogiarena._core.shared.kernel.initial_position_entry import (
+    extract_opening_source_format,
+    resolve_opening_position_text,
+)
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.run_artifact_hashes import canonical_sha256
 from shogiarena._core.shared.kernel.serialization import json_serialize
@@ -589,6 +593,9 @@ class SpsaRunner(BaseSessionRunner[SpsaRunResult, None]):
             validation_sfens = [line.rstrip() for line in handle if line.strip()]
         if not validation_sfens:
             raise RuntimeError("No SFENs available")
+        opening_source_format = extract_opening_source_format(self.config)
+        for sfen_line in validation_sfens:
+            resolve_opening_position_text(sfen_line, source_format=opening_source_format)
         run_id = str(self.config.experiment_name or self.run_dir.name)
         persisted_resume_hash: str | None = None
         resume_disposition = "dispatch"

@@ -82,7 +82,7 @@ async def _remote_run_pair_command(args: argparse.Namespace) -> None:
     except ValueError as exc:
         await _emit_json_error(str(exc))
         raise SystemExit(2) from exc
-    rc = await run_game_execution_spec(sealed_spec, execution_root=spec_path.parent)
+    rc = await run_game_execution_spec(sealed_spec, execution_root=spec_path.resolve().parent)
     if rc != 0:
         raise SystemExit(rc)
 

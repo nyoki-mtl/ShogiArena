@@ -3,13 +3,33 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
-_WORKER = Path(__file__).parents[3] / "helpers" / "spsa_crash_worker.py"
-_PRODUCTION_RECOVERY_WORKER = Path(__file__).parents[3] / "helpers" / "spsa_production_recovery_worker.py"
+_WORKER = Path(__file__).parents[2] / "helpers" / "spsa_crash_worker.py"
+_PRODUCTION_RECOVERY_WORKER = Path(__file__).parents[2] / "helpers" / "spsa_production_recovery_worker.py"
 _CRASH_EXIT = 87
+
+_CRASH_MATRIX: tuple[tuple[str, str], ...] = (
+    ("game_db_commit", "pass"),
+    ("ledger_observation_commit", "pass"),
+    ("pairs_complete", "pass"),
+    ("candidate_saved", "pass"),
+    ("ltc_pending", "pass"),
+    ("ltc_result_persisted", "pass"),
+    ("accepted_before_commit", "pass"),
+    ("accepted_after_commit", "pass"),
+    ("reverted_before_commit", "fail"),
+    ("reverted_after_commit", "fail"),
+    ("result_persisted", "pass"),
+    ("terminal_before_commit", "pass"),
+    ("terminal_after_commit", "pass"),
+    ("terminal_artifact_published", "pass"),
+    ("completion_artifact_published", "pass"),
+    ("completed_flag_published", "pass"),
+)
 
 
 def _run_worker(
@@ -51,43 +71,35 @@ def _run_production_recovery_worker(
     return subprocess.run(command, check=False, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
-@pytest.mark.parametrize(
-    ("crash_point", "decision"),
-    [
-        ("game_db_commit", "pass"),
-        ("ledger_observation_commit", "pass"),
-        ("pairs_complete", "pass"),
-        ("candidate_saved", "pass"),
-        ("ltc_pending", "pass"),
-        ("ltc_result_persisted", "pass"),
-        ("accepted_before_commit", "pass"),
-        ("accepted_after_commit", "pass"),
-        ("reverted_before_commit", "fail"),
-        ("reverted_after_commit", "fail"),
-        ("result_persisted", "pass"),
-        ("terminal_before_commit", "pass"),
-        ("terminal_after_commit", "pass"),
-        ("terminal_artifact_published", "pass"),
-        ("completion_artifact_published", "pass"),
-        ("completed_flag_published", "pass"),
-    ],
-)
+@pytest.fixture(scope="module")
+def canonical_snapshots(tmp_path_factory: pytest.TempPathFactory) -> dict[str, dict[str, object]]:
+    base_dir = tmp_path_factory.mktemp("spsa-crash-canonical")
+
+    def build(decision: str) -> tuple[str, dict[str, object]]:
+        run_dir = base_dir / f"canonical-{decision}"
+        completed = _run_worker(run_dir, decision=decision)
+        assert completed.returncode == 0, completed.stderr
+        return decision, _snapshot(run_dir)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        return dict(pool.map(build, ("pass", "fail")))
+
+
 def test_process_crash_resume_converges_to_uninterrupted_authority(
     tmp_path: Path,
-    crash_point: str,
-    decision: str,
+    canonical_snapshots: dict[str, dict[str, object]],
 ) -> None:
-    canonical_dir = tmp_path / "canonical"
-    canonical = _run_worker(canonical_dir, decision=decision)
-    assert canonical.returncode == 0, canonical.stderr
+    def check_case(case: tuple[str, str]) -> None:
+        crash_point, decision = case
+        crash_dir = tmp_path / crash_point
+        crashed = _run_worker(crash_dir, decision=decision, crash_point=crash_point)
+        assert crashed.returncode == _CRASH_EXIT, f"{crash_point}: {crashed.stderr}"
+        resumed = _run_worker(crash_dir, decision=decision)
+        assert resumed.returncode == 0, f"{crash_point}: {resumed.stderr}"
+        assert _snapshot(crash_dir) == canonical_snapshots[decision], f"diverged at {crash_point}"
 
-    crash_dir = tmp_path / crash_point
-    crashed = _run_worker(crash_dir, decision=decision, crash_point=crash_point)
-    assert crashed.returncode == _CRASH_EXIT, crashed.stderr
-    resumed = _run_worker(crash_dir, decision=decision)
-    assert resumed.returncode == 0, resumed.stderr
-
-    assert _snapshot(crash_dir) == _snapshot(canonical_dir)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(check_case, _CRASH_MATRIX))
 
 
 def test_dispatch_invalidation_crash_resumes_before_starting_work(tmp_path: Path) -> None:

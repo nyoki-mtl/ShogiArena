@@ -135,35 +135,35 @@ async def test_query_after_stop_does_not_claim_complete_coverage() -> None:
 
 @pytest.mark.asyncio
 async def test_in_flight_stall_is_reported_by_both_the_query_and_the_summary() -> None:
-    watchdog = RuntimeWatchdog(interval_s=0.02, loop_threshold_ms=100.0, thread_threshold_ms=100.0)
+    watchdog = RuntimeWatchdog(interval_s=0.01, loop_threshold_ms=25.0, thread_threshold_ms=25.0)
     watchdog.start()
     try:
         start_s = time.perf_counter()
         # Block the loop synchronously; the heartbeat cannot record anything yet.
-        time.sleep(0.3)
+        time.sleep(0.08)
         observation = watchdog.observe_loop_lag(start_s, time.perf_counter())
         summary_during_stall = watchdog.summary()
-        assert observation.in_flight_lag_ms > 100.0
+        assert observation.in_flight_lag_ms > 25.0
         assert observation.lag_ms_in_window >= observation.in_flight_lag_ms
         # 記録済み event が無くても artifact 側が「lag なし」と表示しないこと。
-        assert summary_during_stall.max_loop_lag_ms > 100.0
+        assert summary_during_stall.max_loop_lag_ms > 25.0
     finally:
         await watchdog.stop()
 
 
 @pytest.mark.asyncio
 async def test_loop_heartbeat_records_a_blocking_stall() -> None:
-    watchdog = RuntimeWatchdog(interval_s=0.02, loop_threshold_ms=100.0, thread_threshold_ms=100.0)
+    watchdog = RuntimeWatchdog(interval_s=0.01, loop_threshold_ms=25.0, thread_threshold_ms=25.0)
     watchdog.start()
     try:
-        time.sleep(0.3)
-        await asyncio.sleep(0.1)
+        time.sleep(0.08)
+        await asyncio.sleep(0.03)
     finally:
         await watchdog.stop()
 
     summary = watchdog.summary()
     assert summary.loop_lag_events >= 1
-    assert summary.max_loop_lag_ms >= 200.0
+    assert summary.max_loop_lag_ms >= 50.0
 
 
 def test_summary_tracks_max_and_counts() -> None:
