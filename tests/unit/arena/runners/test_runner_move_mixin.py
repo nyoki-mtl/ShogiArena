@@ -171,15 +171,13 @@ async def test_resign_adjudication_handles_plain_int_eval() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_move_result_treats_missing_bestmove_as_loss() -> None:
-    # An engine that returns no bestmove must lose (side to move), not crash the game task
-    # with an AssertionError.
+async def test_process_move_result_treats_missing_bestmove_as_error() -> None:
     harness = object.__new__(GameRunnerFinalizeMixin)
     board = Board()  # black to move
     think_result = SimpleNamespace(bestmove=None)
     result = await harness._process_move_result(board, think_result, "engine-a")
     assert result["is_game_over"] is True
-    assert result["result"] == GameResult.WHITE_WIN
+    assert result["result"] == GameResult.ERROR
 
 
 def test_extract_move_source_prefers_book_info_string() -> None:

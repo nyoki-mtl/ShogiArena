@@ -175,7 +175,8 @@ shogiarena run tournament tournament.yaml --provision preplaced
 
 YaneuraOuの`BookDir`と`BookFile`で指定する定跡ファイルは、ハッシュ値を名前にしてリモートへ転送します。
 既定では、256 MiBを超えるファイルの自動転送を停止します。
-`BookFile: no_book`はファイルパスではなく定跡無効化のUSI値として扱います。
+`BookFile` の `no_book` と `<empty>` は定跡を無効にするUSI値です。
+どちらも定跡ファイルの転送対象から外れます。
 転送せず、エンジンにも`no_book`を渡します。
 
 | 環境変数 | 値 | 説明 |

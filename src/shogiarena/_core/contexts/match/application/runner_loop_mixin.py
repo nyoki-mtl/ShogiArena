@@ -162,6 +162,33 @@ class GameRunnerLoopMixin:
             )
         return timeout_win_result(winner_color)
 
+    def _adjudicate_declaration_timeout(
+        self,
+        result: GameResult,
+        *,
+        clock: GameClock,
+        decision_holder: list[TimeoutAttributionDecision | None],
+        game_id: str | None,
+        observed_at_s: float | None,
+        observation_basis: str | None,
+    ) -> GameResult:
+        """A valid declaration must also arrive within the active clock's budget."""
+        window = clock.current_timeout_window
+        if clock.limits.should_allow_timeout or window is None or window.deadline_s is None:
+            return result
+        received_at_s = observed_at_s if observed_at_s is not None else time.perf_counter()
+        if received_at_s <= window.deadline_s:
+            return result
+        return self._timeout_result_or_error(
+            winner_color=Color.WHITE if result.is_black_win() else Color.BLACK,
+            decision_holder=decision_holder,
+            window=window,
+            site="declaration_expired",
+            game_id=game_id,
+            observed_at_s=observed_at_s,
+            observation_basis=observation_basis,
+        )
+
     @staticmethod
     def _observation_of(think_result: object) -> tuple[float | None, str | None]:
         """think result が運ぶ ``bestmove`` 観測時刻と basis を取り出す（無ければ ``None``）。"""
@@ -252,13 +279,7 @@ class GameRunnerLoopMixin:
                     logger.debug(f"Game ended by checkmate - {player_name} is checkmated")
                     return GameResult.WHITE_WIN if is_black_turn else GameResult.BLACK_WIN
 
-                # 2. Check for entering king declaration win
-                if board.can_declare_win():
-                    # Current player wins by entering king declaration
-                    logger.debug(f"Game ended by entering king declaration - {player_name} wins")
-                    return GameResult.BLACK_WIN if is_black_turn else GameResult.WHITE_WIN
-
-                # 3. Check for time expiry
+                # Check for time expiry
                 if current_time_control.is_expired():
                     # If should_allow_timeout is enabled, do not end the game on time expiry
                     if current_time_control.limits.should_allow_timeout:
@@ -381,6 +402,15 @@ class GameRunnerLoopMixin:
                         if not isinstance(game_result_obj, GameResult):
                             raise TypeError(f"Expected GameResult, got {type(game_result_obj).__name__}")
                         game_result = game_result_obj
+                        if game_result.is_win_by_declaration():
+                            game_result = self._adjudicate_declaration_timeout(
+                                game_result,
+                                clock=current_time_control,
+                                decision_holder=decision_holder,
+                                game_id=game_id,
+                                observed_at_s=last_observed_at_s,
+                                observation_basis=last_observation_basis,
+                            )
                         if result_progress_emitted is not None and not result_progress_emitted[0]:
                             await self._enqueue_terminal_progress(
                                 game_id=game_id,
@@ -521,18 +551,21 @@ class GameRunnerLoopMixin:
                         raise asyncio.CancelledError() from None
                     logger.warning(f"Engine {current_engine.name} timed out")
 
-                    if should_use_ponder:
-                        recovered_think = await current_engine.cancel_ponder(timeout=timeout_seconds)
-                    else:
-                        recovered_think = await current_engine.stop()
+                    try:
+                        if should_use_ponder:
+                            recovered_think = await current_engine.cancel_ponder(timeout=timeout_seconds)
+                        else:
+                            recovered_think = await current_engine.stop()
+                    except (OSError, RuntimeError, ValueError):
+                        if self._is_shutting_down:
+                            return GameResult.PAUSED
+                        logger.exception("Engine %s failed during timeout recovery", current_engine.name)
+                        return GameResult.ERROR
 
                     if recovered_think is None:
                         if current_time_control.limits.should_allow_timeout:
-                            logger.debug(
-                                f"Timeout recovery failed for {player_name}, "
-                                "but should_allow_timeout=True (treat as draw)"
-                            )
-                            return GameResult.DRAW_BY_MAX_PLIES
+                            logger.warning("No bestmove after stopping %s", current_engine.name)
+                            return GameResult.ERROR
                         logger.debug(f"Timeout recovery failed - {player_name} loses on time")
                         winner_color = Color.WHITE if is_black_turn else Color.BLACK
                         return self._timeout_result_or_error(
@@ -607,8 +640,7 @@ class GameRunnerLoopMixin:
                         logger.debug("Interrupted move during shutdown for %s; pausing game", current_engine.name)
                         return GameResult.PAUSED
                     logger.exception("Error during move by %s: %s", current_engine.name, exc)
-                    # Error results in loss for the current player
-                    return GameResult.WHITE_WIN if is_black_turn else GameResult.BLACK_WIN
+                    return GameResult.ERROR
         finally:
             # Engines can retain exception tracebacks even after a handled timeout.
             # Release this frame's alias on the event-loop thread.

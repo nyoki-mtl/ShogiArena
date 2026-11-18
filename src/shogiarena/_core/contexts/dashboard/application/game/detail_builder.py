@@ -12,6 +12,10 @@ from rsshogi.core import Board
 from shogiarena._core.shared.kernel.json_types import JsonObject
 from shogiarena._core.shared.kernel.ki2_notation import normalize_ki2_move_text
 from shogiarena._core.shared.kernel.scalar_coercion.api import strict_int
+from shogiarena._core.shared.kernel.time_control_spec import (
+    BLACK_TIME_CONTROL_SPEC_ATTRIBUTE,
+    WHITE_TIME_CONTROL_SPEC_ATTRIBUTE,
+)
 
 _EvalValue = int | float | str | None
 
@@ -81,8 +85,12 @@ def build_game_detail_payload(*, record: Any, game_id: str, logger: logging.Logg
     white_player = metadata.white_player or ""
     black_tc = record.black_time_control
     white_tc = record.white_time_control
-    tc_black = black_tc.to_spec() if black_tc is not None else None
-    tc_white = white_tc.to_spec() if white_tc is not None else None
+    tc_black = metadata.attributes.get(BLACK_TIME_CONTROL_SPEC_ATTRIBUTE) or (
+        black_tc.to_spec() if black_tc is not None else None
+    )
+    tc_white = metadata.attributes.get(WHITE_TIME_CONTROL_SPEC_ATTRIBUTE) or (
+        white_tc.to_spec() if white_tc is not None else None
+    )
     start_time = metadata.start_date
     end_time = metadata.end_date
 

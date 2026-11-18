@@ -162,8 +162,6 @@ class AsyncUsiEngine(
 
     def _collect_info_strings_snapshot(self) -> tuple[str, ...]:
         """現在の ``_info_string_log`` のスナップショットを返す。"""
-        if not self._should_collect_info_strings or not self._info_string_log:
-            return ()
         return tuple(self._info_string_log)
 
     def _collect_sorted_pvs(self) -> tuple[UsiThinkPV, ...]:

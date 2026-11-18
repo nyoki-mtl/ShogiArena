@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { formatTimeControlShort } from '@/modules/live/services/time/format';
 import type { WorkerRuntimeState } from '@/modules/live/types';
 import {
     maybeApplyImmediateClockStart,
@@ -9,6 +10,16 @@ import {
 } from '@/modules/live/utils/clock-sync';
 
 describe('clockSync', () => {
+    it('shows millisecond clock settings in the clock summary', () => {
+        expect(formatTimeControlShort('t60505+i100;m500;wt600000')).toBe('1m0.505s +0.1s');
+        expect(formatTimeControlShort('t0+b250')).toBe('+b0.25s');
+        expect(formatTimeControlShort('fx1025')).toBe('1.025s fixed');
+    });
+
+    it('shows whole-second settings from older DB records', () => {
+        expect(formatTimeControlShort('900+60+0')).toBe('15m +b60s');
+    });
+
     it('uses started_at_ms from payload as the running clock anchor', () => {
         const ws: WorkerRuntimeState = {};
         const payload = {

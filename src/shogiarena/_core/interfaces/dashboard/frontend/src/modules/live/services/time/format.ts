@@ -27,16 +27,12 @@ export function formatRemain(ms: number | string | null | undefined): string {
 
 export function formatInc(ms: number | string | null | undefined): string {
     const totalMs = Math.max(0, Number(ms ?? 0));
-    if (totalMs < 1000) {
-        const tenths = Math.floor(totalMs / 100);
-        return `${(tenths / 10).toFixed(1)}s`;
-    }
-    const totalSeconds = Math.floor(totalMs / 1000);
+    const totalSeconds = totalMs / 1000;
     if (totalSeconds < 60) {
         return `${totalSeconds}s`;
     }
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
+    const minutes = Math.floor(totalMs / 60000);
+    const seconds = (totalMs % 60000) / 1000;
     if (seconds === 0) return `${minutes}m`;
     return `${minutes}m${seconds}s`;
 }
@@ -79,13 +75,7 @@ export function formatTimeControlShort(spec: ParsedTimeControlSpec | string | nu
     }
     const pieces: string[] = [];
     if (tc.initial > 0) {
-        const minutes = Math.floor(tc.initial / 60);
-        const seconds = tc.initial % 60;
-        if (minutes > 0) {
-            pieces.push(`${minutes}m${seconds > 0 ? `${seconds}s` : ''}`.trim());
-        } else {
-            pieces.push(`${seconds}s`);
-        }
+        pieces.push(formatInc(Math.round(tc.initial * 1000)));
     }
     if (tc.increment > 0) {
         pieces.push(`+${tc.increment}s`);

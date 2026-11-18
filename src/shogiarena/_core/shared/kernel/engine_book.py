@@ -1,6 +1,6 @@
 """内蔵定跡(A) の起動前バリデーションと有効判定。Task 0014。
 
-``USI_OwnBook`` が明示的に ``false`` でなく、``BookFile`` が ``no_book`` でないとき、
+``USI_OwnBook`` と ``BookFile`` の設定で定跡が有効なとき、
 ``BookDir + BookFile`` を YaneuraOu 互換 Combine で実体パスに解決し、存在確認と
 rsshogi ``YaneuraOuBook`` による bounded 健全性チェックを行う。検証失敗はエンジン起動前に
 明確なエラーとして surface する（黙って no_book 扱いで完走するのを防ぐ）。
@@ -66,7 +66,7 @@ def is_engine_book_enabled(options: Mapping[str, JsonValue]) -> bool:
     """内蔵定跡が有効になりうる構成かを判定する。
 
     発動条件は「``USI_OwnBook`` が ``false`` で明示無効化されておらず、かつ
-    ``BookFile`` が指定されていて ``no_book`` でない」。YaneuraOu は ``USI_OwnBook``
+    ``BookFile`` が指定されていて無効化を表す値でない」。YaneuraOu は ``USI_OwnBook``
     既定が ``true`` のため、省略時も有効とみなす（book.cpp:1003）。
     """
 

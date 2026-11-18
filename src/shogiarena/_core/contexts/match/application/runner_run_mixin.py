@@ -28,6 +28,10 @@ from shogiarena._core.shared.kernel.time_control import (
     coerce_time_control_limits,
     limits_to_record_time_spec,
 )
+from shogiarena._core.shared.kernel.time_control_spec import (
+    BLACK_TIME_CONTROL_SPEC_ATTRIBUTE,
+    WHITE_TIME_CONTROL_SPEC_ATTRIBUTE,
+)
 from shogiarena._core.shared.kernel.timeout_attribution import TimeoutAttributionDecision
 
 from .runner_types import _OptionNameEnginePort, _ReadyStateEnginePort, _starting_ply_number
@@ -259,6 +263,8 @@ class GameRunnerRunMixin:
                 "game_name": game_id,
                 "game_type": "arena",
                 "updated_date": end_time.isoformat(),
+                BLACK_TIME_CONTROL_SPEC_ATTRIBUTE: black_time_control.limits.to_spec_str(),
+                WHITE_TIME_CONTROL_SPEC_ATTRIBUTE: white_time_control.limits.to_spec_str(),
             }
             # Carry the classified timeout origin so completion can exclude orchestrator-stall timeouts
             # from rating/SPRT, and later persist it (task 0047). Kept even for valid timeouts (calibration).
@@ -326,7 +332,7 @@ class GameRunnerRunMixin:
         if isinstance(black_engine, _ReadyStateEnginePort) and isinstance(white_engine, _ReadyStateEnginePort):
             # Two-phase barrier:
             # 1) Wait until both engines are ready (readyok observed by each engine instance).
-            # 2) Start game setup for both sides (usinewgame + position) in parallel.
+            # 2) Run game setup for both sides in parallel and wait for each to acknowledge it.
             await asyncio.gather(
                 black_engine.prepare_ready_state(),
                 white_engine.prepare_ready_state(),

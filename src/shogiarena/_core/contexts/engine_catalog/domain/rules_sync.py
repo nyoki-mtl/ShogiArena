@@ -19,7 +19,7 @@ def build_max_ply_sync_options(
     names_cfg = engine_max_ply_option_names
     if isinstance(names_cfg, str):
         if names_cfg.lower() == "auto":
-            option_names = ["MaxMovesToDraw", "Draw_Ply"]
+            option_names = ["MaxMovesToDraw", "Draw_Ply", "MaxGameMoves"]
         else:
             option_names = [part.strip() for part in names_cfg.replace("|", ",").split(",") if part.strip()]
     else:

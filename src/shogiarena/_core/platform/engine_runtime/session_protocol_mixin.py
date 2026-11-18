@@ -12,6 +12,7 @@ from rsshogi.core import Move
 
 from shogiarena._core.platform.engine_runtime.usi_engine_session_models import UsiEngineState, UsiMateResult
 from shogiarena._core.platform.engine_runtime.usi_protocol_types import UsiThinkPV, move_from_usi
+from shogiarena._core.shared.kernel.engine_errors import is_usi_error_info
 from shogiarena._core.shared.kernel.json_types import JsonObject
 
 logger = logging.getLogger(__name__)
@@ -228,7 +229,10 @@ class AsyncUsiEngineProtocolMixin:
         )
         if is_string_only:
             self._current_aux_info.append(pv)
-            if self._should_collect_info_strings and pv.string is not None:
+            # Preserve explicit failure evidence even when diagnostic collection is disabled.
+            if pv.string is not None and (
+                self._should_collect_info_strings or (not self._info_string_log and is_usi_error_info(pv.string))
+            ):
                 self._info_string_log.append(pv.string)
         else:
             multipv_idx = pv.multipv if pv.multipv is not None else 1
@@ -259,16 +263,6 @@ class AsyncUsiEngineProtocolMixin:
         result.observation_basis = get_basis()
 
     def _handle_bestmove(self, line: str) -> None:
-        sorted_pvs = self._collect_sorted_pvs()
-        info_strings = self._collect_info_strings_snapshot()
-        try:
-            result = self._parser.parse_bestmove(line, pvs=sorted_pvs)
-        except ValueError as exc:
-            logger.debug("Ignoring invalid bestmove line from %s: %s (%s)", self.name, line, exc)
-            return
-        if result is None:
-            return
-        result.info_strings = info_strings
         if self._ignored_bestmove_count > 0:
             self._ignored_bestmove_count -= 1
             has_pending_bestmove = self._bestmove_future is not None and not self._bestmove_future.done()
@@ -291,8 +285,8 @@ class AsyncUsiEngineProtocolMixin:
                             is_mate=False,
                             moves=(),
                             mate_in_ply=None,
-                            pvs=tuple(sorted_pvs),
-                            info_strings=info_strings,
+                            pvs=self._collect_sorted_pvs(),
+                            info_strings=self._collect_info_strings_snapshot(),
                         )
                     )
             self._reset_current_info()
@@ -330,9 +324,17 @@ class AsyncUsiEngineProtocolMixin:
         # ここに到達するのは「この探索の結果として受理した bestmove」だけ。stale bestmove、
         # ponder の早出し、mate search 中の bestmove は上の分岐で返しており、別探索の
         # 証拠として使われない（task 0052）。
-        self._attach_observation(result)
         if self._bestmove_future and not self._bestmove_future.done():
-            self._bestmove_future.set_result(result)
+            try:
+                result = self._parser.parse_bestmove(line, pvs=self._collect_sorted_pvs())
+                if result is None:
+                    raise ValueError(f"Invalid bestmove line: {line}")
+            except ValueError as exc:
+                self._set_future_exception(self._bestmove_future, exc)
+            else:
+                result.info_strings = self._collect_info_strings_snapshot()
+                self._attach_observation(result)
+                self._bestmove_future.set_result(result)
         self._reset_current_info()
         self._info_handler = None
         self._set_state(UsiEngineState.READY, reason="received bestmove")

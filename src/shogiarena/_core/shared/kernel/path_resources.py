@@ -24,7 +24,7 @@ from shogiarena._core.shared.kernel.paths import PATH_OPTION_KEYS, resolve_path_
 
 # ``BookFile`` に対する「定跡無効」センチネル。実体パスを持たないため、
 # preflight / provenance を行う consumer 側で除外に使う（解決自体は機械的に行う）。
-BOOK_DISABLED_VALUES: frozenset[str] = frozenset({"no_book"})
+BOOK_DISABLED_VALUES: frozenset[str] = frozenset({"no_book", "<empty>"})
 
 
 @dataclass(frozen=True, slots=True)

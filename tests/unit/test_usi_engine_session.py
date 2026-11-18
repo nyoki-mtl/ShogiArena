@@ -1522,6 +1522,31 @@ async def test_engine_participant_wraps_engine(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_participant_waits_for_post_new_game_readyok(tmp_path) -> None:
+    config = UsiEngineConfig.from_mapping({"name": "Dummy", "engine_path": str(tmp_path / "engine")})
+    bridge = DummyBridge()
+    isready_sent = asyncio.Event()
+
+    async def hold_readyok(command: str) -> None:
+        isready_sent.set()
+
+    async with AsyncUsiEngine(config=config, bridge=bridge) as eng:
+        bridge.set_handler("isready", hold_readyok)
+        participant = EngineParticipant(eng)
+        prepare_task = asyncio.create_task(participant.prepare_new_game_position(initial_sfen="startpos"))
+        try:
+            await asyncio.wait_for(isready_sent.wait(), timeout=2)
+            assert bridge.commands[-3:] == ["usinewgame", "position startpos", "isready"]
+            assert not prepare_task.done()
+            await bridge.enqueue("readyok")
+            await asyncio.wait_for(prepare_task, timeout=2)
+        finally:
+            if not prepare_task.done():
+                prepare_task.cancel()
+                await asyncio.gather(prepare_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_engine_ignores_stale_bestmove_while_waiting_for_readyok(tmp_path, caplog) -> None:
     config = UsiEngineConfig.from_mapping(
         {

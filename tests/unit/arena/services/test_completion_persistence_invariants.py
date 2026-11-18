@@ -187,8 +187,8 @@ async def test_paused_completion_is_neither_persisted_nor_completed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unclassified_error_fails_before_mutating_state() -> None:
-    """SPRT が扱えない ERROR は state を変更する前に raise する（部分 commit を残さない）。"""
+async def test_unclassified_error_persists_evidence_without_scoring() -> None:
+    """SPRT が扱えない ERROR は DB に残し、標本や対局の集計状態を更新せずに失敗する。"""
 
     db = _DbStub()
     rating = _RatingStub()
@@ -198,7 +198,7 @@ async def test_unclassified_error_fails_before_mutating_state() -> None:
     with pytest.raises(ValueError, match="non-decisive game result"):
         await _complete(context, _RecordStub(GameResult.ERROR), is_stop_requested=False)
 
-    assert db.appended == []
+    assert [record.result for record in db.appended] == [GameResult.ERROR]
     assert rating.updates == []
     assert sprt.results == []
     assert context.state.completed_game_ids == set()

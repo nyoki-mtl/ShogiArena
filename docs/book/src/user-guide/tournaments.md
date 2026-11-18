@@ -131,6 +131,17 @@ system:
 - `node_limit`: ノード数制限
 - `depth_limit`: 深さ制限
 
+両エンジンに新対局と開始局面を通知し、双方の `readyok` を受けてから初手を計時します。
+新規対局では、加算や秒読みを含む時計設定をミリ秒精度で記録します。
+DBを直接読む場合は、`game.metadata_attributes_json` の `black_time_control_spec` と `white_time_control_spec` を参照してください。
+たとえば、持ち時間5秒に100ms加算する設定では、時計の指定部分は `t5000+i100` です。
+
+### 手数上限
+
+`rules.adjudication` でShogiArena側の手数上限を設定できます。
+`sync_max_plies_with_engine` が有効で、`engine_max_ply_option_names` が `auto` の場合、エンジンが公開する `MaxMovesToDraw`、`Draw_Ply`、`MaxGameMoves` を同じ値に揃えます。
+エンジンが別の名前を使う場合は、その名前を指定してください。
+
 ### 初期局面
 
 ```yaml
@@ -297,6 +308,20 @@ SPRTは停止を決めた時点で集計を止めます。
 この時間切れの分類はトーナメントとSPRTで使います。
 SPSAの時間切れは`unattributed`として扱います。
 失敗した局の詳細は`failures/run_failures.jsonl`、エンジン起動失敗は`failures/engine_startup_failure.json`で確認できます。
+
+### エンジン異常と入玉宣言
+
+不正着手、無効な `bestmove`、探索中の例外、`info string error ...` に続く投了は、対局結果に `ERROR` と記録します。
+この結果はレーティングやSPRTの標本から除外されます。
+通常の時間切れは、上記の時間切れの分類に従います。
+SPRTがエンジン異常で停止した場合も、異常局は `game.db` に残ります。
+
+`bestmove win` を受けると、駒落ち補正なしの27点法で宣言が成立するかを確認します。
+宣言側の玉が敵陣にあり、王手を受けておらず、敵陣に玉を除いて10枚以上の自駒が必要です。
+敵陣の自駒と持駒の合計点は先手28点以上、後手27点以上です。
+飛車と角は成駒も含めて5点、ほかの駒は1点と数えます。
+盤面や点数の条件を満たさない宣言は `ERROR` になります。
+成立した宣言は時計の期限も判定し、期限を超えたものは時間切れの分類に従います。
 
 ### 指し手ごとの実測時間
 

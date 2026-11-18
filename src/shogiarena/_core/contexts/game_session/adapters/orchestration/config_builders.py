@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml
 
+from shogiarena._core.contexts.engine_catalog.domain.rules_sync import build_max_ply_sync_options
 from shogiarena._core.contexts.game_session.application.progress.snapshot_normalizer import to_json_value
 from shogiarena._core.platform.settings import project_dirs
 from shogiarena._core.shared.kernel.json_types import JsonObject, JsonValue
@@ -178,33 +179,17 @@ def _resolve_option_paths(options: JsonObject) -> None:
 def compute_max_ply_extra_options(rules: Any) -> JsonObject | None:
     """Build extra engine options to keep engine max-move limits in sync."""
     adj_settings = rules.adjudication
-    if not adj_settings.is_max_plies_enabled:
+    if not adj_settings.is_max_plies_enabled or not adj_settings.should_sync_max_plies_with_engine:
         return None
-    if not adj_settings.should_sync_max_plies_with_engine:
-        return None
-
-    moves_value = int(adj_settings.max_plies if adj_settings.max_plies is not None else 0)
-    names_cfg = adj_settings.engine_max_ply_option_names
-    option_names: list[str] = []
-    if isinstance(names_cfg, str):
-        if names_cfg.lower() == "auto":
-            option_names = ["MaxMovesToDraw", "Draw_Ply"]
-        else:
-            option_names = [part.strip() for part in names_cfg.replace("|", ",").split(",") if part.strip()]
-    else:
-        for entry in names_cfg:
-            option_names.extend(part.strip() for part in str(entry).replace("|", ",").split(",") if part.strip())
-
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for name in option_names:
-        if name and name not in seen:
-            seen.add(name)
-            deduped.append(name)
-    if not deduped:
-        return None
-    key = "|".join(deduped)
-    return {key: moves_value}
+    return (
+        build_max_ply_sync_options(
+            is_max_plies_enabled=True,
+            should_sync_max_plies_with_engine=True,
+            max_plies=adj_settings.max_plies if adj_settings.max_plies is not None else 0,
+            engine_max_ply_option_names=adj_settings.engine_max_ply_option_names,
+        )
+        or None
+    )
 
 
 def build_engine_config_map(engines: list[Any]) -> dict[str, Any]:  # I/O boundary: engine specs are heterogeneous

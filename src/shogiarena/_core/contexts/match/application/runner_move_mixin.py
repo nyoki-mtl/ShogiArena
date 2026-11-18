@@ -47,6 +47,7 @@ class GameRunnerMoveMixin:
     _enqueue_terminal_progress: Any
     _notify_clock_increment: Any
     _timeout_result_or_error: Any
+    _adjudicate_declaration_timeout: Any
 
     async def _handle_recovered_bestmove(
         self,
@@ -71,7 +72,15 @@ class GameRunnerMoveMixin:
                 if not isinstance(result_obj, GameResult):
                     raise TypeError(f"Expected GameResult, got {type(result_obj).__name__}")
                 result = result_obj
-                assert isinstance(result, GameResult), f"Expected GameResult, got {type(result)}"
+                if result.is_win_by_declaration():
+                    result = self._adjudicate_declaration_timeout(
+                        result,
+                        clock=move_state.current_time_control,
+                        decision_holder=move_state.timeout_decision_holder,
+                        game_id=request.game_id,
+                        observed_at_s=request.observed_at_s,
+                        observation_basis=request.observation_basis,
+                    )
                 if state.result_progress_emitted is not None and not state.result_progress_emitted[0]:
                     await self._enqueue_terminal_progress(
                         game_id=request.game_id,

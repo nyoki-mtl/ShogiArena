@@ -6,6 +6,15 @@ classifies them need the type, and the game loop must not depend on platform mod
 
 from __future__ import annotations
 
+import re
+
+_USI_ERROR_INFO = re.compile(r"^\s*error(?:\s|:|$)", re.IGNORECASE)
+
+
+def is_usi_error_info(message: str) -> bool:
+    """Identify an explicit engine error notification in the payload of ``info string``."""
+    return _USI_ERROR_INFO.match(message) is not None
+
 
 class UsiHandshakeTimeoutError(TimeoutError):
     """Raised when a USI handshake exchange (``usi`` / ``isready``) does not complete in time.
@@ -16,4 +25,4 @@ class UsiHandshakeTimeoutError(TimeoutError):
     """
 
 
-__all__ = ["UsiHandshakeTimeoutError"]
+__all__ = ["UsiHandshakeTimeoutError", "is_usi_error_info"]

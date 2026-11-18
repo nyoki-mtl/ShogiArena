@@ -9,9 +9,11 @@ import time
 from typing import Any
 
 from rsshogi.core import Board, Move
+from rsshogi.types import PieceType
 
 from shogiarena._core.contexts.match.ports.game_engine_ports import GameEnginePort
 from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkResultPort
+from shogiarena._core.shared.kernel.engine_errors import is_usi_error_info
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.time_control import GameClock
 
@@ -30,6 +32,26 @@ _BOOK_INFO_POSITIVE_RE = re.compile(
 def _is_positive_book_info_string(value: str) -> bool:
     text = value.lower()
     return _BOOK_INFO_NEGATIVE_RE.search(text) is None and _BOOK_INFO_POSITIVE_RE.search(text) is not None
+
+
+def _can_declare_win_by_27_point_rule(board: Board) -> bool:
+    """Check a declaration under the 27-point rule without handicap adjustments."""
+    color = board.turn
+    is_black = color.is_black()
+    enemy_camp = range(3) if is_black else range(6, 9)
+    king = board.king_square(color)
+    if king.is_none() or king.rank not in enemy_camp or board.is_in_check():
+        return False
+    camp_pieces = [
+        piece.base_piece_type()
+        for square, piece in board.iter_pieces()
+        if piece.color == color and square.rank in enemy_camp and square != king
+    ]
+    if len(camp_pieces) < 10:
+        return False
+    points = sum(5 if piece in (PieceType.BISHOP, PieceType.ROOK) else 1 for piece in camp_pieces)
+    points += sum((5 if piece in ("B", "R") else 1) * count for piece, count in board.hand_counts(color).items())
+    return points >= (28 if is_black else 27)
 
 
 class GameRunnerFinalizeMixin:
@@ -73,32 +95,39 @@ class GameRunnerFinalizeMixin:
         try:
             bestmove = think_result.bestmove
 
-            # Engine returned no usable bestmove (no response / unparseable). Treat as a loss for the
-            # side to move rather than crashing. This must come before the Move.MOVE_RESIGN/MOVE_WIN
-            # comparisons, since comparing None to a Move raises TypeError.
             if bestmove is None:
-                logger.warning(f"No bestmove from {engine_name}; treating as loss for the side to move")
-                result = GameResult.WHITE_WIN if board.turn.is_black() else GameResult.BLACK_WIN
-                return _GameOverResult(is_game_over=True, result=result)
+                logger.warning("No bestmove from %s", engine_name)
+                return _GameOverResult(is_game_over=True, result=GameResult.ERROR)
 
             # Handle special moves
             if bestmove == Move.MOVE_RESIGN:
+                info_strings = getattr(think_result, "info_strings", ())
+                if isinstance(info_strings, tuple | list):
+                    for message in info_strings:
+                        if isinstance(message, str) and is_usi_error_info(message):
+                            logger.warning("Engine %s resigned after reporting an error: %s", engine_name, message)
+                            return _GameOverResult(is_game_over=True, result=GameResult.ERROR)
                 logger.debug(f"Engine {engine_name} resigned")
                 # Current player loses
                 result = GameResult.WHITE_WIN if board.turn.is_black() else GameResult.BLACK_WIN
                 return _GameOverResult(is_game_over=True, result=result)
 
             if bestmove == Move.MOVE_WIN:
+                if not _can_declare_win_by_27_point_rule(board):
+                    logger.warning("Invalid 27-point win declaration from %s", engine_name)
+                    return _GameOverResult(is_game_over=True, result=GameResult.ERROR)
                 logger.debug(f"Engine {engine_name} declared win")
-                # Current player wins
-                result = GameResult.BLACK_WIN if board.turn.is_black() else GameResult.WHITE_WIN
+                result = (
+                    GameResult.BLACK_WIN_BY_DECLARATION
+                    if board.turn.is_black()
+                    else GameResult.WHITE_WIN_BY_DECLARATION
+                )
                 return _GameOverResult(is_game_over=True, result=result)
 
             # Validate normal move
             if not board.is_legal_move(bestmove):
                 logger.warning(f"Illegal move from {engine_name}: {bestmove.to_usi()}")
-                result = GameResult.WHITE_WIN if board.turn.is_black() else GameResult.BLACK_WIN
-                return _GameOverResult(is_game_over=True, result=result)
+                return _GameOverResult(is_game_over=True, result=GameResult.ERROR)
 
             return _MoveContinue(is_game_over=False, move=bestmove)
         finally:

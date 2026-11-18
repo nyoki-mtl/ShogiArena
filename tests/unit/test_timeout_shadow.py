@@ -18,7 +18,7 @@ from shogiarena._core.contexts.match.ports.usi_think_ports import UsiThinkReques
 from shogiarena._core.platform.engine_runtime.usi_protocol_types import UsiThinkResult
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.runtime_watchdog import LoopLagObservation
-from shogiarena._core.shared.kernel.time_control import TimeControlLimits
+from shogiarena._core.shared.kernel.time_control import GameClock, TimeControlLimits
 from shogiarena._core.shared.kernel.timeout_attribution import (
     ObservationBasis,
     TimeoutAttributionDecision,
@@ -84,6 +84,33 @@ def test_no_watchdog_stays_timeout_loss() -> None:
     assert result == GameResult.BLACK_WIN_BY_TIMEOUT
     assert decision is not None
     assert decision.origin is TimeoutOrigin.UNATTRIBUTED
+
+
+@pytest.mark.parametrize(
+    ("observed_at_s", "expected"),
+    [
+        (_START_S + 0.5, GameResult.BLACK_WIN_BY_DECLARATION),
+        (_START_S + 1.1, GameResult.WHITE_WIN_BY_TIMEOUT),
+    ],
+)
+def test_declaration_uses_bestmove_observation_for_deadline(observed_at_s: float, expected: GameResult) -> None:
+    clock = GameClock(TimeControlLimits(fixed_time_ms=1000, expiry_margin_ms=0))
+    clock.current_timeout_window = _window()
+    holder: list[TimeoutAttributionDecision | None] = [None]
+    runner = GameRunner(progress_queue=None)
+
+    assert (
+        runner._adjudicate_declaration_timeout(
+            GameResult.BLACK_WIN_BY_DECLARATION,
+            clock=clock,
+            decision_holder=holder,
+            game_id="g1",
+            observed_at_s=observed_at_s,
+            observation_basis=ObservationBasis.LOCAL_PIPE.value,
+        )
+        == expected
+    )
+    assert (holder[0] is None) == expected.is_win_by_declaration()
 
 
 def test_reclassification_off_keeps_loss_even_for_an_invalid_origin() -> None:

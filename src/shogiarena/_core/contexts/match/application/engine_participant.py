@@ -190,8 +190,11 @@ class EngineParticipant(GameEnginePort):
         initial_sfen: str,
         opening_moves: Sequence[Move] = (),
     ) -> None:
+        self._is_prepared = False
         await self._engine.new_game()
         await self._engine.submit_position(initial_sfen, tuple(opening_moves))
+        # The engine can still be clearing its search state after usinewgame.
+        await self._engine.trigger_isready()
         self._is_prepared = True
         self._ponder_handle = None
         self._ponder_predicted_move = None

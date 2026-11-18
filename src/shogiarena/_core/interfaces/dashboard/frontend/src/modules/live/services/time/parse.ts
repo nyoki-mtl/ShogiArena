@@ -31,14 +31,20 @@ export function parseTimeControlSpec(spec: string | null | undefined): ParsedTim
             tail = parts[1] || '';
         }
         const timeMs = Number.parseInt(body || '0', 10) || 0;
-        ret.initial = Math.floor(timeMs / 1000);
+        ret.initial = timeMs / 1000;
         if (tail.startsWith('b')) {
             const byoMs = Number.parseInt(tail.slice(1) || '0', 10) || 0;
-            ret.byoyomi = Math.floor(byoMs / 1000);
+            ret.byoyomi = byoMs / 1000;
         } else if (tail.startsWith('i')) {
             const incMs = Number.parseInt(tail.slice(1) || '0', 10) || 0;
-            ret.increment = Math.floor(incMs / 1000);
+            ret.increment = incMs / 1000;
         }
+    } else if (/^\d+\+\d+\+\d+$/.test(base)) {
+        // Older DB records store rsshogi's base+byoyomi+increment in whole seconds.
+        const [initial, byoyomi, increment] = base.split('+').map(Number);
+        ret.initial = initial;
+        ret.byoyomi = byoyomi;
+        ret.increment = increment;
     }
     for (const p of suffix) {
         if (!p) continue;

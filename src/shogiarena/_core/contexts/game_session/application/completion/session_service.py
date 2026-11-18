@@ -241,19 +241,23 @@ class TournamentSessionCompletionService:
         if result == GameResult.PAUSED:
             logger.debug("Skipping paused game %s; it remains eligible for resume", game_id)
             return False, result
-        # Ordering is fixed by task 0052 / Decision 8: enrich and read the timeout decision, run the
-        # pure policy pre-checks, persist the terminal record, then mutate rating/SPRT/completed
-        # state. A failed state snapshot can be reconciled from game.db on resume.
+        # Persist terminal evidence before mutating rating/SPRT/completed state.
         summary = self.enrich_record_and_summarize(context, game_spec, record=record)
         # Orchestrator-stall timeouts are recorded as ERROR with a ``timeout_origin`` attribute; read
         # it once here and let the SPRT path exclude such invalid games without aborting (task 0047).
         invalid_timeout_origin = _read_timeout_origin(record)
-        self.validate_completion_policies(
-            context.state,
-            game_spec,
-            result=result,
-            invalid_timeout_origin=invalid_timeout_origin,
-        )
+        sprt_error: ValueError | None = None
+        try:
+            self.validate_completion_policies(
+                context.state,
+                game_spec,
+                result=result,
+                invalid_timeout_origin=invalid_timeout_origin,
+            )
+        except ValueError as exc:
+            if result != GameResult.ERROR:
+                raise
+            sprt_error = exc
         should_persist = self.should_persist_record(result, is_stop_requested=is_stop_requested)
         if should_persist:
             # Record is transferable; any thread-affine Board is created inside
@@ -266,6 +270,8 @@ class TournamentSessionCompletionService:
                 game_type="generate" if context.metadata.is_generate_run else "arena",
                 extract_participation=extract_participation,
             )
+        if sprt_error is not None:
+            raise sprt_error
         self.update_rating_state(context.rating, game_spec, result=result)
         update_dashboard = self.commit_completion_state(
             context.state,

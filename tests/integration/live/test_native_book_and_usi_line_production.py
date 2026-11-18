@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -14,6 +15,9 @@ import yaml
 from rsshogi.book import NativeBookEditor, NativeCandidate
 from rsshogi.core import Board, Move
 
+from shogiarena._core.contexts.dashboard.application.game.detail_builder import build_game_detail_payload
+from shogiarena._core.platform.db.store.arena_db_adapter import ArenaDBAdapter
+from shogiarena._core.platform.db.store.repository_factory import SQLiteShogiDBFactory
 from shogiarena.cli import main
 
 _ENGINE_SOURCE = """\
@@ -40,11 +44,13 @@ while True:
     line = raw.strip()
     if not line:
         continue
+    with LOG_PATH.open("a", encoding="utf-8") as fh:
+        fh.write(line + "\\n")
     if line == "usi":
         send("id name NativeBookUsiLineMock")
         send("option name USI_Ponder type check default false")
-        send("option name MaxMovesToDraw type spin default 0 min 0 max 100000")
-        send("option name BookFile type string default no_book")
+        send("option name MaxGameMoves type spin default 0 min 0 max 100000")
+        send("option name BookFile type filename default <empty>")
         send("option name BookEnableFlip type check default false")
         send("option name BookIgnorePly type check default false")
         send("usiok")
@@ -53,24 +59,25 @@ while True:
     elif line == "quit":
         break
     elif line.startswith("position "):
-        with LOG_PATH.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\\n")
         played_moves = len(line.split(" moves ", 1)[1].split()) if " moves " in line else 0
     elif line.startswith("go"):
         is_white = played_moves % 2 == 1
         seq = WHITE_MOVES if is_white else BLACK_MOVES
         mv = seq[move_idx % len(seq)]
         move_idx += 1
-        send("bestmove " + mv)
+        for reply in __REPLIES__ or ("bestmove " + mv,):
+            send(reply)
     elif line == "stop":
         send("bestmove resign")
 """
 
 
-def _write_launcher(engines_dir: Path, name: str, log_path: Path) -> Path:
+def _write_launcher(engines_dir: Path, name: str, log_path: Path, *, replies: tuple[str, ...] = ()) -> Path:
     script = engines_dir / f"{name}.py"
     script.write_text(
-        textwrap.dedent(_ENGINE_SOURCE).replace("__LOG_PATH__", repr(str(log_path))),
+        textwrap.dedent(_ENGINE_SOURCE)
+        .replace("__LOG_PATH__", repr(str(log_path)))
+        .replace("__REPLIES__", repr(replies)),
         encoding="utf-8",
     )
     os.chmod(script, 0o755)
@@ -144,7 +151,7 @@ def test_production_cli_runs_native_book_preflight_and_usi_line_history(tmp_path
                         "flip_policy": "none",
                     },
                     "repetition_occurrences_to_draw": 4,
-                    "time_control": {"time_ms": 5000, "increment_ms": 0, "expiry_margin_ms": 500},
+                    "time_control": {"time_ms": 5000, "increment_ms": 100, "expiry_margin_ms": 500},
                 },
                 "dashboard": {"enabled": False},
                 "system": {"path_preflight": "error", "resource_capacity_preflight": "off"},
@@ -155,8 +162,17 @@ def test_production_cli_runs_native_book_preflight_and_usi_line_history(tmp_path
 
     main(["run", "tournament", str(config_path), "--run-dir", str(run_dir)])
 
-    black_positions = pos_log_b.read_text(encoding="utf-8").splitlines()
-    white_positions = pos_log_w.read_text(encoding="utf-8").splitlines()
+    black_commands = pos_log_b.read_text(encoding="utf-8").splitlines()
+    white_commands = pos_log_w.read_text(encoding="utf-8").splitlines()
+    for commands in (black_commands, white_commands):
+        new_game = commands.index("usinewgame")
+        first_go = next(i for i, cmd in enumerate(commands) if cmd.startswith("go "))
+        assert "isready" in commands[new_game + 2 : first_go]
+        assert "binc 100" in commands[first_go]
+        assert "winc 100" in commands[first_go]
+        assert any(cmd.startswith("setoption name MaxGameMoves value ") for cmd in commands)
+    black_positions = [cmd for cmd in black_commands if cmd.startswith("position ")]
+    white_positions = [cmd for cmd in white_commands if cmd.startswith("position ")]
     assert black_positions[0] == "position startpos moves 5i5h 5a5b 5h5i 5b5a"
     assert white_positions[0] == "position startpos moves 5i5h 5a5b 5h5i 5b5a"
     assert "position startpos moves 5i5h 5a5b 5h5i 5b5a 5i5h" in white_positions
@@ -172,6 +188,14 @@ def test_production_cli_runs_native_book_preflight_and_usi_line_history(tmp_path
         ).fetchone()
 
     attrs = json.loads(attrs_raw)
+    assert attrs["black_time_control_spec"].startswith("t5000+i100;")
+    assert attrs["white_time_control_spec"].startswith("t5000+i100;")
+    with ArenaDBAdapter(SQLiteShogiDBFactory(run_dir / "game.db")) as adapter:
+        record = adapter.load_record(game_id=1)
+    assert record is not None
+    detail = build_game_detail_payload(record=record, game_id="1", logger=logging.getLogger(__name__))
+    assert detail["time_control_black"] == attrs["black_time_control_spec"]
+    assert detail["time_control_white"] == attrs["white_time_control_spec"]
     participation = json.loads(attrs["_arena_participation"])
     book_prov = participation[0]["extra"]["book"]
     assert book_prov["resolved_path"].endswith("StandardBook.book")
@@ -200,3 +224,63 @@ def test_production_cli_runs_native_book_preflight_and_usi_line_history(tmp_path
     with pytest.raises(SystemExit) as exc_info:
         main(["run", "tournament", str(bad_config), "--dry-run"])
     assert exc_info.value.code == 1
+
+
+@pytest.mark.parametrize(
+    ("replies", "position", "expected"),
+    [
+        (("bestmove resign",), "startpos", "WHITE_WIN"),
+        (("info string error search worker failed", "bestmove resign"), "startpos", "ERROR"),
+        (("bestmove",), "startpos", "ERROR"),
+        (("bestmove 7g7e",), "startpos", "ERROR"),
+        (("bestmove win",), "startpos", "ERROR"),
+        (("bestmove win",), "sfen 4K4/4S4/PPPPPPPPP/9/9/9/9/9/4k4 b 2RB3G 1", "BLACK_WIN_BY_DECLARATION"),
+        (("bestmove win",), "sfen 4K4/9/9/9/9/9/ppppppppp/4s4/4k4 w 2rb2g 1", "WHITE_WIN_BY_DECLARATION"),
+        (("bestmove win",), "sfen 4K4/4S4/PPPPPPPPP/9/9/9/9/9/4k4 b 2RB2G 1", "ERROR"),
+    ],
+)
+def test_production_cli_persists_the_terminal_result(
+    tmp_path: Path, replies: tuple[str, ...], position: str, expected: str
+) -> None:
+    engines = []
+    for name in ("A", "B"):
+        launcher = _write_launcher(tmp_path, name, tmp_path / f"{name}.log", replies=replies)
+        engine_config = tmp_path / f"{name}.yaml"
+        engine_config.write_text(
+            yaml.safe_dump({"name": name, "engine_path": launcher.as_posix()}),
+            encoding="utf-8",
+        )
+        engines.append({"name": name, "engine_path": engine_config.as_posix(), "options": {"BookFile": "<empty>"}})
+
+    openings = tmp_path / "openings.txt"
+    openings.write_text(position + "\n", encoding="utf-8")
+    run_dir = tmp_path / "run"
+    config_path = tmp_path / "tournament.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "experiment_name": "terminal-result-smoke",
+                "output_dir": tmp_path.as_posix(),
+                "engines": engines,
+                "tournament": {"scheduler": "round_robin", "games_per_pair": 1, "num_parallel": 1},
+                "rules": {
+                    "initial_positions": {
+                        "type": "file",
+                        "source_format": "usi_line",
+                        "source": openings.as_posix(),
+                        "flip_policy": "none",
+                    },
+                    "time_control": {"time_ms": 5000},
+                },
+                "dashboard": {"enabled": False},
+                "system": {"path_preflight": "error", "resource_capacity_preflight": "off"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    main(["run", "tournament", str(config_path), "--run-dir", str(run_dir)])
+    with sqlite3.connect(run_dir / "game.db") as conn:
+        assert conn.execute("SELECT game_result, num_moves FROM game").fetchall() == [(expected, 0)]
+    for name in ("A", "B"):
+        assert "setoption name BookFile value <empty>" in (tmp_path / f"{name}.log").read_text(encoding="utf-8")

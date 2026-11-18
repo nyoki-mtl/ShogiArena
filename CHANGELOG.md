@@ -8,6 +8,16 @@ except for the documented 1.2.0 breaking-change exception and the SPSA run-resum
 
 ## [Unreleased]
 
+## [1.3.8] - 2026-11-18
+
+### Fixed
+
+- 新対局の開始局面を送った後、両エンジンの `readyok` を待ってから初手の計時を始める。対局前のハッシュ初期化などが初手の消費時間に入る問題を修正した。
+- 不正着手、不正または欠落した `bestmove`、探索中の例外、`info string error ...` に続く投了を対局異常として扱う。SPRTが異常で停止する場合も、当該局を `ERROR` としてDBに保存する。
+- `bestmove win` の入玉宣言を駒落ち補正なしの27点法で検証し、時計の期限も判定する。成立した宣言を宣言勝ち、不成立の宣言を `ERROR` として記録する。
+- `BookFile: "<empty>"` を定跡無効値として扱い、手数上限の自動同期で `MaxGameMoves` に対応した。
+- 対局で使用した時計設定をDBにミリ秒精度で保存し、対局詳細に反映する。100msの加算は `0.1s` と表示する。
+
 ## [1.3.7] - 2026-11-08
 
 ### Added
@@ -777,7 +787,10 @@ dashboard 無効の長時間 run で event loop が秒単位で停止し、進�
 - **Config**: Pydantic ベースの型安全な設定システム、artifact ビルド・リモート実行対応
 - **Documentation**: mdBook ベースの包括的ドキュメント整備
 
-[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.5...HEAD
+[Unreleased]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.8...HEAD
+[1.3.8]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.7...v1.3.8
+[1.3.7]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.6...v1.3.7
+[1.3.6]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.5...v1.3.6
 [1.3.5]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.4...v1.3.5
 [1.3.4]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/nyoki-mtl/ShogiArena/compare/v1.3.2...v1.3.3

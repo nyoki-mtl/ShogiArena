@@ -107,7 +107,8 @@ options:
   BookOnTheFly: true
 ```
 
-`USI_OwnBook` が明示的に `false` でなく、`BookFile` が `no_book` でない場合、`BookDir + BookFile` の実体パスを起動前に検証します。
+`USI_OwnBook` が明示的に `false` でなく、`BookFile` に実体ファイルが指定されている場合、`BookDir + BookFile` の実体パスを起動前に検証します。
+`no_book` と `<empty>` は定跡を無効にする値として扱い、エンジンにそのまま渡します。
 大きな YANEURAOU-DB2016 形式の book では `BookOnTheFly: true` を使う運用を推奨します。
 rsshogi の `NativeBook`（`.book` 形式）を指定した場合は、起動前に `.book` ヘッダ・ブロック索引の健全性と非空確認を行い、`BookEnableFlip`・`BookIgnorePly` を含む主要オプションを出所（provenance）として記録します。
 
@@ -124,6 +125,7 @@ ShogiArena が通常の USI 出力から観測できる範囲では、book を�
 
 実力比較や SPSA でエンジンごとに異なる内蔵定跡を使うと、定跡の違いも結果に影響します。
 定跡を使わずに比較するには、`BookFile: no_book` または `USI_OwnBook: false` を指定してください。
+定跡なしを `<empty>` で指定するエンジンでは、`BookFile: "<empty>"` を使えます。
 サンプルのオプション上書き用 YAML では `BookFile: no_book` を使っています。
 
 共通の開始局面や、先後を入れ替えて同じ手順を使う設定は、`rules.initial_positions` で指定します。

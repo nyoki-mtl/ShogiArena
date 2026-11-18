@@ -10,8 +10,12 @@ from rsshogi.core import normalize_usi_position
 
 from shogiarena._core.shared.kernel.game_results import GameResult
 from shogiarena._core.shared.kernel.record_engine_metrics import attach_engine_wall_times
-from shogiarena._core.shared.kernel.time_control import TimeControlLimitsPort
-from shogiarena._core.shared.kernel.time_control_spec import limits_to_record_time_spec
+from shogiarena._core.shared.kernel.time_control import TimeControlLimitsPort, coerce_time_control_limits
+from shogiarena._core.shared.kernel.time_control_spec import (
+    BLACK_TIME_CONTROL_SPEC_ATTRIBUTE,
+    WHITE_TIME_CONTROL_SPEC_ATTRIBUTE,
+    limits_to_record_time_spec,
+)
 
 
 def build_remote_game_info(
@@ -62,6 +66,8 @@ def build_remote_game_info(
             "game_name": game_id,
             "game_type": "arena",
             "updated_date": now_iso,
+            BLACK_TIME_CONTROL_SPEC_ATTRIBUTE: coerce_time_control_limits(black_limits).to_spec_str(),
+            WHITE_TIME_CONTROL_SPEC_ATTRIBUTE: coerce_time_control_limits(white_limits).to_spec_str(),
         },
     )
     try:

@@ -6,6 +6,9 @@ from typing import Protocol, runtime_checkable
 
 import rsshogi.record
 
+BLACK_TIME_CONTROL_SPEC_ATTRIBUTE = "black_time_control_spec"
+WHITE_TIME_CONTROL_SPEC_ATTRIBUTE = "white_time_control_spec"
+
 
 @runtime_checkable
 class RecordTimeControlLimitsPort(Protocol):
@@ -29,4 +32,4 @@ def limits_to_record_time_spec(limits: RecordTimeControlLimitsPort) -> str:
     return rsshogi.record.TimeControl(base_seconds, byoyomi_seconds, increment_seconds).to_spec()
 
 
-__all__ = ["limits_to_record_time_spec"]
+__all__ = ["BLACK_TIME_CONTROL_SPEC_ATTRIBUTE", "WHITE_TIME_CONTROL_SPEC_ATTRIBUTE", "limits_to_record_time_spec"]
